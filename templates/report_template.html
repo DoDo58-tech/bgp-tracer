@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BGP Security Analysis Report - AS{ASN}</title>
+    <style>
+        :root {
+            --critical: #dc3545;
+            --medium: #fd7e14;
+            --low: #198754;
+            --primary: #0d6efd;
+            --secondary: #6c757d;
+            --light: #f8f9fa;
+            --dark: #212529;
+            --font-main: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: var(--font-main);
+            line-height: 1.6;
+            color: var(--dark);
+            background-color: #f5f7fb;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--primary), #0056b3);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+        
+        .subtitle {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .section {
+            margin-bottom: 40px;
+        }
+        
+        .section h2 {
+            font-size: 1.8rem;
+            color: var(--primary);
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid var(--primary);
+        }
+        
+        .metadata-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.5rem 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .metadata-table th,
+        .metadata-table td {
+            padding: 1rem 1.5rem;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .metadata-table th {
+            background: var(--primary);
+            color: white;
+            font-weight: 600;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+        }
+        
+        .metadata-table td {
+            font-size: 1rem;
+            color: var(--dark);
+            font-weight: 500;
+        }
+        
+        .metadata-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .metadata-table tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .routing-events {
+            margin: 2rem 0;
+        }
+        
+        .routing-events h3 {
+            color: var(--primary);
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+        
+        .routing-table {
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 1.5rem;
+        }
+        
+        .routing-table th,
+        .routing-table td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 0.875rem;
+        }
+        
+        .routing-table th {
+            background: var(--primary);
+            color: white;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.75rem;
+        }
+        
+        .routing-table td {
+            color: var(--dark);
+            font-weight: 400;
+        }
+        
+        .routing-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .routing-table tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .as-path {
+            font-family: 'Courier New', monospace;
+            background: #f8f9fa;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+        
+        .prefix {
+            font-family: 'Courier New', monospace;
+            color: var(--primary);
+            font-weight: 600;
+        }
+        
+        .timestamp {
+            color: var(--secondary);
+            font-size: 0.8rem;
+        }
+        
+        .risk-critical {
+            color: white;
+            background-color: var(--critical);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            display: inline-block;
+        }
+        
+        .risk-medium {
+            color: white;
+            background-color: var(--medium);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            display: inline-block;
+        }
+        
+        .risk-low {
+            color: white;
+            background-color: var(--low);
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-weight: bold;
+            display: inline-block;
+        }
+        
+        .executive-summary {
+            background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+            padding: 25px;
+            border-radius: 10px;
+            border-left: 5px solid #ffc107;
+        }
+        
+        .executive-summary h3 {
+            color: #856404;
+            margin-bottom: 15px;
+        }
+        
+        .chart-container {
+            text-align: center;
+            margin: 30px 0;
+            padding: 20px;
+            background: var(--light);
+            border-radius: 10px;
+        }
+        
+        .chart-container img {
+            max-width: 100%;
+            height: auto;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        
+        .chart-caption {
+            margin-top: 15px;
+            font-style: italic;
+            color: var(--secondary);
+            font-size: 0.9rem;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        th {
+            background-color: var(--primary);
+            color: white;
+            font-weight: 600;
+        }
+        
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+        
+        .findings-list {
+            background: #e8f4fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        
+        .findings-list ul {
+            margin-left: 20px;
+        }
+        
+        .findings-list li {
+            margin-bottom: 8px;
+        }
+        
+        .recommendations {
+            background: #d4edda;
+            padding: 25px;
+            border-radius: 10px;
+            border-left: 5px solid var(--low);
+        }
+        
+        .recommendations h3 {
+            color: #155724;
+            margin-bottom: 15px;
+        }
+        
+        .recommendations ul {
+            margin-left: 20px;
+        }
+        
+        .recommendations li {
+            margin-bottom: 10px;
+        }
+        
+        footer {
+            background: var(--dark);
+            color: white;
+            text-align: center;
+            padding: 20px;
+            margin-top: 40px;
+        }
+        
+        .timestamp {
+            font-size: 0.9rem;
+            opacity: 0.8;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                margin: 0;
+                box-shadow: none;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+            
+            .metadata-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            header h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>BGP Security Analysis Report</h1>
+            <div class="subtitle">Comprehensive Analysis of BGP Hijacking Activity</div>
+        </header>
+        
+        <div class="content">
+            <!-- 1. Metadata Section -->
+            <section class="section">
+                <h2>1. Metadata</h2>
+                <table class="metadata-table">
+                    <tr>
+                        <th>Target AS</th>
+                        <td>AS{ASN} ({ORGANIZATION})</td>
+                    </tr>
+                    <tr>
+                        <th>Time Range</th>
+                        <td>{TIME_RANGE}</td>
+                    </tr>
+                    <tr>
+                        <th>Victim Events</th>
+                        <td>{VICTIM_EVENTS}</td>
+                    </tr>
+                    <tr>
+                        <th>Attacker Events</th>
+                        <td>{ATTACKER_EVENTS}</td>
+                    </tr>
+                    <tr>
+                        <th>Traffic Anomaly Count</th>
+                        <td>{TRAFFIC_ANOMALIES}</td>
+                    </tr>
+                    <tr>
+                        <th>Risk Level</th>
+                        <td>
+                            <span class="risk-badge {RISK_CLASS}">{RISK_LEVEL}</span>
+                        </td>
+                    </tr>
+                </table>
+            </section>
+            
+            <!-- 2. Executive Summary -->
+            <section class="section">
+                <h2>2. Executive Summary</h2>
+                <div class="executive-summary">
+                    <h3>Security Incident Overview</h3>
+                    <p><strong>Victim:</strong> AS{ASN} ({ORGANIZATION})</p>
+                    <p><strong>Hijackers:</strong> {HIJACKERS_LIST}</p>
+                    <p><strong>Incident Summary:</strong> {EXECUTIVE_SUMMARY}</p>
+                </div>
+            </section>
+            
+            <!-- 3. Traffic Analysis -->
+            <section class="section">
+                <h2>3. Traffic Analysis</h2>
+                <p>{TRAFFIC_DESCRIPTION}</p>
+                
+                <!-- Traffic Chart -->
+                {TRAFFIC_CHART_HTML}
+                
+                <div class="findings-list">
+                    <h3>Key Traffic Findings:</h3>
+                    <ul>
+                        {TRAFFIC_FINDINGS}
+                    </ul>
+                </div>
+            </section>
+            
+            <!-- 4. Routing Analysis -->
+            <section class="section">
+                <h2>4. Routing Analysis</h2>
+                <p>{ROUTING_DESCRIPTION}</p>
+                
+                <!-- Origin Hijacking Events Table -->
+                <div class="routing-events">
+                    <h3>Origin Hijacking Events</h3>
+                    {ORIGIN_HIJACKING_TABLE}
+                </div>
+                
+                <!-- Path Forgery Events Table -->
+                <div class="routing-events">
+                    <h3>Path Forgery Events</h3>
+                    {PATH_FORGERY_TABLE}
+                </div>
+                
+                <div class="findings-list">
+                    <h3>Key Routing Findings:</h3>
+                    <ul>
+                        {ROUTING_FINDINGS}
+                    </ul>
+                </div>
+            </section>
+            
+            <!-- 5. Mitigation Recommendations -->
+            <section class="section">
+                <h2>5. Mitigation Recommendations</h2>
+                <div class="recommendations">
+                    <h3>Immediate Actions Required</h3>
+                    <ul>
+                        {MITIGATION_RECOMMENDATIONS}
+                    </ul>
+                </div>
+            </section>
+        </div>
+        
+        <footer>
+            <div class="timestamp">Report generated on {TIMESTAMP}</div>
+            <div>BGP Security Analysis System</div>
+        </footer>
+    </div>
+</body>
+</html>

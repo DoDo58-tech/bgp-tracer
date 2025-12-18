@@ -1,0 +1,22 @@
+# Core dependencies
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+requests>=2.31.0
+python-dateutil>=2.8.0
+psutil>=5.9.0
+
+# LLM and agent framework
+llama-index>=0.10.0
+llama-index-core>=0.10.0
+
+# Excel/CSV handling
+openpyxl>=3.1.0
+
+# Optional but recommended
+scipy>=1.10.0
+seaborn>=0.12.0
+
+# Route leak detection (PathProb integration)
+sortedcontainers>=2.4.0
+

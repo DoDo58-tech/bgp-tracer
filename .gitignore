@@ -1,0 +1,109 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Data files - 排除所有数据文件
+data/updates_rrc00/
+data/event_features/
+data/event_plots/
+data/traffic/
+data/traffic_plots/
+data/historical_cases/
+data/as2org/*.json
+data/as2org/*.txt
+data/asrel/*.json
+data/asrel/*.txt
+data/prefix2as/*.txt
+data/prefix2as/*.json
+data/reasoning_laws/
+data/pathprob/
+data/traffic-outage-info.xlsx
+data/traffic-outage-info.csv
+data/bgpd
+data/batch_prompts.txt
+
+# Cache
+cache/
+*.cache
+.cache/
+
+# Logs
+logs/
+*.log
+
+# Results
+results/
+data/event_features/
+data/event_plots/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Configuration with sensitive data
+config.py
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Large files
+*.gz
+*.zip
+*.tar
+*.tar.gz
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
