@@ -7,14 +7,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.append((os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from tools.traffic_detector import CloudflareRadarAPI
+from detectors.traffic.traffic_detector import CloudflareRadarAPI
 from utils.logger import logger
 from llm.llm_factory import setup_llm_settings
 from config import BASE_URL, API_KEY, MODEL
 
 
 class LLMEnhancedTrafficAgent:
-    def __init__(self, model: str = MODEL, api_key: str = API_KEY, base_url: str = BASE_URL):
+    def __init__(self, model=MODEL, api_key=API_KEY, base_url=BASE_URL):
         self.model = model
         self.api_key = api_key
         self.base_url = base_url
@@ -37,14 +37,9 @@ class LLMEnhancedTrafficAgent:
         start_time, 
         end_time,
         routing_analysis,
-        original_start_time: str | None = None,
-        original_end_time: str | None = None,
+        original_start_time=None,
+        original_end_time=None,
     ):
-        """Run Cloudflare anomaly detection + LLM explanation.
-
-        NOTE: `start_time`/`end_time` here are the ORIGINAL outage window.
-        The detector itself will expand to [start-1day, end+6h] internally.
-        """
         await self.setup_llm()
         
         traffic_result = self.cloudflare_api.detect_anomalies(
@@ -73,10 +68,8 @@ class LLMEnhancedTrafficAgent:
             "routing_context": routing_analysis,
         }
         
-        # Generate LLM insights
         llm_insights = await self._generate_llm_insights(analysis_data)
         
-        # Enhance result with LLM analysis
         enhanced_result = {
             **traffic_result,
             "llm_enhanced": True,
@@ -86,7 +79,7 @@ class LLMEnhancedTrafficAgent:
         
         return enhanced_result
     
-    async def _generate_llm_insights(self, analysis_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _generate_llm_insights(self, analysis_data):
         import re
         
         routing_context = (
@@ -151,7 +144,6 @@ Return valid JSON with fields:
             try:
                 insights = json.loads(raw)
             except Exception:
-                # Try to extract the first JSON object from the text
                 start = raw.find("{")
                 end = raw.rfind("}")
                 if start != -1 and end != -1 and end > start:
@@ -159,7 +151,6 @@ Return valid JSON with fields:
                     try:
                         insights = json.loads(candidate)
                     except Exception:
-                        # Loosen simple quote usage
                         candidate2 = re.sub(r"'", '"', candidate)
                         insights = json.loads(candidate2)
                 else:
@@ -176,7 +167,7 @@ Return valid JSON with fields:
                 "fallback_analysis": self._generate_fallback_analysis(analysis_data),
             }
     
-    def _generate_fallback_analysis(self, analysis_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _generate_fallback_analysis(self, analysis_data):
         anomaly_count = analysis_data["traffic_metrics"]["anomaly_count"]
         percent_change = analysis_data["traffic_metrics"]["percent_change"]
         
@@ -204,8 +195,7 @@ Return valid JSON with fields:
         }
 
 
-def _compute_extended_window(start_time: str, end_time: str) -> Tuple[str, str]:
-    """Compute the unified extended analysis window [start-1day, end+6h]."""
+def _compute_extended_window(start_time, end_time):
     start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
     end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
 
@@ -218,7 +208,7 @@ def _compute_extended_window(start_time: str, end_time: str) -> Tuple[str, str]:
     )
 
 
-def lookup_as_by_country(country_name: str, asorg_file: str = None) -> List[Dict[str, Any]]:
+def lookup_as_by_country(country_name, asorg_file=None):
     try:
         if not asorg_file or not Path(asorg_file).exists():
             logger.warning("AS organization file not available for country lookup")
@@ -240,7 +230,6 @@ def lookup_as_by_country(country_name: str, asorg_file: str = None) -> List[Dict
             org_name = org_info.get("name", "").lower()
             as_name = asn_to_name.get(asn, "").lower()
             
-            # Check if country matches or if organization name contains country
             if (country_lower in org_country or 
                 country_lower in org_name or 
                 country_lower in as_name):
@@ -261,12 +250,11 @@ def lookup_as_by_country(country_name: str, asorg_file: str = None) -> List[Dict
         return []
 
 
-def parse_country_region_input(user_input: str) -> Tuple[str, str, str, str]:
+def parse_country_region_input(user_input):
     asn_pattern = r'AS(\d+)'
     asn_match = re.search(asn_pattern, user_input, re.IGNORECASE)
     asn = asn_match.group(1) if asn_match else None
     
-    # Extract time periods
     time_patterns = [
         r'(\d{4}):(\d{1,2}):(\d{1,2})\s+(\d{1,2}):(\d{2})\s+to\s+(\d{4}):(\d{1,2}):(\d{1,2})\s+(\d{1,2}):(\d{2})',
         r'(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})\s+to\s+(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})',
@@ -285,7 +273,6 @@ def parse_country_region_input(user_input: str) -> Tuple[str, str, str, str]:
                 end_time = f"{groups[5]}-{groups[6].zfill(2)}-{groups[7].zfill(2)} {groups[8].zfill(2)}:{groups[9]}"
                 break
     
-    # Extract country/region names
     country_patterns = [
         r'in\s+([A-Za-z\s]+?)\s+(?:from|between|during)',
         r'in\s+([A-Za-z\s]+?)\s+from',
@@ -306,16 +293,15 @@ def parse_country_region_input(user_input: str) -> Tuple[str, str, str, str]:
     return country_region, start_time, end_time, asn
 
 
-def parse_multiple_as_input(user_input: str) -> Tuple[List[str], str, str]:
+def parse_multiple_as_input(user_input):
     asn_pattern = r'AS(\d+)'
     asn_matches = re.findall(asn_pattern, user_input, re.IGNORECASE)
     
     if not asn_matches:
         return None, None, None
     
-    as_list = asn_matches  # All found AS numbers
+    as_list = asn_matches
     
-    # Extract time periods - handle various formats
     time_patterns = [
         r'(\d{4}):(\d{1,2}):(\d{1,2})\s+(\d{1,2}):(\d{2})\s+to\s+(\d{4}):(\d{1,2}):(\d{1,2})\s+(\d{1,2}):(\d{2})',
         r'(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})\s+to\s+(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})',
@@ -328,12 +314,10 @@ def parse_multiple_as_input(user_input: str) -> Tuple[List[str], str, str]:
         if match:
             groups = match.groups()
             if len(groups) >= 10:
-                # Full format: YYYY-MM-DD HH:MM to YYYY-MM-DD HH:MM
                 start_time = f"{groups[0]}-{groups[1].zfill(2)}-{groups[2].zfill(2)} {groups[3].zfill(2)}:{groups[4]}"
                 end_time = f"{groups[5]}-{groups[6].zfill(2)}-{groups[7].zfill(2)} {groups[8].zfill(2)}:{groups[9]}"
                 return as_list, start_time, end_time
             elif len(groups) >= 7:
-                # Same day format: from 2025-7-30 17:00 to 19:00
                 start_time = f"{groups[0]}-{groups[1].zfill(2)}-{groups[2].zfill(2)} {groups[3].zfill(2)}:{groups[4]}"
                 end_time = f"{groups[0]}-{groups[1].zfill(2)}-{groups[2].zfill(2)} {groups[5].zfill(2)}:{groups[6]}"
                 return as_list, start_time, end_time
@@ -341,17 +325,14 @@ def parse_multiple_as_input(user_input: str) -> Tuple[List[str], str, str]:
     return as_list, None, None
 
 
-def parse_traffic_outage_input(user_input: str) -> Tuple[str, str, str]:
+def parse_traffic_outage_input(user_input):
     asn_pattern = r'AS(\d+)'
     asn_match = re.search(asn_pattern, user_input, re.IGNORECASE)
     if not asn_match:
-        # If no ASN found, we'll need to extract it from context or ask user
-        # For now, return None to indicate ASN extraction needed
         return None, None, None
     
     asn = asn_match.group(1)
     
-    # Extract time periods - handle various formats
     time_patterns = [
         r'(\d{4}):(\d{1,2}):(\d{1,2})\s+(\d{1,2}):(\d{2})\s+to\s+(\d{4}):(\d{1,2}):(\d{1,2})\s+(\d{1,2}):(\d{2})',  # 2025:7:30 17:00 to 2025:7:30 19:00
         r'(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})\s+to\s+(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})',  # 2025-7-30 17:00 to 2025-7-30 19:00
@@ -363,7 +344,6 @@ def parse_traffic_outage_input(user_input: str) -> Tuple[str, str, str]:
         if match:
             groups = match.groups()
             if len(groups) >= 10:
-                # Format: YYYY-MM-DD HH:MM
                 start_time = f"{groups[0]}-{groups[1].zfill(2)}-{groups[2].zfill(2)} {groups[3].zfill(2)}:{groups[4]}"
                 end_time = f"{groups[5]}-{groups[6].zfill(2)}-{groups[7].zfill(2)} {groups[8].zfill(2)}:{groups[9]}"
                 return asn, start_time, end_time
@@ -371,7 +351,7 @@ def parse_traffic_outage_input(user_input: str) -> Tuple[str, str, str]:
     return asn, None, None
 
 
-async def _analyze_single_as_traffic(asn: str, start_time: str, end_time: str, routing_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
+async def _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis=None):
     try:
         start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
         end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
@@ -381,7 +361,6 @@ async def _analyze_single_as_traffic(asn: str, start_time: str, end_time: str, r
             "error": f"Invalid time format. Use YYYY-MM-DD HH:MM. Error: {str(e)}",
         }
 
-    # Compute unified extended analysis window for reporting only: start_time-1day ~ end_time+6h
     extended_start_time_str, extended_end_time_str = _compute_extended_window(start_time, end_time)
     
     api = CloudflareRadarAPI()
@@ -392,7 +371,6 @@ async def _analyze_single_as_traffic(asn: str, start_time: str, end_time: str, r
     )
     logger.info(f"📊 Original outage period (passed to detector): {start_time} to {end_time}")
     
-    # Use LLM-enhanced traffic analysis; detector will expand to [start-1day, end+6h]
     llm_agent = LLMEnhancedTrafficAgent()
     result = await llm_agent.analyze_traffic_with_llm(
         asn=asn,
@@ -403,14 +381,12 @@ async def _analyze_single_as_traffic(asn: str, start_time: str, end_time: str, r
         original_end_time=end_time,
     )
     
-    # Enhance result with original outage period information
     if result.get("success"):
         result["original_outage_period"] = {
             "start_time": start_time,
             "end_time": end_time,
             "duration_hours": (end_dt - start_dt).total_seconds() / 3600,
         }
-        # Extended period is always exactly start_time-1day ~ end_time+6h
         ext_start_dt = datetime.strptime(extended_start_time_str, "%Y-%m-%d %H:%M")
         ext_end_dt = datetime.strptime(extended_end_time_str, "%Y-%m-%d %H:%M")
         result["extended_analysis_period"] = {
@@ -419,7 +395,6 @@ async def _analyze_single_as_traffic(asn: str, start_time: str, end_time: str, r
             "duration_hours": (ext_end_dt - ext_start_dt).total_seconds() / 3600,
         }
         
-        # Filter anomalies to focus on the original outage period
         original_outage_anomalies = []
         if result.get("anomalies"):
             for anomaly in result["anomalies"]:
@@ -435,23 +410,20 @@ async def _analyze_single_as_traffic(asn: str, start_time: str, end_time: str, r
         
         logger.info(f"📊 Traffic analysis completed: {result.get('anomaly_count', 0)} total anomalies, {len(original_outage_anomalies)} during outage period")
     
-    # Return complete result with plot path
     if result.get("success") and result.get("plot_path"):
         logger.info(f"📊 Traffic comparison chart generated: {result['plot_path']}")
     
     return result
 
 
-async def run_traffic_agent_async(user_input: str = None, asn: str = None, start_time: str = None, end_time: str = None, asorg_file: str = None, routing_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
+async def run_traffic_agent_async(user_input = None, asn = None, start_time = None, end_time = None, asorg_file = None, routing_analysis = None):
     try:
         if user_input and not (asn and start_time and end_time):
             country_region, parsed_start, parsed_end, parsed_asn = parse_country_region_input(user_input)
             
             if country_region and not parsed_asn:
-                # This is a country/region-based outage report
                 logger.info(f"🌍 Detected country/region-based outage report: {country_region}")
                 
-                # Look up AS numbers for the country/region
                 matching_asns = lookup_as_by_country(country_region, asorg_file)
                 
                 if not matching_asns:
@@ -463,7 +435,6 @@ async def run_traffic_agent_async(user_input: str = None, asn: str = None, start
                     }
                 
                 if len(matching_asns) <= 5:
-                    # Few AS numbers - analyze all of them
                     logger.info(f"🔍 Found {len(matching_asns)} AS numbers for {country_region}, analyzing all")
                     
                     results = []
@@ -491,7 +462,6 @@ async def run_traffic_agent_async(user_input: str = None, asn: str = None, start
                         "user_input": user_input
                     }
                 else:
-                    # Too many AS numbers - ask user to select
                     as_list = [f"AS{as_info['asn']} ({as_info['as_name']})" for as_info in matching_asns[:20]]  # Show first 20
                     as_list_str = ", ".join(as_list)
                     
@@ -509,12 +479,10 @@ async def run_traffic_agent_async(user_input: str = None, asn: str = None, start
                     }
             
             elif parsed_asn:
-                # ASN was found in the input
                 asn = parsed_asn
                 start_time = parsed_start
                 end_time = parsed_end
             else:
-                # Try original parsing method
                 parsed_asn, parsed_start, parsed_end = parse_traffic_outage_input(user_input)
                 if not parsed_asn:
                     return {
@@ -533,7 +501,6 @@ async def run_traffic_agent_async(user_input: str = None, asn: str = None, start
                 start_time = parsed_start
                 end_time = parsed_end
         
-        # Validate required parameters
         if not all([asn, start_time, end_time]):
             return {
                 "success": False,
@@ -549,8 +516,6 @@ async def run_traffic_agent_async(user_input: str = None, asn: str = None, start
                 "error": f"Invalid time format. Use YYYY-MM-DD HH:MM. Error: {str(e)}",
             }
 
-        # Extend analysis period to cover before and after the reported outage
-        # Add 2 hours before and 2 hours after for comprehensive analysis
         extended_start_dt = start_dt - timedelta(hours=2)
         extended_end_dt = end_dt + timedelta(hours=2)
         
@@ -559,7 +524,6 @@ async def run_traffic_agent_async(user_input: str = None, asn: str = None, start
         extended_start_time_str = extended_start_dt.strftime("%Y-%m-%d %H:%M")
         extended_end_time_str = extended_end_dt.strftime("%Y-%m-%d %H:%M")
         
-        # Use the internal helper function
         return await _analyze_single_as_traffic(
             asn=asn,
             start_time=start_time,
@@ -572,7 +536,7 @@ async def run_traffic_agent_async(user_input: str = None, asn: str = None, start
         return {"success": False, "error": str(e)}
 
 
-def run_traffic_agent(user_input: str = None, asn: str = None, start_time: str = None, end_time: str = None, asorg_file: str = None, routing_analysis: Dict[str, Any] = None) -> Dict[str, Any]:
+def run_traffic_agent(user_input = None, asn = None, start_time = None, end_time = None, asorg_file = None, routing_analysis = None):
     import asyncio
     try:
         loop = asyncio.get_event_loop()
@@ -609,7 +573,6 @@ def run_traffic_agent_batch(
     
     cloudflare_api = CloudflareRadarAPI()
     
-    # Default: enable fast_mode for batch unless explicitly disabled
     if fast_mode is None:
         fast_mode = os.getenv("TRAFFIC_FAST_MODE", "true").lower() == "true"
     
@@ -630,9 +593,6 @@ def run_traffic_agent_batch(
         logger.info(f"[{idx}/{len(as_list)}] Analyzing traffic for AS{asn}...")
         
         try:
-            # Perform traffic analysis for this AS.
-            # We now pass the ORIGINAL outage window; detector will internally
-            # expand to [start-1day, end+6h] so that monitoring+chart windows match.
             result = cloudflare_api.detect_anomalies(
                 asn=asn,
                 start_time=start_time,
@@ -642,11 +602,12 @@ def run_traffic_agent_batch(
                 event_end_time=end_time,
                 fast_mode=fast_mode,
                 historical_weeks=weeks_override,
+                anomaly_method="combined",
+                auto_expand_boundaries=True,
             )
             
             batch_results[asn] = result
             
-            # Track AS with anomalies
             if result.get("success") and result.get("anomalies_detected"):
                 anomaly_as_list.append(asn)
                 logger.warning(f"AS{asn}: Traffic anomaly detected - "
@@ -664,7 +625,6 @@ def run_traffic_agent_batch(
                 "anomalies_detected": False
             }
     
-    # Summary statistics
     total_as = len(as_list)
     success_count = sum(1 for r in batch_results.values() if r.get("success"))
     anomaly_count = len(anomaly_as_list)
@@ -708,7 +668,6 @@ async def run_traffic_agent_batch_async(
         logger.info(f"[{idx}/{len(as_list)}] LLM-analyzing traffic for AS{asn}...")
         
         try:
-            # Pass original outage window; detector expands internally.
             result = await agent.analyze_traffic_with_llm(
                 asn=asn,
                 start_time=start_time,

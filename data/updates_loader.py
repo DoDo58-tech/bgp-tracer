@@ -85,8 +85,7 @@ def download_data(url):
     return outpath
 
 
-def _disk_busy(threshold: int = 80, sample_seconds: float = 0.2) -> bool:
-    """Quick check of disk busy percentage via psutil (single sample)."""
+def _disk_busy(threshold = 80, sample_seconds = 0.2):
     try:
         c1 = psutil.disk_io_counters()
         if not c1:
@@ -103,8 +102,7 @@ def _disk_busy(threshold: int = 80, sample_seconds: float = 0.2) -> bool:
         return False
 
 
-def _read_updates_file(file_path, columns):
-    """Read updates file - optimized for speed."""
+def read_updates_file(file_path, columns):
     data = []
     
     try:
@@ -138,33 +136,64 @@ def _read_updates_file(file_path, columns):
         return None
 
 
-def get_updates_streaming(start_time, end_time, workers: int = 1, io_busy_threshold: int = 85):
+def get_updates_streaming(start_time, end_time, workers: int = 1, io_busy_threshold: int = 85, auto_download: bool = True):
     columns = [
-        'type', 'timestamp', 'A/W', 'peer_ip', 'peer_as', 'prefix', 
-        'as-path', 'origin', 'next-hop', 'local-pref', 'med', 
+        'type', 'timestamp', 'A/W', 'peer_ip', 'peer_as', 'prefix',
+        'as-path', 'origin', 'next-hop', 'local-pref', 'med',
         'communities', 'atomic-aggregate', 'aggregator', 'unknown'
     ]
-    
+
     decoded_dir = UPDATES_DIR / "decoded"
-    
+
     start_minute = (start_time.minute // 5) * 5
     current_time = start_time.replace(minute=start_minute, second=0, microsecond=0)
-    
+
     files_to_process = []
-    
+    missing_files = []
+
     while current_time <= end_time:
         time_str = current_time.strftime("%Y%m%d.%H%M")
         decoded_file = decoded_dir / f"updates.{time_str}.txt"
-        
+
         if decoded_file.exists():
             files_to_process.append(decoded_file)
         else:
             gz_file = UPDATES_DIR / f"updates.{time_str}.gz"
             if gz_file.exists():
                 files_to_process.append(gz_file)
-        
+            else:
+                missing_files.append((current_time, gz_file))
+
         current_time += timedelta(minutes=5)
-    
+
+    # Auto-download missing files if enabled
+    if missing_files and auto_download:
+        logger.info(f"Auto-downloading {len(missing_files)} missing BGP update files...")
+        downloaded_count = 0
+        for file_time, gz_file in missing_files:
+            try:
+                # Generate URL for the file
+                ym = file_time.strftime("%Y.%m")
+                time_str = file_time.strftime("%Y%m%d.%H%M")
+                url = f"{RIPE_RIS_URL}{ym}/updates.{time_str}.gz"
+
+                logger.debug(f"Downloading {url}")
+                local_path = download_data(url)
+                if local_path.exists():
+                    files_to_process.append(local_path)
+                    downloaded_count += 1
+
+                # Don't download too many files at once to avoid overwhelming the server
+                if downloaded_count >= 10:
+                    logger.info(f"Downloaded {downloaded_count} files, continuing with available data...")
+                    break
+
+            except Exception as e:
+                logger.debug(f"Failed to download {gz_file.name}: {e}")
+                continue
+
+        logger.info(f"Successfully downloaded {downloaded_count} BGP update files")
+
     if not files_to_process:
         logger.warning(f"No update files found for time range {start_time} to {end_time}")
         return
@@ -177,7 +206,7 @@ def get_updates_streaming(start_time, end_time, workers: int = 1, io_busy_thresh
     file_count = 0
     for file_path in sorted(files_to_process):
         try:
-            df = _read_updates_file(file_path, columns)
+            df = read_updates_file(file_path, columns)
             if df is None or df.empty:
                 continue
             yield df

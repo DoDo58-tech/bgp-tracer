@@ -282,12 +282,12 @@ def extract_features_for_as(update_files, target_as_set):
     return result
 
 
-def _bucket_start(ts):
+def bucket_start(ts):
     minute = (ts.minute // BUCKET_MINUTES) * BUCKET_MINUTES
     return ts.replace(minute=minute, second=0, microsecond=0)
 
 
-def _merge_bucket_feature(dst, src):
+def merge_bucket_feature(dst, src):
     dst['announcement_count'] = dst.get('announcement_count', 0) + src.get('announcement_count', 0)
     dst['withdrawal_count'] = dst.get('withdrawal_count', 0) + src.get('withdrawal_count', 0)
     dst['total_messages'] = dst.get('total_messages', 0) + src.get('total_messages', 0)
@@ -301,7 +301,7 @@ def _merge_bucket_feature(dst, src):
     dst['avg_path_length_samples'].extend(src.get('avg_path_length_samples', []))
 
 
-def _finalize_bucket_feature(b):
+def finalize_bucket_feature(b):
     # Calculate entropy for edit distances
     def entropy(values):
         if not values:
@@ -320,22 +320,22 @@ def _finalize_bucket_feature(b):
         'withdrawal_count': b.get('withdrawal_count', 0),
         'flapping_prefix_count': len(b.get('flapping_prefixes', set())),
         
-        # 路由劫持/泄露核心特征
+        # Route hijacking/leakage core features
         'ori_change_rate': b.get('num_ori_change', 0) / b.get('announcement_count', 1),
         'num_ori_change': b.get('num_ori_change', 0),
         'path_change_rate': (b.get('num_longer', 0) + b.get('num_shorter', 0)) / b.get('announcement_count', 1),
         
-        # BGP风暴/异常行为特征
+        # BGP storm/abnormal behavior features
         'dup_A_rate': b.get('num_dup_A', 0) / b.get('announcement_count', 1),
         'avg_arrival_interval': (sum(intervals) / len(intervals)) if intervals else 0,
         
-        # 路径多样性特征
+        # Path diversity features
         'editDis_entropy': entropy(edit_dists),
         'unique_as_count': len(b.get('unique_as_set', set())),
     }
 
 
-def _aggregate_timeseries_to_totals(timeseries):
+def aggregate_timeseries_to_totals(timeseries):
     if not timeseries:
         return {}
     
@@ -373,7 +373,7 @@ def _aggregate_timeseries_to_totals(timeseries):
     }
 
 
-def _process_single_file_timeseries(file_path, target_as_list):
+def process_single_file_timeseries(file_path, target_as_list):
     target_as_set = set(target_as_list)
     buckets = {}
     # keep per-prefix state within this file for flapping
@@ -402,7 +402,7 @@ def _process_single_file_timeseries(file_path, target_as_list):
                     continue
                 relevant_count += 1
 
-                bucket = _bucket_start(bgp_msg['timestamp'])
+                bucket = bucket_start(bgp_msg['timestamp'])
                 b = buckets.get(bucket)
                 if b is None:
                     b = {
@@ -506,7 +506,7 @@ def _process_single_file_timeseries(file_path, target_as_list):
 
     elapsed = time.time() - start_t
     logger.info(f"File processed: {os.path.basename(file_path)} lines={line_count} relevant={relevant_count} buckets={len(buckets)} elapsed={elapsed:.2f}s")
-    return {bucket.isoformat(): _finalize_bucket_feature(b) for bucket, b in buckets.items()}
+    return {bucket.isoformat(): finalize_bucket_feature(b) for bucket, b in buckets.items()}
 
 
 def extract_timeseries_for_as(update_files, target_as_set):
@@ -523,7 +523,7 @@ def extract_timeseries_for_as(update_files, target_as_set):
         actual_workers = min(MAX_WORKERS, max(1, total // 2))
         logger.info(f"Starting ProcessPool: files={total} workers={actual_workers} (max={MAX_WORKERS}) bucket={BUCKET_MINUTES}min")
         with ProcessPoolExecutor(max_workers=actual_workers) as ex:
-            futures = [ex.submit(_process_single_file_timeseries, fp, target_as_list) for fp in files]
+            futures = [ex.submit(process_single_file_timeseries, fp, target_as_list) for fp in files]
             for fut in as_completed(futures):
                 part = fut.result()
                 for ts, feat in part.items():
@@ -556,7 +556,7 @@ def extract_timeseries_for_as(update_files, target_as_set):
     else:
         logger.info(f"Starting sequential processing: files={len(files)} bucket={BUCKET_MINUTES}min")
         for fp in files:
-            part = _process_single_file_timeseries(fp, target_as_list)
+            part = process_single_file_timeseries(fp, target_as_list)
             for ts, feat in part.items():
                 if ts not in results:
                     results[ts] = feat
@@ -655,8 +655,8 @@ def detect_anomalies(event_features, baseline_features):
                     'severity': severity,
                 })
     
-    # 检查特定的异常模式
-    # 1. 撤销数量异常高（可能表示前缀消失）
+    # Check specific anomaly patterns   
+    # 1. Withdrawal count anomaly high
     if 'withdrawal_count' in event_features and 'withdrawal_count' in baseline_stats:
         withdraw_increase = event_features['withdrawal_count'] / baseline_stats['withdrawal_count']['mean'] if baseline_stats['withdrawal_count']['mean'] > 0 else 0
         if withdraw_increase > 5:
@@ -669,7 +669,7 @@ def detect_anomalies(event_features, baseline_features):
                 'severity': 'high',
             })
     
-    # 2. 路由震荡（flapping）增加
+    # 2. Route flapping increase
     if 'flapping_prefix_count' in event_features and 'flapping_prefix_count' in baseline_stats:
         flapping_increase = event_features['flapping_prefix_count'] / baseline_stats['flapping_prefix_count']['mean'] if baseline_stats['flapping_prefix_count']['mean'] > 0 else 0
         if flapping_increase > 3 and event_features['flapping_prefix_count'] > 10:
@@ -682,7 +682,7 @@ def detect_anomalies(event_features, baseline_features):
                 'severity': 'high',
             })
     
-    # 3. 宣告数量异常下降（可能表示网络中断）
+    # 3. Announcement count anomaly decrease
     if 'announcement_count' in event_features and 'announcement_count' in baseline_stats:
         announce_decrease = event_features['announcement_count'] / baseline_stats['announcement_count']['mean'] if baseline_stats['announcement_count']['mean'] > 0 else 0
         if announce_decrease < 0.5 and baseline_stats['announcement_count']['mean'] > 100:

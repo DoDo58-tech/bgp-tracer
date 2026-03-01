@@ -240,7 +240,7 @@ def analyze_leak_surface(
     filtered_announcements = 0
     chunk_count = 0
     
-    for df_chunk in get_updates_streaming(start_dt, end_dt):
+    for df_chunk in get_updates_streaming(start_dt, end_dt, auto_download=True):
         chunk_count += 1
         
         if df_chunk is None or df_chunk.empty:
@@ -321,10 +321,172 @@ def detect_route_leaks_streaming(
     return leaks
 
 
+def check_pathprob_integration():
+    """
+    Check PathProb integration status.
+
+    Returns:
+        bool: True if PathProb is properly integrated, False otherwise
+    """
+    print("=" * 70)
+    print("PathProb Integration Checker")
+    print("=" * 70)
+    print()
+
+    print("1. Checking PathProb_AE installation...")
+    pathprob_ae_path = Path(PATHPROB_AE_ROOT)
+    if pathprob_ae_path.exists():
+        print(f"   ✓ PathProb_AE found at: {pathprob_ae_path}")
+
+        infer_script = pathprob_ae_path / "infer_prob" / "asrel_prob.py"
+        if infer_script.exists():
+            print(f"   ✓ Inference script found: {infer_script}")
+        else:
+            print(f"   ✗ Inference script missing: {infer_script}")
+    else:
+        print(f"   ✗ PathProb_AE not found at: {pathprob_ae_path}")
+        print(f"     Expected location: /data/PathProb_AE")
+
+    print()
+
+    print("2. Searching for pathprob.txt file...")
+    pathprob_file = find_pathprob_file()
+
+    if pathprob_file:
+        print(f"   ✓ Found pathprob.txt at: {pathprob_file}")
+
+        file_size = os.path.getsize(pathprob_file)
+        print(f"   ✓ File size: {file_size:,} bytes ({file_size / 1024 / 1024:.2f} MB)")
+
+        try:
+            with open(pathprob_file, 'r') as f:
+                line_count = sum(1 for _ in f)
+            print(f"   ✓ File is readable, contains {line_count:,} lines")
+        except Exception as e:
+            print(f"   ✗ Error reading file: {e}")
+    else:
+        print("   ✗ pathprob.txt not found in any search location")
+        print()
+        print("   Searched locations:")
+        for i, search_path in enumerate(PATHPROB_SEARCH_PATHS, 1):
+            exists = "✓" if search_path.exists() else "✗"
+            print(f"     {i}. {exists} {search_path}")
+
+    print()
+
+    if not pathprob_file:
+        print("3. How to generate pathprob.txt:")
+        print()
+        print("   Option 1: Use PathProb_AE to generate the file")
+        print(f"   {''.join([' '] * 3)}cd {PATHPROB_AE_ROOT}")
+        print(f"   {''.join([' '] * 3)}python3 infer_prob/asrel_prob.py \\")
+        print(f"   {''.join([' '] * 5)}--path_dir <path_to_as_paths> \\")
+        print(f"   {''.join([' '] * 5)}--print_dir <output_directory>")
+        print()
+        print("   Option 2: Set environment variable")
+        print(f"   {''.join([' '] * 3)}export PATHPROB_FILE=/path/to/pathprob.txt")
+        print()
+        print("   Option 3: Place file in default location")
+        default_location = PROJECT_ROOT / "data" / "pathprob" / "pathprob.txt"
+        print(f"   {''.join([' '] * 3)}mkdir -p {default_location.parent}")
+        print(f"   {''.join([' '] * 3)}cp /path/to/pathprob.txt {default_location}")
+        print()
+    else:
+        print("3. Integration Status: ✓ READY")
+        print()
+        print("   PathProb is properly integrated. Route leak detection should work.")
+
+    print()
+    print("=" * 70)
+
+    return pathprob_file is not None
+
+
+def extract_as_paths_from_bgp_data(start_time, end_time, output_dir, min_path_length=2):
+    """
+    Extract AS paths from BGP data for PathProb analysis.
+
+    Args:
+        start_time: Start time (datetime or str)
+        end_time: End time (datetime or str)
+        output_dir: Output directory path
+        min_path_length: Minimum AS path length to include
+
+    Returns:
+        str: Path to output file, or None if failed
+    """
+    from collections import Counter
+
+    try:
+        start_dt = datetime.strptime(str(start_time), "%Y-%m-%d %H:%M")
+        end_dt = datetime.strptime(str(end_time), "%Y-%m-%d %H:%M")
+    except Exception as e:
+        logger.error(f"Invalid time format: {e}")
+        return None
+
+    from data.updates_loader import get_updates_streaming
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    path_counter = Counter()
+
+    total_updates = 0
+    chunk_count = 0
+
+    logger.info(f"Extracting AS paths from {start_time} to {end_time}")
+
+    for df_chunk in get_updates_streaming(start_dt, end_dt, auto_download=True):
+        chunk_count += 1
+
+        if df_chunk is None or df_chunk.empty:
+            continue
+
+        announcements = df_chunk[df_chunk['A/W'] == 'A']
+        if announcements.empty:
+            continue
+
+        total_updates += len(announcements)
+
+        for idx, row in announcements.iterrows():
+            as_path_str = str(row.get('as-path', ''))
+            if not as_path_str:
+                continue
+
+            path = _parse_as_path(as_path_str)
+
+            if len(path) < min_path_length:
+                continue
+
+            path_str = '|'.join(path)
+            path_counter[path_str] += 1
+
+        if chunk_count % 10 == 0:
+            logger.info(f"Processed {chunk_count} chunks, {total_updates} updates, {len(path_counter)} unique paths")
+
+    logger.info(f"Extraction complete: {total_updates} updates, {len(path_counter)} unique paths")
+
+    output_file = output_path / "as_paths.txt"
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for path, count in path_counter.items():
+            if count > 1:
+                f.write(f"{path} {count}\n")
+            else:
+                f.write(f"{path}\n")
+
+    logger.info(f"AS paths saved to: {output_file}")
+    logger.info(f"Total paths: {len(path_counter)}")
+    logger.info(f"Total path occurrences: {sum(path_counter.values())}")
+
+    return str(output_file)
+
+
 __all__ = [
     "analyze_leak_surface",
     "detect_route_leaks_in_announcements",
     "detect_route_leaks_streaming",
     "find_pathprob_file",
+    "check_pathprob_integration",
+    "extract_as_paths_from_bgp_data",
     "DEFAULT_LEAK_THRESHOLD"
 ]

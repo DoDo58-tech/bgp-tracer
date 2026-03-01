@@ -27,15 +27,6 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 def setup_logger(name: str) -> logging.Logger:
-    """
-    Set up a new logger
-    
-    Args:
-        name: Logger name
-        
-    Returns:
-        logging.Logger: Configured logger instance
-    """
     new_logger = logging.getLogger(name)
     new_logger.setLevel(LOG_LEVEL)
     if not new_logger.handlers:

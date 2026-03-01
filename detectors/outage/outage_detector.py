@@ -5,15 +5,33 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from extract_event_features import (
-    extract_timeseries_for_as,
-    find_update_files,
-    detect_anomalies_timeseries,
-)
-from utils.logger import logger
+try:
+    from bgp_tracer.detectors.outage.extract_event_features import (
+        extract_timeseries_for_as,
+        find_update_files,
+        detect_anomalies_timeseries,
+    )
+except ImportError:
+    # Handle relative imports when running as script
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    from detectors.outage.extract_event_features import (
+        extract_timeseries_for_as,
+        find_update_files,
+        detect_anomalies_timeseries,
+    )
+try:
+    from bgp_tracer.utils import logger
+except ImportError:
+    # Handle relative imports when running as script
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    from utils import logger
 
 
-def _aggregate_timeseries(series):
+def aggregate_timeseries(series):
     if not series:
         return {}
 
@@ -59,59 +77,49 @@ def _aggregate_timeseries(series):
     return totals
 
 
-def _score_outage(
+def score_outage(
     event_features,
     baseline_features,
     anomalies
 ):
-    """
-    Enhanced outage scoring with comprehensive anomaly detection.
-    Based on extract_event_features.py patterns for better detection.
-    """
     if not baseline_features:
         return 0.0, []
 
-    indicators: List[str] = []
-    anomaly_details: List[str] = []
+    indicators = []
+    anomaly_details = []
 
-    def ratio(key: str, fallback: float = 0.0) -> float:
+    def ratio(key, fallback = 0.0):
         baseline_val = baseline_features.get(key, 0)
         event_val = event_features.get(key, 0)
         if baseline_val <= 0:
             return fallback
         return event_val / baseline_val
 
-    # Check announcement drop (key indicator of outage)
     announce_ratio = ratio("announcement_count")
     if announce_ratio < 0.5:
         indicators.append("announcement_drop")
         anomaly_details.append(f"announcement_drop: {announce_ratio:.2f}x baseline")
     
-    # Check withdrawal surge (routes being withdrawn)
     withdraw_ratio = ratio("withdrawal_count", fallback=1.0)
     if withdraw_ratio > 4.0:
         indicators.append("withdrawal_surge")
         anomaly_details.append(f"withdrawal_surge: {withdraw_ratio:.2f}x baseline")
     
-    # Check flapping (route instability)
     flapping_ratio = ratio("flapping_prefix_count", fallback=1.0)
     if flapping_ratio > 3.0 and event_features.get("flapping_prefix_count", 0) > 20:
         indicators.append("flapping_spike")
         anomaly_details.append(f"flapping_spike: {flapping_ratio:.2f}x baseline, {event_features.get('flapping_prefix_count', 0)} prefixes")
     
-    # Check unique prefix count drop
     unique_prefix_ratio = ratio("unique_prefix_count", fallback=1.0)
     if unique_prefix_ratio < 0.6:
         indicators.append("prefix_disappearance")
         anomaly_details.append(f"prefix_disappearance: {unique_prefix_ratio:.2f}x baseline")
     
-    # Check total messages drop
     total_msg_ratio = ratio("total_messages", fallback=1.0)
     if total_msg_ratio < 0.5:
         indicators.append("message_drop")
         anomaly_details.append(f"message_drop: {total_msg_ratio:.2f}x baseline")
 
-    # Analyze timeseries anomalies (from detect_anomalies_timeseries)
     outage_anomalies = [
         a
         for a in anomalies
@@ -136,7 +144,6 @@ def _score_outage(
     
     if outage_anomalies:
         indicators.append("timeseries_anomaly")
-        # Group anomalies by feature for detailed reporting
         anomaly_by_feature = {}
         for a in outage_anomalies:
             feature = a.get("feature", "unknown")
@@ -158,7 +165,6 @@ def _score_outage(
     if not indicators:
         return 0.0, []
 
-    # Enhanced scoring: more weight on critical indicators
     score = 0.0
     if "announcement_drop" in indicators:
         score += 0.3
@@ -175,7 +181,6 @@ def _score_outage(
     
     score = min(1.0, score)
     
-    # Combine indicators with details
     detailed_indicators = indicators.copy()
     if anomaly_details:
         detailed_indicators.extend(anomaly_details)
@@ -187,12 +192,12 @@ def _score_outage(
 class RouteOutageDetector:
     baseline_hours: int = 24
     min_required_buckets: int = 6
-    _parsed_cache: Dict[str, datetime] = field(default_factory=dict, init=False)
+    parsed_cache: Dict[str, datetime] = field(default_factory=dict, init=False)
 
     def analyze(self, asn, start_time, end_time):
         try:
-            start_dt = self._parse_time(start_time)
-            end_dt = self._parse_time(end_time)
+            start_dt = self.parse_time(start_time)
+            end_dt = self.parse_time(end_time)
         except ValueError as exc:
             return {
                 "success": False,
@@ -244,7 +249,7 @@ class RouteOutageDetector:
                 "asn": asn,
             }
 
-        event_ts, baseline_ts = self._split_windows(timeseries, start_dt, end_dt, baseline_start)
+        event_ts, baseline_ts = self.split_windows(timeseries, start_dt, end_dt, baseline_start)
 
         if len(event_ts) < self.min_required_buckets:
             return {
@@ -254,8 +259,8 @@ class RouteOutageDetector:
                 "timeseries_event": event_ts,
             }
 
-        event_features = _aggregate_timeseries(event_ts)
-        baseline_features = _aggregate_timeseries(baseline_ts)
+        event_features = aggregate_timeseries(event_ts)
+        baseline_features = aggregate_timeseries(baseline_ts)
         anomalies = detect_anomalies_timeseries(event_ts, baseline_ts) if baseline_ts else []
         anomaly_timeslots = {a.get("timestamp") for a in anomalies if a.get("timestamp")}
         high_severity_timeslots = {
@@ -263,34 +268,29 @@ class RouteOutageDetector:
             for a in anomalies
             if a.get("timestamp") and abs(a.get("z_score", 0)) >= 3.0
         }
-        outage_score, indicators = _score_outage(event_features, baseline_features, anomalies)
+        outage_score, indicators = score_outage(event_features, baseline_features, anomalies)
 
-        # Enhanced outage detection: lower threshold and more comprehensive check
-        is_outage = outage_score >= 0.25  # Lower threshold to catch more outages
+        is_outage = outage_score >= 0.25
         
-        # Also check if we have significant anomalies even if score is lower
         if not is_outage and anomalies:
             high_severity_anomalies = [a for a in anomalies if abs(a.get("z_score", 0)) >= 3.0]
-            if len(high_severity_anomalies) >= 2:  # At least 2 high-severity anomalies
+            if len(high_severity_anomalies) >= 2:
                 is_outage = True
                 indicators.append(f"high_severity_anomalies: {len(high_severity_anomalies)} anomalies with z-score >= 3.0")
-                outage_score = max(outage_score, 0.4)  # Boost score
+                outage_score = max(outage_score, 0.4)
         
-        # Additional check: if we have multiple different features with anomalies, likely an outage
         if not is_outage and anomalies:
             unique_features_with_anomalies = set(a.get("feature") for a in anomalies if abs(a.get("z_score", 0)) >= 2.5)
-            if len(unique_features_with_anomalies) >= 3:  # At least 3 different features with anomalies
+            if len(unique_features_with_anomalies) >= 3:
                 is_outage = True
                 indicators.append(f"multi_feature_anomalies: {len(unique_features_with_anomalies)} different features with anomalies")
-                outage_score = max(outage_score, 0.35)  # Boost score
+                outage_score = max(outage_score, 0.35)
 
-        # Log outage detection results with detailed information
         if is_outage:
             logger.warning(
                 f"🚨 OUTAGE SUSPECTED for AS{asn} during anomaly period [{start_time} to {end_time}]: "
                 f"score={outage_score:.2f}, indicators={len(indicators)}, anomalies={len(anomalies)}"
             )
-            # Group anomalies by feature for clearer reporting
             anomaly_by_feature = {}
             for anomaly in anomalies:
                 feature = anomaly.get("feature", "unknown")
@@ -312,7 +312,6 @@ class RouteOutageDetector:
                 if ts and ts not in anomaly_by_feature[feature]["timestamps"]:
                     anomaly_by_feature[feature]["timestamps"].append(ts)
             
-            # Log feature anomalies
             logger.warning(f"  Anomaly features detected in period [{start_time} to {end_time}]:")
             for feature, info in sorted(anomaly_by_feature.items(), key=lambda x: x[1]["max_z"], reverse=True):
                 logger.warning(
@@ -325,7 +324,6 @@ class RouteOutageDetector:
                 f"score={outage_score:.2f}, indicators={len(indicators)}, anomalies={len(anomalies)}"
             )
 
-        # Group anomalies by feature for summary
         anomaly_by_feature_summary = {}
         for anomaly in anomalies:
             feature = anomaly.get("feature", "unknown")
@@ -352,18 +350,17 @@ class RouteOutageDetector:
             "success": True,
             "asn": asn,
             "analysis_period": f"{start_time} to {end_time}",
-            "anomaly_time_window": f"{start_time} to {end_time}",  # Explicitly mark as anomaly time window
+            "anomaly_time_window": f"{start_time} to {end_time}",
             "baseline_period": f"{baseline_start.strftime('%Y-%m-%d %H:%M')} to {start_time}",
             "event_features": event_features,
             "baseline_features": baseline_features,
             "timeseries_event": event_ts,
             "timeseries_baseline": baseline_ts,
             "anomalies": anomalies,
-            "anomaly_by_feature": anomaly_by_feature_summary,  # Grouped by feature for easy reporting
+            "anomaly_by_feature": anomaly_by_feature_summary,
             "outage_score": outage_score,
             "indicators": indicators,
             "is_outage_suspected": is_outage,
-            # Count anomalies by 5-minute buckets instead of per-feature hits
             "anomaly_count": len(anomaly_timeslots),
             "anomaly_feature_count": len(anomalies),
             "high_severity_anomaly_count": len(high_severity_timeslots),
@@ -371,35 +368,38 @@ class RouteOutageDetector:
             "data_files": [str(p) for p in plot_files],
         }
 
-    def _split_windows(
+    def split_windows(
         self,
         timeseries,
-        start_dt: datetime,
-        end_dt: datetime,
-        baseline_start: datetime,
+        start_dt,
+        end_dt,
+        baseline_start,
     ):
         event_ts = {}
         baseline_ts = {}
         for ts_str, payload in timeseries.items():
-            ts_dt = self._parse_cached(ts_str)
+            ts_dt = self.parse_cached(ts_str)
             if start_dt <= ts_dt <= end_dt:
                 event_ts[ts_str] = payload
             elif baseline_start <= ts_dt < start_dt:
                 baseline_ts[ts_str] = payload
         return event_ts, baseline_ts
 
-    def _parse_cached(self, iso_ts):
-        cached = self._parsed_cache.get(iso_ts)
+    def parse_cached(self, iso_ts):
+        cached = self.parsed_cache.get(iso_ts)
         if cached:
             return cached
         parsed = datetime.fromisoformat(iso_ts)
-        self._parsed_cache[iso_ts] = parsed
+        self.parsed_cache[iso_ts] = parsed
         return parsed
 
     @staticmethod
-    def _parse_time(raw):
+    def parse_time(raw):
         return datetime.strptime(str(raw), "%Y-%m-%d %H:%M")
 
 
-__all__ = ["RouteOutageDetector"]
+# Create a singleton instance for import
+OUTAGE_DETECTOR = RouteOutageDetector()
+
+__all__ = ["RouteOutageDetector", "OUTAGE_DETECTOR"]
 

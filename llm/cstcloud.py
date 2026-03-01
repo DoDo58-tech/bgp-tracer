@@ -19,17 +19,12 @@ class LLMResult:
 
 
 class CstCloud:
-    """Lightweight OpenAI-compatible client for CSTCloud unified API (DeepSeek models).
-
-    This wrapper exposes a streaming call that returns both final answer and optional reasoning stream.
-    """
-
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        default_model: Optional[str] = None,
-    ) -> None:
+        api_key = None,
+        base_url = None,
+        default_model = None,
+    ):
         self.token = api_key or DEFAULT_API_KEY or os.getenv("CstCloudToken", "")
         self.base_url = base_url or DEFAULT_BASE_URL
         self.default_model = default_model or DEFAULT_MODEL
@@ -39,19 +34,19 @@ class CstCloud:
             "v3": "deepseek-v3:671b",
         }
 
-    def _resolve_model(self, model: Optional[str]) -> str:
+    def _resolve_model(self, model):
         if not model:
             return self.default_model
         return self.model_alias.get(model, model)
 
     def call_by_openai_stream(
         self,
-        sys_prompt: str,
-        user_prompt: str,
-        model: Optional[str] = None,
-        debug: bool = False,
-        enable_thinking: bool = True,
-    ) -> LLMResult:
+        sys_prompt,
+        user_prompt,
+        model = None,
+        debug = False,
+        enable_thinking = True,
+    ):
         resolved_model = self._resolve_model(model)
         client = OpenAI(api_key=self.token, base_url=self.base_url)
 
@@ -69,18 +64,16 @@ class CstCloud:
             },
         )
 
-        answer_parts: list[str] = []
-        thinking_parts: list[str] = []
+        answer_parts = []
+        thinking_parts = []
         for chunk in chat_response:
             if not getattr(chunk, "choices", None):
                 continue
             delta = chunk.choices[0].delta
-            # content stream
             if getattr(delta, "content", None):
                 if debug:
                     print(delta.content, end="", flush=True)
                 answer_parts.append(delta.content)
-            # reasoning stream (if enabled by server)
             if getattr(delta, "reasoning_content", None):
                 if debug:
                     print(delta.reasoning_content, end="", flush=True)

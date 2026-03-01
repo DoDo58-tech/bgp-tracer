@@ -20,47 +20,40 @@ except ImportError:
     AzureOpenAI = None
 
 
-def build_token_counter() -> TokenCountingHandler:
-    """Build a token counter for tracking LLM usage"""
+def build_token_counter():
     try:
         enc = tiktoken.get_encoding("cl100k_base")
         return TokenCountingHandler(tokenizer=enc.encode)
     except Exception:
-        # Fallback: approximate with UTF-8 bytes length
         return TokenCountingHandler(tokenizer=lambda s: list(s.encode("utf-8")))
 
 
 def create_llm(
-    model: str,
-    api_key: str,
-    base_url: str,
-    temperature: float = 0.2,
-    timeout: float = 120.0,
-    max_retries: int = 2
-) -> Any:
-    """Create LLM instance based on model name"""
+    model,
+    api_key,
+    base_url,
+    temperature = 0.2,
+    timeout = 120.0,
+    max_retries = 2
+):
     
     model_lower = model.lower()
     
-    # Qwen/QwQ models - use gpt-4o-mini as fallback for metadata
     if "qwq" in model_lower or "qwen" in model_lower:
         if OpenAI is None:
             raise ImportError("openai package is required for QwQ models")
         
-        # Create OpenAI client but override model metadata to avoid validation issues
         llm = OpenAI(
             api_key=api_key,
             api_base=base_url,
-            model="gpt-4o-mini",  # Use recognized model for metadata
+            model="gpt-4o-mini",
             temperature=temperature,
             timeout=timeout,
             max_retries=max_retries,
         )
-        # Override the actual model name used in requests
         llm._model = model
         return llm
     
-    # DeepSeek models
     elif "deepseek" in model_lower:
         if DeepSeek is None:
             raise ImportError("llama-index-llms-deepseek package is required for DeepSeek models")
@@ -72,8 +65,7 @@ def create_llm(
             timeout=timeout,
             max_retries=max_retries,
         )
-    
-    # GPT models
+
     elif "gpt" in model_lower:
         if "azure" in base_url.lower():
             if AzureOpenAI is None:
@@ -99,7 +91,6 @@ def create_llm(
                 max_retries=max_retries,
             )
     
-    # Default: try OpenAI-compatible API with gpt-4o-mini as fallback
     else:
         if OpenAI is None:
             raise ImportError("openai package is required for OpenAI-compatible models")
@@ -107,25 +98,23 @@ def create_llm(
         llm = OpenAI(
             api_key=api_key,
             api_base=base_url,
-            model="gpt-4o-mini",  # Use recognized model for metadata
+            model="gpt-4o-mini",
             temperature=temperature,
             timeout=timeout,
             max_retries=max_retries,
         )
-        # Override the actual model name used in requests
         llm._model = model
         return llm
 
 
 def setup_llm_settings(
-    model: str,
-    api_key: str,
-    base_url: str,
-    temperature: float = 0.2,
-    timeout: float = 120.0,
-    max_retries: int = 2
-) -> tuple[Any, TokenCountingHandler]:
-    """Setup LLM and token counter for the application"""
+    model,
+    api_key,
+    base_url,
+    temperature = 0.2,
+    timeout = 120.0,
+    max_retries = 2
+):
     llm = create_llm(
         model=model,
         api_key=api_key,

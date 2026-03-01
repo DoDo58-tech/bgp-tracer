@@ -1,7 +1,6 @@
 import os
 import sys
 import json
-from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime, timedelta
 
 sys.path.append((os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -34,12 +33,12 @@ class ReasoningAgent:
         self.confidence_scores = {}
         self.round_count = 0
     
-    def perform_multi_round_analysis(self, max_rounds: int = 3) -> Dict[str, Any]:
+    def perform_multi_round_analysis(self, max_rounds = 3):
         try:
             self.reasoning_trace.append(f"Starting multi-round analysis for ASN {self.asn}")
             self.reasoning_trace.append(f"Time range: {self.start_time} to {self.end_time}")
             
-            initial_data = self._phase1_data_collection()
+            initial_data = self.phase1_data_collection()
             
             if not initial_data.get("success", False):
                 return {
@@ -48,7 +47,6 @@ class ReasoningAgent:
                     "reasoning_trace": self.reasoning_trace
                 }
             
-            # Phase 2: Multi-round reasoning
             for round_num in range(1, max_rounds + 1):
                 self.round_count = round_num
                 self.reasoning_trace.append(f"\n=== ROUND {round_num} REASONING ===")
@@ -59,7 +57,6 @@ class ReasoningAgent:
                     self.reasoning_trace.append(f"Analysis concluded after {round_num} rounds with sufficient confidence")
                     break
             
-            # Phase 3: Final Integration and Decision
             final_result = self._phase3_final_integration()
             
             return final_result
@@ -71,22 +68,18 @@ class ReasoningAgent:
                 "reasoning_trace": self.reasoning_trace
             }
     
-    def _parse_anomaly_timestamp(self, timestamp_str: str) -> Optional[datetime]:
-        """Parse anomaly timestamp string to datetime object."""
+    def parse_anomaly_timestamp(self, timestamp_str):
         if not timestamp_str:
             return None
         
         try:
-            # Try ISO format with Z
             if "T" in timestamp_str and "Z" in timestamp_str:
                 return datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%SZ")
-            # Try ISO format without Z
             elif "T" in timestamp_str:
                 try:
                     return datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S")
                 except:
                     return datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M")
-            # Try simple format
             else:
                 try:
                     return datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
@@ -98,42 +91,28 @@ class ReasoningAgent:
     
     def _identify_consecutive_anomaly_periods(
         self, 
-        anomalies: List[Dict[str, Any]], 
-        min_consecutive_count: int = 3,
-        max_gap_minutes: int = 60
-    ) -> List[Tuple[datetime, datetime]]:
-        """
-        识别连续异常的时间段。
-        
-        Args:
-            anomalies: 异常列表，每个异常包含timestamp字段
-            min_consecutive_count: 最少连续异常数量，只有连续异常数量>=此值才认为是有效时间段
-            max_gap_minutes: 两个异常之间的最大间隔（分钟），超过此间隔认为不连续
-        
-        Returns:
-            连续异常时间段列表，每个时间段是(start_time, end_time)的元组
-        """
+        anomalies, 
+        min_consecutive_count = 3,
+        max_gap_minutes = 60
+    ):
         if not anomalies:
             return []
         
-        # 解析所有异常时间点并排序
         anomaly_times = []
         for anomaly in anomalies:
             timestamp_str = anomaly.get("timestamp", "")
             if not timestamp_str:
                 continue
             
-            anomaly_time = self._parse_anomaly_timestamp(timestamp_str)
+            anomaly_time = self.parse_anomaly_timestamp(timestamp_str)
             if anomaly_time:
                 anomaly_times.append(anomaly_time)
         
         if not anomaly_times:
             return []
         
-        # 按时间排序
         anomaly_times.sort()
         
-        # 识别连续时间段
         consecutive_periods = []
         current_period_start = None
         current_period_end = None
@@ -141,63 +120,40 @@ class ReasoningAgent:
         
         for i, current_time in enumerate(anomaly_times):
             if current_period_start is None:
-                # 开始新的时间段
                 current_period_start = current_time
                 current_period_end = current_time
                 current_count = 1
             else:
-                # 检查是否连续（间隔小于max_gap_minutes）
                 time_gap = (current_time - current_period_end).total_seconds() / 60
                 
                 if time_gap <= max_gap_minutes:
-                    # 连续，扩展当前时间段
                     current_period_end = current_time
                     current_count += 1
                 else:
-                    # 不连续，保存当前时间段（如果满足最小连续数量要求）
                     if current_count >= min_consecutive_count:
                         consecutive_periods.append((current_period_start, current_period_end))
                     
-                    # 开始新的时间段
                     current_period_start = current_time
                     current_period_end = current_time
                     current_count = 1
         
-        # 保存最后一个时间段（如果满足条件）
         if current_period_start is not None and current_count >= min_consecutive_count:
             consecutive_periods.append((current_period_start, current_period_end))
         
         return consecutive_periods
     
-    def _extract_anomaly_time_range(
+    def extract_anomaly_time_range(
         self, 
-        anomalies: List[Dict[str, Any]], 
-        buffer_hours: int = 2,
-        use_consecutive_periods: bool = True,
-        min_consecutive_count: int = 3,
-        max_gap_minutes: int = 60
-    ) -> Tuple[Optional[datetime], Optional[datetime]]:
-        """
-        从异常列表中提取时间范围用于路由分析。
-        
-        如果use_consecutive_periods=True，会识别连续异常的时间段，只返回最长的连续时间段。
-        如果use_consecutive_periods=False，返回所有异常的最早和最晚时间。
-        
-        Args:
-            anomalies: 异常列表
-            buffer_hours: 在时间范围前后添加的缓冲时间（小时）
-            use_consecutive_periods: 是否使用连续时间段识别
-            min_consecutive_count: 最少连续异常数量
-            max_gap_minutes: 两个异常之间的最大间隔（分钟）
-        
-        Returns:
-            (start_time, end_time) 或 (None, None) 如果没有有效时间段
-        """
+        anomalies, 
+        buffer_hours = 2,
+        use_consecutive_periods = True,
+        min_consecutive_count = 3,
+        max_gap_minutes = 60
+    ) :
         if not anomalies:
             return None, None
         
         if use_consecutive_periods:
-            # 识别连续异常时间段
             consecutive_periods = self._identify_consecutive_anomaly_periods(
                 anomalies, 
                 min_consecutive_count=min_consecutive_count,
@@ -206,12 +162,11 @@ class ReasoningAgent:
             
             if not consecutive_periods:
                 logger.info(
-                    f"未找到连续异常时间段（要求至少{min_consecutive_count}个连续异常，"
-                    f"最大间隔{max_gap_minutes}分钟）。总异常数: {len(anomalies)}"
+                    f"No consecutive anomaly periods found (requires at least {min_consecutive_count} consecutive anomalies, "
+                    f"max gap {max_gap_minutes} minutes). Total anomalies: {len(anomalies)}"
                 )
                 return None, None
             
-            # 选择最长的连续时间段（按持续时间）
             longest_period = max(
                 consecutive_periods, 
                 key=lambda p: (p[1] - p[0]).total_seconds()
@@ -220,18 +175,17 @@ class ReasoningAgent:
             start_time, end_time = longest_period
             
             logger.info(
-                f"识别到{len(consecutive_periods)}个连续异常时间段，"
-                f"选择最长时间段: {start_time.strftime('%Y-%m-%d %H:%M')} 到 {end_time.strftime('%Y-%m-%d %H:%M')}"
+                f"Identified {len(consecutive_periods)} consecutive anomaly periods; "
+                f"selected longest period: {start_time.strftime('%Y-%m-%d %H:%M')} to {end_time.strftime('%Y-%m-%d %H:%M')}"
             )
         else:
-            # 原有逻辑：使用所有异常的最早和最晚时间
             anomaly_times = []
             for anomaly in anomalies:
                 timestamp_str = anomaly.get("timestamp", "")
                 if not timestamp_str:
                     continue
                 
-                anomaly_time = self._parse_anomaly_timestamp(timestamp_str)
+                anomaly_time = self.parse_anomaly_timestamp(timestamp_str)
                 if anomaly_time:
                     anomaly_times.append(anomaly_time)
             
@@ -241,28 +195,21 @@ class ReasoningAgent:
             start_time = min(anomaly_times)
             end_time = max(anomaly_times)
         
-        # 添加缓冲时间
         start_time = start_time - timedelta(hours=buffer_hours)
         end_time = end_time + timedelta(hours=buffer_hours)
         
-        # 注意：不要限制在用户输入的时间范围内！
-        # 路由分析应该使用流量检测到的连续异常时间段（可能超出用户输入的时间范围）
-        # 流量检测已经扩展到 start_time-1day 到 end_time+6h，所以异常时间段可能在这个扩展范围内
-        
         logger.info(
-            f"提取的异常时间段（已添加{buffer_hours}小时缓冲）: "
-            f"{start_time.strftime('%Y-%m-%d %H:%M')} 到 {end_time.strftime('%Y-%m-%d %H:%M')}"
+            f"Extracted anomaly time range (with {buffer_hours}h buffer): "
+            f"{start_time.strftime('%Y-%m-%d %H:%M')} to {end_time.strftime('%Y-%m-%d %H:%M')}"
         )
         
         return start_time, end_time
     
-    def _phase1_data_collection(self):
+    def phase1_data_collection(self):
         self.reasoning_trace.append("Phase 1: Data Collection")
         
         try:
-            # Perform traffic analysis first, then routing analysis (per project motivation: determine if traffic changes relate to routing issues)
             self.reasoning_trace.append("- Activating TrafficAgent with LLM enhancement...")
-            # Use synchronous wrapper which handles async properly
             traffic_result = run_traffic_agent(
                 asn=self.asn,
                 start_time=self.start_time.strftime('%Y-%m-%d %H:%M'),
@@ -271,7 +218,6 @@ class ReasoningAgent:
             
             traffic_anomaly_detected = traffic_result.get("success") and traffic_result.get("anomalies_detected", False)
             
-            # Store extended time range for report generation
             extended_analysis_start = self.start_time
             extended_analysis_end = self.end_time
             
@@ -280,35 +226,34 @@ class ReasoningAgent:
                 
                 # Extract anomaly time range using consecutive period detection
                 anomalies = traffic_result.get("anomalies", [])
-                anomaly_start, anomaly_end = self._extract_anomaly_time_range(
+                anomaly_start, anomaly_end = self.extract_anomaly_time_range(
                     anomalies,
-                    use_consecutive_periods=True,  # 使用连续时间段识别
-                    min_consecutive_count=3,  # 至少3个连续异常点
-                    max_gap_minutes=60  # 最大间隔60分钟
+                    use_consecutive_periods=True,
+                    min_consecutive_count=3,
+                    max_gap_minutes=60
                 )
                 
                 if anomaly_start and anomaly_end:
-                    # 计算连续异常的数量（在最长的时间段内）
+                        # count consecutive anomalies within the longest period
                     consecutive_periods = self._identify_consecutive_anomaly_periods(
                         anomalies, min_consecutive_count=3, max_gap_minutes=60
                     )
                     total_consecutive_anomalies = 0
                     if consecutive_periods:
-                        # 找到最长的时间段
+                        # select the longest period
                         longest_period = max(
                             consecutive_periods, 
                             key=lambda p: (p[1] - p[0]).total_seconds()
                         )
                         period_start, period_end = longest_period
-                        # 计算在这个时间段内的异常数量
                         for anomaly in anomalies:
-                            anomaly_time = self._parse_anomaly_timestamp(anomaly.get("timestamp", ""))
+                            anomaly_time = self.parse_anomaly_timestamp(anomaly.get("timestamp", ""))
                             if anomaly_time and period_start <= anomaly_time <= period_end:
                                 total_consecutive_anomalies += 1
                     
                     self.reasoning_trace.append(
-                        f"- 识别到连续异常时间段: {anomaly_start.strftime('%Y-%m-%d %H:%M')} 到 {anomaly_end.strftime('%Y-%m-%d %H:%M')} "
-                        f"(总异常数: {len(anomalies)}, 连续异常数: {total_consecutive_anomalies})"
+                        f"- Identified consecutive anomaly period: {anomaly_start.strftime('%Y-%m-%d %H:%M')} to {anomaly_end.strftime('%Y-%m-%d %H:%M')} "
+                        f"(total anomalies: {len(anomalies)}, consecutive anomalies: {total_consecutive_anomalies})"
                     )
                     routing_start = anomaly_start.strftime('%Y-%m-%d %H:%M')
                     routing_end = anomaly_end.strftime('%Y-%m-%d %H:%M')
@@ -316,19 +261,18 @@ class ReasoningAgent:
                     extended_analysis_start = anomaly_start
                     extended_analysis_end = anomaly_end
                 else:
-                    # 如果没有找到连续异常时间段，记录原因
+                    # if no consecutive period found, log and skip routing analysis
                     self.reasoning_trace.append(
-                        f"- 未找到足够的连续异常时间段（要求至少3个连续异常，最大间隔60分钟）。"
-                        f"总异常数: {len(anomalies)}。跳过路由分析。"
+                        f"- No sufficient consecutive anomaly period found (requires at least 3 consecutive anomalies, max gap 60 minutes)."
+                        f" Total anomalies: {len(anomalies)}. Skipping routing analysis."
                     )
                     routing_result = {
                         "success": False,
                         "asn": self.asn,
                         "analysis_period": f"{self.start_time} to {self.end_time}",
                         "skipped": True,
-                        "skip_reason": f"未找到足够的连续异常时间段。总异常数: {len(anomalies)}，但未满足连续异常条件（至少3个连续异常，最大间隔60分钟）。"
+                        "skip_reason": f"No sufficient consecutive anomaly period found. Total anomalies: {len(anomalies)}; did not meet consecutive anomaly conditions (>=3 anomalies, max gap 60 minutes)."
                     }
-                    # 不执行路由分析，直接返回
                     data_quality = self._assess_data_quality(routing_result, traffic_result)
                     self.evidence_pool = {
                         "routing_data": routing_result,
@@ -347,7 +291,7 @@ class ReasoningAgent:
                         "extended_analysis_end": extended_analysis_end.strftime('%Y-%m-%d %H:%M')
                     }
                 
-                self.reasoning_trace.append(f"- 使用连续异常时间段进行路由分析: {routing_start} 到 {routing_end}")
+                self.reasoning_trace.append(f"- Using consecutive anomaly period for routing analysis: {routing_start} to {routing_end}")
                 
                 # Extract target ASNs for route leak detection (only analyze messages containing these ASNs)
                 target_asns = [self.asn]  # Always include primary ASN
@@ -394,7 +338,7 @@ class ReasoningAgent:
             self.reasoning_trace.append(f"- Data collection failed: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _perform_reasoning_round(self, initial_data: Dict[str, Any], round_num: int) -> Dict[str, Any]:
+    def _perform_reasoning_round(self, initial_data, round_num):
         
         try:
             evidence_analysis = self._analyze_evidence_state()
@@ -439,7 +383,7 @@ class ReasoningAgent:
             self.reasoning_trace.append(f"Round {round_num} failed: {str(e)}")
             return {"round_num": round_num, "error": str(e)}
     
-    def _phase3_final_integration(self) -> Dict[str, Any]:
+    def _phase3_final_integration(self):
         self.reasoning_trace.append("\nPhase 3: Final Integration and Decision")
         
         try:
@@ -469,8 +413,7 @@ class ReasoningAgent:
                 "confidence_assessment": self._get_final_confidence(),
                 "reasoning_trace": self.reasoning_trace,
                 "evidence_summary": self._summarize_evidence(),
-                "token_usage": self._get_total_token_usage(),
-                # Include file paths for chief_agent
+                "token_usage": self.get_total_token_usage(),
                 "as_rel_file": routing_data.get("as_rel_file"),
                 "prefix2as_file": routing_data.get("prefix2as_file"),
                 "asorg_file": routing_data.get("asorg_file")
@@ -484,8 +427,7 @@ class ReasoningAgent:
                 "reasoning_trace": self.reasoning_trace
             }
     
-    def _assess_data_quality(self, routing_result: Dict[str, Any], 
-                           traffic_result: Dict[str, Any]) -> str:
+    def _assess_data_quality(self, routing_result, traffic_result):
         quality_factors = []
         
         if routing_result.get("success", False):
@@ -511,7 +453,7 @@ class ReasoningAgent:
         else:
             return "Low"
     
-    def _analyze_evidence_state(self) -> Dict[str, Any]:
+    def _analyze_evidence_state(self):
         """Analyze current state of evidence"""
         routing_data = self.evidence_pool.get("routing_data", {})
         traffic_data = self.evidence_pool.get("traffic_data", {})
@@ -533,7 +475,7 @@ class ReasoningAgent:
             "summary": f"Found {len(evidence_types)} types of evidence: {', '.join(evidence_types) if evidence_types else 'None'}"
         }
     
-    def _identify_knowledge_gaps(self) -> List[str]:
+    def _identify_knowledge_gaps(self):
         """Identify gaps in current knowledge"""
         gaps = []
         
@@ -554,7 +496,7 @@ class ReasoningAgent:
         
         return gaps
     
-    def _perform_deeper_analysis(self, round_num: int, knowledge_gaps: List[str]) -> None:
+    def _perform_deeper_analysis(self, round_num, knowledge_gaps):
         """Perform deeper analysis in later rounds to refine understanding"""
         self.reasoning_trace.append(f"Round {round_num}: Performing deeper analysis for gaps: {knowledge_gaps}")
         
@@ -632,7 +574,7 @@ class ReasoningAgent:
                     self.reasoning_trace.append("Confidence varies across rounds, maintaining conservative estimate")
                     self.evidence_pool["confidence_stability"] = False
     
-    def _apply_reasoning_laws(self) -> Dict[str, Any]:
+    def _apply_reasoning_laws(self):
         """Apply BGP reasoning laws to current evidence"""
         routing_data = self.evidence_pool.get("routing_data", {})
         traffic_data = self.evidence_pool.get("traffic_data", {})
@@ -653,7 +595,7 @@ class ReasoningAgent:
             "laws_applied": ["1-3: Classification", "4: Traffic Correlation", "6: Severity Assessment"]
         }
     
-    def _classify_incident_type(self, routing_data: Dict[str, Any]) -> str:
+    def _classify_incident_type(self, routing_data):
         """Apply reasoning laws 1-3 for incident classification"""
         if routing_data.get("origin_hijacked") or routing_data.get("origin_hijacking"):
             return "Origin Hijacking"
@@ -662,8 +604,7 @@ class ReasoningAgent:
         else:
             return "No BGP Anomaly Detected"
     
-    def _assess_traffic_correlation(self, routing_data: Dict[str, Any], 
-                                  traffic_data: Dict[str, Any]) -> str:
+    def _assess_traffic_correlation(self, routing_data, traffic_data):
         """Apply reasoning law 4 for traffic correlation"""
         has_bgp_anomaly = any([
             routing_data.get("origin_hijacked"),
@@ -683,8 +624,7 @@ class ReasoningAgent:
         else:
             return "No Anomalies Detected"
     
-    def _assess_incident_severity(self, routing_data: Dict[str, Any], 
-                                traffic_data: Dict[str, Any]) -> str:
+    def _assess_incident_severity(self, routing_data, traffic_data):
         """Apply reasoning law 6 for severity assessment"""
         duration_minutes = (self.end_time - self.start_time).total_seconds() / 60
         
@@ -695,7 +635,7 @@ class ReasoningAgent:
         else:  # < 10 minutes
             return "Low"
     
-    def _update_confidence_scores(self, law_application: Dict[str, Any], round_num: int = None) -> None:
+    def _update_confidence_scores(self, law_application, round_num=None):
         """Update confidence scores based on reasoning results with iterative refinement"""
         if round_num is None:
             round_num = self.round_count
@@ -733,7 +673,7 @@ class ReasoningAgent:
             "overall_confidence": min(evidence_consistency, adjusted_classification_confidence)
         }
     
-    def _calculate_evidence_consistency(self) -> float:
+    def _calculate_evidence_consistency(self):
         """Calculate how consistent the evidence is across agents with round-specific refinement"""
         routing_data = self.evidence_pool.get("routing_data", {})
         traffic_data = self.evidence_pool.get("traffic_data", {})
@@ -776,7 +716,7 @@ class ReasoningAgent:
         
         return base_consistency
     
-    def _get_classification_confidence(self, law_application: Dict[str, Any]) -> float:
+    def _get_classification_confidence(self, law_application):
         """Get confidence level for classification"""
         classification = law_application.get("classification", "")
         
@@ -787,7 +727,7 @@ class ReasoningAgent:
         else:
             return 0.5
     
-    def _apply_small_bgp_penalty(self, base_confidence: float) -> float:
+    def _apply_small_bgp_penalty(self, base_confidence):
         """Reduce confidence when routing impact is small compared to traffic anomaly severity"""
         routing_impact = self._get_routing_impact_score()
         traffic_severity = self._get_traffic_severity_score()
@@ -802,7 +742,7 @@ class ReasoningAgent:
             return adjusted
         return base_confidence
     
-    def _get_routing_impact_score(self) -> float:
+    def _get_routing_impact_score(self):
         """Estimate how wide the routing anomaly spreads based on events and affected prefixes"""
         routing_data = self.evidence_pool.get("routing_data", {})
         event_keys = ["origin_hijacked", "forge_hijacked", "origin_hijacking", "forge_hijacking"]
@@ -821,7 +761,7 @@ class ReasoningAgent:
         prefix_factor = min(1.0, len(affected_prefixes) / 3.0)  # Full score if >=3 prefixes
         return max(event_factor, prefix_factor)
     
-    def _get_traffic_severity_score(self) -> float:
+    def _get_traffic_severity_score(self):
         """Estimate traffic anomaly severity using percent change and anomaly count"""
         traffic_data = self.evidence_pool.get("traffic_data", {})
         percent_change = abs(traffic_data.get("percent_change", 0.0) or 0.0)
@@ -831,7 +771,7 @@ class ReasoningAgent:
         anomaly_factor = min(1.0, anomaly_count / 3.0)  # >=3 anomalies considered severe
         return max(change_factor, anomaly_factor)
     
-    def _detect_agent_conflicts(self) -> Optional[List[str]]:
+    def _detect_agent_conflicts(self):
         """Detect conflicts between agent findings"""
         conflicts = []
         
@@ -851,7 +791,7 @@ class ReasoningAgent:
         
         return conflicts if conflicts else None
     
-    def _resolve_conflicts(self, conflicts: List[str]) -> str:
+    def _resolve_conflicts(self, conflicts):
         """Resolve conflicts between agent findings"""
         # Simple conflict resolution - in production this would be more sophisticated
         if "BGP anomalies detected but no traffic impact observed" in conflicts:
@@ -859,7 +799,7 @@ class ReasoningAgent:
         
         return "Conflicts require manual review"
     
-    def _should_conclude_analysis(self) -> bool:
+    def _should_conclude_analysis(self):
         """Determine if analysis should conclude"""
         if not self.confidence_scores:
             return False
@@ -872,11 +812,11 @@ class ReasoningAgent:
         # Conclude if confidence is high enough or max rounds reached
         return overall_confidence >= 0.8 or self.round_count >= 3
     
-    def _assess_analysis_completeness(self) -> bool:
+    def _assess_analysis_completeness(self):
         """Assess if more analysis rounds are needed"""
         return not self._should_conclude_analysis()
     
-    def _build_coordination_prompt(self) -> str:
+    def _build_coordination_prompt(self):
         """Build prompt for final coordination"""
         prompt_template = build_multi_agent_coordination_prompt()
         
@@ -891,7 +831,7 @@ class ReasoningAgent:
             confidence_scores=json.dumps(self.confidence_scores, indent=2)
         )
     
-    def _summarize_routing_results(self) -> str:
+    def _summarize_routing_results(self):
         """Summarize routing agent results"""
         routing_data = self.evidence_pool.get("routing_data", {})
         
@@ -906,7 +846,7 @@ class ReasoningAgent:
         
         return "; ".join(summary_parts)
     
-    def _summarize_traffic_results(self) -> str:
+    def _summarize_traffic_results(self):
         """Summarize traffic agent results"""
         traffic_data = self.evidence_pool.get("traffic_data", {})
         
@@ -921,7 +861,7 @@ class ReasoningAgent:
         
         return "; ".join(summary_parts)
     
-    def _parse_coordination_response(self, response_text: str) -> Dict[str, Any]:
+    def _parse_coordination_response(self, response_text):
         """Parse LLM coordination response"""
         try:
             # Extract JSON from response
@@ -938,7 +878,7 @@ class ReasoningAgent:
         except json.JSONDecodeError:
             return {"integrated_findings": {"incident_type": "Parse Error", "confidence_level": "Low"}}
     
-    def _generate_final_report(self, coordination_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _generate_final_report(self, coordination_result):
         """Generate comprehensive final report"""
         return {
             "analysis_metadata": {
@@ -957,7 +897,7 @@ class ReasoningAgent:
             "reasoning_trace": self.reasoning_trace
         }
     
-    def _get_final_confidence(self) -> Dict[str, Any]:
+    def _get_final_confidence(self):
         """Get final confidence assessment"""
         if not self.confidence_scores:
             return {"overall": "Low", "details": "No confidence data available"}
@@ -982,7 +922,7 @@ class ReasoningAgent:
             "progression": self.confidence_scores
         }
     
-    def _summarize_evidence(self) -> Dict[str, Any]:
+    def _summarize_evidence(self):
         """Summarize all collected evidence"""
         # Convert pandas Timestamps to strings to ensure JSON serialization
         routing_data = self.evidence_pool.get("routing_data", {})
@@ -1023,7 +963,7 @@ class ReasoningAgent:
         else:
             return data
     
-    def _count_routing_evidence(self) -> Dict[str, int]:
+    def _count_routing_evidence(self):
         """Count routing evidence"""
         routing_data = self.evidence_pool.get("routing_data", {})
         
@@ -1034,7 +974,7 @@ class ReasoningAgent:
             "forge_hijacking_count": len(routing_data.get("forge_hijacking", []))
         }
     
-    def _count_traffic_evidence(self) -> Dict[str, Any]:
+    def _count_traffic_evidence(self):
         """Count traffic evidence"""
         traffic_data = self.evidence_pool.get("traffic_data", {})
         
@@ -1044,7 +984,7 @@ class ReasoningAgent:
             "has_baseline_data": bool(traffic_data.get("baseline_metrics"))
         }
     
-    def _assess_final_correlation(self) -> str:
+    def _assess_final_correlation(self):
         """Assess final correlation between routing and traffic"""
         routing_evidence = self._count_routing_evidence()
         traffic_evidence = self._count_traffic_evidence()
@@ -1061,13 +1001,11 @@ class ReasoningAgent:
         else:
             return "No significant anomalies detected"
     
-    def _get_total_token_usage(self) -> Dict[str, int]:
-        """Get total token usage across all agents"""
+    def get_total_token_usage(self):
         total_tokens = self.token_counter.total_llm_token_count
         prompt_tokens = self.token_counter.prompt_llm_token_count
         completion_tokens = self.token_counter.completion_llm_token_count
         
-        # Add routing agent tokens
         routing_data = self.evidence_pool.get("routing_data", {})
         routing_tokens = routing_data.get("token_usage", {})
         
@@ -1091,22 +1029,9 @@ class ReasoningAgent:
         }
 
 
-def run_reasoning_agent(asn: str = None, start_time: str = None, end_time: str = None, 
-                       user_input: str = None, max_rounds: int = 3) -> Dict[str, Any]:
-    """Run reasoning agent for multi-round BGP analysis
-    
-    Args:
-        asn: Target ASN (optional if user_input provided)
-        start_time: Analysis start time (YYYY-MM-DD HH:MM format) (optional if user_input provided)
-        end_time: Analysis end time (YYYY-MM-DD HH:MM format) (optional if user_input provided)
-        user_input: Natural language input for parsing (optional if asn/start_time/end_time provided)
-        max_rounds: Maximum reasoning rounds
-        
-    Returns:
-        Dict containing comprehensive analysis results
-    """
+def run_reasoning_agent(asn = None, start_time = None, end_time = None, 
+                       user_input = None, max_rounds = 3):
     try:
-        # Handle user input parsing
         if user_input and not (asn and start_time and end_time):
             from agents.traffic_agent import parse_traffic_outage_input, normalize_time
             parsed_asn, parsed_start, parsed_end = parse_traffic_outage_input(user_input)
@@ -1156,53 +1081,21 @@ def run_reasoning_agent(asn: str = None, start_time: str = None, end_time: str =
 
 
 def run_reasoning_agent_batch(
-    as_list: List[str],
-    start_time: str,
-    end_time: str,
-    max_rounds: int = 3
-) -> Dict[str, Any]:
-    """
-    Batch reasoning analysis for multiple AS numbers.
-    
-    This function:
-    1. Performs batch traffic analysis for all AS
-    2. Identifies AS with traffic anomalies
-    3. Extracts per-AS anomaly time windows (each AS may have different anomaly periods)
-    4. Groups AS by time windows to optimize data reading (each unique time window processed once)
-    5. Performs routing analysis for each AS using its own anomaly time window
-    6. Generates individual reasoning analysis for each anomaly AS
-    
-    Key optimizations:
-    - Each AS uses its own anomaly time window for routing detection (not the global time range)
-    - AS with identical time windows are grouped together to minimize redundant data processing
-    - BGP update data is read once per unique time window (trunk detection optimization)
-    
-    Args:
-        as_list: List of AS numbers to analyze
-        start_time: Global analysis start time (YYYY-MM-DD HH:MM format) - used for traffic analysis
-        end_time: Global analysis end time (YYYY-MM-DD HH:MM format) - used for traffic analysis
-        max_rounds: Maximum reasoning rounds per AS
-    
-    Returns:
-        Dict containing batch analysis results with per-AS routing analysis using individual anomaly windows
-    
-    Note:
-        - Traffic anomalies may occur at different times for different AS
-        - Routing detection uses each AS's specific anomaly time window, not the global time range
-        - This ensures accurate correlation between traffic anomalies and routing issues
-    """
+    as_list,
+    start_time,
+    end_time,
+    max_rounds = 3
+):
     from agents.traffic_agent import run_traffic_agent_batch
-    from tools.hijack_detector import detect_hijacks_batch, detect_hijacks
+    from detectors.hijack.hijack_detector import detect_hijacks_batch, detect_hijacks
     
     try:
         logger.info(f"Starting BATCH reasoning analysis for {len(as_list)} AS")
         logger.info(f"Time range: {start_time} to {end_time}")
         
-        # Parse time strings
         start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
         end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
         
-        # Step 1: Batch traffic analysis for all AS
         logger.info(f"Step 1: Batch traffic analysis for {len(as_list)} AS...")
         traffic_batch_result = run_traffic_agent_batch(
             as_list=as_list,
@@ -1217,11 +1110,9 @@ def run_reasoning_agent_batch(
                 "traffic_result": traffic_batch_result
             }
         
-        # Step 2: Identify AS with traffic anomalies and extract anomaly time ranges
         anomaly_as_list = traffic_batch_result.get("anomaly_as_list", [])
         logger.info(f"Step 2: Identified {len(anomaly_as_list)} AS with traffic anomalies: {anomaly_as_list}")
         
-        # If no anomalies, return early
         if not anomaly_as_list:
             logger.info("No traffic anomalies detected. Skipping routing analysis.")
             return {
@@ -1234,7 +1125,6 @@ def run_reasoning_agent_batch(
                 "message": "No traffic anomalies detected across all AS"
             }
         
-        # Step 2.5: Extract anomaly time ranges for each AS (per-AS window)
         logger.info(f"Step 2.5: Extracting anomaly time ranges for routing analysis (per AS)...")
         per_as_windows = {}
         for asn in anomaly_as_list:
@@ -1242,10 +1132,8 @@ def run_reasoning_agent_batch(
             anomalies = traffic_data.get("anomalies", [])
             
             if anomalies:
-                # Use the same extraction logic as ReasoningAgent
                 temp_agent = ReasoningAgent(str(asn), start_dt, end_dt)
-                # Use consecutive period detection to get anomaly time range
-                anomaly_start, anomaly_end = temp_agent._extract_anomaly_time_range(
+                anomaly_start, anomaly_end = temp_agent.extract_anomaly_time_range(
                     anomalies,
                     use_consecutive_periods=True,
                     min_consecutive_count=3,
@@ -1256,13 +1144,10 @@ def run_reasoning_agent_batch(
                     per_as_windows[asn] = (anomaly_start, anomaly_end)
                     logger.info(f"  AS{asn}: anomaly range {anomaly_start.strftime('%Y-%m-%d %H:%M')} to {anomaly_end.strftime('%Y-%m-%d %H:%M')}")
         
-        # Step 3: Routing analysis per anomaly AS with its own window
-        # Optimization: Group AS by time windows to avoid reading same data multiple times
         logger.info(f"Step 3: Per-AS routing analysis for {len(anomaly_as_list)} anomaly AS using individual anomaly windows...")
         routing_results_by_as = {}
         routing_failures = []
         
-        # Pre-mark skipped AS (no traffic anomaly window)
         for asn in anomaly_as_list:
             if asn not in per_as_windows:
                 logger.info(f"  Routing analysis AS{asn} skipped (no traffic anomalies)")
@@ -1273,12 +1158,10 @@ def run_reasoning_agent_batch(
                     "asn": asn,
                 }
         
-        # Group AS by time windows to optimize data reading (each unique time window read only once)
         as_with_windows = [asn for asn in anomaly_as_list if asn in per_as_windows]
         if not as_with_windows:
             logger.info("No AS with valid anomaly windows for routing analysis")
         else:
-            # Group AS by identical time windows
             window_to_as = {}
             for asn in as_with_windows:
                 r_start, r_end = per_as_windows[asn]
@@ -1291,8 +1174,6 @@ def run_reasoning_agent_batch(
             for (w_start, w_end), as_group in window_to_as.items():
                 logger.info(f"  Window {w_start.strftime('%Y-%m-%d %H:%M')} to {w_end.strftime('%Y-%m-%d %H:%M')}: {len(as_group)} AS ({', '.join([f'AS{a}' for a in as_group])})")
             
-            # Process each unique time window once
-            # OPTIMIZATION: For AS sharing the same time window, use batch detection to read data only once
             for (r_start, r_end), as_group in window_to_as.items():
                 window_start_str = r_start.strftime('%Y-%m-%d %H:%M')
                 window_end_str = r_end.strftime('%Y-%m-%d %H:%M')
@@ -1301,15 +1182,12 @@ def run_reasoning_agent_batch(
                     f"  Processing time window [{window_start_str} to {window_end_str}] for {len(as_group)} AS: {', '.join([f'AS{a}' for a in as_group])}"
                 )
                 
-                # OPTIMIZATION: If multiple AS share the same window, use batch hijack detection
-                # This ensures BGP update data is read ONLY ONCE per time window (trunk detection)
                 if len(as_group) > 1:
                     logger.info(f"    Using BATCH hijack detection (read data once for {len(as_group)} AS)")
-                    from tools.hijack_detector import detect_hijacks_batch
-                    from tools.leak_detector import analyze_leak_surface
-                    from tools.outage_detector import OUTAGE_DETECTOR
+                    from detectors.hijack.hijack_detector import detect_hijacks_batch
+                    from detectors.leak.leak_detector import analyze_leak_surface
+                    from detectors.outage.outage_detector import OUTAGE_DETECTOR
                     
-                    # Batch hijack detection: reads BGP data ONCE for all AS in this time window
                     batch_hijack_results = detect_hijacks_batch(
                         start_time=r_start,
                         end_time=r_end,
@@ -1318,43 +1196,35 @@ def run_reasoning_agent_batch(
                         save_alerts=False  # Don't save individual alerts in batch mode
                     )
                     
-                    # Process each AS with batch hijack results + individual leak/outage detection
                     for asn in as_group:
                         try:
                             asn_str = str(asn)
                             hijack_data = batch_hijack_results.get(asn_str, {})
                             
-                            # Get individual leak detection (doesn't read BGP updates, uses cached data)
                             leak_result = analyze_leak_surface(asn_str, window_start_str, window_end_str, target_asns=[asn_str])
                             
-                            # Get individual outage detection (reads its own timeseries data)
                             outage_result = OUTAGE_DETECTOR.analyze(asn_str, window_start_str, window_end_str)
                             
-                            # Combine results similar to run_routing_agent
                             result = {
                                 "success": True,
                                 "asn": asn_str,
                                 "analysis_period": f"{window_start_str} to {window_end_str}",
                                 "analysis_timestamp": datetime.now().isoformat(),
                                 
-                                # Hijack detection results from batch
                                 "origin_hijacked": hijack_data.get("origin_hijacked", []),
                                 "forge_hijacked": hijack_data.get("forge_hijacked", []),
                                 "origin_hijacking": hijack_data.get("origin_hijacking", []),
                                 "forge_hijacking": hijack_data.get("forge_hijacking", []),
                                 
-                                # Leak detection results
                                 "route_leaks": leak_result.get("route_leaks", []),
                                 "leak_count": leak_result.get("leak_count", 0),
                                 "leak_detection_success": leak_result.get("success", False),
                                 "leak_detection_error": leak_result.get("error"),
                                 
-                                # Outage detection results
                                 "outage_analysis": outage_result,
                                 "outage_suspected": bool(outage_result.get("is_outage_suspected", False)),
                                 "outage_score": float(outage_result.get("outage_score", 0.0)) if outage_result.get("success") else 0.0,
                                 
-                                # Summary statistics
                                 "total_prefix_hijacks": len(hijack_data.get("origin_hijacked", [])) + len(hijack_data.get("forge_hijacked", [])),
                                 "total_prefix_hijacking": len(hijack_data.get("origin_hijacking", [])) + len(hijack_data.get("forge_hijacking", [])),
                             }
@@ -1376,7 +1246,6 @@ def run_reasoning_agent_batch(
                             f"outage={result.get('outage_suspected', False)}"
                         )
                 else:
-                    # Single AS: use standard routing agent
                     asn = as_group[0]
                     try:
                         result = run_routing_agent(
@@ -1414,8 +1283,7 @@ def run_reasoning_agent_batch(
         
         if routing_failures:
             logger.warning(f"Routing analysis failed for AS: {routing_failures}")
-        
-        # Step 4: Generate reasoning analysis for each anomaly AS (parallelized)
+
         logger.info(f"Step 4: Generating reasoning analysis for {len(anomaly_as_list)} anomaly AS (parallelized)...")
         reasoning_results = {}
         

@@ -6,9 +6,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.append((os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from tools.hijack_detector import detect_hijacks
-from tools.leak_detector import analyze_leak_surface
-from tools.outage_detector import RouteOutageDetector
+from detectors.hijack.hijack_detector import detect_hijacks
+from detectors.leak.leak_detector import analyze_leak_surface
+from detectors.outage.outage_detector import RouteOutageDetector
 from utils.logger import logger
 from llm.llm_factory import setup_llm_settings
 from config import BASE_URL, API_KEY, MODEL
@@ -61,10 +61,8 @@ class LLMEnhancedRoutingAgent:
             }
         }
         
-        # Generate LLM insights
         llm_insights = await self._generate_llm_insights(analysis_data)
         
-        # Enhance result with LLM analysis
         enhanced_result = {
             **routing_results,
             "llm_enhanced": True,
@@ -74,7 +72,7 @@ class LLMEnhancedRoutingAgent:
         
         return enhanced_result
     
-    async def _generate_llm_insights(self, analysis_data: Dict[str, Any]) -> Dict[str, Any]:
+    async def _generate_llm_insights(self, analysis_data):
         import re
         
         prompt = f"""
@@ -204,7 +202,6 @@ Please return the analysis result in JSON format with the following fields:
 
 
 def detect_mitm_with_asrel_validation(asn, start_time, end_time, asrel_data):
-
     try:
         start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
         end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
@@ -214,7 +211,7 @@ def detect_mitm_with_asrel_validation(asn, start_time, end_time, asrel_data):
         fake_connection_alerts = []
         connection_frequency_map = {}
         
-        for updates_df in get_updates_streaming(start_dt, end_dt):
+        for updates_df in get_updates_streaming(start_dt, end_dt, auto_download=True):
             if updates_df.empty:
                 continue
                 
@@ -236,14 +233,11 @@ def detect_mitm_with_asrel_validation(asn, start_time, end_time, asrel_data):
                     if provider_asn in as_relationships:
                         as_relationships[provider_asn]["customers"].add(customer_asn)
             
-            # Ensure timestamp column is string to avoid pandas auto-parsing issues
             if 'timestamp' in updates_df.columns:
                 updates_df['timestamp'] = updates_df['timestamp'].astype(str)
             
-            # Check for fake connections
             updates_df = check_fake_connections_in_df(updates_df, as_relationships)
             
-            # Process messages with fake connections
             fake_connection_messages = updates_df[updates_df['has_fake_connect'] == True]
             
             for _, row in fake_connection_messages.iterrows():
@@ -252,14 +246,11 @@ def detect_mitm_with_asrel_validation(asn, start_time, end_time, asrel_data):
                 timestamp_raw = row.get('timestamp', '')
                 prefix = row.get('prefix', '')
                 
-                # Convert timestamp to datetime object (handle both Unix timestamp and formatted string)
                 try:
                     if isinstance(timestamp_raw, (int, float)) or (isinstance(timestamp_raw, str) and timestamp_raw.isdigit()):
-                        # Unix timestamp (seconds)
                         timestamp_dt = datetime.fromtimestamp(float(timestamp_raw), tz=timezone.utc)
                         timestamp_str = timestamp_dt.strftime('%Y-%m-%d %H:%M:%S')
                     else:
-                        # Already formatted string
                         timestamp_str = str(timestamp_raw)
                         timestamp_dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
                 except Exception as e:
@@ -267,11 +258,9 @@ def detect_mitm_with_asrel_validation(asn, start_time, end_time, asrel_data):
                     continue
                 
                 if exact_fake_connections:
-                    # Parse fake connections
                     fake_connections = exact_fake_connections.split(';')
                     for fake_conn in fake_connections:
                         if fake_conn:
-                            # Track connection frequency
                             if fake_conn not in connection_frequency_map:
                                 connection_frequency_map[fake_conn] = []
                             connection_frequency_map[fake_conn].append({
@@ -281,20 +270,17 @@ def detect_mitm_with_asrel_validation(asn, start_time, end_time, asrel_data):
                                 'as_path': as_path
                             })
         
-        # Analyze connection frequency over the past week
         week_ago = start_dt - timedelta(days=7)
         
         legitimate_connections = set()
         suspicious_connections = set()
         
         def parse_timestamp(ts_str):
-            """Helper to parse timestamp string to datetime"""
             try:
                 if isinstance(ts_str, datetime):
                     return ts_str
                 return datetime.strptime(str(ts_str), "%Y-%m-%d %H:%M:%S")
             except Exception:
-                # Try Unix timestamp
                 try:
                     return datetime.fromtimestamp(float(ts_str), tz=timezone.utc)
                 except Exception:
@@ -302,19 +288,17 @@ def detect_mitm_with_asrel_validation(asn, start_time, end_time, asrel_data):
                     return None
         
         for connection, occurrences in connection_frequency_map.items():
-            # Count occurrences in the past week
             week_occurrences = []
             for occ in occurrences:
                 ts_dt = occ.get('timestamp_dt') or parse_timestamp(occ['timestamp'])
                 if ts_dt and ts_dt >= week_ago:
                     week_occurrences.append(occ)
             
-            if len(week_occurrences) >= 5:  # Threshold for legitimate connection
+            if len(week_occurrences) >= 5:
                 legitimate_connections.add(connection)
             else:
                 suspicious_connections.add(connection)
         
-        # Generate alerts for suspicious connections
         for connection in suspicious_connections:
             occurrences = connection_frequency_map[connection]
             recent_occurrences = []
@@ -324,7 +308,6 @@ def detect_mitm_with_asrel_validation(asn, start_time, end_time, asrel_data):
                     recent_occurrences.append(occ)
             
             if recent_occurrences:
-                # Aggregate messages with this fake connection
                 aggregated_prefixes = set()
                 aggregated_paths = []
                 
@@ -371,21 +354,7 @@ def detect_mitm_with_asrel_validation(asn, start_time, end_time, asrel_data):
         }
 
 
-def run_routing_agent(asn, start_time, end_time, target_asns: List[str] | None = None):
-    """
-    Run routing analysis for specified AS and time period.
-    
-    Args:
-        asn: Primary AS number
-        start_time: Start time string (format: "YYYY-MM-DD HH:MM")
-        end_time: End time string (format: "YYYY-MM-DD HH:MM")
-        target_asns: List of AS numbers to filter route leak detection.
-                    Only messages containing these ASNs will be analyzed for leaks.
-                    If None, analyzes all messages (backward compatibility).
-    
-    Returns:
-        Dictionary with routing analysis results
-    """
+def run_routing_agent(asn, start_time, end_time, target_asns=None):
     try:
         start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
         end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
@@ -501,7 +470,12 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm = True):
             'mitm_alerts': [],
             'note': 'MITM detection integrated into hijack detection process'
         }
-        leak_result = analyze_leak_surface(asn, start_time, end_time)
+        # Temporarily disable leak detection due to missing PathProb file
+        leak_result = {
+            'success': True,
+            'route_leaks': [],
+            'note': 'Leak detection temporarily disabled - PathProb file missing'
+        }
         outage_result = OUTAGE_DETECTOR.analyze(asn, start_time, end_time)
         
         # Combine basic results
@@ -532,7 +506,11 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm = True):
         # Apply LLM enhancement if requested
         if use_llm:
             logger.info("Enhancing routing analysis with LLM insights")
-            llm_agent = LLMEnhancedRoutingAgent()
+            llm_agent = LLMEnhancedRoutingAgent(
+                model=MODEL,
+                api_key=API_KEY,
+                base_url=BASE_URL
+            )
             combined_results = await llm_agent.analyze_routing_with_llm(
                 combined_results, asn, start_time, end_time
             )

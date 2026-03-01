@@ -1,34 +1,19 @@
 #!/usr/bin/env python3
-"""
-Batch process traffic outage XLSX file and generate traffic comparison plots
-"""
-
 import json
 import argparse
 import sys
 import os
+import pandas as pd
 from datetime import datetime
-from typing import Dict, Any
 
-# Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from traffic_detect import CloudflareRadarAPI
 from utils.logger import logger
 from config import CLOUDFLARE_API_TOKEN, CLOUDFLARE_DEFAULT_THRESHOLD, CLOUDFLARE_DEFAULT_AGG_INTERVAL
 
-try:
-    import pandas as pd
-    XLSX_SUPPORT = True
-except ImportError:
-    logger.error("pandas library is required for XLSX file support. Please install it: pip install pandas")
-    XLSX_SUPPORT = False
-
 
 def parse_time(time_str):
-    """
-    解析时间字符串，格式：M/D/YY HH:MM (如 6/20/25 14:30)
-    """
     if isinstance(time_str, datetime):
         return time_str
     
@@ -36,11 +21,9 @@ def parse_time(time_str):
         return None
     
     if isinstance(time_str, str):
-        # 只支持一种格式：M/D/YY HH:MM
         try:
             return datetime.strptime(time_str.strip(), '%m/%d/%y %H:%M')
         except ValueError:
-            # 如果失败，尝试pandas的自动解析（作为后备）
             if XLSX_SUPPORT:
                 try:
                     return pd.to_datetime(time_str)
@@ -55,27 +38,13 @@ def parse_time(time_str):
 
 
 def process_traffic_outage_xlsx(
-    api: CloudflareRadarAPI,
-    xlsx_path: str,
-    threshold: float = CLOUDFLARE_DEFAULT_THRESHOLD,
-    agg_interval: str = CLOUDFLARE_DEFAULT_AGG_INTERVAL,
-    sheet_name: str = 0,  # 默认第一个sheet，也可以是具体的sheet名称
-    asn_list: list = None  # 手动指定要分析的ASN列表
-) -> Dict[str, Any]:
-    """
-    Process traffic-outage-info.xlsx and generate traffic comparison plots for each AS in each event
-
-    Args:
-        api: CloudflareRadarAPI instance
-        xlsx_path: Path to the traffic-outage-info.xlsx file
-        threshold: Anomaly detection threshold
-        agg_interval: Data aggregation interval
-        sheet_name: Excel sheet name or index (default: 0 for first sheet)
-        asn_list: Manual list of AS numbers to analyze for all events
-
-    Returns:
-        Dictionary containing processing results and statistics
-    """
+    api,
+    xlsx_path,
+    threshold = CLOUDFLARE_DEFAULT_THRESHOLD,
+    agg_interval = CLOUDFLARE_DEFAULT_AGG_INTERVAL,
+    sheet_name = 0,
+    asn_list = None
+):
     logger.info(f"Processing traffic outage XLSX file: {xlsx_path}")
 
     results = {
@@ -91,10 +60,8 @@ def process_traffic_outage_xlsx(
         return results
 
     try:
-        # 使用pandas读取XLSX文件
         df = pd.read_excel(xlsx_path, sheet_name=sheet_name)
         
-        # 检查必要的列
         required_columns = ['event_type', 'event_name', 'start_time', 'end_time']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
@@ -102,17 +69,14 @@ def process_traffic_outage_xlsx(
             logger.info(f"Available columns: {list(df.columns)}")
             return results
 
-        # 检查是否有outage_as列
         has_outage_as_column = 'outage_as' in df.columns
 
-        # 处理每一行数据
-        for row_idx, (_, row) in enumerate(df.iterrows(), start=2):  # Start from 2 (1 is header)
+        for row_idx, (_, row) in enumerate(df.iterrows(), start=2):
             event_type = row.get('event_type', '')
             event_name = row.get('event_name', f'event_{row_idx}')
             start_time_raw = row.get('start_time', '')
             end_time_raw = row.get('end_time', '')
 
-            # 处理NaN值
             if pd.isna(event_type) or pd.isna(event_name):
                 logger.info(f"Skipping row {row_idx}: missing event_type or event_name")
                 continue
@@ -120,12 +84,10 @@ def process_traffic_outage_xlsx(
                 logger.info(f"Skipping row {row_idx}: missing time data")
                 continue
 
-            # 跳过空值
             if not event_type or not event_name or not start_time_raw or not end_time_raw:
                 logger.info(f"Skipping row {row_idx}: empty required fields")
                 continue
 
-            # Parse start and end times
             try:
                 start_time_dt = parse_time(start_time_raw)
                 end_time_dt = parse_time(end_time_raw)
@@ -143,26 +105,21 @@ def process_traffic_outage_xlsx(
                 logger.error(f"Start time: {start_time_raw}, End time: {end_time_raw}")
                 continue
 
-            # 从outage_as列读取AS号，如果没有则使用手动提供的ASN列表
             as_numbers = []
             
             if has_outage_as_column:
                 outage_as_raw = row.get('outage_as', '')
                 if not pd.isna(outage_as_raw) and outage_as_raw:
-                    # 解析outage_as列：支持中文逗号（、）和英文逗号（,）分隔
                     outage_as_str = str(outage_as_raw).strip()
                     if outage_as_str:
-                        # 先按中文逗号分割，再按英文逗号分割
                         as_parts = outage_as_str.replace('，', ',').replace('、', ',').split(',')
                         for as_part in as_parts:
                             as_part = as_part.strip()
                             if as_part:
-                                # 移除AS前缀（如果有）
                                 as_num = as_part.replace('AS', '').replace('as', '').strip()
                                 if as_num and as_num.isdigit():
                                     as_numbers.append(as_num)
             
-            # 如果outage_as列没有数据，使用手动提供的ASN列表
             if not as_numbers and asn_list:
                 as_numbers = [str(asn).replace('AS', '').replace('as', '') for asn in asn_list if str(asn).strip()]
 
@@ -187,7 +144,6 @@ def process_traffic_outage_xlsx(
             logger.info(f"AS numbers to analyze: {as_list_str}")
             logger.info(f"{'='*80}\n")
 
-            # Analyze each AS
             for asn in as_numbers:
                 results["total_ases"] += 1
                 logger.info(f"Analyzing AS{asn} for event {event_name}...")
@@ -234,7 +190,6 @@ def process_traffic_outage_xlsx(
 
             results["events"].append(event_result)
 
-        # Generate summary
         logger.info(f"\n{'='*80}")
         logger.info("Processing Summary:")
         logger.info(f"  Total events processed: {results['total_events']}")
@@ -273,12 +228,10 @@ def main():
 
     args = parser.parse_args()
 
-    # Check if pandas is available
     if not XLSX_SUPPORT:
         logger.error("Cannot process XLSX files without pandas. Please install: pip install pandas openpyxl")
         return
 
-    # Initialize API
     api = CloudflareRadarAPI(args.api_token)
 
     print(f"\n{'='*80}")
@@ -291,7 +244,6 @@ def main():
     print(f"⏱️  Aggregation Interval: {args.agg_interval}")
     print(f"{'='*80}\n")
 
-    # Process XLSX
     result = process_traffic_outage_xlsx(
         api=api,
         xlsx_path=args.xlsx_file,
@@ -301,7 +253,6 @@ def main():
         asn_list=args.asn_list
     )
 
-    # Print summary
     print(f"\n{'='*80}")
     print(f"📊 Batch Processing Complete")
     print(f"{'='*80}")
@@ -310,7 +261,6 @@ def main():
     print(f"Successful analyses: {result['successful_analyses']}")
     print(f"Failed analyses: {result['failed_analyses']}")
 
-    # Display results by event
     for event in result['events']:
         print(f"\n📌 Event: {event['event_name']} ({event['event_type']})")
         print(f"   Time: {event['start_time']} to {event['end_time']}")
@@ -335,7 +285,6 @@ def main():
 
     print(f"\n{'='*80}\n")
 
-    # Save results to JSON if requested
     if args.output_json:
         with open(args.output_json, 'w', encoding='utf-8') as f:
             json.dump(result, f, indent=2, default=str, ensure_ascii=False)

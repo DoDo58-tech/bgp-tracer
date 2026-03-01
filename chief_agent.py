@@ -8,8 +8,14 @@ from time import perf_counter
 from pathlib import Path
 from typing import Dict, Any, List
 
-from agents.reasoning_agent import run_reasoning_agent
-from agents.analysis_agent import run_analysis_agent
+try:
+    from agents.reasoning_agent import run_reasoning_agent
+    from agents.analysis_agent import run_analysis_agent
+except ImportError:
+    # Handle relative imports when running as script
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from agents.reasoning_agent import run_reasoning_agent
+    from agents.analysis_agent import run_analysis_agent
 from data.asorg_loader import process_asorg
 from llm.llm_factory import setup_llm_settings
 from llama_index.core.agent.workflow import ReActAgent, AgentStream, ToolCallResult
@@ -18,7 +24,7 @@ from llama_index.core.tools import FunctionTool
 sys.path.append((os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import logger
 from utils.helpers import make_json_safe
-from utils.report_generator import generate_comprehensive_report, generate_batch_html_report
+from utils.report_exporters import generate_comprehensive_report, generate_batch_html_report
 from config import BASE_URL, API_KEY, MODEL, LOG_FILE, USE_DIRECT_MODE
 from agents.coordination_utils import (
     lookup_org_info,
@@ -46,7 +52,7 @@ class ChiefExpertAgent:
             'invoke_reasoning_expert': 0
         }
         
-    def _wrapped_reasoning_agent(self, asn, start_time, end_time, user_input, **kwargs):
+    def wrapped_reasoning_agent(self, asn, start_time, end_time, user_input, **kwargs):
         if self.tool_call_counts['invoke_reasoning_expert'] > 0:
             return {
                 "success": False,
@@ -59,9 +65,9 @@ class ChiefExpertAgent:
         logger.info(f"🔧 Executing reasoning analysis (call #{self.tool_call_counts['invoke_reasoning_expert']})")
         
         if hasattr(self, '_current_asn') and hasattr(self, '_current_start_time') and hasattr(self, '_current_end_time'):
-            asn = self._current_asn
-            start_time = self._current_start_time
-            end_time = self._current_end_time
+            asn = self.current_asn
+            start_time = self.current_start_time
+            end_time = self.current_end_time
             logger.info(f"🔧 Using parsed parameters: AS{asn} from {start_time} to {end_time}")
             return run_reasoning_agent(asn, start_time, end_time)
         else:
@@ -70,7 +76,7 @@ class ChiefExpertAgent:
             else:
                 return run_reasoning_agent(asn, start_time, end_time)
     
-    def _wrapped_analysis_agent(self, traffic_analysis: Dict[str, Any], routing_analysis: Dict[str, Any], user_input: str = None, **kwargs) -> Dict[str, Any]:
+    def wrapped_analysis_agent(self, traffic_analysis: Dict[str, Any], routing_analysis: Dict[str, Any], user_input: str = None, **kwargs) -> Dict[str, Any]:
         logger.info(f"🔧 Executing comprehensive analysis agent")
         return run_analysis_agent(traffic_analysis, routing_analysis, user_input)
         
@@ -87,38 +93,38 @@ class ChiefExpertAgent:
     def create_agent_tools(self):
         return [
             FunctionTool.from_defaults(
-                fn=self._wrapped_reasoning_agent,
+                fn=self.wrapped_reasoning_agent,
                 name="invoke_reasoning_expert",
                 description="Invoke multi-round reasoning expert for comprehensive BGP analysis. Performs traffic analysis first, then routing analysis to determine if traffic changes are related to routing issues (CALL ONCE ONLY)"
             ),
             FunctionTool.from_defaults(
-                fn=self._wrapped_analysis_agent,
+                fn=self.wrapped_analysis_agent,
                 name="invoke_analysis_expert",
                 description="Invoke comprehensive analysis expert to generate final report integrating traffic and routing analysis"
             ),
             FunctionTool.from_defaults(
-                fn=self._query_as_organization,
+                fn=self.query_as_organization,
                 name="query_as_organization",
                 description="Query organization information for any ASN using the asorg data file"
             ),
             FunctionTool.from_defaults(
-                fn=self._query_as_relationships,
+                fn=self.query_as_relationships,
                 name="query_as_relationships",
                 description="Query provider/peer/customer relationships for any ASN using the asrel data file"
             ),
             FunctionTool.from_defaults(
-                fn=self._query_as_prefixes,
+                fn=self.query_as_prefixes,
                 name="query_as_prefixes",
                 description="Query legal prefixes owned by any ASN using the prefix2as data file"
             ),
             FunctionTool.from_defaults(
-                fn=self._generate_integrated_report,
+                fn=self.generate_integrated_report,
                 name="generate_final_report",
                 description="Generate comprehensive integrated analysis report from all expert inputs"
             )
         ]
     
-    def _load_data_from_file(self, file_path):
+    def load_data_from_file(self, file_path):
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -126,35 +132,35 @@ class ChiefExpertAgent:
             logger.warning(f"Failed to load data from {file_path}: {e}")
             return {}
     
-    def _query_as_organization(self, asn):
+    def query_as_organization(self, asn):
         logger.info(f"🔍 query_as_organization called for ASN {asn}")
         logger.info(f"📁 Current asorg_file: {self.asorg_file}")
         if not self.asorg_file:
             return {"success": False, "error": "AS organization data file not available", "asn": asn}
         return lookup_org_info(str(asn), self.asorg_file)
     
-    def _query_as_relationships(self, asn):
+    def query_as_relationships(self, asn):
         return util_query_as_relationships(str(asn), self.asrel_file)
     
-    def _query_as_prefixes(self, asn):
+    def query_as_prefixes(self, asn):
         return util_query_as_prefixes(str(asn), self.prefix2as_file)
     
-    async def _generate_integrated_report(
+    async def generate_integrated_report(
         self,
         routing_analysis,
         traffic_analysis,
         law_analysis,
-        start_time,
         reasoning_analysis,
         asn,
+        start_time,
         output_dir,
         org_name,
+        end_time=None,
         **kwargs,
     ):
         if output_dir is None:
             output_dir = PROJECT_ROOT / "results" / "html"
         
-        # If org_name was not passed in, try to resolve it from AS-org data.
         if org_name is None:
             try:
                 asn_info = (
@@ -174,7 +180,6 @@ class ChiefExpertAgent:
                     if org_info.get("success"):
                         org_name = org_info.get("org_name")
             except Exception:
-                # Non-fatal: org name is optional for report generation.
                 pass
 
         actual_reasoning_analysis = reasoning_analysis or getattr(
@@ -204,13 +209,19 @@ class ChiefExpertAgent:
             or (reasoning_analysis or {}).get("asn")
         )
         
-        return await generate_comprehensive_report(
+        try:
+            user_input_time_range = f"{getattr(self, '_current_start_time', start_time)} to {getattr(self, '_current_end_time', end_time or 'Unknown')}"
+        except Exception:
+            user_input_time_range = f"{start_time} to {end_time or 'Unknown'}"
+
+        return generate_comprehensive_report(
             llm=self.llm,
             routing_analysis=routing_analysis,
             traffic_analysis=traffic_analysis,
             law_analysis=law_analysis,
             reasoning_analysis=actual_reasoning_analysis,
             start_time=start_time,
+            user_input_time_range=user_input_time_range,
             output_dir=output_dir,
             org_name=org_name,
             asn=asn_info,
@@ -219,7 +230,7 @@ class ChiefExpertAgent:
     
     
     
-    async def coordinate_analysis(self, user_input, asn, start_time, end_time) -> Dict[str, Any]:
+    async def coordinate_analysis(self, user_input, asn, start_time, end_time):
         logger.info(f"🎯 Chief Expert Agent starting coordination for traffic outage analysis")
         _t0 = perf_counter()
         event_start_time = datetime.now()
@@ -438,23 +449,23 @@ class ChiefExpertAgent:
         
         logger.info(f"🎯 Analyzing traffic outage for AS{asn} from {start_time} to {end_time}")
         
-        self._current_asn = asn
-        self._current_start_time = start_time
-        self._current_end_time = end_time
+        self.current_asn = asn
+        self.current_start_time = start_time
+        self.current_end_time = end_time
         
         # Use direct analysis flow (streaming mode is disabled)
         # Direct flow ensures outage detection is called via run_reasoning_agent -> run_routing_agent
         if USE_DIRECT_MODE:
             logger.info("📊 Using direct analysis flow: Direct function calls")
-            result = await self._direct_analysis_flow(asn, start_time, end_time, user_input)
+            result = await self.direct_analysis_flow(asn, start_time, end_time, user_input)
         else:
             logger.info("🤔 Attempting ReActAgent coordination mode: LLM autonomous decision making")
             try:
-                result = await self._react_agent_flow(asn, start_time, end_time, user_input)
+                result = await self.react_agent_flow(asn, start_time, end_time, user_input)
             except RuntimeError as e:
                 if "Streaming coordination mode is disabled" in str(e):
                     logger.warning("⚠️  ReActAgent mode disabled, falling back to direct analysis flow")
-                    result = await self._direct_analysis_flow(asn, start_time, end_time, user_input)
+                    result = await self.direct_analysis_flow(asn, start_time, end_time, user_input)
                 else:
                     raise
         
@@ -477,18 +488,198 @@ class ChiefExpertAgent:
         
         return result
     
-    async def _direct_analysis_flow(self, asn: str, start_time: str, end_time: str, user_input: str = None) -> Dict[str, Any]:
+    async def direct_analysis_flow(self, asn: str, start_time: str, end_time: str, user_input: str = None) -> Dict[str, Any]:
         _t0 = perf_counter()
         
         try:
-            # Step 1: Directly call reasoning_agent to execute detection
-            logger.info("📊 Step 1: Executing traffic and routing detection...")
-            reasoning_result = run_reasoning_agent(
+            # Step 1: Run traffic detection first to determine precise anomaly window,
+            # then run routing/reasoning using the detected anomaly time range.
+            logger.info("📊 Step 1: Running traffic detection to determine anomaly window...")
+            from agents.traffic_agent import run_traffic_agent
+
+            traffic_result = run_traffic_agent(
+                user_input=user_input,
                 asn=asn,
                 start_time=start_time,
                 end_time=end_time,
+            )
+
+            logger.info(f"📊 Traffic detection result: success={traffic_result.get('success', False)}, anomalies={traffic_result.get('anomaly_count', 0)}")
+
+            # Check if traffic analysis detected any anomalies
+            traffic_anomaly_count = traffic_result.get('anomaly_count', 0)
+            if traffic_anomaly_count == 0:
+                logger.info(f"🚫 No traffic anomalies detected for AS{asn} in time period {start_time} to {end_time} - generating simplified report")
+                # Generate a simplified report indicating no anomalies found
+                from utils.report_exporters import generate_comprehensive_report
+
+                mock_routing = {
+                    'success': True,
+                    'origin_hijacked': [],
+                    'forge_hijacked': [],
+                    'route_leaks': [],
+                    'outage_analysis': {'is_outage_suspected': False}
+                }
+
+                mock_reasoning = {
+                    'asn': asn,
+                    'time_range': f"{start_time} to {end_time}",
+                    'confidence_score': 0.9,
+                    'key_findings': [f'No traffic anomalies detected for AS{asn} in the specified time period'],
+                    'evidence_summary': {
+                        'data_quality': 'Good',
+                        'traffic_data': traffic_result,
+                        'routing_data': mock_routing
+                    }
+                }
+
+                report_result = generate_comprehensive_report(
+                    llm=None,
+                    routing_analysis=mock_routing,
+                    traffic_analysis=traffic_result,
+                    law_analysis=None,
+                    reasoning_analysis=mock_reasoning,
+                    start_time=start_time,
+                    user_input_time_range=f"{start_time} to {end_time}",
+                    output_dir=str(PROJECT_ROOT / "results" / "html"),
+                    asn=asn,
+                    no_anomalies=True  # Generate simplified report
+                )
+
+                # Format result to match expected structure for main function
+                formatted_result = {
+                    "success": True,
+                    "chief_expert_analysis": {
+                        "success": True,
+                        "message": f"No anomalies detected for AS{asn} in the specified time period ({start_time} to {end_time})",
+                        "traffic_anomalies": 0,
+                        "routing_anomalies": 0,
+                        "analysis_time": perf_counter() - _t0,
+                        "html_report_path": report_result.get("html_report_path"),
+                        "json_report_path": report_result.get("json_report_path"),
+                        "analysis_report": report_result,
+                        "reasoning_trace": [],
+                        "analysis_timestamp": datetime.now().isoformat()
+                    },
+                    "token_count": 0,
+                    "reasoning_result": {},
+                    "analysis_report": report_result,
+                    "report_result": report_result,
+                    "reasoning_trace": []
+                }
+                return formatted_result
+
+            # Determine detected anomaly window (prefer expanded_boundaries)
+            detected_start = None
+            detected_end = None
+            if traffic_result.get('expanded_boundaries'):
+                eb = traffic_result['expanded_boundaries']
+                detected_start = eb.get('expanded_start')
+                detected_end = eb.get('expanded_end')
+            elif traffic_result.get('outage_period_anomalies'):
+                try:
+                    times = [a['timestamp'] for a in traffic_result['outage_period_anomalies'] if a.get('timestamp')]
+                    if times:
+                        detected_start = min(times)
+                        detected_end = max(times)
+                except Exception:
+                    detected_start = None
+                    detected_end = None
+
+            # Fallback to user input if detection failed
+            if not detected_start:
+                detected_start = start_time
+            if not detected_end:
+                detected_end = end_time
+
+            # Normalize timestamps expected by routing agent: "YYYY-MM-DD HH:MM"
+            def _normalize_ts(ts_str):
+                try:
+                    if 'T' in ts_str:
+                        # Try ISO
+                        dt = datetime.strptime(ts_str.split('Z')[0], '%Y-%m-%dT%H:%M:%S')
+                        return dt.strftime('%Y-%m-%d %H:%M')
+                    else:
+                        return ts_str
+                except Exception:
+                    return ts_str
+
+            routing_start = _normalize_ts(detected_start)
+            routing_end = _normalize_ts(detected_end)
+
+            logger.info(f"🔍 Running routing analysis for detected window: {routing_start} to {routing_end}")
+            from agents.routing_agent import run_routing_agent_async
+
+            routing_results_by_as = {}
+
+            # If traffic_result contains per-AS batch results, run routing analysis per AS
+            if isinstance(traffic_result, dict) and traffic_result.get("results_by_as"):
+                logger.info("Detected batch traffic_result with multiple AS - running per-AS routing analysis")
+                for asn_key, as_result in traffic_result.get("results_by_as", {}).items():
+                    try:
+                        # Determine detected window for this AS result
+                        detected_start_as = None
+                        detected_end_as = None
+                        if as_result.get("expanded_boundaries"):
+                            eb_as = as_result["expanded_boundaries"]
+                            detected_start_as = eb_as.get("expanded_start")
+                            detected_end_as = eb_as.get("expanded_end")
+                        elif as_result.get("outage_period_anomalies"):
+                            try:
+                                times_as = [a["timestamp"] for a in as_result["outage_period_anomalies"] if a.get("timestamp")]
+                                if times_as:
+                                    detected_start_as = min(times_as)
+                                    detected_end_as = max(times_as)
+                            except Exception:
+                                detected_start_as = None
+                                detected_end_as = None
+
+                        if not detected_start_as:
+                            detected_start_as = start_time
+                        if not detected_end_as:
+                            detected_end_as = end_time
+
+                        def _normalize_ts(ts_str):
+                            try:
+                                if 'T' in ts_str:
+                                    dt = datetime.strptime(ts_str.split('Z')[0], '%Y-%m-%dT%H:%M:%S')
+                                    return dt.strftime('%Y-%m-%d %H:%M')
+                                else:
+                                    return ts_str
+                            except Exception:
+                                return ts_str
+
+                        routing_start_as = _normalize_ts(detected_start_as)
+                        routing_end_as = _normalize_ts(detected_end_as)
+
+                        logger.info(f"Running routing analysis for AS{asn_key} window: {routing_start_as} to {routing_end_as}")
+                        routing_res = await run_routing_agent_async(asn_key, routing_start_as, routing_end_as, use_llm=True)
+                        routing_results_by_as[asn_key] = routing_res
+                    except Exception as e:
+                        logger.error(f"Routing analysis failed for AS{asn_key}: {e}", exc_info=True)
+                        routing_results_by_as[asn_key] = {"success": False, "error": str(e), "asn": asn_key}
+
+                routing_result = {"success": True, "batch_mode": True, "results_by_as": routing_results_by_as}
+            else:
+                # Ensure we call LLM-enhanced routing analysis (use async version)
+                routing_result = await run_routing_agent_async(asn, routing_start, routing_end, use_llm=True)
+
+            # Now run reasoning agent with the detected window and routing result
+            logger.info("📊 Step 2: Executing reasoning agent with detected window and routing analysis...")
+            reasoning_result = run_reasoning_agent(
+                asn=asn,
+                start_time=routing_start,
+                end_time=routing_end,
                 user_input=user_input
             )
+            
+            # attach routing result into reasoning_result for downstream reporting
+            if isinstance(reasoning_result, dict):
+                # Provide explicit evidence_summary so downstream report generation uses our routing and traffic results
+                reasoning_result['routing_analysis_override'] = routing_result
+                reasoning_result['evidence_summary'] = reasoning_result.get('evidence_summary', {})
+                reasoning_result['evidence_summary']['traffic_data'] = traffic_result
+                reasoning_result['evidence_summary']['routing_data'] = routing_result
             
             self.reasoning_analysis_result = reasoning_result
             
@@ -525,12 +716,13 @@ class ChiefExpertAgent:
             traffic_data = evidence_summary.get("traffic_data", {})
             routing_data = evidence_summary.get("routing_data", {})
             
-            report_result = await self._generate_integrated_report(
+            report_result = await self.generate_integrated_report(
                 routing_analysis=routing_data,
                 traffic_analysis=traffic_data,
                 law_analysis=None,
                 reasoning_analysis=reasoning_result,
                 start_time=start_time,
+                end_time=detected_end,
                 output_dir=PROJECT_ROOT / "results" / "html",
                 org_name=org_info.get("org_name") if org_info.get("success") else None,
                 asn=asn,
@@ -628,7 +820,7 @@ class ChiefExpertAgent:
             logger.error(f"❌ Direct analysis flow failed: {e}", exc_info=True)
             raise RuntimeError(f"Direct analysis flow failed: {str(e)}")
     
-    async def _react_agent_flow(self, asn: str, start_time: str, end_time: str, user_input: str = None) -> Dict[str, Any]:
+    async def react_agent_flow(self, asn: str, start_time: str, end_time: str, user_input: str = None) -> Dict[str, Any]:
         logger.debug("setup_llm start")
         await self.setup_llm()
         logger.debug("setup_llm done")
@@ -695,7 +887,7 @@ Start with reasoning analysis now."""
         coordination_timeout = int(os.environ.get("CHIEF_COORDINATION_TIMEOUT", "900"))
         try:
             return await asyncio.wait_for(
-                self._coordinate_with_streaming(coordination_agent, mission_prompt, asn, start_time, end_time),
+                self.coordinate_with_streaming(coordination_agent, mission_prompt, asn, start_time, end_time),
                 timeout=coordination_timeout
             )
         except asyncio.TimeoutError:
@@ -705,25 +897,17 @@ Start with reasoning analysis now."""
                 "Consider reducing mission complexity or increasing CHIEF_COORDINATION_TIMEOUT."
             )
 
-    async def _coordinate_with_streaming(
+    async def coordinate_with_streaming(
         self,
         coordination_agent,
-        mission_prompt: str,
-        asn: str,
-        start_time: str,
-        end_time: str,
-    ) -> Dict[str, Any]:
-        """
-        Streaming coordination path (ReAct-style agent).
-
-        To simplify this build and avoid complex async event handling bugs,
-        we currently do not support the streaming coordination mode.
-        The project is configured to use direct mode (USE_DIRECT_MODE=True),
-        so this function should not be invoked in normal workflows.
-        """
-        logger.error(
+        mission_prompt,
+        asn,
+        start_time,
+        end_time,
+    ):
+        logger.info(
             "Streaming coordination mode (_coordinate_with_streaming) is disabled in this build. "
-            "Set USE_DIRECT_MODE=True to rely on the direct analysis flow."
+            "Falling back to direct analysis flow; set USE_DIRECT_MODE=True to avoid attempting streaming."
         )
         raise RuntimeError(
             "Streaming coordination mode is disabled in this build; "
@@ -767,7 +951,7 @@ async def analyze_traffic_outage_async(user_input, asn, start_time, end_time):
         raise
 
 
-def analyze_traffic_outage(user_input, asn, start_time, end_time) -> Dict[str, Any]:
+def analyze_traffic_outage(user_input, asn, start_time, end_time):
     return asyncio.run(analyze_traffic_outage_async(user_input, asn, start_time, end_time))
 
 

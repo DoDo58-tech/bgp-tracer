@@ -18,24 +18,31 @@ CAIDA_PREFIX2AS_URL = "https://publicdata.caida.org/datasets/routing/routeviews-
 
 def get_available_dates():
     try:
-        res = subprocess.check_output(["curl", "-s", CAIDA_PREFIX2AS_URL]).decode()
+        res = subprocess.check_output(["curl", "-s", "--max-time", "30", CAIDA_PREFIX2AS_URL]).decode()
         res = re.sub(r"\s\s+", " ", res.replace("\n", " "))
-        
+
         year_pattern = r'href="(\d{4})/"'
         years = sorted(re.findall(year_pattern, res))
-        
+
         available_dates = []
         for year in years:
-            year_url = f"{CAIDA_PREFIX2AS_URL}/{year}/"
-            res = subprocess.check_output(["curl", "-s", year_url]).decode()
-            res = re.sub(r"\s\s+", " ", res.replace("\n", " "))
-            
-            month_pattern = r'href="(\d{2})/"'
-            months = sorted(re.findall(month_pattern, res))
-            
-            for month in months:
-                available_dates.append(f"{year}{month}")
-        
+            try:
+                year_url = f"{CAIDA_PREFIX2AS_URL}/{year}/"
+                res = subprocess.check_output(["curl", "-s", "--max-time", "10", year_url]).decode()
+                res = re.sub(r"\s\s+", " ", res.replace("\n", " "))
+
+                month_pattern = r'href="(\d{2})/"'
+                months = sorted(re.findall(month_pattern, res))
+
+                for month in months:
+                    available_dates.append(f"{year}{month}")
+            except subprocess.CalledProcessError:
+                logger.warning(f"Failed to access year {year}, skipping")
+                continue
+            except Exception as e:
+                logger.warning(f"Error processing year {year}: {e}")
+                continue
+
         return available_dates
     except Exception as e:
         logger.error(f"Failed to get available dates: {e}")
@@ -64,7 +71,7 @@ def get_prefix2as_url(target_time):
         res = subprocess.check_output(["curl", "-s", dir_url]).decode()
         res = re.sub(r"\s\s+", " ", res.replace("\n", " "))
         
-        file_pattern = r'\<a href="(routeviews-rv2-(\d{8})-\d{4}\.pfx2as\.gz)"\>'
+        file_pattern = r'href="(routeviews-(?:rv2|oix)-(\d{8})-\d{4}\.pfx2as\.gz)"'
         matches = re.findall(file_pattern, res)
         
         if not matches:

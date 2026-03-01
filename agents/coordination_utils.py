@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional
 from utils.logger import logger
 
 
-def load_json(path: str) -> Dict[str, Any]:
+def load_json(path):
     try:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -15,7 +15,7 @@ def load_json(path: str) -> Dict[str, Any]:
         return {}
 
 
-def lookup_org_info(asn: str, asorg_file: str) -> Dict[str, Any]:
+def lookup_org_info(asn, asorg_file):
     if not asorg_file or not Path(asorg_file).exists():
         return {"success": False, "error": "AS organization data file not available", "asn": asn}
     data = load_json(asorg_file)
@@ -47,8 +47,7 @@ def lookup_org_info(asn: str, asorg_file: str) -> Dict[str, Any]:
     }
 
 
-def normalize_time(value: str) -> str:
-    """Normalize multiple input formats to YYYY-MM-DD HH:MM."""
+def normalize_time(value):
     fmts = [
         "%Y-%m-%d %H:%M",
         "%Y:%m:%d %H:%M",
@@ -63,11 +62,11 @@ def normalize_time(value: str) -> str:
     return value
 
 
-def query_as_organization(asn: str, asorg_file: str) -> Dict[str, Any]:
+def query_as_organization(asn, asorg_file):
     return lookup_org_info(asn, asorg_file)
 
 
-def query_as_relationships(asn: str, asrel_file: str) -> Dict[str, Any]:
+def query_as_relationships(asn, asrel_file):
     if not asrel_file or not Path(asrel_file).exists():
         return {"success": False, "error": "AS relationship data file not available", "asn": asn}
     data = load_json(asrel_file)
@@ -97,7 +96,7 @@ def query_as_relationships(asn: str, asrel_file: str) -> Dict[str, Any]:
     }
 
 
-def query_as_prefixes(asn: str, prefix2as_file: str) -> Dict[str, Any]:
+def query_as_prefixes(asn, prefix2as_file):
     if not prefix2as_file or not Path(prefix2as_file).exists():
         return {"success": False, "error": "Prefix-to-AS data file not available", "asn": asn}
     data = load_json(prefix2as_file)
@@ -109,21 +108,20 @@ def query_as_prefixes(asn: str, prefix2as_file: str) -> Dict[str, Any]:
 
 
 def generate_integrated_report(
-    routing_analysis: Dict[str, Any] = None,
-    traffic_analysis: Dict[str, Any] = None,
-    law_analysis: Dict[str, Any] = None,
-    reasoning_analysis: Dict[str, Any] = None,
-    start_time: str = None,
-    output_dir: Optional[Path] = None,
-    org_name: Optional[str] = None,
-    asn: str = None,
-) -> Dict[str, Any]:
+    routing_analysis = None,
+    traffic_analysis = None,
+    law_analysis = None,
+    reasoning_analysis = None,
+    start_time = None,
+    output_dir = None,
+    org_name = None,
+    asn = None,
+):
     try:
         victim_events = 0
         attacker_events = 0
         traffic_anomalies = 0
         
-        # Extract ASN information from various analysis sources, prioritizing direct asn parameter
         asn_info = asn or "Unknown"
         if asn_info == "Unknown":
             if routing_analysis and routing_analysis.get("asn"):
@@ -137,14 +135,12 @@ def generate_integrated_report(
         org_name_final = org_name or "Unknown"
         risk_level = "Unknown"
 
-        # Prepare output directories early (needed for asset handling)
         if output_dir is None:
             output_dir = Path("results") / "html"
         assets_dir = output_dir / "assets"
         output_dir.mkdir(exist_ok=True, parents=True)
         assets_dir.mkdir(exist_ok=True, parents=True)
 
-        # Extract routing results - try reasoning_analysis first, then routing_analysis
         origin_hijacked: List[Dict[str, Any]] = []
         forge_hijacked: List[Dict[str, Any]] = []
         origin_hijacking: List[Dict[str, Any]] = []
@@ -154,10 +150,8 @@ def generate_integrated_report(
         asn_info = asn or "Unknown"
         time_period = start_time or "Unknown"
         
-        # First try to extract from reasoning_analysis (new workflow)
         if reasoning_analysis and hasattr(reasoning_analysis, 'get') and reasoning_analysis.get("success"):
             logger.info(f"🔍 DEBUG: Found reasoning_analysis with success=True")
-            # Extract from evidence_pool if available
             evidence_summary = reasoning_analysis.get("evidence_summary", {})
             logger.info(f"🔍 DEBUG: evidence_summary keys: {list(evidence_summary.keys())}")
             
@@ -182,15 +176,12 @@ def generate_integrated_report(
             else:
                 logger.warning(f"🔍 DEBUG: routing_data is empty or None")
         
-        # Handle string reasoning_analysis (fallback case)
         elif isinstance(reasoning_analysis, str):
             logger.info(f"🔍 DEBUG: Found string reasoning_analysis, attempting to parse")
             try:
-                # Try to parse as JSON first
                 parsed_reasoning = json.loads(reasoning_analysis)
             except:
                 try:
-                    # Try to parse as Python dict string
                     parsed_reasoning = eval(reasoning_analysis)
                 except Exception as e:
                     logger.warning(f"🔍 DEBUG: Could not parse string reasoning_analysis: {e}")
@@ -215,7 +206,6 @@ def generate_integrated_report(
                     logger.info(f"🔍 DEBUG: Extracted from parsed routing_data - origin_hijacked: {len(origin_hijacked)}, origin_hijacking: {len(origin_hijacking)}")
                     logger.info(f"🔍 DEBUG: victim_events: {victim_events}, attacker_events: {attacker_events}")
         
-        # Fallback to direct routing_analysis (legacy workflow)
         elif routing_analysis and routing_analysis.get("success"):
             origin_hijacked = routing_analysis.get("origin_hijacked", [])
             forge_hijacked = routing_analysis.get("forge_hijacked", [])
@@ -226,14 +216,12 @@ def generate_integrated_report(
             asn_info = routing_analysis.get("asn", asn_info)
             time_period = routing_analysis.get("analysis_period", time_period)
 
-        # Extract traffic results - try reasoning_analysis first, then traffic_analysis
         plot_path = None
         data_points = 0
         percent_change = 0.0
         anomalies: List[Dict[str, Any]] = []
         traffic_anomalies = 0
         
-        # First try to extract from reasoning_analysis (new workflow)
         if reasoning_analysis and hasattr(reasoning_analysis, 'get') and reasoning_analysis.get("success"):
             evidence_summary = reasoning_analysis.get("evidence_summary", {})
             traffic_data = evidence_summary.get("traffic_data", {})
@@ -245,7 +233,6 @@ def generate_integrated_report(
                 percent_change = traffic_data.get("percent_change", 0.0)
                 anomalies = traffic_data.get("anomalies", [])
         
-        # Handle string reasoning_analysis for traffic data (fallback case)
         elif isinstance(reasoning_analysis, str):
             try:
                 parsed_reasoning = json.loads(reasoning_analysis)
@@ -266,7 +253,6 @@ def generate_integrated_report(
                     percent_change = traffic_data.get("percent_change", 0.0)
                     anomalies = traffic_data.get("anomalies", [])
         
-        # Fallback to direct traffic_analysis (legacy workflow)
         elif traffic_analysis and traffic_analysis.get("success"):
             traffic_anomalies = traffic_analysis.get("anomaly_count", 0)
             plot_path = traffic_analysis.get("plot_path")
@@ -278,7 +264,6 @@ def generate_integrated_report(
             "Critical" if victim_events > 0 else ("Medium" if attacker_events > 0 or traffic_anomalies > 0 else "Low")
         )
 
-        # Prepare traffic chart (prefer file reference for large images)
         traffic_chart_src = ""
         if plot_path:
             try:
@@ -336,9 +321,6 @@ def generate_integrated_report(
             f"<td>{html_escape(a.get('note',''))}</td></tr>" for a in anomalies[:50]
         ])
 
-        # Delegate to the rich HTML generator in utils.report_generator so that
-        # layout matches comprehensive_analysis_*.html (Executive Summary,
-        # Impact Assessment, Traffic Analysis, Routing Analysis, Root Cause, Recommendations, etc.).
         from utils.report_generator import render_summary_html
 
         summary_payload = {
