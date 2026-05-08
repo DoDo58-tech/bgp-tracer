@@ -41,9 +41,10 @@ BGP_SECURITY_HTML_TEMPLATE = """<html>
       h2 { margin: 0.2em 0 0.4em 0; font-size: 24px; }
       h3 { margin: 0.8em 0 0.4em 0; font-size: 20px; }
       h4 { margin: 0.6em 0 0.3em 0; font-size: 18px; }
-      table { border-collapse: collapse; width: 100%; margin: 0.6em 0; }
-      th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+      table { border-collapse: collapse; width: 100%; margin: 0.6em 0; table-layout: fixed; }
+      th, td { border: 1px solid #ddd; padding: 6px 8px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       th { background: #fafafa; }
+      td { font-size: 13px; }
       code { background: #f6f8fa; padding: 2px 4px; border-radius: 4px; font-size: 14px; }
       ul { margin: 0.4em 0 0.4em 1.2em; }
       .chart-container { margin: 1em 0; text-align: center; }

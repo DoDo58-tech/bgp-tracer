@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import json
+import gzip
 import subprocess
 import argparse
 from datetime import datetime
@@ -203,7 +204,11 @@ def process_asorg(target_time):
         logger.info(f"Downloading {url}")
         try:
             subprocess.run(["wget", "-q", url, "-O", str(gz_path)], check=True)
-            subprocess.run(["gzip", "-d", "-f", str(gz_path)], check=True)
+            # 用 Python 内置 gzip 解压，不依赖外部 gzip 命令，避免被信号打断
+            with gzip.open(gz_path, 'rb') as f_in:
+                with open(txt_path, 'wb') as f_out:
+                    f_out.write(f_in.read())
+            logger.info(f"ASORG file extracted to {txt_path}")
         except Exception as e:
             logger.error(f"Error downloading or extracting ASORG file ({selected_key}): {e}")
             if gz_path.exists():

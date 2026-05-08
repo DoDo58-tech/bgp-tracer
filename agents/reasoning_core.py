@@ -13,7 +13,7 @@ from config import BASE_URL, API_KEY, MODEL
 
 
 class ReasoningCore:
-    def __init__(self, asn, start_time, end_time, model="deepseek-chat", uuid=""):
+    def __init__(self, asn, start_time, end_time, model=MODEL, uuid=""):
         self.asn = asn
         self.start_time = start_time
         self.end_time = end_time
@@ -94,10 +94,15 @@ class ReasoningCore:
         try:
             logger.info(f"🔍 Phase 1: Collecting data for AS{self.asn}")
 
+            # Note: In this path, traffic analysis is run after routing,
+            # so we don't have periodicity info for outage detection.
+            # Outage detector will use default baseline (24h) in this case.
             routing_result = run_routing_agent(
                 asn=self.asn,
                 start_time=self.start_time,
-                end_time=self.end_time
+                end_time=self.end_time,
+                periodicity=None,
+                periodicity_confidence=0.0
             )
 
             traffic_result = run_traffic_agent(
@@ -334,7 +339,7 @@ class ReasoningCore:
 
 
 def run_reasoning_agent_core(asn, start_time, end_time,
-                           model="deepseek-chat", uuid=""):
+                           model=MODEL, uuid=""):
     try:
         agent = ReasoningCore(asn, start_time, end_time, model, uuid)
         return agent.perform_multi_round_analysis()

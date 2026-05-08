@@ -1,3 +1,4 @@
+import sys
 from typing import List, Dict, Set, Tuple, Optional, Any
 from ipaddress import ip_network
 import pandas as pd
@@ -6,6 +7,9 @@ import hashlib
 import os
 from pathlib import Path
 from collections import defaultdict
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import DEFAULT_ANOMALY_THRESHOLD
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -139,7 +143,7 @@ class PrefixTrie:
         
         return best_parent if best_parent else (None, None)
 
-def find_common_path_endings(as_paths: List[str], threshold: float = 0.2) -> List[Dict[str, any]]:
+def find_common_path_endings(as_paths, threshold=DEFAULT_ANOMALY_THRESHOLD):
     if not as_paths or len(as_paths) < 2:
         return []
     

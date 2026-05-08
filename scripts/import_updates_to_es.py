@@ -10,6 +10,7 @@ import sys
 import os
 import argparse
 import hashlib
+import gc
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -279,26 +280,34 @@ def import_updates_to_es(
         logger.info(f"Importing updates from {start_time} to {end_time}")
         
         batch_docs = []
-        for df_chunk in get_updates_streaming(start_time, end_time):
+        for df_chunk in get_updates_streaming(start_time, end_time, workers=1):  # 使用单线程避免内存爆炸
             if df_chunk is None or df_chunk.empty:
                 continue
-            
+
             total_files += 1
-            
-            # 只处理Announcement消息
-            announcements = df_chunk[df_chunk['A/W'] == 'A']
+
+            # 只处理Announcement消息并只保留必要列
+            announcements = df_chunk[df_chunk['A/W'] == 'A'][['prefix', 'as-path', 'timestamp', 'peer_ip', 'peer_as']].copy()
+            del df_chunk  # 立即释放原始chunk
+            gc.collect()
+
             if announcements.empty:
+                del announcements
+                gc.collect()
                 continue
-            
+
             # 获取文件源（如果有）
             file_source = None
-            if hasattr(df_chunk, 'attrs') and 'file_source' in df_chunk.attrs:
-                file_source = df_chunk.attrs['file_source']
-            
+            if hasattr(announcements, 'attrs') and 'file_source' in announcements.attrs:
+                file_source = announcements.attrs['file_source']
+
             # 向量化转换为ES文档（大幅提升性能）
             file_docs = _convert_dataframe_to_docs_vectorized(announcements, file_source)
+            del announcements
+            gc.collect()
+
             batch_docs.extend(file_docs)
-            
+
             # 批量导入（累积到batch_size再提交，减少ES调用次数）
             if len(batch_docs) >= batch_size:
                 batch_to_index = batch_docs[:batch_size]

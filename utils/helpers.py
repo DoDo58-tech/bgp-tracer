@@ -1,13 +1,9 @@
-"""Helper utilities for BGP Tracer"""
-
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
 
 
-def make_json_safe(value: Any) -> Any:
-    """Convert arbitrary objects to JSON-serializable structures."""
+def make_json_safe(value):
     try:
         if value is None:
             return None
@@ -28,8 +24,7 @@ def make_json_safe(value: Any) -> Any:
         return str(value)
 
 
-def parse_llm_json(raw_text: str) -> Dict[str, Any]:
-    """Best-effort JSON parsing for LLM output."""
+def parse_llm_json(raw_text):
     if not raw_text:
         raise ValueError("Empty LLM response")
     raw = raw_text.strip()
@@ -42,4 +37,3 @@ def parse_llm_json(raw_text: str) -> Dict[str, Any]:
             snippet = raw[start : end + 1]
             return json.loads(snippet)
         raise
-

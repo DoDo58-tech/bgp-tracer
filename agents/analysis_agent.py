@@ -1,7 +1,6 @@
 import os
 import sys
 import json
-from typing import Dict, Any, List
 from datetime import datetime
 from pathlib import Path
 
@@ -12,10 +11,11 @@ from config import MODEL, API_KEY, BASE_URL
 import re
 from html import escape as html_escape
 
+
 def generate_comprehensive_analysis_report(
     traffic_analysis,
     routing_analysis,
-    user_input = None
+    user_input=None
 ):
     try:
         llm, token_counter = setup_llm_settings(
@@ -23,25 +23,66 @@ def generate_comprehensive_analysis_report(
             api_key=API_KEY,
             base_url=BASE_URL,
             temperature=0.3,
-            timeout=120.0,
+            timeout=300.0,
             max_retries=2
         )
-        
+
         analysis_data = {
             "user_input": user_input,
             "analysis_timestamp": datetime.now().isoformat(),
             "traffic_analysis": traffic_analysis,
             "routing_analysis": routing_analysis
         }
-        
-        
-        logger.info("🧠 Generating comprehensive analysis report using LLM (thinking mode enabled)...")
 
-        # Enable thinking mode for complex multi-modal analysis
+        logger.info("Generating comprehensive analysis report...")
+
+        traffic_json = json.dumps(traffic_analysis, ensure_ascii=False, indent=2)
+        routing_json = json.dumps(routing_analysis, ensure_ascii=False, indent=2)
+
+        prompt = f"""
+You are a senior Internet reliability and BGP routing expert. Perform structured Root Cause Analysis (RCA)
+for a traffic outage event using the provided traffic and routing analyses.
+
+User query (if any):
+{json.dumps(user_input, ensure_ascii=False)}
+
+Current UTC time: {analysis_data['analysis_timestamp']}
+
+=== Traffic Analysis (JSON) ===
+{traffic_json}
+
+=== Routing Analysis (JSON) ===
+{routing_json}
+
+Follow a multi-step deep-thinking procedure in your own mind, then produce a concise but comprehensive report:
+
+1. Problem framing
+   - Restate the suspected incident (who, when, where, what symptoms).
+2. Evidence collection
+   - Summarize key traffic anomalies (time range, magnitude, affected AS/prefixes).
+   - Summarize key routing anomalies (hijacks, forged paths/MITM, leaks, outages).
+3. Hypothesis generation
+   - Enumerate 2-4 candidate root causes (e.g., origin hijack, MITM, route leak, pure traffic incident, other).
+4. Hypothesis evaluation
+   - For each hypothesis, list supporting and contradicting evidence from BOTH traffic and routing data.
+   - Explicitly discuss temporal correlation and impact scope (prefixes / regions / services).
+5. Root cause decision
+   - Select the most likely root cause(s) and give a confidence level (High/Medium/Low).
+   - Explain why this root cause best matches the evidence.
+6. Impact and blast radius
+   - Describe who is affected (AS, countries/regions, services) and severity.
+7. Actionable recommendations
+   - Give concrete next steps for operators (BGP mitigation / traffic mitigation / monitoring / data collection).
+
+OUTPUT FORMAT REQUIREMENTS:
+- Prefer an HTML report (starting with <!DOCTYPE html> or <html>) if convenient, suitable for direct rendering.
+- If not using HTML, return a well-structured Markdown-style plain text report.
+- Do NOT include any code blocks; use plain text or HTML only.
+"""
+
         response = llm.complete(prompt)
-        analysis_report = str(response)
+        analysis_report = response.text if hasattr(response, "text") else str(response)
 
-        # If LLM returned a full HTML document, save and return it directly.
         if analysis_report.strip().lower().startswith("<!doctype html") or analysis_report.strip().startswith("<html"):
             output_dir = Path(__file__).parent.parent / "results" / "html"
             output_dir.mkdir(exist_ok=True, parents=True)
@@ -63,7 +104,6 @@ def generate_comprehensive_analysis_report(
                 "token_usage": getattr(token_counter, 'total_tokens', 0) if token_counter else 0
             }
 
-        # Otherwise, generate an HTML wrapper using the helper (if needed)
         insights = extract_key_insights(traffic_analysis, routing_analysis)
         html_report = generate_html_report(analysis_report, traffic_analysis, routing_analysis, insights)
 
@@ -76,7 +116,7 @@ def generate_comprehensive_analysis_report(
             "generation_timestamp": datetime.now().isoformat(),
             "token_usage": getattr(token_counter, 'total_tokens', 0) if token_counter else 0
         }
-        
+
     except Exception as e:
         logger.error(f"Analysis agent error: {str(e)}")
         return {
@@ -101,7 +141,7 @@ def extract_key_insights(traffic_analysis, routing_analysis):
         "primary_cause": "unknown",
         "outage_detected": outage_detected
     }
-    
+
     if insights["traffic_anomalies_detected"] and insights["routing_issues_detected"]:
         insights["correlation_found"] = True
         insights["confidence_level"] = "high"
@@ -112,7 +152,7 @@ def extract_key_insights(traffic_analysis, routing_analysis):
     elif not insights["traffic_anomalies_detected"] and insights["routing_issues_detected"]:
         insights["confidence_level"] = "medium"
         insights["primary_cause"] = "routing_issues_without_traffic_impact"
-    
+
     return insights
 
 
@@ -130,10 +170,10 @@ def generate_html_report(
 
         output_dir = Path(__file__).parent.parent / "results" / "html"
         output_dir.mkdir(exist_ok=True, parents=True)
-        
+
         asn = traffic_analysis.get('asn', routing_analysis.get('asn', 'Unknown'))
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+
         traffic_chart_html = ""
         multi_as_gallery_html = ""
         is_multi_as = traffic_analysis.get('analysis_type') == 'multi_as_country_analysis'
@@ -163,7 +203,7 @@ def generate_html_report(
                 pass
         if not traffic_chart_html and not is_multi_as:
             traffic_chart_html = "<p>No traffic visualization available for this run.</p>"
-        
+
         if is_multi_as and traffic_analysis.get('results'):
             gallery_items = []
             for entry in traffic_analysis.get('results', []):
@@ -184,7 +224,7 @@ def generate_html_report(
                 multi_as_gallery_html = "<div class='traffic-multi-grid'>" + "".join(gallery_items) + "</div>"
             if not traffic_chart_html:
                 traffic_chart_html = "<p>Aggregate traffic chart is not available for multi-AS analysis.</p>"
-        
+
         outage_analysis = routing_analysis.get('outage_analysis') or {}
         leak_analysis = routing_analysis.get('leak_analysis') or {}
         outage_status = 'Yes' if outage_analysis.get('is_outage_suspected') else 'No'
@@ -199,7 +239,6 @@ def generate_html_report(
         ) or "<li>No feature anomalies detected.</li>"
         leak_message = leak_analysis.get('message', 'Leak analysis did not run.')
 
-        # Determine whether to show anomaly details and technical details
         show_anomaly_details = bool(outage_anomalies or routing_analysis.get('origin_hijack') or routing_analysis.get('forge_hijack') or traffic_analysis.get('anomalies_detected'))
         show_technical_details = any([
             routing_analysis.get('as_rel_file'),
@@ -208,7 +247,6 @@ def generate_html_report(
             insights.get('token_usage') if isinstance(insights, dict) else False
         ])
 
-                # Prepare optional HTML blocks (simplified)
         routing_block = ""
         technical_block = ""
 
@@ -268,7 +306,7 @@ def generate_html_report(
                 <strong>Correlation Found:</strong> {'Yes' if insights['correlation_found'] else 'No'}
             </div>
             <div class="insight-item">
-                <strong>Confidence Level:</strong> 
+                <strong>Confidence Level:</strong>
                 <span class="confidence-{insights['confidence_level']}">{insights['confidence_level'].title()}</span>
             </div>
         </div>
@@ -295,14 +333,14 @@ def generate_html_report(
     </div>
 </body>
 </html>"""
-        
+
         html_file = output_dir / f"traffic_outage_analysis_AS{asn}_{timestamp}.html"
         with open(html_file, "w", encoding="utf-8") as f:
             f.write(html_content)
-        
-        logger.info(f"📊 HTML analysis report generated: {html_file}")
+
+        logger.info(f"HTML analysis report generated: {html_file}")
         return str(html_file)
-        
+
     except Exception as e:
         logger.error(f"Failed to generate HTML report: {str(e)}")
         return ""
@@ -311,10 +349,10 @@ def generate_html_report(
 def run_analysis_agent(
     traffic_analysis,
     routing_analysis,
-    user_input = None
+    user_input=None
 ):
-    logger.info("🧠 Starting comprehensive analysis agent...")
-    
+    logger.info("Starting comprehensive analysis agent...")
+
     return generate_comprehensive_analysis_report(
         traffic_analysis=traffic_analysis,
         routing_analysis=routing_analysis,
