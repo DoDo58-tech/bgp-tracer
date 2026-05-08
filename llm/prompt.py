@@ -57,15 +57,8 @@ BGP_REASONING_LAWS = """
 def get_reasoning_laws():
     return BGP_REASONING_LAWS
 
-def update_reasoning_law(law_id, new_rule):
-    # This would be implemented with persistent storage and version control
-    return True
-
-
-# PROMPT TEMPLATES - All Project Prompts Centralized
 
 def build_routing_analysis_prompt():
-    """Build prompt for routing anomaly analysis with reasoning laws"""
     text = f"""
 # BGP Routing Security Analysis Agent
 
@@ -114,8 +107,8 @@ Focus on actionable intelligence and avoid speculation beyond observed data.
 """
     return PromptTemplate(text)
 
-def build_traffic_analysis_prompt() -> PromptTemplate:
-    """Build prompt for traffic pattern analysis without BGP inference"""
+
+def build_traffic_analysis_prompt():
     text = f"""
 # Network Traffic Pattern Analysis Agent
 
@@ -183,8 +176,8 @@ Traffic analysis provides correlation data for comprehensive multi-source analys
 """
     return PromptTemplate(text)
 
-def build_law_analysis_prompt() -> PromptTemplate:
-    """Build prompt for reasoning law optimization"""
+
+def build_law_analysis_prompt():
     text = f"""
 # BGP Reasoning Law Analysis Agent
 
@@ -244,11 +237,10 @@ Focus on evidence-based improvements that enhance accuracy while maintaining sys
 """
     return PromptTemplate(text)
 
+
 def build_multi_agent_coordination_prompt():
-    """Build prompt for multi-agent coordination"""
     reasoning_laws_text = BGP_REASONING_LAWS
     
-    # Example format without f-string formatting conflicts
     example_format = '''```
 Thought: I need to analyze BGP security for the target AS. Let me start by getting contextual information about the AS.
 Action: get_contextual_info
@@ -300,12 +292,8 @@ Use tools in logical sequence to build comprehensive BGP security assessment.
 """
     return PromptTemplate(text)
 
-# ============================================================================
-# EXISTING PROMPT FUNCTIONS (Updated to use centralized laws)
-# ============================================================================
 
 def build_react_system_prompt():
-    """Build system prompt for ReAct agent"""
     reasoning_laws_text = BGP_REASONING_LAWS
     
     text = f"""
@@ -408,11 +396,7 @@ Analyze BGP routing security for AS{asn} from {start_time} to {end_time}.
 - Keep explanations professional and concise.
 
 Begin the analysis now.
-
-HTML Template Reference (use this structure for report generation):
-{html_template}
 """
-    
     return PromptTemplate(text)
 
 
@@ -420,5 +404,3 @@ __all__ = [
     "build_react_system_prompt",
     "build_user_analysis_prompt",
 ]
-
-

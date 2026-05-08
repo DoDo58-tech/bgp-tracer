@@ -208,18 +208,15 @@ def save_fake_conn_cache():
 
 
 def get_cached_fake_conn_frequency(fake_connection, day_str):
-    """Get cached fake connection frequency with LRU memory cache + SQLite fallback."""
-    # First check memory LRU cache
+    """Get cached fake connection frequency with memory cache + SQLite fallback."""
+    # First check in-memory cache
     cache_key = memory_lru_cache_key(fake_connection, day_str)
-    if memory_lru_cache_key.cache_info().currsize > 0:
-        # Check if we have this in LRU cache by trying to get it
-        try:
-            # This is a bit of a hack, but LRU cache doesn't have a "contains" method
-            # We'll let it raise KeyError if not found
-            cached_data = _get_from_memory_cache(cache_key)
-            return cached_data
-        except KeyError:
-            pass  # Not in memory cache, continue to database
+    try:
+        cached_data = get_from_memory_cache(cache_key)
+        return cached_data
+    except KeyError:
+        # Not in memory cache, fall through to SQLite
+        pass
 
     # Not in memory cache, check SQLite database
     try:

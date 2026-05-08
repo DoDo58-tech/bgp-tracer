@@ -1,15 +1,12 @@
 import os
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
 from openai import OpenAI
 
-try:
-    from config import BASE_URL as DEFAULT_BASE_URL, API_KEY as DEFAULT_API_KEY, MODEL as DEFAULT_MODEL
-except Exception:
-    DEFAULT_BASE_URL = os.getenv("CSTCLOUD_BASE_URL", "https://uni-api.cstcloud.cn/v1")
-    DEFAULT_API_KEY = os.getenv("CstCloudToken", "")
-    DEFAULT_MODEL = os.getenv("CSTCLOUD_MODEL", "deepseek-v3:671b")
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import CSTCLOUD_BASE_URL, CSTCLOUD_TOKEN, CSTCLOUD_MODEL
 
 
 @dataclass
@@ -25,13 +22,13 @@ class CstCloud:
         base_url = None,
         default_model = None,
     ):
-        self.token = api_key or DEFAULT_API_KEY or os.getenv("CstCloudToken", "")
-        self.base_url = base_url or DEFAULT_BASE_URL
-        self.default_model = default_model or DEFAULT_MODEL
+        self.token = api_key or CSTCLOUD_TOKEN or os.getenv("CstCloudToken", "")
+        self.base_url = base_url or CSTCLOUD_BASE_URL
+        self.default_model = default_model or CSTCLOUD_MODEL
         self.model_alias = {
             "r1-0528": "deepseek-r1:671b-0528",
             "r1": "deepseek-r1:671b-64k",
-            "v3": "deepseek-v3:671b",
+            "v3": "deepseek-v3:0324",
         }
 
     def _resolve_model(self, model):

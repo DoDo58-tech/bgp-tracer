@@ -10,15 +10,36 @@ from agents.routing_agent import run_routing_agent, run_routing_agent_async
 from agents.traffic_agent import run_traffic_agent
 from utils.logger import logger
 from config import BASE_URL, API_KEY, MODEL
+from detectors.outage.outage_detector import RouteOutageDetector
+
+# Lazy initialization for OUTAGE_DETECTOR to avoid import issues
+_OUTAGE_DETECTOR = None
+
+def get_outage_detector():
+    global _OUTAGE_DETECTOR
+    if _OUTAGE_DETECTOR is None:
+        _OUTAGE_DETECTOR = RouteOutageDetector()
+    return _OUTAGE_DETECTOR
 
 
 class ReasoningAgent:
-    def __init__(self, asn, start_time, end_time, model = "deepseek-chat", uuid = ""):
+    def __init__(
+        self,
+        asn,
+        start_time,
+        end_time,
+        model=MODEL,
+        uuid="",
+        pre_computed_routing=None,
+        pre_computed_traffic=None,
+    ):
         self.asn = asn
         self.start_time = start_time
         self.end_time = end_time
         self.model = model
         self.uuid = uuid
+        self.pre_computed_routing = pre_computed_routing
+        self.pre_computed_traffic = pre_computed_traffic
         
         self.llm, self.token_counter = setup_llm_settings(
             model=self.model,
@@ -209,12 +230,16 @@ class ReasoningAgent:
         self.reasoning_trace.append("Phase 1: Data Collection")
         
         try:
-            self.reasoning_trace.append("- Activating TrafficAgent with LLM enhancement...")
-            traffic_result = run_traffic_agent(
-                asn=self.asn,
-                start_time=self.start_time.strftime('%Y-%m-%d %H:%M'),
-                end_time=self.end_time.strftime('%Y-%m-%d %H:%M')
-            )
+            if self.pre_computed_traffic is not None:
+                self.reasoning_trace.append("- Using pre-computed traffic result from chief_agent (avoiding duplicate traffic analysis)")
+                traffic_result = self.pre_computed_traffic
+            else:
+                self.reasoning_trace.append("- Activating TrafficAgent with LLM enhancement...")
+                traffic_result = run_traffic_agent(
+                    asn=self.asn,
+                    start_time=self.start_time.strftime('%Y-%m-%d %H:%M'),
+                    end_time=self.end_time.strftime('%Y-%m-%d %H:%M')
+                )
             
             traffic_anomaly_detected = traffic_result.get("success") and traffic_result.get("anomalies_detected", False)
             
@@ -293,15 +318,34 @@ class ReasoningAgent:
                 
                 self.reasoning_trace.append(f"- Using consecutive anomaly period for routing analysis: {routing_start} to {routing_end}")
                 
-                # Extract target ASNs for route leak detection (only analyze messages containing these ASNs)
-                target_asns = [self.asn]  # Always include primary ASN
-                
-                routing_result = run_routing_agent(
-                    asn=self.asn,
-                    start_time=routing_start,
-                    end_time=routing_end,
-                    target_asns=target_asns
-                )
+                # Use pre-computed routing result if available, otherwise run routing analysis
+                if self.pre_computed_routing is not None:
+                    self.reasoning_trace.append("- Using pre-computed routing result from chief_agent (avoiding duplicate routing analysis)")
+                    routing_result = self.pre_computed_routing
+                    self.reasoning_trace.append(f"- pre_computed_routing has {len(routing_result.get('forge_hijacked', []))} forge hijacks")
+                else:
+                    # Extract target ASNs for route leak detection (only analyze messages containing these ASNs)
+                    self.reasoning_trace.append("- WARNING: pre_computed_routing is None, will run new routing analysis")
+                    target_asns = [self.asn]  # Always include primary ASN
+
+                    # Extract periodicity from pre_computed_traffic for outage detection
+                    periodicity = None
+                    periodicity_confidence = 0.0
+                    if self.pre_computed_traffic and isinstance(self.pre_computed_traffic, dict):
+                        periodicity_info = self.pre_computed_traffic.get("periodicity_analysis", {})
+                        periodicity = periodicity_info.get("detected_periodicity")
+                        periodicity_confidence = periodicity_info.get("periodicity_confidence", 0.0)
+                        if periodicity:
+                            self.reasoning_trace.append(f"- Using periodicity from traffic analysis: {periodicity} (confidence: {periodicity_confidence:.2f})")
+
+                    routing_result = run_routing_agent(
+                        asn=self.asn,
+                        start_time=routing_start,
+                        end_time=routing_end,
+                        target_asns=target_asns,
+                        periodicity=periodicity,
+                        periodicity_confidence=periodicity_confidence
+                    )
             else:
                 self.reasoning_trace.append("- Traffic anomalies were not confirmed. Skipping routing analysis by design.")
                 routing_result = {
@@ -482,16 +526,20 @@ class ReasoningAgent:
         routing_data = self.evidence_pool.get("routing_data", {})
         traffic_data = self.evidence_pool.get("traffic_data", {})
         
-        if not routing_data.get("as_rel_data"):
-            gaps.append("missing_as_relationships")
-        
-        if not routing_data.get("as_prefixes_data"):
-            gaps.append("missing_prefix_mappings")
-        
-        if routing_data.get("success") and not routing_data.get("llm_analysis"):
+        # Check if routing data is missing or failed
+        if not routing_data or not routing_data.get("success"):
             gaps.append("missing_routing_analysis")
         
-        if traffic_data.get("success") and not traffic_data.get("llm_analysis"):
+        # Check if AS relationships data is available
+        if not routing_data.get("as_rel_file") and not routing_data.get("relationships"):
+            gaps.append("missing_as_relationships")
+        
+        # Check if prefix mappings data is available
+        if not routing_data.get("prefix2as_file") and not routing_data.get("prefixes"):
+            gaps.append("missing_prefix_mappings")
+        
+        # Check if traffic data is available
+        if not traffic_data or not traffic_data.get("success"):
             gaps.append("missing_traffic_analysis")
         
         return gaps
@@ -1030,7 +1078,7 @@ class ReasoningAgent:
 
 
 def run_reasoning_agent(asn = None, start_time = None, end_time = None, 
-                       user_input = None, max_rounds = 3):
+                       user_input = None, max_rounds = 3, pre_computed_routing = None, pre_computed_traffic = None):
     try:
         if user_input and not (asn and start_time and end_time):
             from agents.traffic_agent import parse_traffic_outage_input, normalize_time
@@ -1068,12 +1116,25 @@ def run_reasoning_agent(asn = None, start_time = None, end_time = None,
                 "error": "Missing required parameters: asn, start_time, end_time"
             }
         
-        # Parse time strings
-        start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
-        end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
+        # Parse time strings - handle both formats with and without seconds
+        try:
+            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
         
-        # Create and run reasoning agent
-        agent = ReasoningAgent(asn, start_dt, end_dt)
+        try:
+            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
+        
+        # Create and run reasoning agent with pre-computed routing if available
+        agent = ReasoningAgent(
+            asn,
+            start_dt,
+            end_dt,
+            pre_computed_routing=pre_computed_routing,
+            pre_computed_traffic=pre_computed_traffic,
+        )
         return agent.perform_multi_round_analysis(max_rounds)
         
     except Exception as e:
@@ -1093,8 +1154,15 @@ def run_reasoning_agent_batch(
         logger.info(f"Starting BATCH reasoning analysis for {len(as_list)} AS")
         logger.info(f"Time range: {start_time} to {end_time}")
         
-        start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
-        end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
+        try:
+            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
+        
+        try:
+            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
         
         logger.info(f"Step 1: Batch traffic analysis for {len(as_list)} AS...")
         traffic_batch_result = run_traffic_agent_batch(
@@ -1186,7 +1254,6 @@ def run_reasoning_agent_batch(
                     logger.info(f"    Using BATCH hijack detection (read data once for {len(as_group)} AS)")
                     from detectors.hijack.hijack_detector import detect_hijacks_batch
                     from detectors.leak.leak_detector import analyze_leak_surface
-                    from detectors.outage.outage_detector import OUTAGE_DETECTOR
                     
                     batch_hijack_results = detect_hijacks_batch(
                         start_time=r_start,
@@ -1196,14 +1263,36 @@ def run_reasoning_agent_batch(
                         save_alerts=False  # Don't save individual alerts in batch mode
                     )
                     
+                    # Debug: Log batch_hijack_results structure for first AS
+                    if not hasattr(run_reasoning_agent_batch, '_logged_batch_structure'):
+                        run_reasoning_agent_batch._logged_batch_structure = True
+                        logger.info(f"[DEBUG] batch_hijack_results keys: {list(batch_hijack_results.keys())}")
+                        if batch_hijack_results.get("results_by_as"):
+                            results_keys = list(batch_hijack_results["results_by_as"].keys())[:5]
+                            logger.info(f"[DEBUG] results_by_as sample keys: {results_keys}")
+                    
                     for asn in as_group:
                         try:
                             asn_str = str(asn)
-                            hijack_data = batch_hijack_results.get(asn_str, {})
+                            # FIXED: Access results through 'results_by_as' key
+                            # detect_hijacks_batch returns {"success": True, "results_by_as": {asn: data}}
+                            # The data contains "origin_hijack" and "forge_hijack" (NOT "origin_hijacked" etc.)
+                            batch_results_by_as = batch_hijack_results.get("results_by_as", {})
+                            hijack_data = batch_results_by_as.get(asn_str, {})
+                            
+                            # Extract hijack data - convert from batch format (origin_hijack -> origin_hijacked)
+                            raw_origin_hijack = hijack_data.get("origin_hijack", [])
+                            raw_forge_hijack = hijack_data.get("forge_hijack", [])
+                            
+                            # Log to detect if hijack_data is empty when it shouldn't be
+                            if hijack_data:
+                                logger.info(f"[DEBUG] AS{asn_str} hijack_data: origin_hijack={len(raw_origin_hijack)}, forge_hijack={len(raw_forge_hijack)}")
+                            else:
+                                logger.warning(f"[DEBUG] AS{asn_str} hijack_data is EMPTY! batch_results_by_as keys: {list(batch_results_by_as.keys())}")
                             
                             leak_result = analyze_leak_surface(asn_str, window_start_str, window_end_str, target_asns=[asn_str])
                             
-                            outage_result = OUTAGE_DETECTOR.analyze(asn_str, window_start_str, window_end_str)
+                            outage_result = get_outage_detector().analyze(asn_str, window_start_str, window_end_str)
                             
                             result = {
                                 "success": True,
@@ -1211,10 +1300,15 @@ def run_reasoning_agent_batch(
                                 "analysis_period": f"{window_start_str} to {window_end_str}",
                                 "analysis_timestamp": datetime.now().isoformat(),
                                 
-                                "origin_hijacked": hijack_data.get("origin_hijacked", []),
-                                "forge_hijacked": hijack_data.get("forge_hijacked", []),
+                                # Use both naming conventions for compatibility
+                                "origin_hijacked": raw_origin_hijack,  # victim hijack
+                                "forge_hijacked": raw_forge_hijack,    # victim forge
                                 "origin_hijacking": hijack_data.get("origin_hijacking", []),
                                 "forge_hijacking": hijack_data.get("forge_hijacking", []),
+                                # Also keep original names for compatibility
+                                "origin_hijack": raw_origin_hijack,
+                                "forge_hijack": raw_forge_hijack,
+                                "aggregated_alerts": hijack_data.get("aggregated_alerts", []),
                                 
                                 "route_leaks": leak_result.get("route_leaks", []),
                                 "leak_count": leak_result.get("leak_count", 0),
@@ -1272,6 +1366,30 @@ def run_reasoning_agent_batch(
                         f"outage={result.get('outage_suspected', False)}"
                     )
         
+        # Validation: Check if hijack detection results were properly transferred
+        total_hijacks_in_batch = 0
+        total_hijacks_in_results = 0
+        
+        # Only validate if batch_hijack_results was defined (when len(as_group) > 1)
+        if batch_hijack_results is not None:
+            for asn_str, hijack_result in batch_hijack_results.get("results_by_as", {}).items():
+                total_hijacks_in_batch += len(hijack_result.get("origin_hijacked", []) or hijack_result.get("origin_hijack", []))
+                total_hijacks_in_batch += len(hijack_result.get("forge_hijacked", []) or hijack_result.get("forge_hijack", []))
+        else:
+            # For single AS case, extract from the routing_results directly
+            pass
+        
+        for asn_str, routing_result in routing_results_by_as.items():
+            total_hijacks_in_results += len(routing_result.get("origin_hijacked", []) or routing_result.get("origin_hijack", []))
+            total_hijacks_in_results += len(routing_result.get("forge_hijacked", []) or routing_result.get("forge_hijack", []))
+        
+        logger.info(f"[VALIDATION] Hijack events - batch source: {total_hijacks_in_batch}, in routing_results: {total_hijacks_in_results}")
+        if total_hijacks_in_batch > 0 and total_hijacks_in_results == 0:
+            logger.error(f"[CRITICAL] DATA LOSS: {total_hijacks_in_batch} hijack events detected but ALL were lost during transfer!")
+            logger.error(f"[CRITICAL] This indicates a bug in the routing result extraction logic.")
+        elif total_hijacks_in_batch > total_hijacks_in_results:
+            logger.warning(f"[WARNING] Possible data loss: batch has {total_hijacks_in_batch} hijacks but only {total_hijacks_in_results} in routing_results")
+
         routing_batch_result = {
             "success": len(routing_failures) == 0,
             "batch_mode": True,
@@ -1279,6 +1397,12 @@ def run_reasoning_agent_batch(
             "results_by_as": routing_results_by_as,
             "analysis_timestamp": datetime.now().isoformat(),
             "failed_as": routing_failures,
+            # Add validation metadata
+            "_validation": {
+                "hijack_events_in_batch": total_hijacks_in_batch,
+                "hijack_events_in_results": total_hijacks_in_results,
+                "data_integrity_check": "PASSED" if total_hijacks_in_batch == total_hijacks_in_results else "FAILED"
+            }
         }
         
         if routing_failures:

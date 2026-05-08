@@ -39,7 +39,12 @@ class ConfidenceCalculator:
                 "update_timestamp": datetime.now().isoformat()
             })
 
-            self.core.reasoning_trace.append(".2f")
+            self.core.reasoning_trace.append(
+                f"✅ Confidence updated (round {round_num}): "
+                f"overall={overall_confidence:.2f}, "
+                f"evidence_consistency={evidence_consistency:.2f}, "
+                f"classification_confidence={classification_confidence:.2f}"
+            )
 
         except Exception as e:
             logger.warning(f"Confidence score update failed: {e}")

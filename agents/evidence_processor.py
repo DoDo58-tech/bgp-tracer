@@ -287,7 +287,10 @@ class EvidenceProcessor:
         summary_parts.append(f"Detected {anomaly_count} traffic anomalies")
 
         percent_change = traffic_data.get("percent_change", 0)
-        summary_parts.append(".1f")
+        try:
+            summary_parts.append(f"Traffic changed by {percent_change:.1f}% compared to baseline")
+        except Exception:
+            summary_parts.append(f"Traffic change: {percent_change}")
 
         period_info = traffic_data.get("period_detection", {})
         if period_info.get("period_name"):

@@ -10,6 +10,14 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import logger
 
 
+def _effective_std_for_baseline(mean_arr: np.ndarray, std_arr: np.ndarray) -> np.ndarray:
+    """与 detect_anomalies_statistical 一致：极小 std 用下限，避免图上 ±3σ 与检测阈值不一致。"""
+    mean_arr = np.asarray(mean_arr, dtype=float)
+    std_arr = np.asarray(std_arr, dtype=float)
+    floor = np.maximum(0.05 * np.maximum(np.abs(mean_arr), 1.0), 0.02)
+    return np.where(std_arr > 1e-6, std_arr, floor)
+
+
 def plot_traffic_comparison_beautiful(
     asn,
     start_date,
@@ -22,13 +30,18 @@ def plot_traffic_comparison_beautiful(
     anomalies = None,
     overlay_series = None,
     event_name = None,
-    output_dir = None
+    output_dir = None,
+    title_suffix = "",
 ):
     try:
         plt.rcParams['font.family'] = 'DejaVu Sans'
         plt.rcParams['axes.unicode_minus'] = False
 
         fig, ax = plt.subplots(figsize=(18, 8))
+
+        n_points = min(len(timestamps), len(current_values))
+        timestamps = timestamps[:n_points]
+        current_values = current_values[:n_points]
 
         time_labels = []
         for ts in timestamps:
@@ -49,6 +62,31 @@ def plot_traffic_comparison_beautiful(
 
         has_historical_data = len(historical_means) > 0 and len(historical_stds) > 0
 
+        # Plot historical periods as reference
+        period_colors = ['#F4A6A6', '#A6C4F4', '#A6E4A6', '#C0C0C0']  # light pink, light blue, light green, light gray
+        def _period_label(period_key: str, i: int) -> str:
+            if "weekly" in period_key.lower():
+                return f"{i} week ago" if i == 1 else f"{i} weeks ago"
+            return f"{i} day ago" if i == 1 else f"{i} days ago"
+        if historical_data:
+            for idx, h in enumerate(historical_data):
+                period_ago = h.get("weekly_ago") or h.get("daily_ago")
+                if period_ago is None:
+                    for k, v in h.items():
+                        if k.endswith("_ago") and isinstance(v, (int, float)):
+                            period_ago = int(v)
+                            period_key = k
+                            break
+                    else:
+                        period_ago = idx + 1
+                        period_key = "weekly_ago"
+                else:
+                    period_key = "weekly_ago" if "weekly_ago" in h else "daily_ago"
+                label = _period_label(period_key, period_ago)
+                vals = np.array(h["values"], dtype=float)
+                min_len = min(len(x), len(vals))
+                color = period_colors[idx % len(period_colors)]
+                ax.plot(x[:min_len], vals[:min_len], color=color, linewidth=1.8, alpha=0.85, label=label)
         if has_historical_data:
             mean_arr = np.array(historical_means)
             std_arr = np.array(historical_stds)
@@ -58,11 +96,12 @@ def plot_traffic_comparison_beautiful(
             std_arr = std_arr[:min_len]
             x_plot = x[:min_len]
 
-            upper_3sigma = mean_arr + 3 * std_arr
-            lower_3sigma = mean_arr - 3 * std_arr
+            eff_std = _effective_std_for_baseline(mean_arr, std_arr)
+            upper_3sigma = mean_arr + 3 * eff_std
+            lower_3sigma = mean_arr - 3 * eff_std
 
-            ax.fill_between(x_plot, lower_3sigma, upper_3sigma, color='#B0C4DE', alpha=0.15, label='Baseline ±3σ')
-            ax.plot(x_plot, mean_arr, label='Baseline Mean', color='#FF8C42', linestyle='--', linewidth=2.5, alpha=0.9)
+            ax.fill_between(x_plot, lower_3sigma, upper_3sigma, color='#B0C4DE', alpha=0.15, label='Baseline ±3σ (detection-aligned)')
+            ax.plot(x_plot, mean_arr, label='Historical Mean', color='#FF8C42', linestyle='--', linewidth=2.5, alpha=0.9)
         else:
             current_mean = np.mean(current_arr)
             current_std = np.std(current_arr)
@@ -120,25 +159,36 @@ def plot_traffic_comparison_beautiful(
             plotted_anomaly = False
             for anomaly in anomalies:
                 try:
-                    anomaly_time = anomaly["timestamp"]
-                    idx = timestamps.index(anomaly_time)
+                    idx = anomaly.get("index")
+                    if idx is None:
+                        anomaly_time = anomaly.get("timestamp")
+                        if anomaly_time and anomaly_time in timestamps:
+                            idx = timestamps.index(anomaly_time)
+                        else:
+                            continue
+                    idx = int(idx)
+                    if idx < 0 or idx >= len(current_arr):
+                        continue
                     ax.scatter(
                         x[idx],
                         current_arr[idx],
-                        color='#E74C3C',
-                        s=180,
+                        c='#E74C3C',
+                        s=70,
                         marker='o',
-                        edgecolors='white',
-                        linewidth=2.5,
+                        edgecolors='none',
                         zorder=10,
-                        label='Anomaly' if not plotted_anomaly else None
+                        label='Anomalies' if not plotted_anomaly else None
                     )
                     plotted_anomaly = True
-                except ValueError:
+                except (ValueError, KeyError, TypeError):
                     continue
 
-        ax.set_title(f'AS{asn} Traffic Analysis - {start_date} to {end_date}',
-                     fontsize=16, fontweight='bold', pad=20)
+        ax.set_title(
+            f'AS{asn} Traffic Analysis - {start_date} to {end_date}{title_suffix or ""}',
+            fontsize=16,
+            fontweight='bold',
+            pad=20,
+        )
         ax.set_ylabel('Traffic Value (Normalized)', fontsize=12)
         ax.grid(True, alpha=0.3, linestyle='-')
         ax.legend(loc='upper left', framealpha=0.9)
@@ -146,6 +196,7 @@ def plot_traffic_comparison_beautiful(
         current_avg = np.mean(current_arr)
 
         if has_historical_data:
+            historical_avg = np.mean(historical_means)
             percent_change = ((current_avg - historical_avg) / historical_avg * 100) if historical_avg > 0 else 0
         else:
             historical_avg = current_avg

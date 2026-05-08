@@ -21,6 +21,7 @@ from data.updates_loader import get_updates_streaming
 from data.prefix2as_loader import process_prefix2as
 from data.asorg_loader import process_asorg
 from data.asrel_loader import process_asrel
+from config import MAX_WORKERS, IO_BUSY_THRESHOLD
 
 
 def load_full_day_bgp_data(start_time, end_time):
@@ -36,16 +37,19 @@ def load_full_day_bgp_data(start_time, end_time):
         total_chunks = 0
         total_announcements = 0
 
-        for df_chunk in get_updates_streaming(day_start, day_end, auto_download=True):
+        for df_chunk in get_updates_streaming(day_start, day_end, workers=MAX_WORKERS, io_busy_threshold=IO_BUSY_THRESHOLD, auto_download=True):
             total_chunks += 1
             if df_chunk is None or df_chunk.empty:
                 continue
 
-            announcements = df_chunk[df_chunk['A/W'] == 'A']
+            # 早期筛选并只保留必要列，减少内存占用
+            announcements = df_chunk[df_chunk['A/W'] == 'A'][['prefix', 'as-path', 'timestamp']].copy()
+            del df_chunk  # 立即释放原始chunk
+            gc.collect()
+
             if announcements.empty:
                 continue
 
-            announcements = announcements.copy()
             announcements['as-path'] = announcements['as-path'].apply(remove_consecutive_duplicates)
             announcements['date'] = pd.to_datetime(announcements['timestamp']).dt.date.astype(str)
 
@@ -53,12 +57,16 @@ def load_full_day_bgp_data(start_time, end_time):
             total_announcements += chunk_size
             full_day_data.extend(announcements.to_dict('records'))
 
-            # Log progress every 10 chunks
-            if total_chunks % 10 == 0:
+            # 每处理5个chunk就清理一次内存
+            if total_chunks % 5 == 0:
+                gc.collect()
                 logger.info(f"Loaded {total_announcements:,} announcements from {total_chunks} chunks so far...")
 
         logger.info(f"Successfully loaded {len(full_day_data):,} BGP announcements for complete day {target_date}")
-        return pd.DataFrame(full_day_data)
+        result_df = pd.DataFrame(full_day_data)
+        del full_day_data
+        gc.collect()
+        return result_df
 
     except Exception as e:
         logger.error(f"Error loading full day BGP data: {e}")
@@ -73,9 +81,10 @@ def detect_hijacks_streaming(
     save_alerts = True,
     update_workers = 1,
     io_busy_threshold = 85,
+    skip_forge_detection = False,  # 控制是否跳过forge hijack检测
 ):
     try:
-        logger.info(f"Starting hijack detection for AS{target_as} from {start_time} to {end_time}")
+        logger.info(f"Starting hijack detection for AS{target_as} from {start_time} to {end_time} (skip_forge: {skip_forge_detection})")
 
         batch_results = detect_hijacks_batch(
             start_time=start_time,
@@ -84,20 +93,50 @@ def detect_hijacks_streaming(
             validate_with_updates=validate_with_updates,
             save_alerts=save_alerts,
             update_workers=update_workers,
-            io_busy_threshold=io_busy_threshold
+            io_busy_threshold=io_busy_threshold,
+            skip_forge_detection=skip_forge_detection
         )
 
-        if batch_results.get("success") and target_as in batch_results.get("results_by_as", {}):
-            result = batch_results["results_by_as"][target_as]
-            result["batch_mode"] = False
-            return result
+        # CRITICAL: Ensure batch_results is always a dict
+        if batch_results is None:
+            batch_results = {"success": False, "error": "batch_results is None", "results_by_as": {}}
+
+        # Try both integer and string key (batch_results uses strings, but target_as might be integer)
+        results_by_as = batch_results.get("results_by_as", {})
+        
+        # Normalize the key - results_by_as uses string keys
+        as_key_str = str(target_as)
+        as_key_int = int(target_as) if str(target_as).isdigit() else target_as
+        
+        # Check which key exists in results_by_as
+        if as_key_str in results_by_as:
+            actual_key = as_key_str
+        elif as_key_int in results_by_as:
+            actual_key = as_key_int
         else:
-            return {
-                "success": False,
-                "error": "Detection failed",
-                "asn": target_as,
-                "analysis_period": f"{start_time} to {end_time}"
+            actual_key = None
+        
+        if batch_results.get("success") and actual_key is not None:
+            as_result = results_by_as[actual_key]
+            # Convert origin_hijacked/forge_hijacked for downstream compatibility
+            # CRITICAL: Add 'success' key to ensure routing_agent can detect success properly
+            result = {
+                "success": True,  # MUST include success=True for routing_agent to process this result
+                "origin_hijacked": as_result.get("origin_hijacked", []),
+                "forge_hijacked": as_result.get("forge_hijacked", []),
+                "total_announcements": as_result.get("total_announcements", 0),
+                "batch_mode": False,
+                "aggregated_alerts": as_result.get("aggregated_alerts", [])
             }
+            return result
+        
+        # If we reach here, something went wrong
+        return {
+            "success": False,
+            "error": "Detection failed - condition not met",
+            "asn": target_as,
+            "analysis_period": f"{start_time} to {end_time}"
+        }
 
     except Exception as e:
         logger.error(f"Hijack detection failed for AS{target_as}: {e}")
@@ -118,6 +157,7 @@ def detect_hijacks(
     save_alerts = True,
     update_workers = 1,
     io_busy_threshold = 85,
+    skip_forge_detection = False,  # 控制是否跳过forge hijack检测（MITM）
 ):
     return detect_hijacks_streaming(
         start_time=start_time,
@@ -127,6 +167,7 @@ def detect_hijacks(
         save_alerts=save_alerts,
         update_workers=update_workers,
         io_busy_threshold=io_busy_threshold,
+        skip_forge_detection=skip_forge_detection,
     )
 
 
@@ -138,8 +179,21 @@ def detect_hijacks_batch(
     save_alerts = True,
     update_workers = 1,
     io_busy_threshold = 85,
+    skip_forge_detection = False,  # 控制是否跳过forge hijack检测（MITM）
+    use_csv_for_origin = True,     # 强制使用CSV做Origin Hijack检测（不使用ES）
 ):
+    """
+    批量劫持检测主函数。
+    
+    重要：Origin Hijack检测始终使用本地CSV文件，不使用ES。
+    只有Forge Hijack（MITM）检测在enable时才会使用ES查询历史连接频率。
+    
+    Args:
+        skip_forge_detection: True=跳过Forge Hijack检测（不使用ES）, False=启用Forge检测
+        use_csv_for_origin: True=Origin Hijack始终用CSV（推荐）
+    """
     logger.info(f"Starting BATCH hijack detection for {len(target_as_list)} AS from {start_time} to {end_time}")
+    logger.info(f"Configuration: skip_forge={skip_forge_detection}, use_csv_for_origin={use_csv_for_origin}")
     
     cleaned_as_list = []
     for asn in target_as_list:
@@ -148,15 +202,17 @@ def detect_hijacks_batch(
     
     logger.info(f"Target AS list: {', '.join(['AS' + asn for asn in cleaned_as_list])}")
 
+    # 加载AS关系数据
     asrel_result = process_asrel(start_time)
     if isinstance(asrel_result, str) and asrel_result and os.path.exists(asrel_result):
         with open(asrel_result, 'r', encoding='utf-8') as f:
             as_relationships_data = json.load(f)
-        logger.info("Successfully loaded AS relationship data from parsed file")
+        logger.info("Successfully loaded AS relationship data")
     else:
         logger.error("Failed to load AS relationship data")
         as_relationships_data = {}
 
+    # 加载前缀映射
     prefix2as_path = process_prefix2as(start_time)
     if prefix2as_path:
         with open(prefix2as_path, 'r', encoding='utf-8') as f:
@@ -166,19 +222,50 @@ def detect_hijacks_batch(
         logger.error("Failed to load prefix-to-AS mappings")
         prefix_to_as = {}
 
+    # 构建目标前缀集合
     prefixes_by_as = get_target_prefixes_batch(cleaned_as_list, prefix_to_as)
     union_target_prefixes = set().union(*prefixes_by_as.values()) if prefixes_by_as else set()
     cleaned_as_set = set(cleaned_as_list)
 
+    # 构建前缀Trie用于子网匹配
     prefix_trie = build_prefix_trie(union_target_prefixes)
 
+    # 预加载全天数据（仅在需要Forge检测时）
     full_day_data = None
-    if validate_with_updates:
-        logger.info("Pre-loading full day BGP data for accurate frequency analysis...")
+    if validate_with_updates and not skip_forge_detection:
+        logger.info("Pre-loading full day BGP data for forge hijack detection...")
         full_day_data = load_full_day_bgp_data(start_time, end_time)
-        logger.info(f"Loaded {len(full_day_data) if full_day_data is not None else 0} BGP announcements for full day analysis")
+        logger.info(f"Loaded {len(full_day_data) if full_day_data is not None else 0} announcements for full day analysis")
 
+    # 前缀所有者映射
     prefix_owner_map = {}
+    for asn, pref_set in prefixes_by_as.items():
+        for p in pref_set:
+            prefix_owner_map.setdefault(p, []).append(asn)
+    
+    for asn in cleaned_as_list:
+        prefix_count = len(prefixes_by_as.get(asn, set()))
+        logger.info(f"AS{asn}: {prefix_count} target prefixes")
+    
+    # 初始化结果
+    batch_results = {}
+    for asn in cleaned_as_list:
+        batch_results[asn] = {
+            "origin_hijacked": [],    # 目标AS被劫持
+            "origin_hijacking": [],   # 目标AS劫持别人
+            "forge_hijack": [],      # MITM攻击（目标AS被攻击）
+            "forge_hijacking": [],    # MITM攻击（目标AS发起攻击）
+            "total_announcements": 0,
+        }
+    
+    total_processed_rows = 0
+    chunk_count = 0
+    memory_peaks = []
+    processing_times = []
+    
+    # ========== 使用CSV流式处理进行Origin Hijack检测 ==========
+    # 重要：始终使用本地CSV文件，不依赖ES
+    logger.info(f"Using CSV streaming for Origin Hijack detection (forge detection: {'skipped' if skip_forge_detection else 'enabled'})")
     for asn, pref_set in prefixes_by_as.items():
         for p in pref_set:
             prefix_owner_map.setdefault(p, []).append(asn)
@@ -190,17 +277,23 @@ def detect_hijacks_batch(
     batch_results = {}
     for asn in cleaned_as_list:
         batch_results[asn] = {
-            "origin_hijack": [],
-            "forge_hijack": [],
+            "origin_hijacked": [],    # 目标AS被劫持
+            "origin_hijacking": [],   # 目标AS劫持别人
+            "forge_hijack": [],      # MITM攻击（目标AS被攻击）
+            "forge_hijacking": [],    # MITM攻击（目标AS发起攻击）
             "total_announcements": 0,
         }
     
-    chunk_count = 0
     total_processed_rows = 0
+    chunk_count = 0
     memory_peaks = []
     processing_times = []
+    
+    # ========== 使用CSV流式处理进行Origin Hijack检测 ==========
+    # 重要：始终使用本地CSV文件，不依赖ES
+    logger.info(f"Using CSV streaming for Origin Hijack detection (forge detection: {'skipped' if skip_forge_detection else 'enabled'})")
 
-    for df_chunk in get_updates_streaming(start_time, end_time, auto_download=True):
+    for df_chunk in get_updates_streaming(start_time, end_time, workers=MAX_WORKERS, io_busy_threshold=IO_BUSY_THRESHOLD, auto_download=True):
         import time
         chunk_start_time = time.time()
 
@@ -212,112 +305,110 @@ def detect_hijacks_batch(
 
         chunk_rows = len(df_chunk)
         logger.info(f"Processing chunk {chunk_count} with {chunk_rows} rows")
-        
-        announcements = df_chunk[df_chunk['A/W'] == 'A']
+
+        # 早期筛选：只保留 Announce 消息并只保留必要列
+        announcements = df_chunk[df_chunk['A/W'] == 'A'][['prefix', 'as-path', 'timestamp']].copy()
         if announcements.empty:
             logger.info(f"Chunk {chunk_count} has no announcements, skipping")
             continue
-        
-        announcements = announcements.copy()
+
+        # 立即释放原始chunk
+        del df_chunk
+        gc.collect()
+
+        # 处理as-path（向量化）
         announcements['as-path'] = announcements['as-path'].apply(remove_consecutive_duplicates)
-        announcements['origin-as'] = announcements['as-path'].str.split().str[-1]
 
-        def is_relevant(row):
-            prefix = row.get('prefix', '')
-            # Check exact match first (faster)
-            if prefix in union_target_prefixes:
-                return True
-            # Check if it's a subnet of any target prefix using trie
-            if is_subnet_of_trie(prefix, prefix_trie):
-                return True
-            # Check AS path relevance
-            path = str(row.get('as-path', '')).split()
-            return any(asn in cleaned_as_set for asn in path)
-
-        announcements = announcements[announcements.apply(is_relevant, axis=1)]
+        # ========== 向量化过滤（优化apply(axis=1)）==========
+        # 条件1: prefix精确匹配
+        mask1 = announcements['prefix'].isin(union_target_prefixes)
+        
+        # 条件2: prefix是子网（使用trie）
+        mask2 = announcements['prefix'].apply(
+            lambda p: is_subnet_of_trie(p, prefix_trie) if p else False
+        )
+        
+        # 条件3: AS路径包含目标AS（向量化操作）
+        mask3 = announcements['as-path'].str.split().apply(
+            lambda tokens: bool(set(tokens) & cleaned_as_set) if tokens else False
+        )
+        
+        # 三条件OR合并
+        announcements = announcements[mask1 | mask2 | mask3]
+        
         if announcements.empty:
             logger.info(f"Chunk {chunk_count}: no relevant announcements after filtering")
             continue
 
-        per_as_rows = {asn: [] for asn in cleaned_as_list}
-
-        for _, row in announcements.iterrows():
-            row_dict = row.to_dict()
-            as_path_tokens = set(str(row_dict.get('as-path', '')).split())
-            prefix = row_dict.get('prefix', '')
-
-            victim_asns = prefix_owner_map.get(prefix, [])
-            for asn in victim_asns:
-                rd = dict(row_dict)
-                rd['ip_related'] = True
-                per_as_rows[asn].append(rd)
-
-            involved_asns = as_path_tokens & cleaned_as_set
-            for asn in involved_asns:
-                rd = dict(row_dict)
-                rd['ip_related'] = False
-                per_as_rows[asn].append(rd)
-
-        for asn, rows in per_as_rows.items():
-            if not rows:
+        # ========== 优化：使用向量化方法替代iterrows ==========
+        # 策略：按AS分组处理，而不是逐行处理
+        
+        # 为每个AS创建过滤后的DataFrame（使用向量化）
+        for asn in cleaned_as_list:
+            asn_str = str(asn)
+            
+            # 条件：该行的AS路径包含当前AS
+            as_mask = announcements['as-path'].str.split().apply(
+                lambda tokens: asn_str in tokens if tokens else False
+            )
+            
+            df_asn = announcements[as_mask].copy()
+            
+            if df_asn.empty:
                 continue
-
-            df_asn = pd.DataFrame(rows)
+            
             batch_results[asn]["total_announcements"] += len(df_asn)
-
+            
+            # Origin Hijack检测（始终执行）
             if not df_asn.empty:
-                forge_alerts, analyzed_df = detect_forge_hijacks(
-                    df_asn,
-                    as_relationships_data,
-                    asn,
-                    hijack_cache_manager,
-                    full_day_data=full_day_data,
-                    prefix_to_as=prefix_to_as
-                )
-
-                for alert in forge_alerts:
-                    try:
+                if skip_forge_detection:
+                    # 跳过forge检测，直接进行origin检测
+                    df_asn['connection_frequency_suspicious'] = False
+                    df_asn['has_fake_connect'] = False
+                    df_asn['fake_connections'] = '[]'
+                    analyzed_df = df_asn
+                else:
+                    # Forge Hijack检测（使用本地数据，不依赖ES）
+                    forge_alerts, analyzed_df = detect_forge_hijacks(
+                        df_asn,
+                        as_relationships_data,
+                        asn,
+                        hijack_cache_manager,
+                        full_day_data=full_day_data,
+                        prefix_to_as=prefix_to_as
+                    )
+                    
+                    for alert in forge_alerts:
                         if isinstance(alert, dict):
                             batch_results[asn]["forge_hijack"].append(alert)
-                    except Exception:
-                        continue
 
                 if not analyzed_df.empty:
-                    clean_df = analyzed_df[
-                        (analyzed_df['connection_frequency_suspicious'] == False) |
-                        (analyzed_df['connection_frequency_suspicious'].isna())
-                    ]
+                    # Origin Hijack检测（按类型分开存储）
+                    origin_hijacks = detect_origin_hijacks(analyzed_df, prefix_to_as, target_as=asn)
+                    if origin_hijacks:
+                        for hijack in origin_hijacks:
+                            hijack_type = hijack.get('hijack_type', 'origin_hijacked')
+                            if hijack_type == 'origin_hijacked':
+                                # 目标AS被劫持
+                                batch_results[asn]["origin_hijacked"].append(hijack)
+                            elif hijack_type == 'origin_hijacking':
+                                # 目标AS劫持别人
+                                batch_results[asn]["origin_hijacking"].append(hijack)
+                            # 其他类型不处理
 
-                    if not clean_df.empty:
-                        origin_hijacks = detect_origin_hijacks(clean_df, prefix_to_as)
-                        if origin_hijacks:
-                            batch_results[asn]["origin_hijack"].extend(origin_hijacks)
-        
-        try:
-            del df_chunk, announcements, per_as_rows
-        except NameError:
-            pass
-        
-        try:
-            del victim_df, attacker_df, df_asn, forge_df, forge_chunk
-        except NameError:
-            pass
-        
-        try:
-            del origin_hijacked_chunk, origin_hijacking_chunk
-        except NameError:
-            pass
-        
+        # 关键：处理完一个chunk后立即释放所有相关内存
+        del announcements
+        gc.collect()
+
         chunk_time = time.time() - chunk_start_time
         processing_times.append(chunk_time)
 
-        if chunk_count % 10 == 0:
-            gc.collect()
-            import psutil
-            memory_mb = psutil.Process().memory_info().rss / 1024 / 1024
-            memory_peaks.append(memory_mb)
-            avg_time = sum(processing_times[-10:]) / len(processing_times[-10:])
-            logger.info(f"Chunk {chunk_count}: {avg_time:.2f}s avg, {memory_mb:.1f}MB memory")
+        # 每个chunk都报告内存使用
+        import psutil
+        memory_mb = psutil.Process().memory_info().rss / 1024 / 1024
+        memory_peaks.append(memory_mb)
+        avg_time = sum(processing_times[-min(10, len(processing_times)):]) / len(processing_times[-min(10, len(processing_times)):])
+        logger.info(f"Chunk {chunk_count}: {avg_time:.2f}s avg, {memory_mb:.1f}MB memory")
 
         total_processed_rows += chunk_rows
         logger.info(f"Chunk {chunk_count}: Processed {chunk_rows} rows for {len(cleaned_as_list)} AS")
@@ -375,7 +466,14 @@ def detect_hijacks_batch(
         for validation_key, group in unique_fake_connections.items():
             try:
                 fake_conn = group['fake_connection']
-                frequency_result = analyze_connection_frequency(fake_conn, start_time.strftime('%Y-%m-%d'), full_day_data)
+                # Use the last_seen timestamp of this connection as the end of the ES 7-day window
+                end_ts = group.get('last_seen', start_time.strftime('%Y-%m-%d'))
+                frequency_result = analyze_connection_frequency(
+                    fake_conn,
+                    start_time.strftime('%Y-%m-%d'),
+                    full_day_data,
+                    end_timestamp=end_ts,
+                )
                 validated_connections[validation_key] = frequency_result
             except Exception as e:
                 logger.warning(f"Error validating connection {validation_key}: {e}")
@@ -419,9 +517,12 @@ def detect_hijacks_batch(
     for asn in cleaned_as_list:
         result_data = batch_results[asn]
         
+        # 所有异常（包括被攻击和攻击别人）
         all_anomalies = (
-            result_data["origin_hijack"]
-            + result_data["forge_hijack"]
+            result_data["origin_hijacked"]     # 目标AS被劫持
+            + result_data["origin_hijacking"]  # 目标AS劫持别人
+            + result_data["forge_hijacked"]    # MITM攻击（被攻击）
+            + result_data["forge_hijacking"]   # MITM攻击（发起攻击）
         )
         aggregated_alerts = aggregate_anomalies(all_anomalies)
         
@@ -429,8 +530,14 @@ def detect_hijacks_batch(
             "success": True,
             "asn": asn,
             "analysis_period": f"{start_time} to {end_time}",
-            "origin_hijack": result_data["origin_hijack"],
-            "forge_hijack": result_data["forge_hijack"],
+            # 目标AS被劫持
+            "origin_hijacked": result_data["origin_hijacked"],
+            # 目标AS劫持别人
+            "origin_hijacking": result_data["origin_hijacking"],
+            # Forge/MITM检测
+            "forge_hijacked": result_data["forge_hijacked"],
+            "forge_hijacking": result_data["forge_hijacking"],
+            # 汇总
             "all_anomalies": all_anomalies,
             "aggregated_alerts": aggregated_alerts,
             "prefix2as_file": prefix2as_path,
@@ -440,8 +547,10 @@ def detect_hijacks_batch(
             "analysis_timestamp": datetime.now().isoformat(),
         }
         
-        logger.info(f"AS{asn} Detection: {len(result_data['origin_hijack'])} origin hijack, "
-                   f"{len(result_data['forge_hijack'])} forge hijack")
+        logger.info(f"AS{asn} Detection: {len(result_data['origin_hijacked'])} origin hijacked, "
+                   f"{len(result_data['origin_hijacking'])} origin hijacking, "
+                   f"{len(result_data['forge_hijacked'])} forge hijacked, "
+                   f"{len(result_data['forge_hijacking'])} forge hijacking")
 
         if save_alerts:
             # Convert datetime objects to strings for save_alert_messages
@@ -452,8 +561,8 @@ def detect_hijacks_batch(
                 asn,
                 start_time_str,
                 end_time_str,
-                result_data["forge_hijack"] ,
-                result_data["origin_hijack"]
+                result_data["forge_hijacked"],
+                result_data["origin_hijacked"]
             )
     
     logger.info(f"Batch detection completed for {len(cleaned_as_list)} AS")
@@ -481,6 +590,7 @@ def detect_hijacks_batch(
         "results_by_as": final_results,
         "analysis_period": f"{start_time} to {end_time}",
         "analysis_timestamp": datetime.now().isoformat(),
+        "data_source": "csv_streaming",
         "performance_stats": {
             "total_chunks": len(processing_times) if 'processing_times' in locals() else 0,
             "total_rows": total_processed_rows if 'total_processed_rows' in locals() else 0,

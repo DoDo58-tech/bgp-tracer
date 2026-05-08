@@ -135,6 +135,11 @@ def generate_comprehensive_report(llm, routing_analysis: Dict[str, Any],
 
         # Extract basic information
         target_as = asn or (reasoning_analysis.get("asn") if isinstance(reasoning_analysis, dict) else "Unknown")
+        # If routing_analysis is batch_mode (results_by_as), resolve to target AS so report shows detected anomalies
+        if isinstance(routing_analysis, dict) and routing_analysis.get("batch_mode") and routing_analysis.get("results_by_as"):
+            _resolved = routing_analysis.get("results_by_as", {}).get(str(target_as), {})
+            if isinstance(_resolved, dict) and ("origin_hijacked" in _resolved or "forge_hijacked" in _resolved):
+                routing_analysis = _resolved
 
         # Determine time range: prefer explicit user_input_time_range, then reasoning/routing/traffic analysis fields
         if user_input_time_range:
@@ -181,23 +186,45 @@ def generate_comprehensive_report(llm, routing_analysis: Dict[str, Any],
 
         routing_section = render_routing_analysis_section(routing_analysis)
 
-        all_anomalies = _collect_all_anomalies(routing_analysis, traffic_analysis)
+        all_anomalies = _get_anomalies(routing_analysis, traffic_analysis)
         anomaly_section = render_anomaly_details_section(all_anomalies)
 
         # Synthesize root cause and recommendations if reasoning analysis does not provide them
         root_cause_data = {}
+        reasoning_trace_text = ""
+        
         if isinstance(reasoning_analysis, dict):
+            # Extract reasoning trace for report
+            reasoning_trace_list = reasoning_analysis.get("reasoning_trace", [])
+            if reasoning_trace_list:
+                reasoning_trace_text = "\n".join(f"- {item}" for item in reasoning_trace_list)
+            
             root_cause_data = reasoning_analysis.get("root_cause_analysis", {}) or {}
-        if not root_cause_data:
+            
+            # Also check final_classification for incident type
+            if not root_cause_data:
+                final_class = reasoning_analysis.get("final_classification", {})
+                if isinstance(final_class, dict):
+                    integrated = final_class.get("integrated_findings", {})
+                    if integrated:
+                        root_cause_data = {
+                            "primary_cause": integrated.get("incident_type", "Unknown"),
+                            "confidence": integrated.get("confidence_level", "medium"),
+                            "contributing_factors": [],
+                            "technical_details": str(integrated)
+                        }
             # Build a simple deterministic root cause summary based on routing/traffic results
             primary_cause = "Unknown"
             if routing_analysis and isinstance(routing_analysis, dict):
-                if routing_analysis.get("total_prefix_hijacks", 0) > 0:
+                hijacks = routing_analysis.get("total_prefix_hijacks", 0)
+                leaks = routing_analysis.get("leak_count", 0)
+                if isinstance(hijacks, (int, float)) and hijacks > 0:
                     primary_cause = "Prefix Hijack(s) detected"
-                elif routing_analysis.get("leak_count", 0) > 0:
+                elif isinstance(leaks, (int, float)) and leaks > 0:
                     primary_cause = "Route Leak(s) detected"
             if primary_cause == "Unknown" and traffic_analysis and isinstance(traffic_analysis, dict):
-                if traffic_analysis.get("anomaly_count", 0) > 0:
+                anomaly_count = traffic_analysis.get("anomaly_count", 0)
+                if isinstance(anomaly_count, (int, float)) and anomaly_count > 0:
                     primary_cause = "Traffic Anomaly detected"
 
             root_cause_data = {
@@ -234,6 +261,18 @@ def generate_comprehensive_report(llm, routing_analysis: Dict[str, Any],
         recommendations_section = render_recommendations_section(recommendations)
 
         technical_details = _prepare_technical_details(reasoning_analysis)
+        
+        # Add reasoning trace to technical details if available
+        if isinstance(reasoning_analysis, dict):
+            reasoning_trace_list = reasoning_analysis.get("reasoning_trace", [])
+            if reasoning_trace_list:
+                technical_details["reasoning_trace"] = "\n".join(f"- {item}" for item in reasoning_trace_list)
+            
+            # Add confidence assessment
+            confidence = reasoning_analysis.get("confidence_assessment", {})
+            if confidence:
+                technical_details["confidence_assessment"] = str(confidence)
+        
         technical_section = render_technical_details_section(technical_details)
 
         # Render complete HTML report
@@ -425,7 +464,14 @@ def make_json_serializable(data: Any) -> Any:
 def _determine_primary_classification(reasoning_analysis: Dict[str, Any]) -> str:
     """Determine primary incident classification."""
     try:
-        # Check for explicit classification
+        # Check for explicit classification in final_classification
+        final_class = reasoning_analysis.get("final_classification", {})
+        if isinstance(final_class, dict):
+            integrated = final_class.get("integrated_findings", {})
+            if "incident_type" in integrated:
+                return integrated["incident_type"]
+        
+        # Check for explicit classification at top level
         if "incident_type" in reasoning_analysis:
             return reasoning_analysis["incident_type"]
 
@@ -525,7 +571,7 @@ def _generate_executive_summary(reasoning_analysis: Dict[str, Any], primary_clas
         return "Analysis completed. See detailed sections below for comprehensive findings."
 
 
-def _collect_all_anomalies(routing_analysis: Dict[str, Any], traffic_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _get_anomalies(routing_analysis, traffic_analysis):
     """Collect all anomalies from routing and traffic analyses."""
     try:
         all_anomalies = []

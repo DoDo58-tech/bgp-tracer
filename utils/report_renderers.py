@@ -118,12 +118,21 @@ def render_routing_analysis_section(routing_data: Dict[str, Any]) -> str:
 
         # Build a concise summary table with available metrics
         summary_rows = []
+        _outage_score = routing_data.get("outage_score")
+        outage_analysis = routing_data.get("outage_analysis", {}) or {}
+        if outage_analysis.get("success") and isinstance(_outage_score, (int, float)):
+            outage_score_display = f"{float(_outage_score):.2f}/1.0"
+        elif not outage_analysis.get("success") and outage_analysis.get("error"):
+            err = (outage_analysis.get("error") or "no data")[:80]
+            outage_score_display = f"N/A (outage check: {err})"
+        else:
+            outage_score_display = "N/A" if _outage_score is None else f"{float(_outage_score):.2f}/1.0"
         metrics = [
             ("Total Prefix Hijacks", routing_data.get("total_prefix_hijacks", 0)),
             ("Total MITM Alerts", routing_data.get("total_mitm_alerts", 0)),
             ("Route Leak Count", routing_data.get("leak_count", routing_data.get("route_leaks_count", 0))),
             ("Outage Suspected", "Yes" if routing_data.get("outage_suspected") else "No"),
-            ("Outage Score", routing_data.get("outage_score", 0))
+            ("Outage Score", outage_score_display),
         ]
         for name, val in metrics:
             summary_rows.append(f"<tr><td>{name}</td><td>{val}</td></tr>")
@@ -433,6 +442,20 @@ def render_technical_details_section(technical_data: Dict[str, Any]) -> str:
                 html += f"<tr><th>{key.replace('_', ' ').title()}</th><td>{value}</td></tr>"
 
         html += "</table>"
+        
+        # Add reasoning trace if available
+        if "reasoning_trace" in technical_data:
+            html += "<h4>LLM Reasoning Trace</h4>"
+            html += "<pre style='background:#f5f5f5;padding:10px;overflow-x:auto;max-height:300px;'>"
+            html += technical_data.get("reasoning_trace", "")
+            html += "</pre>"
+        
+        # Add confidence assessment if available
+        if "confidence_assessment" in technical_data:
+            html += "<h4>Confidence Assessment</h4>"
+            html += "<pre style='background:#f5f5f5;padding:10px;overflow-x:auto;'>"
+            html += technical_data.get("confidence_assessment", "")
+            html += "</pre>"
 
         # Raw data (collapsible) - render JSON safely
         if "raw_data" in technical_data:
@@ -535,17 +558,22 @@ def render_summary_html(target_as: str, time_range: str, detected_time_range: st
             leak_count = len(routing_analysis_data.get("route_leaks", []))
             leak_success = "Yes" if leak_count > 0 else "No"
 
-            # Outage info
-            outage_analysis = routing_analysis_data.get("outage_analysis", {})
+            # Outage info (outage detector runs and computes multi-feature anomaly check; show result or reason not run)
+            outage_analysis = routing_analysis_data.get("outage_analysis", {}) or {}
             if outage_analysis.get("success"):
-                outage_score_val = outage_analysis.get("outage_score", 0)
-                outage_score = f"{outage_score_val:.2f}/1.0"
+                outage_score_val = outage_analysis.get("outage_score")
+                if outage_score_val is None:
+                    outage_score_val = 0.0
+                outage_score = f"{float(outage_score_val):.2f}/1.0"
                 if outage_analysis.get("is_outage_suspected"):
                     outage_status = "🚨 SUSPECTED"
                     outage_color = "#d73027"
                 else:
                     outage_status = "✅ NORMAL"
                     outage_color = "#1a9850"
+            else:
+                err = outage_analysis.get("error", "no BGP update data or insufficient buckets")
+                outage_score = f"N/A ({err[:60]}...)" if len(str(err)) > 60 else f"N/A ({err})"
 
             # Overall routing status
             total_routing_anomalies = (hijack_origin_count + hijack_forge_count +

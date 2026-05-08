@@ -280,6 +280,29 @@ def render_summary_html(
             return "<p>Traffic chart not available in this run.</p>"
         return "<p>No traffic visualization.</p>"
     
+    def _get_hijack_type_style(hijack_type: str) -> dict:
+        """Get color style for different hijack types"""
+        type_styles = {
+            "origin_hijacked": {"color": "#dc3545", "bg": "#f8d7da", "icon": "🎯", "label": "Origin Hijacked (Victim)"},
+            "origin_hijacking": {"color": "#fd7e14", "bg": "#fff3cd", "icon": "⚠️", "label": "Origin Hijacking (Attacker)"},
+            "forge_hijacked": {"color": "#6f42c1", "bg": "#e2d9f3", "icon": "🔗", "label": "Path Forgery (Victim)"},
+            "forge_hijacking": {"color": "#e83e8c", "bg": "#fce4ec", "icon": "🎭", "label": "Path Forgery (Attacker)"},
+        }
+        return type_styles.get(hijack_type, {"color": "#6c757d", "bg": "#e9ecef", "icon": "❓", "label": hijack_type})
+
+    def _format_severity_badge(severity: str, reason: str = "") -> str:
+        """Format severity with appropriate badge style and explanation"""
+        severity_config = {
+            "critical": {"color": "#dc3545", "bg": "#f8d7da", "label": "🔴 CRITICAL"},
+            "high": {"color": "#fd7e14", "bg": "#fff3cd", "label": "🟠 HIGH"},
+            "medium": {"color": "#ffc107", "bg": "#fff9c4", "label": "🟡 MEDIUM"},
+            "low": {"color": "#28a745", "bg": "#d4edda", "label": "🟢 LOW"},
+            "unknown": {"color": "#6c757d", "bg": "#e9ecef", "label": "⚪ UNKNOWN"},
+        }
+        config = severity_config.get(severity.lower(), severity_config["unknown"])
+        reason_html = f"<br/><small style='color:#666;'>{reason}</small>" if reason else ""
+        return f"<span style='background:{config['bg']};color:{config['color']};padding:4px 10px;border-radius:12px;font-weight:bold;font-size:12px;'>{config['label']}</span>{reason_html}"
+
     def routing_evidence_table() -> str:
         """Generate comprehensive routing evidence table with all three detection types"""
         routing_data = routing_analysis or {}
@@ -292,31 +315,160 @@ def render_summary_html(
         for bucket in ["origin_hijacked", "forge_hijacked", "origin_hijacking", "forge_hijacking"]:
             for event in routing_data.get(bucket, []) or []:
                 hijack_events.append((bucket, event))
-        
+        total_hijack_events = len(hijack_events)
+        aggregated_alerts = routing_data.get("aggregated_alerts") or []
+
+        # If no aggregated_alerts but we have raw events, build aggregation by (type, prefix) so we show groups, not raw messages
+        if hijack_events and not aggregated_alerts:
+            from collections import defaultdict
+            key_to_events = defaultdict(list)
+            type_from_bucket = {"origin_hijacked": "origin_hijack", "forge_hijacked": "forged_path_hijack", "origin_hijacking": "origin_hijack", "forge_hijacking": "forged_path_hijack"}
+            for bucket, event in hijack_events:
+                prefix = event.get("prefix") or event.get("parent_prefix") or ""
+                key = (bucket, prefix)
+                key_to_events[key].append(event)
+            for (bucket, prefix), events in key_to_events.items():
+                timestamps = []
+                for e in events:
+                    t = e.get("timestamp") or e.get("first_seen")
+                    if t:
+                        timestamps.append(t)
+                first_seen = min(timestamps) if timestamps else (events[0].get("timestamp") or events[0].get("first_seen") or "")
+                last_seen = max(timestamps) if timestamps else first_seen
+                aggregated_alerts.append({
+                    "type": type_from_bucket.get(bucket, bucket),
+                    "prefix": prefix,
+                    "first_seen": first_seen,
+                    "last_seen": last_seen,
+                    "count": len(events),
+                    "anomalies": events,
+                })
+
         if hijack_events:
             hijack_rows = []
-            for bucket, event in hijack_events[:50]:
-                ts = safe_text(event.get("timestamp") or event.get("first_seen") or "")
-                prefix = safe_text(event.get("prefix") or event.get("parent_prefix") or "")
-                hijacker = safe_text(event.get("hijacker_as") or event.get("most_suspicious_hijacker") or "unknown")
-                victim = safe_text(event.get("victim_as") or event.get("expected_origin") or "unknown")
-                detail_parts = []
-                if event.get("fake_connection"):
-                    detail_parts.append(f"Fake connection: {safe_text(event.get('fake_connection'))}")
-                if event.get("as-path"):
-                    detail_parts.append(f"AS_PATH: {safe_text(event.get('as-path'))}")
-                if event.get("reason"):
-                    detail_parts.append(safe_text(event.get("reason")))
-                detail = "<br>".join(detail_parts) or "N/A"
-                hijack_rows.append(
-                    f"<tr><td>{safe_text(bucket)}</td><td>{ts}</td><td>{prefix}</td>"
-                    f"<td>Hijacker: {hijacker}<br>Victim: {victim}</td><td>{detail}</td></tr>"
-                )
-            
-            hijack_table = f"""
-            <h4 style="color: #d73027; margin-top: 20px;">🚨 Hijack Detection ({len(hijack_events)} events)</h4>
-        <table class="data-table">
-            <thead><tr><th>Type</th><th>Timestamp</th><th>Prefix</th><th>Actors</th><th>Evidence</th></tr></thead>
+            if aggregated_alerts:
+                # Enhanced aggregated alerts display with improved styling
+                for agg in aggregated_alerts:
+                    a_type = agg.get("type", "unknown")
+                    bucket_label = (
+                        "origin_hijacked" if a_type == "origin_hijack" else
+                        "forge_hijacked" if a_type == "forged_path_hijack" else a_type
+                    )
+                    # Get style for this hijack type
+                    type_style = _get_hijack_type_style(bucket_label)
+                    prefix = safe_text(agg.get("prefix", ""))
+                    # Truncate long prefixes for display while keeping full data
+                    display_prefix = prefix[:30] + "..." if len(prefix) > 30 else prefix
+                    first_seen = safe_text(agg.get("first_seen", ""))
+                    last_seen = safe_text(agg.get("last_seen", ""))
+                    # Full time format for display (YYYY-MM-DD HH:MM)
+                    display_first = first_seen[:16] if len(first_seen) > 16 else first_seen
+                    display_last = last_seen[:16] if len(last_seen) > 16 else last_seen
+                    time_range = f"{display_first} → {display_last}" if (first_seen and last_seen) else (first_seen or last_seen or "")
+                    count = agg.get("count", 0)
+                    anomalies_in_group = agg.get("anomalies", [])
+                    first_ev = anomalies_in_group[0] if anomalies_in_group else {}
+                    hijacker_list = first_ev.get("hijacker_as_list")
+                    if hijacker_list and isinstance(hijacker_list, list):
+                        hijacker = ", ".join(str(a) for a in hijacker_list[:3])  # Limit to 3
+                        if len(hijacker_list) > 3:
+                            hijacker += f" <span style='color:#6c757d;'>+{len(hijacker_list)-3} more</span>"
+                    else:
+                        hijacker = safe_text(first_ev.get("hijacker_as") or first_ev.get("origin_as") or "unknown")
+                    victim = safe_text(first_ev.get("victim_as") or first_ev.get("expected_origin") or "unknown")
+                    
+                    # Build evidence details
+                    detail_parts = []
+                    if first_ev.get("fake_connection"):
+                        fake_conn = safe_text(str(first_ev.get('fake_connection'))[:30])
+                        detail_parts.append(f"<span style='color:#dc3545;'>⚠️ Fake: {fake_conn}</span>")
+                    detail_parts.append(f"Count: {count}")
+                    
+                    # Determine severity based on count
+                    if count >= 50:
+                        severity_badge = _format_severity_badge("critical", f"Major incident: {count} announcements")
+                    elif count >= 20:
+                        severity_badge = _format_severity_badge("high", f"Significant: {count} announcements")
+                    elif count >= 5:
+                        severity_badge = _format_severity_badge("medium", f"{count} announcements")
+                    else:
+                        severity_badge = _format_severity_badge("low", f"{count} announcements")
+                    
+                    # Build actors section with AS links
+                    actors_html = f"""
+                    <div style="margin:4px 0;">
+                        <div><strong style="color:#dc3545;">Hijacker:</strong> {hijacker}</div>
+                        <div><strong style="color:#1a9850;">Victim:</strong> {victim}</div>
+                    </div>
+                    """
+                    
+                    detail_html = "<br>".join(detail_parts)
+                    
+                    # Row with type-specific styling
+                    hijack_rows.append(
+                        f"""<tr style="background:{type_style['bg']};border-left:4px solid {type_style['color']};">
+                        <td style="width:12%;">
+                            <span style="background:{type_style['color']};color:white;padding:3px 8px;border-radius:4px;font-size:11px;font-weight:bold;">
+                                {type_style['icon']} {type_style['label']}
+                            </span>
+                        </td>
+                        <td style="width:18%;font-family:monospace;font-size:12px;">{time_range}</td>
+                        <td style="width:14%;font-family:monospace;" title="{prefix}">{display_prefix}</td>
+                        <td style="width:20%;">{actors_html}</td>
+                        <td style="width:16%;">{detail_html}</td>
+                        <td style="width:20%;">{severity_badge}</td>
+                        </tr>"""
+                    )
+                
+                hijack_table = f"""
+            <h4 style="color: #d73027; margin-top: 20px; display:flex; align-items:center; gap:8px;">
+                🚨 Hijack Detection 
+                <span style="background:#d73027;color:white;padding:2px 10px;border-radius:12px;font-size:14px;">{total_hijack_events} events</span>
+                <span style="background:#6c757d;color:white;padding:2px 10px;border-radius:12px;font-size:14px;">{len(aggregated_alerts)} groups</span>
+            </h4>
+        <table class="data-table" style="table-layout:fixed; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+            <thead style="background: linear-gradient(135deg, #d73027, #c82333); color: white;">
+                <tr>
+                    <th style="width:12%; padding:12px;">Type</th>
+                    <th style="width:18%; padding:12px;">Time Range</th>
+                    <th style="width:14%; padding:12px;">Prefix</th>
+                    <th style="width:20%; padding:12px;">Actors</th>
+                    <th style="width:16%; padding:12px;">Evidence</th>
+                    <th style="width:20%; padding:12px;">Severity</th>
+                </tr>
+            </thead>
+                <tbody>{"".join(hijack_rows)}</tbody>
+        </table>
+            """
+            else:
+                # Fallback: show raw events (first 50)
+                for bucket, event in hijack_events[:50]:
+                    ts = safe_text(event.get("timestamp") or event.get("first_seen") or "")
+                    prefix = safe_text(event.get("prefix") or event.get("parent_prefix") or "")
+                    hijacker_list = event.get("hijacker_as_list")
+                    if hijacker_list and isinstance(hijacker_list, list):
+                        hijacker = ", ".join(str(a) for a in hijacker_list)
+                    else:
+                        hijacker = safe_text(event.get("hijacker_as") or event.get("most_suspicious_hijacker") or "unknown")
+                    victim = safe_text(event.get("victim_as") or event.get("expected_origin") or "unknown")
+                    detail_parts = []
+                    if event.get("fake_connection"):
+                        detail_parts.append(f"Fake connection: {safe_text(event.get('fake_connection'))}")
+                    if event.get("as-path"):
+                        detail_parts.append(f"AS_PATH: {safe_text(event.get('as-path'))}")
+                    if event.get("reason"):
+                        detail_parts.append(safe_text(event.get("reason")))
+                    detail = "<br>".join(detail_parts) or "N/A"
+                    hijack_rows.append(
+                        f"<tr><td>{safe_text(bucket)}</td><td style='font-family:monospace;'>{ts}</td><td style='font-family:monospace;'>{prefix}</td>"
+                        f"<td>Hijacker: {hijacker}<br>Victim: {victim}</td><td>{detail}</td></tr>"
+                    )
+                showing = min(50, total_hijack_events)
+                show_label = f"showing all {showing}" if showing == total_hijack_events else f"showing first {showing}"
+                hijack_table = f"""
+            <h4 style="color: #d73027; margin-top: 20px;">🚨 Hijack Detection ({total_hijack_events} events, {show_label})</h4>
+        <table class="data-table" style="table-layout:fixed;">
+            <thead><tr><th style="width:14%;">Type</th><th style="width:18%;">Timestamp</th><th style="width:18%;">Prefix</th><th style="width:22%;">Actors</th><th style="width:28%;">Evidence</th></tr></thead>
                 <tbody>{"".join(hijack_rows)}</tbody>
         </table>
             """
@@ -331,19 +483,44 @@ def render_summary_html(
                 prefix = safe_text(leak.get("prefix") or "")
                 origin_as = safe_text(leak.get("origin-as") or leak.get("origin_as") or "")
                 as_path = safe_text(leak.get("as-path") or leak.get("as_path") or "")
-                leak_prob = safe_text(f"{leak.get('leak_probability', 0):.2f}")
+                leak_prob = leak.get('leak_probability', 0)
                 detection_method = safe_text(leak.get("detection_method", "PathProb"))
                 
+                # Color code leak probability
+                if leak_prob >= 0.8:
+                    prob_color = "#dc3545"
+                    prob_badge = f"<span style='background:#f8d7da;color:#dc3545;padding:2px 8px;border-radius:10px;font-size:11px;'>High {leak_prob:.2f}</span>"
+                elif leak_prob >= 0.5:
+                    prob_color = "#fd7e14"
+                    prob_badge = f"<span style='background:#fff3cd;color:#fd7e14;padding:2px 8px;border-radius:10px;font-size:11px;'>Med {leak_prob:.2f}</span>"
+                else:
+                    prob_color = "#28a745"
+                    prob_badge = f"<span style='background:#d4edda;color:#28a745;padding:2px 8px;border-radius:10px;font-size:11px;'>Low {leak_prob:.2f}</span>"
+                
                 leak_rows.append(
-                    f"<tr><td>{ts}</td><td>{prefix}</td><td>{origin_as}</td>"
-                    f"<td>Probability: {leak_prob}<br>Method: {detection_method}</td>"
-                    f"<td>{as_path}</td></tr>"
+                    f"""<tr style="border-left:3px solid {prob_color};">
+                    <td style="font-family:monospace;font-size:12px;width:15%;">{ts[:16] if len(ts) > 16 else ts}</td>
+                    <td style="font-family:monospace;width:14%;" title="{prefix}">{prefix[:18] + '...' if len(prefix) > 18 else prefix}</td>
+                    <td style="font-family:monospace;width:10%;">{origin_as}</td>
+                    <td style="width:12%;">{prob_badge}<br/><small style="color:#666;">{detection_method}</small></td>
+                    <td style="font-family:monospace;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{as_path}">{as_path[:30] + '...' if len(as_path) > 30 else as_path}</td></tr>"""
                 )
             
             leak_table = f"""
-            <h4 style="color: #fc8d59; margin-top: 20px;">⚠️ Route Leak Detection ({len(route_leaks)} events)</h4>
-            <table class="data-table">
-                <thead><tr><th>Timestamp</th><th>Prefix</th><th>Origin AS</th><th>Leak Info</th><th>AS_PATH</th></tr></thead>
+            <h4 style="color: #fc8d59; margin-top: 20px; display:flex; align-items:center; gap:8px;">
+                ⚠️ Route Leak Detection 
+                <span style="background:#fc8d59;color:white;padding:2px 10px;border-radius:12px;font-size:14px;">{len(route_leaks)} events</span>
+            </h4>
+            <table class="data-table" style="table-layout:fixed; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                <thead style="background: linear-gradient(135deg, #fc8d59, #e67e22); color: white;">
+                    <tr>
+                        <th style="width:15%; padding:12px;">Timestamp</th>
+                        <th style="width:14%; padding:12px;">Prefix</th>
+                        <th style="width:10%; padding:12px;">Origin AS</th>
+                        <th style="width:12%; padding:12px;">Leak Probability</th>
+                        <th style="width:49%; padding:12px;">AS_PATH</th>
+                    </tr>
+                </thead>
                 <tbody>{"".join(leak_rows)}</tbody>
             </table>
             """
@@ -355,26 +532,136 @@ def render_summary_html(
             outage_score = outage_analysis.get("outage_score", 0)
             is_outage = outage_analysis.get("is_outage_suspected", False)
             indicators = outage_analysis.get("indicators", [])
-            event_features = outage_analysis.get("event_features", {})
-            baseline_features = outage_analysis.get("baseline_features", {})
             anomalies = outage_analysis.get("anomalies", []) or []
+            outage_error = outage_analysis.get("error", "")
+            outage_note = outage_analysis.get("note", "")
+            no_data = bool(outage_error or outage_note)
+            feature_scores = outage_analysis.get("feature_scores", {}) or {}
             
             # Color based on outage score
             score_color = "#d73027" if is_outage else "#1a9850"
             score_label = "🚨 OUTAGE SUSPECTED" if is_outage else "✅ No Outage"
             
-            # Build indicator list
-            indicator_items = "".join([f"<li>{safe_text(ind)}</li>" for ind in indicators])
+            # Build indicator list - only include meaningful indicators (use ratio_valid from detector)
+            meaningful_indicators = []
+            na_indicators = []
             
-            # Build feature comparison
-            feature_rows = []
-            for key in ["announcement_count", "withdrawal_count", "flapping_prefix_count", "unique_prefix_count"]:
-                event_val = event_features.get(key, 0)
-                baseline_val = baseline_features.get(key, 0)
-                ratio = (event_val / baseline_val * 100) if baseline_val > 0 else 0
-                feature_rows.append(
-                    f"<tr><td>{safe_text(key)}</td><td>{event_val}</td><td>{baseline_val}</td><td>{ratio:.1f}%</td></tr>"
+            for ind in indicators:
+                # Check if this indicator has valid ratio (baseline > 0)
+                feat_name = ind
+                fs = feature_scores.get(feat_name, {})
+                ratio_valid = fs.get("ratio_valid", True)
+                
+                if ratio_valid:
+                    meaningful_indicators.append(ind)
+                else:
+                    na_indicators.append(ind)
+            
+            # Indicator descriptions in Chinese
+            indicator_labels = {
+                "announcement_drop": "公告数量显著下降",
+                "withdrawal_surge": "撤回消息激增",
+                "flapping_spike": "路由抖动加剧",
+                "prefix_disappearance": "前缀消失",
+                "timeseries_anomaly": "时序异常",
+                "message_drop": "消息丢失"
+            }
+            
+            indicator_items = "".join([f"<li><strong>{ind}</strong>: {indicator_labels.get(ind, '')}</li>" for ind in meaningful_indicators]) if meaningful_indicators else ""
+            
+            # Add note about N/A indicators
+            na_note = ""
+            if na_indicators:
+                na_indicators_str = ", ".join([f"<code>{ind}</code>" for ind in na_indicators])
+                na_note = f"<li style='color:#6c757d;margin-top:8px;'><strong>⚠️ Excluded (no meaningful data):</strong> {na_indicators_str} - baseline=0, ratio is invalid</li>"
+            
+            if no_data and not indicator_items:
+                indicator_items = f"<li style='color:#666;'>Outage detection was not run: no decoded BGP update data for this AS/time window. {safe_text(outage_error or outage_note)}</li>"
+            
+            # ============ Feature Detection Rules Table ============
+            detection_rules = [
+                {"name": "announcement_drop", "formula": "event_val / baseline_mean", "condition": "ratio < 0.5", "weight": 0.3},
+                {"name": "withdrawal_surge", "formula": "event_val / baseline_mean", "condition": "ratio > 4.0", "weight": 0.25},
+                {"name": "flapping_spike", "formula": "event_val / baseline_mean", "condition": "ratio > 3.0 AND count > 20", "weight": 0.2},
+                {"name": "prefix_disappearance", "formula": "event_val / baseline_mean", "condition": "ratio < 0.6", "weight": 0.15},
+                {"name": "timeseries_anomaly", "formula": "|z-score| >= 3.0", "condition": "anomaly points detected", "weight": 0.2},
+                {"name": "message_drop", "formula": "event_val / baseline_mean", "condition": "ratio < 0.5", "weight": 0.1},
+            ]
+            
+            detection_rules_rows = []
+            for rule in detection_rules:
+                rule_name = rule["name"]
+                fs = feature_scores.get(rule_name, {})
+                triggered = fs.get("triggered", False)
+                ratio_valid = fs.get("ratio_valid", True)  # New field from detector
+                event_val = fs.get("event_val", "-")
+                baseline_val = fs.get("baseline_mean", "-")
+                ratio_val = fs.get("ratio", "-")
+                z_score = fs.get("z_score", "-")
+                
+                # Format values
+                if isinstance(event_val, (int, float)):
+                    event_val = f"{event_val:.0f}"
+                if isinstance(baseline_val, (int, float)):
+                    baseline_val = f"{baseline_val:.1f}"
+                if isinstance(ratio_val, (int, float)):
+                    ratio_val = f"{ratio_val:.2f}"
+                if isinstance(z_score, (int, float)):
+                    z_score = f"{z_score:.2f}"
+                
+                # Enhanced styling for triggered rows
+                if triggered:
+                    row_bg = "#fff3cd"
+                    status_text = f"<span style='background:#28a745;color:white;padding:2px 8px;border-radius:10px;font-size:11px;'>TRIGGERED</span>"
+                    row_border = "border-left:4px solid #28a745;"
+                elif not ratio_valid:
+                    # Data not valid (baseline=0)
+                    row_bg = "#f8f9fa"
+                    status_text = f"<span style='background:#6c757d;color:white;padding:2px 8px;border-radius:10px;font-size:11px;'>N/A</span>"
+                    row_border = "border-left:4px solid #6c757d;"
+                else:
+                    row_bg = ""
+                    status_text = f"<span style='background:#e9ecef;color:#6c757d;padding:2px 8px;border-radius:10px;font-size:11px;'>Normal</span>"
+                    row_border = ""
+                
+                # Show N/A for values when ratio is not valid
+                display_event = event_val if ratio_valid else "N/A"
+                display_baseline = baseline_val if ratio_valid else "N/A"
+                display_ratio = ratio_val if ratio_valid else "N/A"
+                display_z = z_score if ratio_valid else "N/A"
+                
+                detection_rules_rows.append(
+                    f"<tr style='background:{row_bg};{row_border}'>"
+                    f"<td style='font-weight:bold;padding:8px;'>{rule_name}</td>"
+                    f"<td style='font-family:monospace;font-size:11px;padding:8px;color:#495057;'>{rule['formula']}</td>"
+                    f"<td style='font-family:monospace;font-size:11px;padding:8px;color:#6c757d;'>{rule['condition']}</td>"
+                    f"<td style='text-align:center;padding:8px;'><span style='background:#e9ecef;padding:2px 6px;border-radius:4px;'>{rule['weight']}</span></td>"
+                    f"<td style='text-align:center;padding:8px;'>{status_text}</td>"
+                    f"<td style='font-family:monospace;padding:8px;text-align:center;'>{display_event}</td>"
+                    f"<td style='font-family:monospace;padding:8px;text-align:center;'>{display_baseline}</td>"
+                    f"<td style='font-family:monospace;padding:8px;text-align:center;'>{display_ratio}</td>"
+                    f"<td style='font-family:monospace;padding:8px;text-align:center;'>{display_z}</td>"
+                    f"</tr>"
                 )
+            
+            detection_rules_table = f"""
+            <table class="data-table" style="table-layout:fixed; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                <thead style="background: linear-gradient(135deg, #6c757d, #495057); color: white;">
+                    <tr>
+                        <th style="width:14%; padding:10px;">Indicator</th>
+                        <th style="width:16%; padding:10px;">Formula</th>
+                        <th style="width:14%; padding:10px;">Condition</th>
+                        <th style="width:6%; padding:10px;">Weight</th>
+                        <th style="width:8%; padding:10px;">Triggered</th>
+                        <th style="width:12%; padding:10px;">Event Value</th>
+                        <th style="width:12%; padding:10px;">Baseline</th>
+                        <th style="width:8%; padding:10px;">Ratio</th>
+                        <th style="width:10%; padding:10px;">Z-Score</th>
+                    </tr>
+                </thead>
+                <tbody>{"".join(detection_rules_rows)}</tbody>
+            </table>
+            """
             
             # Build anomaly analysis table
             anomaly_rows = []
@@ -393,16 +680,19 @@ def render_summary_html(
                         }
                     anomaly_summary[feature]["count"] += 1
                     z_score = abs(anomaly.get("z_score", 0))
+                    # event_value is used by extract_event_features.py
+                    event_val = anomaly.get("event_value", anomaly.get("value"))
                     if z_score > anomaly_summary[feature]["max_z_score"]:
                         anomaly_summary[feature]["max_z_score"] = z_score
-                        anomaly_summary[feature]["max_value"] = anomaly.get("value")
+                        anomaly_summary[feature]["max_value"] = event_val
                         anomaly_summary[feature]["baseline_mean"] = anomaly.get("baseline_mean")
                 
                 # Show detailed anomalies (limit to first 20 for readability)
                 for anomaly in anomalies[:20]:
                     timestamp = safe_text(anomaly.get("timestamp", ""))
                     feature = safe_text(anomaly.get("feature", "unknown"))
-                    value = anomaly.get("value", anomaly.get("event_value", ""))
+                    # event_value is used by extract_event_features.py
+                    event_val = anomaly.get("event_value", anomaly.get("value", ""))
                     baseline_mean = anomaly.get("baseline_mean", "")
                     z_score = anomaly.get("z_score", 0)
                     anomaly_type = safe_text(anomaly.get("anomaly_type", "unknown"))
@@ -410,7 +700,7 @@ def render_summary_html(
                     
                     # Format z-score
                     z_display = f"{z_score:.2f}" if isinstance(z_score, (int, float)) else str(z_score)
-                    value_display = f"{value:.2f}" if isinstance(value, (int, float)) else str(value)
+                    value_display = f"{event_val:.2f}" if isinstance(event_val, (int, float)) else str(event_val)
                     mean_display = f"{baseline_mean:.2f}" if isinstance(baseline_mean, (int, float)) else str(baseline_mean)
                     
                     anomaly_rows.append(
@@ -452,6 +742,57 @@ def render_summary_html(
                 """
             
             anomaly_table_html = ""
+            triggered_features = []  # 收集有意义数据且触发的特征
+            no_data_features = []   # 收集数据不可用的特征
+            
+            # 从 feature_scores 中收集已触发的指标
+            if feature_scores:
+                for feat_name, feat_data in feature_scores.items():
+                    if feat_data.get("triggered", False):
+                        ratio_valid = feat_data.get("ratio_valid", True)
+                        event_val = feat_data.get("event_val", "-")
+                        baseline_val = feat_data.get("baseline_mean", "-")
+                        ratio_val = feat_data.get("ratio", "-")
+                        z_score_val = feat_data.get("z_score", "-")
+                        
+                        # 格式化显示
+                        if isinstance(event_val, (int, float)):
+                            event_val = f"{event_val:.0f}"
+                        if isinstance(baseline_val, (int, float)):
+                            baseline_val = f"{baseline_val:.1f}"
+                        if isinstance(ratio_val, (int, float)):
+                            ratio_val = f"{ratio_val:.2f}"
+                        if isinstance(z_score_val, (int, float)):
+                            z_score_val = f"{z_score_val:.2f}"
+                        
+                        # 获取特征对应的描述
+                        feat_descriptions = {
+                            "announcement_drop": "公告数量显著下降",
+                            "withdrawal_surge": "撤回消息激增",
+                            "flapping_spike": "路由抖动加剧",
+                            "prefix_disappearance": "前缀消失",
+                            "timeseries_anomaly": "时序异常",
+                            "message_drop": "消息丢失"
+                        }
+                        desc = feat_descriptions.get(feat_name, feat_name)
+                        
+                        feat_info = {
+                            "feature": feat_name,
+                            "description": desc,
+                            "event_val": event_val if ratio_valid else "N/A",
+                            "baseline_val": baseline_val if ratio_valid else "N/A",
+                            "ratio": ratio_val if ratio_valid else "N/A",
+                            "z_score": z_score_val if ratio_valid else "N/A",
+                            "is_meaningful": ratio_valid,
+                            "orig_ratio": feat_data.get("ratio", 0)
+                        }
+                        
+                        if ratio_valid:
+                            triggered_features.append(feat_info)
+                        else:
+                            no_data_features.append(feat_info)
+            
+            # 优先使用 timeseries 检测到的 anomalies
             if anomaly_rows:
                 # Get anomaly time window from outage_analysis
                 anomaly_time_window = safe_text(outage_analysis.get('anomaly_time_window', outage_analysis.get('analysis_period', 'unknown')))
@@ -459,23 +800,153 @@ def render_summary_html(
                 anomaly_table_html = f"""
                 <h5>Feature Anomaly Analysis ({len(anomalies)} anomalies detected in period [{anomaly_time_window}]):</h5>
                 {feature_summary_html}
-                <table class="data-table">
-                    <thead>
+                <table class="data-table" style="table-layout:fixed; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+                    <thead style="background: linear-gradient(135deg, #d73027, #c82333); color: white;">
                         <tr>
-                            <th>Timestamp</th>
-                            <th>Feature</th>
-                            <th>Event Value</th>
-                            <th>Baseline Mean</th>
-                            <th>Z-Score</th>
-                            <th>Anomaly Type</th>
-                            <th>Severity</th>
+                            <th style="width:15%; padding:12px;">Timestamp</th>
+                            <th style="width:15%; padding:12px;">Feature</th>
+                            <th style="width:14%; padding:12px;">Event Value</th>
+                            <th style="width:14%; padding:12px;">Baseline</th>
+                            <th style="width:10%; padding:12px;">Z-Score</th>
+                            <th style="width:16%; padding:12px;">Anomaly Type</th>
+                            <th style="width:16%; padding:12px;">Severity</th>
                         </tr>
                     </thead>
                     <tbody>{"".join(anomaly_rows)}</tbody>
                 </table>
                 """
+            elif triggered_features:
+                # 有触发的特征指标，但 timeseries anomalies 为空
+                # 从 triggered_features 构建显示（有意义的异常）
+                triggered_rows = []
+                for feat in triggered_features:
+                    feat_name = feat["feature"]
+                    event_val = feat["event_val"]
+                    baseline_val = feat["baseline_val"]
+                    ratio_val = feat["ratio"]
+                    orig_ratio = feat.get("orig_ratio", 0)
+                    
+                    # 计算动态 severity 基于 ratio
+                    if feat_name == "prefix_disappearance":
+                        if orig_ratio < 0.1:
+                            severity = "critical"
+                            severity_reason = f"Almost all prefixes disappeared (ratio={orig_ratio:.2f})"
+                        elif orig_ratio < 0.3:
+                            severity = "high"
+                            severity_reason = f"Most prefixes disappeared (ratio={orig_ratio:.2f})"
+                        elif orig_ratio < 0.6:
+                            severity = "medium"
+                            severity_reason = f"Some prefixes disappeared (ratio={orig_ratio:.2f})"
+                        else:
+                            severity = "low"
+                            severity_reason = f"Minor prefix changes (ratio={orig_ratio:.2f})"
+                        a_type = "prefix_drop"
+                    elif feat_name == "message_drop":
+                        if orig_ratio < 0.1:
+                            severity = "critical"
+                            severity_reason = f"Message traffic dropped to near zero (ratio={orig_ratio:.2f})"
+                        elif orig_ratio < 0.3:
+                            severity = "high"
+                            severity_reason = f"Significant message drop (ratio={orig_ratio:.2f})"
+                        elif orig_ratio < 0.5:
+                            severity = "medium"
+                            severity_reason = f"Moderate message drop (ratio={orig_ratio:.2f})"
+                        else:
+                            severity = "low"
+                            severity_reason = f"Minor message changes (ratio={orig_ratio:.2f})"
+                        a_type = "message_decrease"
+                    else:
+                        severity = "medium"
+                        severity_reason = "Based on threshold detection"
+                        a_type = "unknown"
+                    
+                    # 获取特征对应的中文描述
+                    feat_descriptions = {
+                        "announcement_drop": "公告数量显著下降",
+                        "withdrawal_surge": "撤回消息激增",
+                        "flapping_spike": "路由抖动加剧",
+                        "prefix_disappearance": "前缀消失",
+                        "timeseries_anomaly": "时序异常",
+                        "message_drop": "消息丢失"
+                    }
+                    desc = feat_descriptions.get(feat_name, feat_name)
+                    
+                    # 获取 severity badge
+                    severity_badge = _format_severity_badge(severity, severity_reason)
+                    
+                    # 获取异常类型的中文标签
+                    anomaly_type_labels = {
+                        "prefix_drop": "前缀消失",
+                        "message_decrease": "消息下降",
+                        "announcement_decrease": "公告下降",
+                        "withdrawal_increase": "撤回增加",
+                        "flapping_increase": "路由抖动",
+                        "timeseries_deviation": "时序偏离",
+                        "unknown": "未知异常"
+                    }
+                    a_type_label = anomaly_type_labels.get(a_type, a_type)
+                    
+                    triggered_rows.append(
+                        f"""<tr style="background: #fff8f8; border-left:4px solid #d73027;">
+                        <td style="text-align:center;color:#999;">N/A</td>
+                        <td>
+                            <strong style="color:#d73027;">{feat_name}</strong><br/>
+                            <small style="color:#666;">{desc}</small>
+                        </td>
+                        <td style="font-family:monospace;text-align:center;">{event_val}</td>
+                        <td style="font-family:monospace;text-align:center;">{baseline_val}</td>
+                        <td style="font-family:monospace;text-align:center;">{ratio_val}</td>
+                        <td style="text-align:center;">{a_type_label}</td>
+                        <td style="text-align:center;">{severity_badge}</td>
+                        </tr>"""
+                    )
+                
+                # 构建无数据特征提示
+                no_data_section = ""
+                if no_data_features:
+                    no_data_items = []
+                    for nd_feat in no_data_features:
+                        feat_descriptions = {
+                            "prefix_disappearance": "前缀消失",
+                            "message_drop": "消息丢失",
+                            "announcement_drop": "公告数量下降",
+                            "withdrawal_surge": "撤回消息激增",
+                            "flapping_spike": "路由抖动加剧",
+                            "timeseries_anomaly": "时序异常"
+                        }
+                        desc = feat_descriptions.get(nd_feat["feature"], nd_feat["feature"])
+                        no_data_items.append(f"<li><strong>{nd_feat['feature']}</strong> ({desc}): 基线和事件值都为0，无法判断</li>")
+                    
+                    no_data_section = f"""
+                    <div style="background:#f8f9fa;padding:12px;border-radius:6px;margin-top:12px;border-left:4px solid #6c757d;">
+                        <p style="margin:0 0 8px 0;"><strong>⚪ Data Not Available:</strong> The following features were marked as 'triggered' by the detector but have no meaningful data (both baseline=0 and event=0):</p>
+                        <ul style="margin:0;padding-left:20px;color:#6c757d;">{"".join(no_data_items)}</ul>
+                    </div>
+                    """
+                
+                anomaly_table_html = f"""
+                <h5>Feature Anomaly Analysis ({len(triggered_features)} real anomalies detected, {len(no_data_features)} features with no data):</h5>
+                <p style="color: #856404; background:#fff3cd; padding:10px; border-radius:4px; border-left:4px solid #ffc107;">
+                    <strong>ℹ️ Note:</strong> Time series anomaly detection returned no detailed results. The following features showed significant anomalies based on threshold detection.
+                </p>
+                {no_data_section}
+                <table class="data-table" style="table-layout:fixed; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.1); margin-top:12px;">
+                    <thead style="background: linear-gradient(135deg, #fd7e14, #e65c00); color: white;">
+                        <tr>
+                            <th style="width:10%; padding:12px;">Time</th>
+                            <th style="width:18%; padding:12px;">Feature</th>
+                            <th style="width:12%; padding:12px;">Event Value</th>
+                            <th style="width:12%; padding:12px;">Baseline</th>
+                            <th style="width:10%; padding:12px;">Ratio</th>
+                            <th style="width:16%; padding:12px;">Anomaly Type</th>
+                            <th style="width:22%; padding:12px;">Severity</th>
+                        </tr>
+                    </thead>
+                    <tbody>{"".join(triggered_rows)}</tbody>
+                </table>
+                """
             else:
-                # No anomalies detected or anomalies list is empty
+                # 完全没有异常
                 anomaly_table_html = """
                 <h5>Feature Anomaly Analysis:</h5>
                 <p style="color: #1a9850;">✅ No significant feature anomalies detected in the time series analysis.</p>
@@ -486,25 +957,90 @@ def render_summary_html(
             baseline_period = safe_text(outage_analysis.get('baseline_period', 'N/A'))
             unique_features = outage_analysis.get('unique_features_with_anomalies', [])
             
+            no_data_msg = f"<p style='color:#666;'><strong>Note:</strong> {safe_text(outage_error or outage_note)}</p>" if no_data else ""
+            
+            # Also add sliding window scores if available
+            sliding_info = ""
+            if outage_analysis.get("outage_score_sliding_max"):
+                sliding_info = f"<p><strong>Sliding Window:</strong> Max={outage_analysis.get('outage_score_sliding_max', 0):.2f}, Avg={outage_analysis.get('outage_score_sliding_avg', 0):.2f}</p>"
+            
+            # Generate outage score visualization
+            score_percent = int(outage_score * 100)
+            score_bar_color = "#dc3545" if outage_score >= 0.5 else "#fd7e14" if outage_score >= 0.25 else "#28a745"
+            
+            # Determine status indicator
+            if is_outage:
+                status_indicator = f"""
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                    <div style="background:{score_color};color:white;padding:8px 20px;border-radius:20px;font-weight:bold;font-size:16px;">
+                        🚨 OUTAGE SUSPECTED
+                    </div>
+                    <div style="flex:1;max-width:300px;">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                            <span style="font-weight:bold;">Outage Score</span>
+                            <span style="font-weight:bold;">{outage_score:.2f}/1.0</span>
+                        </div>
+                        <div style="background:#e9ecef;border-radius:10px;height:20px;overflow:hidden;">
+                            <div style="background:{score_bar_color};width:{score_percent}%;height:100%;border-radius:10px;transition:width 0.5s;"></div>
+                        </div>
+                    </div>
+                </div>
+                """
+            else:
+                status_indicator = f"""
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                    <div style="background:#28a745;color:white;padding:8px 20px;border-radius:20px;font-weight:bold;font-size:16px;">
+                        ✅ NO OUTAGE
+                    </div>
+                    <div style="flex:1;max-width:300px;">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+                            <span style="font-weight:bold;">Outage Score</span>
+                            <span style="font-weight:bold;">{outage_score:.2f}/1.0</span>
+                        </div>
+                        <div style="background:#e9ecef;border-radius:10px;height:20px;overflow:hidden;">
+                            <div style="background:{score_bar_color};width:{score_percent}%;height:100%;border-radius:10px;"></div>
+                        </div>
+                    </div>
+                </div>
+                """
+            
             outage_table = f"""
-            <h4 style="color: {score_color}; margin-top: 20px;">📊 Outage Detection</h4>
-            <div style="background: #f0f0f0; padding: 12px; border-radius: 6px; margin-bottom: 12px;">
-                <p><strong>Status:</strong> <span style="color: {score_color}; font-weight: bold;">{score_label}</span></p>
-                <p><strong>Outage Score:</strong> {outage_score:.2f}/1.0</p>
-                <p><strong>Score Calculation:</strong> The outage score is calculated based on multiple indicators: announcement drop (0.3 weight), withdrawal surge (0.25 weight), flapping spike (0.2 weight), prefix disappearance (0.15 weight), timeseries anomalies (0.2 weight), and message drop (0.1 weight). Scores are summed and capped at 1.0. A score ≥0.25 indicates suspected outage.</p>
-                <p><strong>Anomaly Time Window:</strong> <span style="color: #d73027; font-weight: bold;">{anomaly_time_window}</span> (traffic anomaly period)</p>
-                <p><strong>Baseline Period:</strong> {baseline_period}</p>
-                <p><strong>Features with Anomalies:</strong> {', '.join([safe_text(f) for f in unique_features]) if unique_features else 'None'}</p>
+            <h4 style="color: #d73027; margin-top: 20px; display:flex; align-items:center; gap:8px;">
+                📊 Outage Detection
+                {f'<span style="background:#d73027;color:white;padding:2px 10px;border-radius:12px;font-size:14px;">Score: {outage_score:.2f}</span>' if is_outage else ''}
+            </h4>
+            <div style="background: linear-gradient(135deg, #f8f9fa, #e9ecef); padding: 16px; border-radius: 8px; margin-bottom: 16px; border-left:4px solid {score_color};">
+                {status_indicator}
+                {sliding_info}
+                {no_data_msg}
+                <div style="background:white;padding:12px;border-radius:6px;margin-top:12px;">
+                    <p style="margin:4px 0;"><strong>📋 Score Calculation:</strong></p>
+                    <p style="margin:4px 0;font-size:13px;color:#666;">
+                        Based on: announcement drop (0.3), withdrawal surge (0.25), flapping spike (0.2), 
+                        prefix disappearance (0.15), timeseries anomalies (0.2), message drop (0.1).
+                        Score ≥0.25 indicates suspected outage.
+                    </p>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+                    <div style="background:white;padding:12px;border-radius:6px;">
+                        <p style="margin:0;"><strong>Anomaly Time Window:</strong></p>
+                        <p style="margin:4px 0 0 0;color:#d73027;font-weight:bold;">{anomaly_time_window}</p>
+                    </div>
+                    <div style="background:white;padding:12px;border-radius:6px;">
+                        <p style="margin:0;"><strong>Baseline Period:</strong></p>
+                        <p style="margin:4px 0 0 0;color:#666;">{baseline_period}</p>
+                    </div>
+                </div>
             </div>
             
-            <h5>Outage Indicators:</h5>
-            <ul>{indicator_items if indicator_items else "<li>No indicators detected</li>"}</ul>
+            <h5 style="color:#495057;margin-top:24px;">🔍 Feature Detection Rules</h5>
+            {detection_rules_table}
             
-            <h5>Feature Comparison (Event vs Baseline):</h5>
-            <table class="data-table">
-                <thead><tr><th>Feature</th><th>Event Value</th><th>Baseline Value</th><th>Ratio %</th></tr></thead>
-                <tbody>{"".join(feature_rows)}</tbody>
-            </table>
+            <h5 style="color:#495057;margin-top:24px;">📌 Outage Indicators:</h5>
+            <ul style="background:#fff3cd;padding:12px 12px 12px 32px;border-radius:6px;border-left:4px solid #ffc107;">
+                {indicator_items if indicator_items else "<li>No meaningful indicators detected</li>"}
+                {na_note}
+            </ul>
             
             {anomaly_table_html}
             """
@@ -817,8 +1353,8 @@ def render_summary_html(
                 <div style="background: #ffe8d6; border-left: 4px solid #fc8d59; padding: 12px; border-radius: 4px;">
                     <h4 style="margin-top: 0; color: #fc8d59;">⚠️ Route Leak Detection</h4>
                     <p style="margin: 8px 0;"><strong>Leaks Detected:</strong> {len(routing_analysis.get("route_leaks", []) or [])}</p>
-                    <p style="margin: 8px 0;"><strong>Detection Success:</strong> {safe_text("Yes" if routing_analysis.get("leak_detection_success") else "No")}</p>
-                    {f'<p style="margin: 8px 0; color: #d73027;"><strong>Error:</strong> {safe_text(routing_analysis.get("leak_detection_error"))}</p>' if routing_analysis.get("leak_detection_error") else ""}
+                    <p style="margin: 8px 0;"><strong>Data Source:</strong> {safe_text(routing_analysis.get("leak_data_source", "CSV streaming"))}</p>
+                    {f'<p style="margin: 8px 0; color: #d73027;"><strong>Error:</strong> {safe_text(routing_analysis.get("leak_detection_error"))}</p>' if routing_analysis.get("leak_detection_error") else '<p style="margin: 8px 0;"><strong>Status:</strong> ✅ Analysis completed</p>'}
                 </div>
                 
                 <!-- Outage Detection Summary -->
@@ -1044,10 +1580,16 @@ def generate_batch_html_report(
                 prefix = html.escape(str(alert.get("prefixes", alert.get("prefix", 'unknown'))))
                 a_type = html.escape(str(alert.get("type", "unknown")))
                 victim = html.escape(str(alert.get("victim_as", "unknown")))
-                hijackers = alert.get("hijackers", alert.get("hijacker_as"))
-                if isinstance(hijackers, (list, set, tuple)):
-                    hijackers = ", ".join(str(h) for h in hijackers if h)
-                hijackers = html.escape(str(hijackers or "unknown"))
+                # 优先使用 hijacker_as_list（所有可能的劫持者AS），其次兼容 hijackers/hijacker_as
+                hijacker_list = alert.get("hijacker_as_list")
+                if hijacker_list and isinstance(hijacker_list, (list, set, tuple)):
+                    hijackers = ", ".join(str(h) for h in hijacker_list if h)
+                else:
+                    hijackers = alert.get("hijackers", alert.get("hijacker_as"))
+                    if isinstance(hijackers, (list, set, tuple)):
+                        hijackers = ", ".join(str(h) for h in hijackers if h)
+                    hijackers = str(hijackers or "unknown")
+                hijackers = html.escape(hijackers)
                 first_seen = html.escape(str(alert.get("first_seen", "unknown")))
                 last_seen = html.escape(str(alert.get("last_seen", "unknown")))
                 all_alerts.append(
@@ -1383,16 +1925,115 @@ async def generate_comprehensive_report(
         except Exception:
             pass
     
-    # Prepare comprehensive analysis data for LLM summarization
+    def _slim_list(value: Any, limit: int = 10) -> Any:
+        if not isinstance(value, list):
+            return value
+        return value[:limit]
+
+    def _slim_routing(r: Dict[str, Any], sample_limit: int = 10) -> Dict[str, Any]:
+        """Reduce routing payload size for LLM prompt while preserving signal."""
+        if not isinstance(r, dict):
+            return {}
+        slim = {
+            "success": r.get("success"),
+            "asn": r.get("asn"),
+            "analysis_period": r.get("analysis_period"),
+            "analysis_timestamp": r.get("analysis_timestamp"),
+            "outage_suspected": r.get("outage_suspected"),
+            "outage_score": r.get("outage_score"),
+            "leak_count": r.get("leak_count"),
+            "total_prefix_hijacks": r.get("total_prefix_hijacks"),
+            "total_prefix_hijacking": r.get("total_prefix_hijacking"),
+            "total_mitm_alerts": r.get("total_mitm_alerts"),
+        }
+
+        # Keep counts + small samples of event lists
+        for k in [
+            "origin_hijacked",
+            "forge_hijacked",
+            "origin_hijacking",
+            "forge_hijacking",
+            "mitm_alerts",
+            "route_leaks",
+            "aggregated_alerts",
+        ]:
+            items = r.get(k, []) or []
+            slim[f"{k}_count"] = len(items) if isinstance(items, list) else 0
+            slim[f"{k}_samples"] = _slim_list(items, sample_limit)
+
+        # Outage analysis is often large; keep a compact view
+        oa = r.get("outage_analysis") or {}
+        if isinstance(oa, dict):
+            slim["outage_analysis"] = {
+                "success": oa.get("success"),
+                "is_outage_suspected": oa.get("is_outage_suspected"),
+                "outage_score": oa.get("outage_score"),
+                "indicators": _slim_list(oa.get("indicators") or [], 10),
+                "anomalies_count": len(oa.get("anomalies") or []) if isinstance(oa.get("anomalies"), list) else 0,
+                "anomalies_samples": _slim_list(oa.get("anomalies") or [], 5),
+                "error": oa.get("error"),
+            }
+        return slim
+
+    def _slim_traffic(t: Dict[str, Any], sample_limit: int = 20) -> Dict[str, Any]:
+        """Reduce traffic payload size for LLM prompt while preserving signal."""
+        if not isinstance(t, dict):
+            return {}
+        slim = {
+            "success": t.get("success"),
+            "asn": t.get("asn"),
+            "anomalies_detected": t.get("anomalies_detected"),
+            "anomaly_count": t.get("anomaly_count"),
+            "outage_period_anomaly_count": t.get("outage_period_anomaly_count"),
+            "percent_change": t.get("percent_change"),
+            "current_avg": t.get("current_avg"),
+            "historical_avg": t.get("historical_avg"),
+            "plot_path": t.get("plot_path"),
+            "analysis_timestamp": t.get("analysis_timestamp"),
+            "original_outage_period": t.get("original_outage_period"),
+            "extended_analysis_period": t.get("extended_analysis_period"),
+            "periodicity_analysis": t.get("periodicity_analysis"),
+            "consecutive_anomaly_windows": _slim_list(t.get("consecutive_anomaly_windows") or [], 5),
+        }
+        anomalies = t.get("anomalies") or []
+        if isinstance(anomalies, list):
+            slim["anomalies_samples"] = _slim_list(anomalies, sample_limit)
+        return slim
+
+    def _slim_reasoning(rz: Any, trace_limit: int = 30) -> Dict[str, Any]:
+        """Reduce reasoning payload size for LLM prompt (avoid embedding full evidence again)."""
+        if not isinstance(rz, dict):
+            return {}
+        trace = rz.get("reasoning_trace") or []
+        slim_trace = trace[-trace_limit:] if isinstance(trace, list) else []
+
+        # Prefer summary-like fields; exclude evidence_summary (it contains full routing/traffic again)
+        return {
+            "success": rz.get("success"),
+            "analysis_type": rz.get("analysis_type"),
+            "asn": rz.get("asn"),
+            "time_range": rz.get("time_range"),
+            "rounds_performed": rz.get("rounds_performed"),
+            "final_classification": rz.get("final_classification"),
+            "recommendations": rz.get("recommendations"),
+            "confidence_assessment": rz.get("confidence_assessment"),
+            "confidence_score": rz.get("confidence_score"),
+            "key_findings": _slim_list(rz.get("key_findings") or [], 10),
+            "correlation_assessment": (rz.get("evidence_summary") or {}).get("correlation_assessment"),
+            "data_quality": (rz.get("evidence_summary") or {}).get("data_quality"),
+            "reasoning_trace_tail": slim_trace,
+        }
+
+    # Prepare analysis data for LLM summarization (slimmed to avoid context overflow)
     analysis_data = {
         "asn": asn,
         "org_name": org_name or "Unknown Organization",
         "start_time": start_time,
         "extended_analysis_time_range": extended_time_range,
-        "routing_analysis": routing_analysis or {},
-        "traffic_analysis": traffic_analysis or {},
+        "routing_analysis": _slim_routing(routing_analysis or {}, sample_limit=10),
+        "traffic_analysis": _slim_traffic(traffic_analysis or {}, sample_limit=20),
         "law_analysis": law_analysis or {},
-        "reasoning_analysis": reasoning_analysis or {}
+        "reasoning_analysis": _slim_reasoning(reasoning_analysis or {}, trace_limit=30),
     }
     
     schema_hint = {

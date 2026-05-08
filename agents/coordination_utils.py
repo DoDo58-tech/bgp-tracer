@@ -1,7 +1,6 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional
 
 from utils.logger import logger
 
@@ -48,12 +47,7 @@ def lookup_org_info(asn, asorg_file):
 
 
 def normalize_time(value):
-    fmts = [
-        "%Y-%m-%d %H:%M",
-        "%Y:%m:%d %H:%M",
-        "%Y/%m/%d %H:%M",
-    ]
-    for fmt in fmts:
+    for fmt in ["%Y-%m-%d %H:%M", "%Y:%m:%d %H:%M", "%Y/%m/%d %H:%M"]:
         try:
             dt = datetime.strptime(value, fmt)
             return dt.strftime("%Y-%m-%d %H:%M")
@@ -77,7 +71,7 @@ def query_as_relationships(asn, asrel_file):
     asn_str = str(asn)
     providers = providers_data.get(asn_str, [])
     peers = peers_data.get(asn_str, [])
-    customers: List[str] = []
+    customers = []
     for customer_asn, customer_providers in providers_data.items():
         try:
             if asn_str in customer_providers:
@@ -108,20 +102,16 @@ def query_as_prefixes(asn, prefix2as_file):
 
 
 def generate_integrated_report(
-    routing_analysis = None,
-    traffic_analysis = None,
-    law_analysis = None,
-    reasoning_analysis = None,
-    start_time = None,
-    output_dir = None,
-    org_name = None,
-    asn = None,
+    routing_analysis=None,
+    traffic_analysis=None,
+    law_analysis=None,
+    reasoning_analysis=None,
+    start_time=None,
+    output_dir=None,
+    org_name=None,
+    asn=None,
 ):
     try:
-        victim_events = 0
-        attacker_events = 0
-        traffic_anomalies = 0
-        
         asn_info = asn or "Unknown"
         if asn_info == "Unknown":
             if routing_analysis and routing_analysis.get("asn"):
@@ -130,10 +120,9 @@ def generate_integrated_report(
                 asn_info = str(traffic_analysis.get("asn"))
             elif reasoning_analysis and reasoning_analysis.get("asn"):
                 asn_info = str(reasoning_analysis.get("asn"))
-        
+
         time_period = start_time or "Unknown"
         org_name_final = org_name or "Unknown"
-        risk_level = "Unknown"
 
         if output_dir is None:
             output_dir = Path("results") / "html"
@@ -141,26 +130,17 @@ def generate_integrated_report(
         output_dir.mkdir(exist_ok=True, parents=True)
         assets_dir.mkdir(exist_ok=True, parents=True)
 
-        origin_hijacked: List[Dict[str, Any]] = []
-        forge_hijacked: List[Dict[str, Any]] = []
-        origin_hijacking: List[Dict[str, Any]] = []
-        forge_hijacking: List[Dict[str, Any]] = []
+        origin_hijacked = []
+        forge_hijacked = []
+        origin_hijacking = []
+        forge_hijacking = []
         victim_events = 0
         attacker_events = 0
-        asn_info = asn or "Unknown"
-        time_period = start_time or "Unknown"
-        
+
         if reasoning_analysis and hasattr(reasoning_analysis, 'get') and reasoning_analysis.get("success"):
-            logger.info(f"🔍 DEBUG: Found reasoning_analysis with success=True")
             evidence_summary = reasoning_analysis.get("evidence_summary", {})
-            logger.info(f"🔍 DEBUG: evidence_summary keys: {list(evidence_summary.keys())}")
-            
             routing_data = evidence_summary.get("routing_data", {})
             traffic_data = evidence_summary.get("traffic_data", {})
-            
-            logger.info(f"🔍 DEBUG: routing_data keys: {list(routing_data.keys())}")
-            logger.info(f"🔍 DEBUG: traffic_data keys: {list(traffic_data.keys())}")
-            
             if routing_data:
                 origin_hijacked = routing_data.get("origin_hijacked", [])
                 forge_hijacked = routing_data.get("forge_hijacked", [])
@@ -170,29 +150,17 @@ def generate_integrated_report(
                 attacker_events = len(origin_hijacking) + len(forge_hijacking)
                 asn_info = routing_data.get("asn", asn_info)
                 time_period = routing_data.get("analysis_period", time_period)
-                
-                logger.info(f"🔍 DEBUG: Extracted from routing_data - origin_hijacked: {len(origin_hijacked)}, origin_hijacking: {len(origin_hijacking)}")
-                logger.info(f"🔍 DEBUG: victim_events: {victim_events}, attacker_events: {attacker_events}")
-            else:
-                logger.warning(f"🔍 DEBUG: routing_data is empty or None")
-        
         elif isinstance(reasoning_analysis, str):
-            logger.info(f"🔍 DEBUG: Found string reasoning_analysis, attempting to parse")
             try:
                 parsed_reasoning = json.loads(reasoning_analysis)
-            except:
+            except Exception:
                 try:
                     parsed_reasoning = eval(reasoning_analysis)
-                except Exception as e:
-                    logger.warning(f"🔍 DEBUG: Could not parse string reasoning_analysis: {e}")
+                except Exception:
                     parsed_reasoning = None
-            
             if parsed_reasoning and parsed_reasoning.get("success"):
-                logger.info(f"🔍 DEBUG: Successfully parsed string reasoning_analysis")
                 evidence_summary = parsed_reasoning.get("evidence_summary", {})
                 routing_data = evidence_summary.get("routing_data", {})
-                traffic_data = evidence_summary.get("traffic_data", {})
-                
                 if routing_data:
                     origin_hijacked = routing_data.get("origin_hijacked", [])
                     forge_hijacked = routing_data.get("forge_hijacked", [])
@@ -202,10 +170,6 @@ def generate_integrated_report(
                     attacker_events = len(origin_hijacking) + len(forge_hijacking)
                     asn_info = routing_data.get("asn", asn_info)
                     time_period = routing_data.get("analysis_period", time_period)
-                    
-                    logger.info(f"🔍 DEBUG: Extracted from parsed routing_data - origin_hijacked: {len(origin_hijacked)}, origin_hijacking: {len(origin_hijacking)}")
-                    logger.info(f"🔍 DEBUG: victim_events: {victim_events}, attacker_events: {attacker_events}")
-        
         elif routing_analysis and routing_analysis.get("success"):
             origin_hijacked = routing_analysis.get("origin_hijacked", [])
             forge_hijacked = routing_analysis.get("forge_hijacked", [])
@@ -219,40 +183,35 @@ def generate_integrated_report(
         plot_path = None
         data_points = 0
         percent_change = 0.0
-        anomalies: List[Dict[str, Any]] = []
+        anomalies = []
         traffic_anomalies = 0
-        
+
         if reasoning_analysis and hasattr(reasoning_analysis, 'get') and reasoning_analysis.get("success"):
             evidence_summary = reasoning_analysis.get("evidence_summary", {})
             traffic_data = evidence_summary.get("traffic_data", {})
-            
             if traffic_data:
                 traffic_anomalies = traffic_data.get("anomaly_count", 0)
                 plot_path = traffic_data.get("plot_path")
                 data_points = traffic_data.get("data_points", 0)
                 percent_change = traffic_data.get("percent_change", 0.0)
                 anomalies = traffic_data.get("anomalies", [])
-        
         elif isinstance(reasoning_analysis, str):
             try:
                 parsed_reasoning = json.loads(reasoning_analysis)
-            except:
+            except Exception:
                 try:
                     parsed_reasoning = eval(reasoning_analysis)
-                except:
+                except Exception:
                     parsed_reasoning = None
-            
             if parsed_reasoning and parsed_reasoning.get("success"):
                 evidence_summary = parsed_reasoning.get("evidence_summary", {})
                 traffic_data = evidence_summary.get("traffic_data", {})
-                
                 if traffic_data:
                     traffic_anomalies = traffic_data.get("anomaly_count", 0)
                     plot_path = traffic_data.get("plot_path")
                     data_points = traffic_data.get("data_points", 0)
                     percent_change = traffic_data.get("percent_change", 0.0)
                     anomalies = traffic_data.get("anomalies", [])
-        
         elif traffic_analysis and traffic_analysis.get("success"):
             traffic_anomalies = traffic_analysis.get("anomaly_count", 0)
             plot_path = traffic_analysis.get("plot_path")
@@ -260,9 +219,7 @@ def generate_integrated_report(
             percent_change = traffic_analysis.get("percent_change", 0.0)
             anomalies = traffic_analysis.get("anomalies", [])
 
-        risk_level = (
-            "Critical" if victim_events > 0 else ("Medium" if attacker_events > 0 or traffic_anomalies > 0 else "Low")
-        )
+        risk_level = "Critical" if victim_events > 0 else "Medium" if attacker_events > 0 or traffic_anomalies > 0 else "Low"
 
         traffic_chart_src = ""
         if plot_path:
@@ -270,8 +227,7 @@ def generate_integrated_report(
                 import os
                 import shutil
                 file_size_bytes = os.path.getsize(plot_path)
-                size_threshold_inline = 300_000
-                if file_size_bytes > size_threshold_inline:
+                if file_size_bytes > 300_000:
                     sanitized_time = (start_time or "").replace(' ', '_').replace(':', '-')
                     ext = plot_path.split('.')[-1].lower() or 'png'
                     dest_path = assets_dir / f"traffic_AS{asn_info}_{sanitized_time}.{ext}"
@@ -286,17 +242,14 @@ def generate_integrated_report(
                         mime_type = f"image/{img_extension}" if img_extension in ['png', 'jpg', 'jpeg'] else "image/png"
                         traffic_chart_src = f"data:{mime_type};base64,{img_base64}"
             except Exception as e:
-                logger.warning(f"Could not inline traffic plot, will reference path. Error: {e}")
+                logger.warning(f"Could not inline traffic plot: {e}")
                 traffic_chart_src = plot_path
 
-        def html_escape(text: str) -> str:
-            try:
-                return (str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
-            except Exception:
-                return str(text)
+        def html_escape(text):
+            return str(text).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-        def build_rows(events: List[Dict[str, Any]], label: str) -> str:
-            rows: List[str] = []
+        def build_rows(events, label):
+            rows = []
             for ev in events:
                 rows.append(
                     f"<tr><td>{label}</td>"
@@ -363,7 +316,7 @@ def generate_integrated_report(
         html_file = output_dir / f"traffic_outage_analysis_{filename_time}.html"
         with open(html_file, "w", encoding="utf-8") as f:
             f.write(html_content)
-        logger.info(f"HTML report has been saved to: {html_file}")
+        logger.info(f"HTML report saved: {html_file}")
         return {
             "success": True,
             "html_report_path": str(html_file),
@@ -372,7 +325,4 @@ def generate_integrated_report(
         }
     except Exception as e:
         logger.error(f"Failed to generate integrated report: {e}")
-        return {"success": False, "error": f"Failed to generate integrated report: {str(e)}", "timestamp": datetime.now().isoformat()}
-
-
-
+        return {"success": False, "error": str(e), "timestamp": datetime.now().isoformat()}

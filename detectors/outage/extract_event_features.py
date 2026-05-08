@@ -11,23 +11,33 @@ from typing import Dict, List, Set, Tuple, Optional
 import pandas as pd
 from ipaddress import ip_network
 
-DATA_DIR = Path(__file__).parent / "data"
+# Data directory: bgp_tracer/data/ instead of detectors/outage/data/
+DATA_DIR = Path(__file__).parent.parent.parent / "data"
 CSV_FILE = DATA_DIR / "traffic-outage-info.csv"
 UPDATES_DIR = DATA_DIR / "updates_rrc00" / "decoded"
 OUTPUT_DIR = DATA_DIR / "event_features"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-LOG_DIR = Path(__file__).parent / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_FILE = LOG_DIR / "bgp_tracer.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(processName)s %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+# Log directory: bgp_tracer/logs/
+import sys as _sys
+_sys.path.append(str(Path(__file__).parent.parent.parent))
+from config import LOG_FILE
+
+# Avoid duplicate logging setup
+_root = logging.getLogger()
+if not _root.handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s %(levelname)s %(processName)s %(message)s',
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding='utf-8'),
+            logging.StreamHandler()
+        ]
+    )
+else:
+    _module_logger = logging.getLogger(__name__)
+    _module_logger.addHandler(logging.FileHandler(LOG_FILE, encoding='utf-8'))
+
 logger = logging.getLogger(__name__)
 
 # Analysis parameters
@@ -314,6 +324,7 @@ def finalize_bucket_feature(b):
     
     edit_dists = b.get('edit_distances', [])
     intervals = b.get('arrival_intervals', [])
+    path_lengths = b.get('path_lengths', [])
     
     return {
         'announcement_count': b.get('announcement_count', 0),
@@ -332,6 +343,16 @@ def finalize_bucket_feature(b):
         # Path diversity features
         'editDis_entropy': entropy(edit_dists),
         'unique_as_count': len(b.get('unique_as_set', set())),
+        
+        # Peer AS features
+        'unique_peer_as_count': len(b.get('peer_as_set', set())),
+        
+        # Path length features
+        'avg_path_length': sum(path_lengths) / len(path_lengths) if path_lengths else 0,
+        'max_path_length': max(path_lengths) if path_lengths else 0,
+        'min_path_length': min(path_lengths) if path_lengths else 0,
+        
+        'origin_change_count': b.get('num_ori_change', 0),
     }
 
 
@@ -347,6 +368,7 @@ def aggregate_timeseries_to_totals(timeseries):
     unique_prefixes = 0
     flapping_prefixes = 0
     path_lengths = []
+    peer_as_sets = []
     
     for bucket in timeseries.values():
         total_announcement += bucket.get('announcement_count', 0)
@@ -358,6 +380,13 @@ def aggregate_timeseries_to_totals(timeseries):
         flapping_prefixes += bucket.get('flapping_prefix_count', 0)
         if bucket.get('avg_path_length', 0) > 0:
             path_lengths.append(bucket['avg_path_length'])
+        if 'peer_as_set' in bucket:
+            peer_as_sets.append(bucket['peer_as_set'])
+    
+    # Calculate total unique peer AS count
+    total_peer_as = set()
+    for ps in peer_as_sets:
+        total_peer_as.update(ps)
     
     return {
         'announcement_count': total_announcement,
@@ -370,6 +399,7 @@ def aggregate_timeseries_to_totals(timeseries):
         'avg_path_length': sum(path_lengths) / len(path_lengths) if path_lengths else 0,
         'max_path_length': max(path_lengths) if path_lengths else 0,
         'min_path_length': min(path_lengths) if path_lengths else 0,
+        'unique_peer_as_count': len(total_peer_as),
     }
 
 
@@ -421,6 +451,8 @@ def process_single_file_timeseries(file_path, target_as_list):
                         'num_dup_A': 0,
                         'num_dup_W': 0,
                         'unique_as_set': set(),
+                        'peer_as_set': set(),
+                        'path_lengths': [],
                         'prefix_announce_counts': defaultdict(int),
                         'prefix_withdraw_counts': defaultdict(int),
                         'edit_distances': [],
@@ -448,8 +480,12 @@ def process_single_file_timeseries(file_path, target_as_list):
                         as_list = list(extract_as_from_path(bgp_msg['as_path']))
                         path_len = len(as_list)
                         b['avg_path_length_samples'].append(path_len)
+                        b['path_lengths'].append(path_len)
                         
                         b['unique_as_set'].update(as_list)
+                        
+                        if bgp_msg.get('peer_as'):
+                            b['peer_as_set'].add(bgp_msg['peer_as'])
                         
                         origin_as = as_list[-1] if as_list else None
                         
@@ -703,16 +739,31 @@ def detect_anomalies_timeseries(event_ts, baseline_ts):
         return []
     import numpy as np
     features = [
+        # Basic message stats
         'announcement_count',
         'withdrawal_count',
         'flapping_prefix_count',
+        'unique_prefix_count',
+        
+        # Route change features
         'ori_change_rate',
         'num_ori_change',
+        'origin_change_count',
         'path_change_rate',
+        
+        # Message behavior features
         'dup_A_rate',
         'avg_arrival_interval',
+        
+        # Path diversity features
         'editDis_entropy',
         'unique_as_count',
+        
+        # Peer AS and path length features
+        'unique_peer_as_count',
+        'avg_path_length',
+        'max_path_length',
+        'min_path_length',
     ]
     stats = {}
     for k in features:
@@ -744,6 +795,131 @@ def detect_anomalies_timeseries(event_ts, baseline_ts):
                     'anomaly_type': 'high_increase' if (std == 0 and x > mean) or z > 0 else 'high_decrease',
                     'severity': 'high'
                 })
+    return anomalies
+
+
+def detect_anomalies_timeseries_periodic(event_ts, baseline_ts_dict):
+    """
+    Detect anomalies using multiple baseline periods.
+    Uses mean and std computed across all baseline periods for each time slot.
+
+    Args:
+        event_ts: dict of timestamp -> features for event window
+        baseline_ts_dict: dict of period_index -> (timestamp -> features)
+
+    Returns:
+        list of anomaly dicts with timestamp, feature, z_score, etc.
+    """
+    if not event_ts or not baseline_ts_dict:
+        return []
+
+    import numpy as np
+
+    features = [
+        'announcement_count',
+        'withdrawal_count',
+        'flapping_prefix_count',
+        'unique_prefix_count',
+        'ori_change_rate',
+        'num_ori_change',
+        'origin_change_count',
+        'path_change_rate',
+        'dup_A_rate',
+        'avg_arrival_interval',
+        'editDis_entropy',
+        'unique_as_count',
+        'unique_peer_as_count',
+        'avg_path_length',
+        'max_path_length',
+        'min_path_length',
+    ]
+
+    # Align baseline periods by relative time offset within the period
+    # Group by relative time (e.g., "15:30", "15:35" from period start)
+    aligned_baseline = {}  # relative_time -> {feature: [values from each period]}
+
+    for period_idx, period_ts in baseline_ts_dict.items():
+        # Get sorted timestamps to establish relative position
+        sorted_times = sorted(period_ts.keys())
+        if not sorted_times:
+            continue
+
+        period_start_time = sorted_times[0]
+        for ts_str, features_dict in period_ts.items():
+            # Calculate relative time from period start
+            ts_dt = datetime.fromisoformat(ts_str)
+            if period_start_time:
+                start_dt = datetime.fromisoformat(period_start_time)
+                relative_minutes = int((ts_dt - start_dt).total_seconds() / 60)
+                relative_key = f"offset_{relative_minutes // 5}"  # 5-min buckets
+
+                if relative_key not in aligned_baseline:
+                    aligned_baseline[relative_key] = {f: [] for f in features}
+
+                for f in features:
+                    if f in features_dict:
+                        aligned_baseline[relative_key][f].append(features_dict[f])
+
+    # Compute stats for each relative time slot
+    stats_by_relative_time = {}
+    for relative_key, feature_vals in aligned_baseline.items():
+        stats_by_relative_time[relative_key] = {}
+        for f, vals in feature_vals.items():
+            if vals:
+                stats_by_relative_time[relative_key][f] = {
+                    'mean': float(np.mean(vals)),
+                    'std': float(np.std(vals)),
+                }
+
+    # Detect anomalies by comparing each event bucket to aligned baseline
+    anomalies = []
+    for ts_str, event_feat in event_ts.items():
+        # Find relative time for this bucket
+        # For simplicity, use the first baseline period to get relative position
+        if not baseline_ts_dict:
+            continue
+
+        first_period_ts = baseline_ts_dict.get(0, {})
+        if not first_period_ts:
+            continue
+
+        sorted_baseline_times = sorted(first_period_ts.keys())
+        if not sorted_baseline_times:
+            continue
+
+        period_start_time = sorted_baseline_times[0]
+        ts_dt = datetime.fromisoformat(ts_str)
+        start_dt = datetime.fromisoformat(period_start_time)
+        relative_minutes = int((ts_dt - start_dt).total_seconds() / 60)
+        relative_key = f"offset_{relative_minutes // 5}"
+
+        if relative_key not in stats_by_relative_time:
+            continue
+
+        stats = stats_by_relative_time[relative_key]
+        for f, st in stats.items():
+            mean = st['mean']
+            std = st['std']
+            x = event_feat.get(f, 0)
+
+            if std > 0:
+                z = (x - mean) / std
+            else:
+                z = 0.0
+
+            if abs(z) >= 3.0:
+                anomalies.append({
+                    'timestamp': ts_str,
+                    'relative_time': relative_key,
+                    'feature': f,
+                    'value': x,
+                    'baseline_mean': mean,
+                    'baseline_std': std,
+                    'z_score': z,
+                    'anomaly_type': 'high_increase' if z > 0 else 'high_decrease',
+                    'severity': 'high' if abs(z) >= 3.0 else 'medium',
+                })
+
     return anomalies
 
 

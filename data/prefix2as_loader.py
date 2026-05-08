@@ -116,10 +116,19 @@ def load_prefix2as(filepath):
                 if len(parts) >= 3:
                     ip_addr = parts[0]
                     prefix_len = parts[1]
-                    asn = parts[2].split('_')[0]  # Take first AS if there are multiple
+                    asns = parts[2].split('_')  # Get all ASes if there are multiple
+                    asn = asns[0]  # Take first AS as primary
                     
                     prefix = f"{ip_addr}/{prefix_len}"
-                    prefix_to_as[prefix] = asn
+                    # Store as list to match hijack detector expectations
+                    # If prefix already exists, append to list (rare case of multiple entries)
+                    if prefix in prefix_to_as:
+                        if isinstance(prefix_to_as[prefix], list):
+                            prefix_to_as[prefix].append(asn)
+                        else:
+                            prefix_to_as[prefix] = [prefix_to_as[prefix], asn]
+                    else:
+                        prefix_to_as[prefix] = [asn]
     except Exception as e:
         logger.error(f"Error loading prefix2as data: {e}")
     

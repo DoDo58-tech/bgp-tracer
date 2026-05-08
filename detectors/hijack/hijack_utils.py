@@ -6,6 +6,9 @@ from typing import Dict, Any, List, Tuple, Optional, Set
 from datetime import datetime
 from pathlib import Path
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from config import DEFAULT_ANOMALY_THRESHOLD
+
 class SimpleLogger:
     def info(self, msg):
         print(f"[HIJACK INFO] {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - {msg}")
@@ -24,7 +27,7 @@ def remove_consecutive_duplicates(as_path):
     return ' '.join(unique_as_list)
 
 
-def find_common_path_endings(as_paths, threshold = 0.2):
+def find_common_path_endings(as_paths, threshold=DEFAULT_ANOMALY_THRESHOLD):
     if not as_paths or len(as_paths) < 2:
         return []
 
