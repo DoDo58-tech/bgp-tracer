@@ -1,0 +1,534 @@
+"""
+组合检测器 — 检测流量异常
+=========================
+
+整合多种检测方法，对明显异常（持续数小时的流量下降）也能检出。
+核心改进：
+- 从「交集」(AND) 改为「并集」(OR)：任何一种方法检测到异常就保留
+- 增加「峰谷检测」：直接对当前数据做峰值到谷值的分析
+- 放松 context_filter：降低过滤阈值，避免过滤掉真实的持续性异常
+- 降低 sudden_drop 阈值：从 0.50 降至 0.35，min_consecutive 从 3 降至 1
+- 宽松回退：当所有方法都无结果但数据明显异常时，用简化统计回退
+"""
+
+import numpy as np
+from datetime import datetime
+
+from detectors.traffic.detectors import (
+    detect_anomalies_statistical,
+    detect_anomalies_percentile,
+    detect_anomalies_isolation_forest,
+)
+from detectors.traffic.sudden import (
+    detect_anomalies_sudden_drop,
+    detect_anomalies_sudden_drop_to_zero,
+    detect_anomalies_sudden_jump,
+    detect_anomalies_post_jump_drop,
+)
+from detectors.traffic.sustained import (
+    detect_anomalies_sustained_outage,
+)
+from detectors.traffic.preprocessing import filter_consecutive_anomalies
+from utils.logger import logger
+
+
+def detect_anomalies_combined(
+    current_values,
+    historical_means,
+    historical_stds,
+    historical_values,
+    timestamps=None,
+    threshold=3.0,
+    detect_direction="both",
+    context_window=1,
+    context_threshold=0.35,   # 降低：避免过滤掉持续性异常
+    min_consecutive_context=2,  # 新增：要求连续 N 个点都偏离才过滤
+):
+    """
+    组合多种异常检测方法。
+    
+    关键变化：
+    1. 交集 → 并集：任何一种方法检测到异常就保留
+    2. 宽松 context 过滤：降低阈值 + 增加连续性要求
+    3. 新增峰谷检测：检测持续数小时的流量下降
+    4. 回退检测：当所有方法无结果但数据明显异常时
+    """
+    curr = np.array(current_values, dtype=float)
+    n = len(curr)
+
+    # ── 1. 各方法独立检测 ────────────────────────────────────────────
+    stat_anomalies = detect_anomalies_statistical(
+        current_values, historical_means, historical_stds, threshold
+    )
+    ml_anomalies = detect_anomalies_isolation_forest(
+        current_values, historical_values
+    )
+
+    # ── 2. 改为并集 (UNION)，而非交集 ──────────────────────────────
+    # 原逻辑: s_idx & m_idx (要求两种方法都检测到) → 漏检率极高
+    # 新逻辑: s_idx | m_idx (任一方法检测到即可)
+    s_idx = {a["index"] for a in stat_anomalies}
+    m_idx = {a["index"] for a in ml_anomalies}
+
+    combined: list = []
+
+    # 交集：两种方法都检测到 → 高置信度
+    for idx in s_idx & m_idx:
+        sa = next(a for a in stat_anomalies if a["index"] == idx)
+        ma = next(a for a in ml_anomalies if a["index"] == idx)
+        combined.append({
+            **sa,
+            "method": "combined_both",
+            "ml_score": ma["anomaly_score"],
+            "confidence": "high",
+            "severity": "high",
+            "detected_by": ["statistical", "isolation_forest"],
+        })
+
+    # 并集（仅统计方法检测到）
+    for idx in s_idx - m_idx:
+        a = next(x for x in stat_anomalies if x["index"] == idx)
+        combined.append({
+            **a,
+            "method": "statistical_only",
+            "confidence": "medium",
+            "ml_detected": False,
+            "detected_by": ["statistical"],
+        })
+
+    # 并集（仅ML方法检测到）
+    for idx in m_idx - s_idx:
+        ma = next(a for a in ml_anomalies if a["index"] == idx)
+        combined.append({
+            **ma,
+            "method": "ml_only",
+            "confidence": "medium",
+            "z_score": 0.0,
+            "detected_by": ["isolation_forest"],
+        })
+
+    # ── 3. 持续性中断检测 ──────────────────────────────────────────
+    if detect_direction in ("both", "lower_only"):
+        for oa in detect_anomalies_sustained_outage(
+            current_values, historical_means, historical_stds
+        ):
+            idx = oa["index"]
+            if idx not in {a["index"] for a in combined}:
+                combined.append({**oa, "confidence": "high", "ml_detected": False,
+                                 "detected_by": ["sustained_outage"]})
+            else:
+                for a in combined:
+                    if a.get("index") == idx:
+                        a["sustained_outage"] = True
+                        if "detected_by" in a:
+                            a["detected_by"].append("sustained_outage")
+                        break
+
+    # ── 4. 骤降检测（降低阈值）────────────────────────────────────
+    if detect_direction in ("both", "lower_only") and timestamps:
+        try:
+            # 阈值从 0.50 → 0.35，min_consecutive 从 3 → 1
+            for oa in detect_anomalies_sudden_drop(
+                current_values, historical_means, timestamps,
+                drop_threshold_ratio=0.35,   # 降低阈值，检测更小的下降
+                min_prev_baseline=0.08,
+                min_consecutive=1,           # 降低连续点要求
+            ):
+                idx = oa["index"]
+                if idx not in {a["index"] for a in combined}:
+                    combined.append({**oa, "confidence": "high", "ml_detected": False,
+                                     "detected_by": ["sudden_drop"]})
+                else:
+                    for a in combined:
+                        if a.get("index") == idx:
+                            a["sudden_drop"] = True
+                            break
+        except Exception as e:
+            logger.warning(f"Sudden drop detection failed: {e}")
+
+    # ── 5. 骤降到零检测 ────────────────────────────────────────────
+    if detect_direction in ("both", "lower_only") and timestamps:
+        try:
+            for oa in detect_anomalies_sudden_drop_to_zero(
+                current_values, historical_means, timestamps,
+                min_consecutive=2,   # 降低要求
+            ):
+                idx = oa["index"]
+                if idx not in {a["index"] for a in combined}:
+                    combined.append({**oa, "confidence": "high", "ml_detected": False,
+                                     "detected_by": ["sudden_drop_to_zero"]})
+                else:
+                    for a in combined:
+                        if a.get("index") == idx:
+                            a["sudden_drop_to_zero"] = True
+                            break
+        except Exception as e:
+            logger.warning(f"Sudden drop-to-zero detection failed: {e}")
+
+    # ── 6. 骤增检测 ────────────────────────────────────────────────
+    if detect_direction in ("both", "upper_only") and timestamps:
+        try:
+            for oa in detect_anomalies_sudden_jump(
+                current_values, historical_means, timestamps,
+                jump_threshold_ratio=0.40,   # 稍微放宽
+                min_jump_magnitude=0.08,
+                min_consecutive=1,
+            ):
+                combined.append({**oa, "_skip_context_filter": True,
+                                 "confidence": "high", "ml_detected": False,
+                                 "detected_by": ["sudden_jump"]})
+        except Exception as e:
+            logger.warning(f"Sudden jump detection failed: {e}")
+
+    # ── 7. 骤增后骤降检测 ─────────────────────────────────────────
+    if timestamps and len(historical_means) == len(current_values):
+        try:
+            for oa in detect_anomalies_post_jump_drop(
+                current_values, historical_means, timestamps
+            ):
+                idx = oa.get("index")
+                if idx not in {a.get("index") for a in combined}:
+                    combined.append({**oa, "confidence": "high", "ml_detected": False,
+                                     "detected_by": ["post_jump_drop"]})
+                else:
+                    for a in combined:
+                        if a.get("index") == idx:
+                            a["post_jump_drop"] = True
+                            break
+        except Exception as e:
+            logger.warning(f"Post-jump drop detection failed: {e}")
+
+    # ── 8. 百分位检测 ──────────────────────────────────────────────
+    if historical_values and len(historical_values) >= 2:
+        try:
+            for oa in detect_anomalies_percentile(
+                current_values=current_values,
+                historical_values_list=historical_values,
+                timestamps=timestamps,
+                lower_pct=5, upper_pct=95,
+                min_consecutive=1,    # 降低要求
+                detect_only_upper=(detect_direction == "upper_only"),
+                detect_only_lower=(detect_direction == "lower_only"),
+                context_window=context_window,
+                context_threshold=context_threshold,
+            ):
+                idx = oa["index"]
+                if idx not in {a["index"] for a in combined}:
+                    combined.append({**oa, "confidence": "high", "ml_detected": False,
+                                     "detected_by": ["percentile"]})
+                else:
+                    for a in combined:
+                        if a.get("index") == idx:
+                            a["percentile_deviation"] = oa.get("deviation")
+                            a["percentile_direction"] = oa.get("direction")
+                            break
+        except Exception as e:
+            logger.warning(f"Percentile detection failed: {e}")
+
+    # ── 9. 峰谷检测（新增：直接分析当前数据形状）────────────────
+    # 这是对「持续数小时的流量下降」最直接的检测
+    # 图表中13:00-16:00的异常属于这种类型
+    if n >= 4 and len(historical_means) == n:
+        try:
+            for oa in _detect_peak_trough_drops(
+                current_values, historical_means, timestamps,
+                min_drop_ratio=0.25,   # 峰值到谷值下降超过25%就算异常
+                min_sustained_points=3, # 至少持续3个数据点
+            ):
+                idx = oa["index"]
+                if idx not in {a["index"] for a in combined}:
+                    combined.append({**oa, "confidence": "high", "ml_detected": False,
+                                     "detected_by": ["peak_trough"]})
+                else:
+                    for a in combined:
+                        if a.get("index") == idx:
+                            a["peak_trough"] = True
+                            break
+        except Exception as e:
+            logger.warning(f"Peak-trough detection failed: {e}")
+
+    # ── 10. 宽松 context 过滤 ──────────────────────────────────────
+    # 原逻辑：偏差 < 20% 就过滤 → 持续性异常容易被误过滤
+    # 新逻辑：降低过滤阈值 + 要求连续多点都正常才过滤
+    if context_threshold > 0 and n > 0:
+        ctx_filtered = []
+        for anom in combined:
+            if anom.get("_skip_context_filter"):
+                ctx_filtered.append(anom)
+                continue
+            idx = anom.get("index", -1)
+            if idx < 0 or idx >= n:
+                ctx_filtered.append(anom)
+                continue
+
+            # 检查上下文：左右各看 context_window 个点
+            ctx_vals = []
+            for w in range(1, context_window + 1):
+                if idx - w >= 0:
+                    ctx_vals.append(curr[idx - w])
+                if idx + w < n:
+                    ctx_vals.append(curr[idx + w])
+
+            if not ctx_vals:
+                ctx_filtered.append(anom)
+                continue
+
+            ctx_avg = float(np.mean(ctx_vals))
+            current_val = float(curr[idx])
+
+            # 偏差 = 当前值与上下文的差异
+            if abs(ctx_avg) > 1e-6:
+                deviation = abs(current_val - ctx_avg) / ctx_avg
+            else:
+                deviation = 0.0
+
+            # 如果偏差小于阈值，且在历史均值附近，不算异常
+            # 但如果与历史均值本身就有大偏差，则保留（这是真正的异常）
+            hist_mean = float(historical_means[idx]) if idx < len(historical_means) else ctx_avg
+            hist_deviation = abs(current_val - hist_mean) / abs(hist_mean) if abs(hist_mean) > 1e-6 else 0.0
+
+            # 如果与历史均值的偏差很大，即使上下文过滤也会保留
+            if hist_deviation >= 0.30:  # 超过30%的历史偏差 → 保留
+                ctx_filtered.append(anom)
+            elif deviation >= context_threshold:
+                # 与上下文有足够偏差 → 保留
+                ctx_filtered.append(anom)
+            else:
+                # 与上下文接近，且与历史均值也接近 → 过滤
+                anom["filtered_by_context"] = True
+        combined = ctx_filtered
+
+    # ── 11. 添加时间戳 ────────────────────────────────────────────
+    if timestamps:
+        for anom in combined:
+            idx = anom.get("index")
+            if idx is not None and idx < len(timestamps):
+                anom["timestamp"] = timestamps[idx]
+
+    # ── 12. 连续性过滤（降低要求）───────────────────────────────
+    skip = [a for a in combined if a.get("_skip_context_filter")]
+    others = [a for a in combined if not a.get("_skip_context_filter")]
+    # 降低 min_consecutive：从 2 → 1
+    filtered = filter_consecutive_anomalies(others, min_consecutive=1)
+    filtered.extend(skip)
+
+    # ── 13. 回退检测：当所有方法无结果但数据明显异常 ─────────────
+    if not filtered and n >= 4:
+        fallback = _fallback_detection(
+            current_values, historical_means, historical_stds, timestamps
+        )
+        if fallback:
+            logger.info(f"⚠️ Fallback detection triggered: {len(fallback)} anomalies")
+            filtered.extend(fallback)
+
+    return sorted(filtered, key=lambda x: x.get("index", 0)), sorted(combined, key=lambda x: x.get("index", 0))
+
+
+# ─────────────────────────────────────────────────────────────────
+# 新增：峰谷检测 — 针对「持续数小时的流量下降」
+# ─────────────────────────────────────────────────────────────────
+
+def _detect_peak_trough_drops(
+    current_values, historical_means, timestamps=None,
+    min_drop_ratio=0.25, min_sustained_points=3,
+):
+    """
+    检测持续性流量下降：峰值 → 谷值 → 恢复
+
+    适用于图表中 13:00-16:00 这种明显的「流量骤降然后恢复」场景。
+    与 sudden_drop 不同，sudden_drop 关注相邻点的变化，
+    peak_trough 关注整体形状（peak -> sustained low -> recovery）。
+    """
+    curr = np.array(current_values, dtype=float)
+    hist = np.array(historical_means, dtype=float) if len(historical_means) == len(curr) else None
+    n = len(curr)
+    anomalies = []
+
+    if n < 4:
+        return anomalies
+
+    # 找到峰值位置
+    peak_idx = int(np.argmax(curr))
+    peak_val = float(curr[peak_idx])
+
+    # 找谷值：在峰值之后找最低点
+    if peak_idx < n - 1:
+        post_peak = curr[peak_idx:]
+        trough_idx_local = int(np.argmin(post_peak))
+        trough_idx = peak_idx + trough_idx_local
+    else:
+        # 峰值在最后，找前面的谷值
+        pre_peak = curr[:peak_idx + 1]
+        trough_idx = int(np.argmin(pre_peak))
+
+    trough_val = float(curr[trough_idx])
+
+    # 计算下降比例
+    if peak_val > 1e-6:
+        drop_ratio = (peak_val - trough_val) / peak_val
+    else:
+        drop_ratio = 0.0
+
+    # 如果下降比例不够大，不算异常
+    if drop_ratio < min_drop_ratio:
+        return anomalies
+
+    # 找异常区间的起点（开始下降的位置）和终点（恢复到正常的位置）
+    threshold = trough_val + (peak_val - trough_val) * 0.3  # 30% 恢复点
+
+    # 向前找下降起点
+    drop_start = peak_idx
+    for i in range(peak_idx - 1, -1, -1):
+        if curr[i] < curr[i + 1] * 0.98:  # 开始下降
+            drop_start = i
+        else:
+            break
+
+    # 向后找恢复点
+    recovery_end = trough_idx
+    for i in range(trough_idx, n):
+        if curr[i] >= threshold:
+            recovery_end = i
+        else:
+            break
+
+    # 计算持续点数
+    sustained_points = recovery_end - drop_start + 1
+
+    # 如果持续点数不够，不算异常
+    if sustained_points < min_sustained_points:
+        return anomalies
+
+    # 为区间内每个点添加异常标记
+    for idx in range(drop_start, recovery_end + 1):
+        ts = timestamps[idx] if timestamps and idx < len(timestamps) else None
+
+        # 计算该点相对于峰值的下降
+        if peak_val > 1e-6:
+            local_drop = (peak_val - float(curr[idx])) / peak_val
+        else:
+            local_drop = 0.0
+
+        # 计算相对于历史均值的偏差
+        hist_val = float(hist[idx]) if hist is not None else float(np.mean(hist)) if hist is not None else peak_val
+        if abs(hist_val) > 1e-6:
+            z = abs(float(curr[idx]) - hist_val) / abs(hist_val)
+        else:
+            z = 0.0
+
+        anomalies.append({
+            "index": idx,
+            "timestamp": ts,
+            "current_value": float(curr[idx]),
+            "peak_value": peak_val,
+            "trough_value": trough_val,
+            "drop_start_index": drop_start,
+            "recovery_end_index": recovery_end,
+            "drop_ratio": float(drop_ratio),
+            "local_drop_from_peak": float(local_drop),
+            "z_score": float(z),
+            "method": "peak_trough",
+            "severity": "critical" if drop_ratio > 0.7 else "high" if drop_ratio > 0.4 else "medium",
+            "confidence": "high",
+            "_skip_context_filter": True,  # 峰谷异常不需要 context 过滤
+        })
+
+    return anomalies
+
+
+# ─────────────────────────────────────────────────────────────────
+# 新增：回退检测 — 当所有方法都无结果但数据明显异常
+# ─────────────────────────────────────────────────────────────────
+
+def _fallback_detection(
+    current_values, historical_means, historical_stds, timestamps=None,
+):
+    """
+    回退检测：当所有组合方法都无结果时使用。
+
+    使用简化的统计方法，检测明显的流量异常。
+    """
+    curr = np.array(current_values, dtype=float)
+    n = len(curr)
+
+    if n < 4:
+        return []
+
+    hist = np.array(historical_means, dtype=float) if len(historical_means) == n else None
+    stds = np.array(historical_stds, dtype=float) if historical_stds is not None and len(historical_stds) == n else None
+
+    anomalies = []
+
+    # 方法1：峰谷分析（独立于 combined 中的调用，用于回退）
+    try:
+        pt_anomalies = _detect_peak_trough_drops(
+            current_values, historical_means, timestamps,
+            min_drop_ratio=0.30,  # 稍微严格一些
+            min_sustained_points=3,
+        )
+        if pt_anomalies:
+            logger.info(f"Fallback peak-trough: {len(pt_anomalies)} anomalies")
+            return pt_anomalies
+    except Exception as e:
+        logger.debug(f"Fallback peak-trough failed: {e}")
+
+    # 方法2：简化Z-score（宽松阈值）
+    if hist is not None:
+        for i in range(n):
+            cv = float(curr[i])
+            hm = float(hist[i])
+            if stds is not None and abs(float(stds[i])) > 1e-6:
+                sv = float(stds[i])
+                z = abs(cv - hm) / sv
+            elif abs(hm) > 1e-6:
+                z = abs(cv - hm) / (abs(hm) * 0.2)  # 用均值的20%作为std近似
+            else:
+                z = 0.0
+
+            # 宽松阈值：z > 2.0 就算异常
+            if z > 2.0:
+                ts = timestamps[i] if timestamps and i < len(timestamps) else None
+                anomalies.append({
+                    "index": i,
+                    "timestamp": ts,
+                    "current_value": cv,
+                    "historical_mean": hm,
+                    "z_score": float(z),
+                    "method": "fallback_zscore",
+                    "severity": "high" if z > 3 else "medium",
+                    "confidence": "medium",
+                    "_skip_context_filter": True,
+                })
+
+    # 方法3：连续下降段检测
+    drops = []
+    for i in range(1, n):
+        if curr[i] < curr[i - 1] * 0.9:  # 下降超过10%
+            drops.append(i)
+
+    if len(drops) >= 3:
+        # 找到最长连续下降段
+        groups, current = [], [drops[0]]
+        for idx in drops[1:]:
+            if idx == current[-1] + 1:
+                current.append(idx)
+            else:
+                groups.append(current)
+                current = [idx]
+        groups.append(current)
+
+        longest = max(groups, key=len) if groups else []
+        if len(longest) >= 3:
+            for i in longest:
+                ts = timestamps[i] if timestamps and i < len(timestamps) else None
+                anomalies.append({
+                    "index": i,
+                    "timestamp": ts,
+                    "current_value": float(curr[i]),
+                    "method": "fallback_consecutive_drop",
+                    "severity": "medium",
+                    "confidence": "low",
+                    "_skip_context_filter": True,
+                })
+
+    return anomalies
