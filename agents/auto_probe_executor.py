@@ -18,7 +18,6 @@ import asyncio
 import logging
 import os
 import socket
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional, List
@@ -31,9 +30,12 @@ try:
         CloudflareRealtime, ProbingOrchestrator, ProbeResult,
     )
     PROBING_TOOLS_AVAILABLE = True
+    # Check if scapy-based traceroute is available (works without root)
+    _PROBE_BACKEND = "scapy" if hasattr(TracerouteProbe, 'probe') else "system"
 except ImportError as e:
     logger.warning(f"probing_tools 不可用，自动探测将受限: {e}")
     PROBING_TOOLS_AVAILABLE = False
+    _PROBE_BACKEND = "none"
 
 try:
     import aiohttp
@@ -119,8 +121,24 @@ class AutoProbeExecutor:
             )
             tasks.append(task)
 
-        # 使用 gather 但每个 task 都有自己的超时
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Bug fix 2026-09-13 (BUG-R115): ``asyncio.gather(*tasks)``
+        # without a per-task timeout will block forever if a single
+        # probe hangs (e.g. a subprocess stuck waiting on stdin, an
+        # aiohttp request whose connect phase never times out). The
+        # original docstring claimed "每个 task 都有自己的超时" but the
+        # implementation never enforced it — only the inner aiohttp
+        # calls used ``self.timeout``. Wrap each task in
+        # ``asyncio.wait_for`` so a stuck probe becomes a normal
+        # ``AutoProbeFinding`` with ``success=False, error=asyncio.TimeoutError``
+        # instead of a pipeline-wide hang.
+        if self.timeout > 0:
+            timeout_tasks = [
+                asyncio.wait_for(t, timeout=self.timeout + 5.0)
+                for t in tasks
+            ]
+            results = await asyncio.gather(*timeout_tasks, return_exceptions=True)
+        else:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
         findings: List[AutoProbeFinding] = []
         for rec, res in zip(probing_recommendations, results):
@@ -189,7 +207,7 @@ class AutoProbeExecutor:
 
         target 字符串格式: "victim ASes: 20119, 34927, 207564, 34854, 3257"
         """
-        ases = _extract_as_numbers(target)
+        ases = extract_as_numbers(target)
         if not ases:
             return AutoProbeFinding(
                 action="check_victim_traffic", target=target, success=False,
@@ -231,7 +249,7 @@ class AutoProbeExecutor:
 
         target 字符串格式: "prefixes: 90.174.144.0/20, 85.54.152.0/22, ..."
         """
-        prefixes = _extract_prefixes(target)
+        prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
                 action="bgp_path_analysis", target=target, success=False,
@@ -268,7 +286,7 @@ class AutoProbeExecutor:
 
     async def _probe_traceroute(self, target: str, target_as: str) -> AutoProbeFinding:
         """
-        执行 traceroute 探测（简化版，最多 10 跳）
+        执行 traceroute 探测（使用 scapy，无 root 依赖）
 
         target 字符串格式: "target AS12479"
         """
@@ -281,38 +299,49 @@ class AutoProbeExecutor:
                 error="no_target_ip",
             )
 
-        if not _which("traceroute"):
+        if not PROBING_TOOLS_AVAILABLE:
             return AutoProbeFinding(
                 action="traceroute_probing", target=target, success=False,
-                summary="系统未安装 traceroute，跳过探测",
-                error="traceroute_not_installed",
+                summary="probing_tools 模块不可用，跳过探测",
+                error="probing_tools_unavailable",
             )
 
         try:
-            loop = asyncio.get_event_loop()
-            cmd = ["traceroute", "-m", "10", "-w", "2", "-q", "1", target_ip]
-            proc = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None,
-                    lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=self.timeout),
-                ),
-                timeout=self.timeout + 5,
+            traceroute_probe = TracerouteProbe(
+                max_hops=15,
+                timeout=self.timeout,
+                retries=1,
+                method="icmp",
             )
-            output = proc.stdout
-            hops = _parse_simple_traceroute(output)
-            return AutoProbeFinding(
-                action="traceroute_probing", target=target,
-                success=proc.returncode == 0 and len(hops) > 0,
-                summary=f"traceroute 至 {target_ip}: {len(hops)} 跳可达",
-                data={"target_ip": target_ip, "hops": hops, "raw_output": output[:2000]},
-            )
-        except subprocess.TimeoutExpired:
-            return AutoProbeFinding(
-                action="traceroute_probing", target=target, success=False,
-                summary=f"traceroute 超时（>{self.timeout}s）",
-                error="timeout",
-            )
+            result = await traceroute_probe.probe(target_ip)
+
+            if result.success:
+                hop_count = len(result.hops)
+                hop_summary = ", ".join(
+                    h.get("ip", "*") for h in result.hops[:3] if h.get("ip")
+                )
+                if hop_count > 3:
+                    hop_summary += f" ... (+{hop_count - 3} hops)"
+                return AutoProbeFinding(
+                    action="traceroute_probing", target=target,
+                    success=result.success,
+                    summary=f"traceroute 至 {target_ip}: {hop_count} 跳, 路径 {hop_summary}",
+                    data={
+                        "target_ip": target_ip,
+                        "hops": result.hops,
+                        "raw_output": result.raw_output[:2000],
+                        "backend": result.probe_type,
+                    },
+                )
+            else:
+                return AutoProbeFinding(
+                    action="traceroute_probing", target=target,
+                    success=False,
+                    summary=f"traceroute 至 {target_ip} 失败: {result.error}",
+                    error=result.error or "probe_failed",
+                )
         except Exception as e:
+            logger.warning(f"traceroute 探测失败: {e}")
             return AutoProbeFinding(
                 action="traceroute_probing", target=target, success=False,
                 summary=f"traceroute 失败: {e}",
@@ -323,7 +352,7 @@ class AutoProbeExecutor:
         self, target: str, target_as: str, analysis_window: Optional[dict],
     ) -> AutoProbeFinding:
         """查询目标 AS 的流量（Cloudflare Radar 公开数据）"""
-        asn = _extract_first_as(target) or target_as
+        asn = extract_first_as(target) or target_as
         if not asn:
             return AutoProbeFinding(
                 action="collect_traffic_data", target=target, success=False,
@@ -350,7 +379,7 @@ class AutoProbeExecutor:
         self, target: str, target_as: str,
     ) -> AutoProbeFinding:
         """查询特定前缀的流量（Cloudflare Radar）"""
-        prefixes = _extract_prefixes(target)
+        prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
                 action="prefix_specific_traffic", target=target, success=False,
@@ -376,7 +405,7 @@ class AutoProbeExecutor:
 
     async def _probe_rpki(self, target: str) -> AutoProbeFinding:
         """RPKI 验证：通过 rpki-validator.console.api 查询 ROA 状态"""
-        prefixes = _extract_prefixes(target)
+        prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
                 action="rpki_validation", target=target, success=False,
@@ -410,7 +439,7 @@ class AutoProbeExecutor:
 
     async def _probe_as_topology(self, target: str) -> AutoProbeFinding:
         """AS 拓扑查询（通过 CAIDA AS-Relationship 数据）"""
-        asn = _extract_first_as(target)
+        asn = extract_first_as(target)
         if not asn:
             return AutoProbeFinding(
                 action="as_topology", target=target, success=False,
@@ -629,41 +658,48 @@ class AutoProbeExecutor:
 
     async def _resolve_target_for_as(self, asn: str) -> Optional[str]:
         """
-        为 AS 找一个可探测的目标 IP（通过其 org 的常用 DNS）
+        为 AS 找一个可探测的目标 IP（使用 RIPE RIS API 获取其宣布的前缀）
 
-        简化实现：尝试查询该AS的官方域名的IP
+        返回前缀中第一个可用 IP（取前缀的第一个地址）
         """
-        # 简单启发式：尝试查询该 AS 的 whois 或公开DNS
-        # 实际生产环境应该通过 CAIDA Prefix-to-AS 或 ITDK 获取前缀列表
+        asn_clean = asn.replace("AS", "").strip()
         try:
-            # 用 RIPE Stat API 获取 AS 的 announced prefixes
             if not AIOHTTP_AVAILABLE:
                 return None
 
-            url = "https://stat.ripe.net/data/prefix-list/data.json"
-            params = {"resource": f"AS{asn.replace('AS', '')}", "list_type": "info"}
+            # Try RIPE RIS announced-prefixes endpoint
+            url = "https://stat.ripe.net/data/announced-prefixes/data.json"
+            params = {"resource": f"AS{asn_clean}"}
             timeout = aiohttp.ClientTimeout(total=self.timeout)
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.get(url, params=params) as resp:
                     if resp.status != 200:
                         return None
                     data = await resp.json()
-            prefixes = (data.get("data") or {}).get("prefixes") or []
-            if not prefixes:
+
+            data_obj = data.get("data") or {}
+            prefixes_data = data_obj.get("prefixes") or []
+            # Filter for IPv4 only, take first
+            ipv4_prefixes = [p for p in prefixes_data if ":" not in p.get("prefix", "")]
+            if not ipv4_prefixes:
                 return None
-            # 用第一个前缀的 .1 IP 作为探测目标
-            first_prefix = prefixes[0].get("prefix", "")
+
+            first_prefix = ipv4_prefixes[0].get("prefix", "")
             if not first_prefix:
                 return None
-            # 把前缀变成 IP，例如 90.174.144.0/20 -> 90.174.144.1
-            ip = ".".join(first_prefix.split("/")[0].split(".")[:-1] + ["1"])
-            return ip
+
+            # Convert prefix to IP: 90.160.0.0/12 -> 90.160.0.1
+            prefix_part = first_prefix.split("/")[0]
+            parts = prefix_part.split(".")
+            parts[-1] = "1"
+            return ".".join(parts)
+
         except Exception:
             return None
 
 
 # ---------- 辅助函数 ----------
-def _extract_as_numbers(text: str) -> List[str]:
+def extract_as_numbers(text: str) -> List[str]:
     """从 "victim ASes: 20119, 34927, 207564" 中提取 AS 号列表"""
     import re
     matches = re.findall(r"\b(?:AS)?(\d{2,6})\b", text or "")
@@ -676,40 +712,62 @@ def _extract_as_numbers(text: str) -> List[str]:
     return result
 
 
-def _extract_prefixes(text: str) -> List[str]:
-    """从 "prefixes: 90.174.144.0/20, ..." 中提取前缀列表"""
+def extract_prefixes(text: str) -> List[str]:
+    """从 ``"prefixes: 90.174.144.0/20, ..."`` 中提取前缀列表。
+
+    Bug fix 2026-09-13 (BUG-R123, two improvements):
+      1. ``\b\\d{1,3}(?:\\.\\d{1,3}){3}/\\d{1,2}\\b`` accepts out-of-range
+         octets like ``999.999.999.999/8`` because each ``\\d{1,3}`` matches
+         any three digits. We now validate ``0 <= octet <= 255`` so
+         nonsense inputs are filtered out instead of being passed to the
+         RPKI / traceroute probes (which then either silently fail or
+         shell-inject-or-error-out).
+      2. The original regex was IPv4-only. IPv6 prefixes
+         (``2001:db8::/32``) were silently dropped — meaning the probe
+         executor reported only ``probe_results=[]`` for IPv6-only
+         hijack events, even though valid targets were given. We now
+         also match standard IPv6 prefix syntax.
+
+    Note: this intentionally returns ``list`` in input order, not a
+    ``set``; downstream code prefers deterministic ordering and
+    dedupes via ``list(dict.fromkeys(...))`` where needed.
+    """
     import re
-    return re.findall(r"\b\d{1,3}(?:\.\d{1,3}){3}/\d{1,2}\b", text or "")
+    if not text:
+        return []
+    v4_pat = re.compile(
+        r"\b(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})\b"
+    )
+    out: List[str] = []
+    for m in v4_pat.finditer(text):
+        try:
+            octets = [int(m.group(i)) for i in range(1, 5)]
+            plen = int(m.group(5))
+        except (TypeError, ValueError):
+            continue
+        if not all(0 <= o <= 255 for o in octets):
+            continue
+        if not (0 <= plen <= 32):
+            continue
+        out.append(f"{octets[0]}.{octets[1]}.{octets[2]}.{octets[3]}/{plen}")
+    # IPv6 prefix: 1-4 hex hextets, :: shorthand, /prefix  (very loose; we
+    # only care that we don't lose the value when extracting from the
+    # LLM's natural-language "prefixes:" strings).
+    v6_pat = re.compile(
+        r"\b([0-9A-Fa-f]{1,4}(?::[0-9A-Fa-f]{0,4}){1,7})/(\d{1,3})\b"
+    )
+    for m in v6_pat.finditer(text):
+        plen = int(m.group(2))
+        if not (0 <= plen <= 128):
+            continue
+        out.append(f"{m.group(1)}/{plen}")
+    return out
 
 
-def _extract_first_as(text: str) -> str:
+def extract_first_as(text: str) -> str:
     """提取第一个 AS 号"""
-    nums = _extract_as_numbers(text)
+    nums = extract_as_numbers(text)
     return nums[0] if nums else ""
-
-
-def _which(cmd: str) -> Optional[str]:
-    """检查命令是否存在"""
-    for path in os.environ.get("PATH", "").split(":"):
-        full = os.path.join(path, cmd)
-        if os.path.isfile(full) and os.access(full, os.X_OK):
-            return full
-    return None
-
-
-def _parse_simple_traceroute(output: str) -> List[dict]:
-    """简单解析 traceroute 输出"""
-    import re
-    hops = []
-    for line in output.split("\n"):
-        match = re.match(r"^\s*(\d+)\s+(.+)$", line.strip())
-        if match:
-            hop_num = int(match.group(1))
-            rest = match.group(2)
-            ip_match = re.search(r"\((\d+\.\d+\.\d+\.\d+)\)", rest)
-            ip = ip_match.group(1) if ip_match else ""
-            hops.append({"hop": hop_num, "ip": ip, "raw": rest[:120]})
-    return hops
 
 
 def format_findings_for_html(findings: List[AutoProbeFinding]) -> str:

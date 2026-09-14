@@ -6,17 +6,12 @@ import hashlib
 from functools import lru_cache
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Dict, Tuple, Any
+from typing import Any, Dict, Tuple
 
-# SQLite-based cache system: fake-connection frequency keyed by
-# (fake_connection, YYYY-MM-DD) to avoid re-validating the same pair within the
-# same day across multiple AS runs/processes.
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CACHE_DIR = PROJECT_ROOT / "cache"
 SQLITE_CACHE_DB = CACHE_DIR / "fake_conn_cache.db"
-
-# Thread-local storage for database connections
 local = threading.local()
 
 # Memory LRU cache for hot data (most frequently accessed)
@@ -106,7 +101,6 @@ def cleanup_old_cache_entries(days_to_keep=30):
         print(f"Failed to cleanup old cache entries: {e}")
 
 def load_fake_conn_cache():
-    """Load fake connection cache from disk once per process (legacy compatibility)."""
     global FAKE_CONN_FREQ_CACHE, FAKE_CONN_CACHE_LOADED
     if _FAKE_CONN_CACHE_LOADED:
         return
@@ -141,7 +135,6 @@ def load_fake_conn_cache():
         FAKE_CONN_CACHE_LOADED = True
 
 def migrate_json_to_sqlite():
-    """Migrate existing JSON cache to SQLite database."""
     try:
         if not FAKE_CONN_CACHE_FILE.exists():
             return
@@ -180,7 +173,6 @@ def migrate_json_to_sqlite():
 
 
 def save_fake_conn_cache():
-    """Save fake connection cache to SQLite (legacy compatibility)."""
     global FAKE_CONN_FREQ_CACHE
 
     try:
@@ -208,7 +200,6 @@ def save_fake_conn_cache():
 
 
 def get_cached_fake_conn_frequency(fake_connection, day_str):
-    """Get cached fake connection frequency with memory cache + SQLite fallback."""
     # First check in-memory cache
     cache_key = memory_lru_cache_key(fake_connection, day_str)
     try:
@@ -237,16 +228,14 @@ def get_cached_fake_conn_frequency(fake_connection, day_str):
         print(f"Failed to get cached fake connection frequency: {e}")
         return {}
 
-def get_from_memory_cache(key: str) -> Dict[str, Any]:
-    """Get data from memory LRU cache (helper function to work around lru_cache limitations)."""
+def get_from_memory_cache(key):
     # This is a workaround since lru_cache decorated functions don't have direct access
     # We'll use a global dict to store the actual data
     if not hasattr(get_from_memory_cache, '_cache'):
         get_from_memory_cache._cache = {}
     return get_from_memory_cache._cache[key]
 
-def put_in_memory_cache(key: str, data: Dict[str, Any]) -> None:
-    """Put data in memory LRU cache."""
+def put_in_memory_cache(key, data):
     if not hasattr(put_in_memory_cache, '_cache'):
         put_in_memory_cache._cache = {}
 
@@ -261,7 +250,6 @@ def put_in_memory_cache(key: str, data: Dict[str, Any]) -> None:
 
 
 def set_cached_fake_conn_frequency(fake_connection, day_str, frequency_data):
-    """Set cached fake connection frequency in both memory LRU cache and SQLite."""
     try:
         # Update SQLite database
         conn = get_db_connection()
@@ -284,7 +272,6 @@ def set_cached_fake_conn_frequency(fake_connection, day_str, frequency_data):
 
 
 def is_fake_conn_cached(fake_connection, day_str):
-    """Check if fake connection is cached in SQLite."""
     try:
         conn = get_db_connection()
         cursor = conn.execute("""
@@ -299,7 +286,6 @@ def is_fake_conn_cached(fake_connection, day_str):
 
 
 def clear_fake_conn_cache():
-    """Clear SQLite, memory LRU cache, and legacy memory cache."""
     global FAKE_CONN_FREQ_CACHE, FAKE_CONN_CACHE_LOADED
 
     try:
@@ -331,7 +317,6 @@ def clear_fake_conn_cache():
 
 
 def get_cache_stats():
-    """Get comprehensive cache statistics including LRU cache."""
     try:
         # SQLite stats
         conn = get_db_connection()
@@ -393,7 +378,6 @@ def memory_fake_conn_detection_key(as_path, asrel_hash):
 
 
 def get_asrel_hash(as_relationships):
-    """Calculate hash of AS relationship data for cache invalidation"""
     try:
         # Convert to sorted, deterministic string representation
         providers = as_relationships.get('providers', {})
@@ -411,7 +395,6 @@ def get_asrel_hash(as_relationships):
 
 
 def get_cached_fake_connection_detection(as_path, asrel_hash):
-    """Get cached fake connection detection result"""
     try:
         # Check memory cache first
         mem_key = memory_fake_conn_detection_key(as_path, asrel_hash)
@@ -489,7 +472,6 @@ def is_fake_connection_detection_cached(as_path, asrel_hash):
 # ============== 新增AS对缓存函数 ==============
 
 def get_cached_as_pair(as1, as2, date_str, asrel_hash):
-    """Get cached AS pair connection status"""
     try:
         # Check memory cache first
         mem_key = f"as_pair:{as1}:{as2}:{date_str}:{asrel_hash}"
@@ -518,15 +500,6 @@ def get_cached_as_pair(as1, as2, date_str, asrel_hash):
 
 
 def set_cached_as_pair(as1, as2, date_str, asrel_hash, is_fake, timestamp=None):
-    """Cache AS pair connection status
-
-    Args:
-        as1, as2: AS numbers
-        date_str: Date string (YYYY-MM-DD format)
-        asrel_hash: AS relationship hash
-        is_fake: Boolean indicating if connection is fake
-        timestamp: Date string (YYYY-MM-DD), defaults to date_str if None
-    """
     try:
         # 确保时间戳是日期格式，如果没有提供则使用date_str
         if timestamp is None:
@@ -555,7 +528,6 @@ def set_cached_as_pair(as1, as2, date_str, asrel_hash, is_fake, timestamp=None):
 
 
 def is_as_pair_cached(as1, as2, date_str, asrel_hash):
-    """Check if AS pair is cached"""
     try:
         # Check memory cache first
         mem_key = f"as_pair:{as1}:{as2}:{date_str}:{asrel_hash}"

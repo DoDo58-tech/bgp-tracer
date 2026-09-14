@@ -73,6 +73,15 @@ data/event_plots/
 .env
 .env.local
 .env.*.local
+# Bug fix 2026-09-13: ``.env.glm`` contains plaintext API keys and was
+# previously matched by neither ``.env`` nor ``.env.*.local`` (the latter
+# only catches *.local). Explicitly exclude it so a careless ``git add .``
+# never commits the credentials.
+.env.glm
+# Also exclude other .env.* vendor profiles by name; add new profiles
+# here as they are created.
+.env.kimi
+.env.deepseek
 
 # Configuration with sensitive data
 config.py

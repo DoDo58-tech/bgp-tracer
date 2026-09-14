@@ -1,7 +1,7 @@
 import sys
 import os
 import ipaddress
-from typing import List, Dict, Set, Any
+from typing import Any, Dict, List, Set
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from detectors.hijack.hijack_utils import logger

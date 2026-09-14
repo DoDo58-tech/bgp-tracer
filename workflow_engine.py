@@ -135,7 +135,7 @@ class WorkflowContext:
     needs_traffic_deep_analysis: bool = False
     needs_routing_analysis: bool = False
     routing_analysis_detail: str = "full"
-    # victim ASes extracted from routing events (set by _compute_causal_analysis)
+    # victim ASes extracted from routing events (set by compute_causal_analysis)
     victim_asns: list = field(default_factory=list)
     routing_time_window: dict = None
     validation_notes: list = field(default_factory=list)
@@ -198,7 +198,7 @@ class RetryableError(Exception):
 def async_retry(max_retries = 3, backoff_base = 1.0):
     """
     Decorator for automatic retry with exponential backoff.
-    
+
     Usage:
         @async_retry(max_retries=3)
         async def unreliable_operation():
@@ -207,19 +207,38 @@ def async_retry(max_retries = 3, backoff_base = 1.0):
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
+            # Bug fix 2026-09-13 (BUG-R44): the previous implementation
+            # unconditionally executed ``raise last_exception`` after the
+            # retry loop. When ``max_retries == 0`` the for-loop runs
+            # zero times, ``last_exception`` stays None, and the post-loop
+            # statement becomes ``raise None`` → ``TypeError: exceptions
+            # must derive from BaseException`` at runtime. Also, even
+            # with a positive retry count, any non-RetryableError
+            # exception was suppressed (we returned ``None``) — silent
+            # swallowing.
+            #
+            # The cleaner fix: rewrite as ``attempt < max(max_retries, 1)``
+            # so the function is always invoked at least once, and only
+            # retry when ``max_retries > 0``.
             last_exception = None
-            for attempt in range(max_retries):
+            effective_attempts = max(max_retries, 1)
+            for attempt in range(effective_attempts):
                 try:
                     return await func(*args, **kwargs)
                 except RetryableError as e:
                     last_exception = e
-                    if attempt < max_retries - 1:
+                    if attempt < effective_attempts - 1:
                         wait_time = backoff_base * (2 ** attempt)
                         logger.warning(f"Retry {attempt + 1}/{max_retries} for {func.__name__} after {wait_time}s: {e}")
                         await asyncio.sleep(wait_time)
                     else:
                         logger.error(f"All {max_retries} retries exhausted for {func.__name__}")
-            raise last_exception
+            # If we got here, the function raised a RetryableError every
+            # time. Propagate the last captured exception.
+            if last_exception is not None:
+                raise last_exception
+            # Defensive fallback (should be unreachable in practice).
+            return None
         return wrapper
     return decorator
 
@@ -273,7 +292,7 @@ class WorkflowEngine:
 
         # State handlers
         self._state_handlers: dict[WorkflowState, Callable] = {}
-        self._register_default_handlers()
+        self.register_default_handlers()
 
         # Metrics
         self.metrics = {
@@ -282,8 +301,36 @@ class WorkflowEngine:
             "failed_runs": 0,
             "total_execution_time_ms": 0.0
         }
-    
-    def _register_default_handlers(self):
+
+    @staticmethod
+    def _extract_hcaf_strength(result) -> dict:
+        """Return ``{"strength": <value|None>}`` from a HCAF result object.
+
+        Bug fix 2026-09-13: previous code used
+        ``getattr(getattr(结果, "强度", None), "value", "unknown")``.
+        If ``结果.强度`` exists but lacks a ``.value`` attribute, the
+        inner getattr returned ``None`` and the outer ``getattr`` ALSO
+        returned ``None`` — the "unknown" default was unreachable.
+
+        New shape handles four cases:
+          1. ``强度`` missing  → ``"unknown"``
+          2. ``强度`` has ``.value`` (e.g. Enum) → use that
+          3. ``强度`` is a plain scalar (float/int/str) → use directly
+          4. Otherwise → ``str(强度)`` so the value still reaches the caller
+        """
+        strength_obj = getattr(result, "强度", None)
+        if strength_obj is None:
+            return {"strength": "unknown"}
+        if hasattr(strength_obj, "value"):
+            return {"strength": strength_obj.value}
+        if isinstance(strength_obj, (int, float, str, bool)):
+            return {"strength": strength_obj}
+        try:
+            return {"strength": str(strength_obj)}
+        except Exception:
+            return {"strength": "unknown"}
+
+    def register_default_handlers(self):
         """Register default state handlers."""
         self._state_handlers = {
             WorkflowState.INITIAL: self._handle_initial,
@@ -300,7 +347,7 @@ class WorkflowEngine:
             WorkflowState.ERROR: self._handle_error,
         }
 
-    def _init_enhanced_components(self, context: WorkflowContext):
+    def init_enhanced_components(self, context: WorkflowContext):
         """
         Lazily initialize enhanced multi-agent components.
         Called once at the start of enhanced-mode execution.
@@ -416,8 +463,12 @@ class WorkflowEngine:
         if not WORKFLOW_EVENT_DRIVEN_ENABLED:
             # Diagnostic mode: collapse subscribers to log-only behavior.
             # Useful when LLM rate limits make downstream reactions undesirable.
-            for sub in list(bus._subscriptions.values()):
-                bus._subscriptions[sub] = []  # type: ignore[index]
+            # Bug fix 2026-09-13: the previous implementation iterated
+            # ``bus._subscriptions.values()`` (lists of callbacks) and used
+            # each list as a dict key — which raises TypeError because
+            # lists are unhashable. Iterate keys instead.
+            for topic in list(bus._subscriptions.keys()):
+                bus._subscriptions[topic] = []
             logger.info("[BusSub] WORKFLOW_EVENT_DRIVEN_ENABLED=false — subscribers disabled")
 
         # LLM (shared across all enhanced agents)
@@ -463,6 +514,19 @@ class WorkflowEngine:
         _t0 = perf_counter()
         self.metrics["total_runs"] += 1
 
+        # Hard cap on total workflow runtime to avoid the enhanced mode
+        # getting stuck in debate/retry loops. Defaults to 900s, overridable
+        # via BGP_TRACER_WORKFLOW_TIMEOUT_S. When the cap is hit we jump
+        # straight to REPORT_GENERATION so the caller still gets a usable
+        # HTML, then mark COMPLETE.
+        try:
+            from config import WORKFLOW_TOTAL_TIMEOUT_S
+        except Exception:
+            WORKFLOW_TOTAL_TIMEOUT_S = 900.0
+        workflow_timeout_s = float(
+            os.environ.get("BGP_TRACER_WORKFLOW_TIMEOUT_S", WORKFLOW_TOTAL_TIMEOUT_S)
+        )
+
         context.add_transition(
             WorkflowState.INITIAL,
             WorkflowState.INITIAL,
@@ -474,10 +538,25 @@ class WorkflowEngine:
         context.debate_rounds = context.debate_rounds or self.debate_rounds
         context.evaluation_retries = context.evaluation_retries or self.evaluation_retries
 
+        # Bug fix 2026-09-13: ``event_type`` and ``as_role`` came in as
+        # parameters to ``run_workflow`` and were stored on the context,
+        # but were NEVER written into the Blackboard ``config`` section.
+        # Downstream agents that read ``config.event_type`` (e.g.
+        # RoutingAgent when deciding whether to skip / force routing
+        # analysis for a hijack-shaped event) therefore saw ``None``.
+        # Mirror both keys into the shared blackboard here so they're
+        # available before any handler runs.
+        bb_seed = getattr(context, "shared_blackboard", None)
+        if bb_seed is not None:
+            if context.event_type is not None:
+                await bb_seed.write("config", "event_type", context.event_type)
+            if context.as_role is not None:
+                await bb_seed.write("config", "as_role", context.as_role)
+
         try:
             # Initialize enhanced multi-agent components if enabled
             if context.enhanced:
-                self._init_enhanced_components(context)
+                self.init_enhanced_components(context)
                 logger.info(
                     f"[Enhanced Mode] Enabled: debate_rounds={context.debate_rounds}, "
                     f"evaluation_retries={context.evaluation_retries}, "
@@ -485,7 +564,29 @@ class WorkflowEngine:
                 )
 
             # Main state machine loop
+            timed_out = False
             while context.current_state not in (WorkflowState.COMPLETE, WorkflowState.ERROR):
+                # ── Global timeout check ──────────────────────────────────
+                elapsed = perf_counter() - _t0
+                if elapsed > workflow_timeout_s:
+                    logger.warning(
+                        f"[Workflow] GLOBAL TIMEOUT ({elapsed:.1f}s > {workflow_timeout_s}s) "
+                        f"at state {context.current_state.name}; forcing REPORT_GENERATION"
+                    )
+                    context.validation_notes.append({
+                        "case": "workflow_global_timeout",
+                        "severity": "warning",
+                        "message": (
+                            f"Workflow exceeded {workflow_timeout_s:.0f}s; "
+                            "skipping remaining stages and forcing report generation"
+                        ),
+                    })
+                    timed_out = True
+                    if context.current_state != WorkflowState.REPORT_GENERATION:
+                        context.current_state = WorkflowState.REPORT_GENERATION
+                        continue
+                    break
+
                 handler = self._state_handlers.get(context.current_state)
 
                 if handler is None:
@@ -506,7 +607,7 @@ class WorkflowEngine:
                 state_duration = (perf_counter() - state_start) * 1000
 
                 # Determine next state based on event (pass context for dynamic routing)
-                next_state = self._get_next_state(prev_state, next_event, context)
+                next_state = self.get_next_state(prev_state, next_event, context)
                 context.add_transition(
                     prev_state,
                     next_state,
@@ -523,9 +624,15 @@ class WorkflowEngine:
                 ckpt = getattr(self, "checkpoint", None)
                 if ckpt is not None and ckpt.enabled:
                     try:
-                        ckpt.save(f"workflow_{prev_state.name.lower()}", _snapshot_context(context))
+                        ckpt.save(f"workflow_{prev_state.name.lower()}", snapshot_context(context))
                     except Exception as e:
                         logger.warning(f"[Checkpoint] Failed to save after {prev_state.name}: {e}")
+
+            if timed_out and context.current_state != WorkflowState.COMPLETE:
+                # Fallback reached: jump to report generation and let it
+                # produce whatever HTML it can with the partial evidence.
+                # The state machine loop above already redirected us there.
+                pass
 
             # Success
             self.metrics["successful_runs"] += 1
@@ -544,7 +651,7 @@ class WorkflowEngine:
             ckpt = getattr(self, "checkpoint", None)
             if ckpt is not None and ckpt.enabled:
                 try:
-                    ckpt.save("workflow_state", _snapshot_context(context))
+                    ckpt.save("workflow_state", snapshot_context(context))
                 except Exception as save_err:
                     logger.warning(f"[Checkpoint] Failed to save error state: {save_err}")
 
@@ -554,21 +661,51 @@ class WorkflowEngine:
 
             # Clean up MessageBus if enhanced mode was used
             if context.message_bus_run_id:
+                # Bug fix 2026-09-13: stop() the BlackboardMessageBridge
+                # BEFORE clearing the bus instance. The bridge monkey-patches
+                # ``bb._notify`` in start(); without stop() the patched
+                # callback stays attached and any subsequent Blackboard
+                # activity (including a non-enhanced follow-up run that
+                # happens to share the same Python process) will try to
+                # call into a dead bus instance and AttributeError.
+                bridge = (self._enhanced_components or {}).get("bridge") if hasattr(self, "_enhanced_components") else None
+                if bridge is not None:
+                    try:
+                        bridge.stop()
+                    except Exception as _bs_err:
+                        logger.warning(f"[Enhanced Mode] Bridge stop failed: {_bs_err}")
                 from agents.enhanced import AgentMessageBus
                 AgentMessageBus.clear_instance(context.message_bus_run_id)
                 logger.info(f"[Enhanced Mode] MessageBus instance cleared: {context.message_bus_run_id}")
+
+            # Bug fix 2026-09-13 (BUG-R56): TokenBudget.clear_instance
+            # existed but was never called in production — only tests
+            # used it. Without cleanup, every run leaks its TokenBudget
+            # entry into TokenBudget._instances for the lifetime of the
+            # Python process. Long-running batch jobs (e.g. 100-event
+            # benchmark runs) accumulate hundreds of AgentTokenUsage
+            # lists that are kept alive even after analysis completes,
+            # eventually OOMing the worker. We now clear the instance
+            # here alongside MessageBus so both registries balance with
+            # each run.
+            if context.message_bus_run_id:
+                try:
+                    from agents.token_budget import TokenBudget
+                    TokenBudget.clear_instance(context.message_bus_run_id)
+                except Exception as _tb_err:
+                    logger.debug(f"[Cleanup] TokenBudget.clear_instance failed: {_tb_err}")
 
             # ── Final checkpoint: save fully-completed context ──
             ckpt = getattr(self, "checkpoint", None)
             if ckpt is not None and ckpt.enabled and context.current_state == WorkflowState.COMPLETE:
                 try:
-                    ckpt.save("workflow_context", _snapshot_context(context))
+                    ckpt.save("workflow_context", snapshot_context(context))
                 except Exception as e:
                     logger.warning(f"[Checkpoint] Failed to save final context: {e}")
 
         return context
     
-    def _get_next_state(self, current: WorkflowState, event: WorkflowEvent, context: WorkflowContext = None):
+    def get_next_state(self, current: WorkflowState, event: WorkflowEvent, context: WorkflowContext = None):
         transitions = {
             (WorkflowState.INITIAL, WorkflowEvent.START): WorkflowState.PARSING_INPUT,
             (WorkflowState.PARSING_INPUT, WorkflowEvent.INPUT_PARSED): WorkflowState.TRAFFIC_SCREENING,
@@ -675,9 +812,19 @@ class WorkflowEngine:
         from agents.core import Blackboard
         from agents.traffic_agent import TrafficAgent
 
+        logger.info(f"[_handle_traffic_analysis] precomputed_traffic={bool(context.precomputed_traffic)}")
+
         # Use shared Blackboard in enhanced mode; create new one otherwise
         if context.enhanced and context.shared_blackboard:
             bb = context.shared_blackboard
+            # Bug fix: in enhanced mode the shared Blackboard is created in
+            # init_enhanced_components but never seeded with config.asn /
+            # config.start_time / config.end_time. Without these, TrafficAgent
+            # / RoutingAgent immediately return "Missing config" and the
+            # whole analysis chain silently degrades to inconclusive.
+            await bb.write("config", "asn", context.asn)
+            await bb.write("config", "start_time", context.start_time)
+            await bb.write("config", "end_time", context.end_time)
         else:
             bb = Blackboard()
             await bb.write("config", "asn", context.asn)
@@ -716,9 +863,9 @@ class WorkflowEngine:
             if traffic.get("anomalies"):
                 # set anomalies_detected when traffic data contains anomalies
                 context.anomalies_detected = True
-                windows = _extract_anomaly_windows(traffic["anomalies"], buffer_hours=context.buffer_hours)
+                windows = extract_anomaly_windows(traffic["anomalies"], buffer_hours=context.buffer_hours)
                 if windows:
-                    all_windows = _union_anomaly_windows(windows)
+                    all_windows = union_anomaly_windows(windows)
                     context.routing_time_window = all_windows
 
             # Routing evidence is independently required. A normal traffic
@@ -797,22 +944,27 @@ class WorkflowEngine:
             bb = context.shared_blackboard
         else:
             bb = Blackboard()
-            await bb.write("config", "asn", context.asn)
-            await bb.write("config", "start_time", routing_start)
-            await bb.write("config", "end_time", routing_end)
-            await bb.write("config", "enable_mitm", context.enable_mitm)
-            # use_traffic_time_window should follow rt dynamically
-            # 当 routing_time_window 由 traffic 扩展分析得出时，设为 True，
-            # 让 RoutingAgent 知道使用扩展窗口而非用户原始窗口。
-            await bb.write("config", "use_traffic_time_window", rt is not None)
-            await bb.write("config", "routing_detail", context.routing_analysis_detail or "full")
-
+        # Write the routing-window config keys once. The previous
+        # implementation wrote them twice in the non-enhanced branch
+        # (the second copy was a dead-code duplicate of the first); we
+        # consolidate here so config keys stay in lockstep with the
+        # routing_time_window derivation above.
         await bb.write("config", "asn", context.asn)
         await bb.write("config", "start_time", routing_start)
         await bb.write("config", "end_time", routing_end)
         await bb.write("config", "enable_mitm", context.enable_mitm)
+        # use_traffic_time_window should follow rt dynamically
+        # 当 routing_time_window 由 traffic 扩展分析得出时，设为 True，
+        # 让 RoutingAgent 知道使用扩展窗口而非用户原始窗口。
         await bb.write("config", "use_traffic_time_window", rt is not None)
         await bb.write("config", "routing_detail", context.routing_analysis_detail or "full")
+        # Bug fix 2026-09-13: ``event_type`` and ``as_role`` came in via
+        # the CLI / workflow context but were never propagated into the
+        # routing Blackboard, so RoutingAgent saw them as None.
+        if context.event_type is not None:
+            await bb.write("config", "event_type", context.event_type)
+        if context.as_role is not None:
+            await bb.write("config", "as_role", context.as_role)
         if rt:
             await bb.write("traffic", "expanded_windows", [rt])
             await bb.write("traffic", "anomaly_window", rt)
@@ -891,7 +1043,11 @@ class WorkflowEngine:
                     # prefer flat key; fall back to nested hijack.{key}
                     events = rr.get(key) or hijack_section.get(key) or []
                     for event in events:
-                        event_copy = dict(event)
+                        # Normalise event to dict (it may be AnomalyDetail).
+                        if isinstance(event, dict):
+                            event_copy = dict(event)
+                        else:
+                            event_copy = dict(getattr(event, "__dict__", {}) or {})
                         event_copy["event_type"] = (key
                             .replace("origin_hijacked", "origin_hijack")
                             .replace("origin_hijacking", "origin_hijack")
@@ -905,7 +1061,11 @@ class WorkflowEngine:
                 leak_section = rr.get("leak") or {}
                 leak_events = rr.get("route_leaks") or leak_section.get("route_leaks") or []
                 for event in leak_events:
-                    event_copy = dict(event)
+                    # Normalise event to dict (it may be AnomalyDetail).
+                    if isinstance(event, dict):
+                        event_copy = dict(event)
+                    else:
+                        event_copy = dict(getattr(event, "__dict__", {}) or {})
                     event_copy["event_type"] = "leak"
                     routing_events.append(event_copy)
 
@@ -922,7 +1082,11 @@ class WorkflowEngine:
             traffic_anomalies = []
             if context.traffic_result and context.traffic_result.get("data_available") is not False:
                 for anomaly in context.traffic_result.get("anomalies", []) or []:
-                    anomaly_copy = dict(anomaly)
+                    # Normalise anomaly to dict (it may be AnomalyDetail).
+                    if isinstance(anomaly, dict):
+                        anomaly_copy = dict(anomaly)
+                    else:
+                        anomaly_copy = dict(getattr(anomaly, "__dict__", {}) or {})
                     if "timestamp" not in anomaly_copy:
                         anomaly_copy["timestamp"] = anomaly_copy.get("time")
                     traffic_anomalies.append(anomaly_copy)
@@ -994,7 +1158,7 @@ class WorkflowEngine:
 
             # HCAF 因果归因（三个创新方法：MSCBD/CTPR/CIC）
             try:
-                hcaf_result = self._compute_hcaf_attribution(context)
+                hcaf_result = self.compute_hcaf_attribution(context)
                 if hcaf_result:
                     context.hcaf_attribution = hcaf_result
                     context.hcaf_attribution_status = "ok"
@@ -1005,12 +1169,13 @@ class WorkflowEngine:
                         f"收敛度={hcaf_result['convergence']:.0%}"
                     )
                 else:
-                    if not context.hcaf_attribution_status:
+                    if context.hcaf_attribution_status not in ("ok",):
                         context.hcaf_attribution_status = "skipped"
                     logger.info(f"[HCAF] 因果归因未生成结果（status={context.hcaf_attribution_status}）")
             except Exception as e:
                 logger.warning(f"[HCAF] 因果归因在 joint_evidence 阶段失败: {e}")
-                context.hcaf_attribution_status = "failed"
+                if context.hcaf_attribution_status not in ("ok",):
+                    context.hcaf_attribution_status = "failed"
 
             # Event-driven: publish HCAF to MessageBus so CalibratorAgent can react
             if (
@@ -1028,7 +1193,10 @@ class WorkflowEngine:
                         metadata={"tier": context.joint_tier, "score": context.joint_score},
                     )
                 except Exception as exc:
-                    logger.debug(f"[BusPub] validation.hcaf_attribution skipped: {exc}")
+                    logger.warning(
+                        f"[BusPub] validation.hcaf_attribution publish failed: {exc!r} "
+                        "— CalibratorAgent may not see HCAF attribution."
+                    )
 
             return WorkflowEvent.JOINT_EVIDENCE_COMPLETE
 
@@ -1052,7 +1220,7 @@ class WorkflowEngine:
         # HCAF 因果归因（三个创新方法：MSCBD/CTPR/CIC）
         # 独立于 joint_evidence，保证 joint_evidence 出错时也能跑
         try:
-            hcaf_result = self._compute_hcaf_attribution(context)
+            hcaf_result = self.compute_hcaf_attribution(context)
             if hcaf_result:
                 context.hcaf_attribution = hcaf_result
                 context.hcaf_attribution_status = "ok"
@@ -1063,12 +1231,13 @@ class WorkflowEngine:
                     f"收敛度={hcaf_result['convergence']:.0%}"
                 )
             else:
-                if not context.hcaf_attribution_status:
+                if context.hcaf_attribution_status not in ("ok",):
                     context.hcaf_attribution_status = "skipped"
                 logger.info(f"[HCAF] 因果归因未生成结果（status={context.hcaf_attribution_status}）")
         except Exception as e:
             logger.warning(f"[HCAF] 因果归因在 joint_evidence 之后失败: {e}")
-            context.hcaf_attribution_status = "failed"
+            if context.hcaf_attribution_status not in ("ok",):
+                context.hcaf_attribution_status = "failed"
 
         return WorkflowEvent.JOINT_EVIDENCE_COMPLETE
     
@@ -1154,7 +1323,7 @@ class WorkflowEngine:
                 }
             })
 
-        causal_result = self._compute_causal_analysis(context)
+        causal_result = self.compute_causal_analysis(context)
         if causal_result:
             context.validation_notes.append({
                 "case": "causal_analysis",
@@ -1165,21 +1334,19 @@ class WorkflowEngine:
             context.causal_analysis = causal_result
             context.joint_alert = causal_result
 
-        evidence_chain = self._build_evidence_chain(context)
+        evidence_chain = self.build_evidence_chain(context)
         if evidence_chain:
             context.evidence_chain = evidence_chain
 
-    def _compute_causal_analysis(self, context: WorkflowContext) -> Optional[dict]:
-        """
-        计算路由异常与流量异常的因果关联评分
-        """
+    def compute_causal_analysis(self, context):
+        """Score the causal association between routing and traffic anomalies."""
         routing_result = context.routing_result
         traffic_result = context.traffic_result
 
         if not routing_result or not traffic_result:
             return None
 
-        causal_evidence = self._collect_causal_evidence(routing_result, traffic_result)
+        causal_evidence = self.collect_causal_evidence(routing_result, traffic_result)
 
         # ── Extract victim ASes from routing result ─────────────────────────────
         # annotation_package uses { "hijack": { "origin_hijacked": [...] } };
@@ -1188,18 +1355,12 @@ class WorkflowEngine:
         hijack_section = rr.get("hijack") or {}
         leak_section = rr.get("leak") or {}
 
-        def _events(key):
-            """Look up events under flat, hijack-section, or leak-section keys."""
-            return (
-                rr.get(key)
-                or hijack_section.get(key)
-                or leak_section.get(key)
-                or []
-            )
+        def events_for(key):
+            return rr.get(key) or hijack_section.get(key) or leak_section.get(key) or []
 
         victim_asns: set = set()
         for key in ["origin_hijacked", "forge_hijacked", "origin_hijacking", "forge_hijacking"]:
-            for ev in _events(key):
+            for ev in events_for(key):
                 if key in ("origin_hijacked", "forge_hijacked"):
                     if ev.get("origin_as"):
                         victim_asns.add(str(ev["origin_as"]))
@@ -1217,8 +1378,15 @@ class WorkflowEngine:
             "route_leaks": "affected",
         }
         for key, role in event_roles.items():
-            for event in _events(key):
-                event_copy = dict(event)
+            for event in events_for(key):
+                # `event` may be a dict OR an AnomalyDetail object (e.g. when
+                # the unified_result wrapper is in play).  Normalise to a dict
+                # so downstream code (event_copy, .get(...), etc.) works for
+                # both shapes.
+                if isinstance(event, dict):
+                    event_copy = dict(event)
+                else:
+                    event_copy = dict(getattr(event, "__dict__", {}) or {})
                 event_copy["event_type"] = "leak" if key == "route_leaks" else "hijack"
                 event_copy["role"] = role
                 event_copy["semantic_match"] = role != "attacker"
@@ -1272,12 +1440,8 @@ class WorkflowEngine:
             logger.warning(f"因果分析计算失败: {e}")
             return None
 
-    def _build_hcaf_timelines(self, routing_result: dict, traffic_result: dict):
-        """
-        把 routing_result / traffic_result 转成 HCAF 因果归因引擎需要的 timeline/context 格式。
-
-        返回: (路由时间线, 流量时间线, 路由上下文, 流量上下文, 拓扑上下文)
-        """
+    def build_hcaf_timelines(self, routing_result, traffic_result):
+        """Convert routing_result / traffic_result into the timeline/context shape HCAF expects."""
         路由时间线 = []
         if routing_result:
             # annotation_package uses { "hijack": { "origin_hijacked": [...] } };
@@ -1286,7 +1450,7 @@ class WorkflowEngine:
             leak_section = routing_result.get("leak") or {}
             for key in ("origin_hijacked", "forge_hijacked", "origin_hijacking", "forge_hijacking", "route_leaks"):
                 # Check flat key first (live format), then hijack nested (annotation_package),
-                # then leak nested (annotation_package). This mirrors _compute_causal_analysis._events().
+                # then leak nested (annotation_package). This mirrors compute_causal_analysis._events().
                 events = (
                     routing_result.get(key)
                     or hijack_section.get(key)
@@ -1294,7 +1458,12 @@ class WorkflowEngine:
                     or []
                 )
                 for 事件 in events:
-                    时间戳 = 事件.get("timestamp") or 事件.get("first_seen")
+                    # Normalise to dict (event may be AnomalyDetail object).
+                    if isinstance(事件, dict):
+                        ev = 事件
+                    else:
+                        ev = dict(getattr(事件, "__dict__", {}) or {})
+                    时间戳 = ev.get("timestamp") or ev.get("first_seen")
                     if not 时间戳:
                         continue
                     分数 = 0.9 if "hijack" in key else 0.7
@@ -1302,7 +1471,7 @@ class WorkflowEngine:
                         "timestamp": 时间戳,
                         "score": 分数,
                         "event_type": "hijack" if "hijack" in key else "leak",
-                        "raw_event": 事件,
+                        "raw_event": ev,
                     })
             outage = routing_result.get("outage_analysis") or routing_result.get("outage") or {}
             if outage.get("is_outage_suspected"):
@@ -1319,16 +1488,21 @@ class WorkflowEngine:
         流量时间线 = []
         if traffic_result:
             for 异常 in (traffic_result.get("anomalies") or []):
-                时间戳 = 异常.get("timestamp") or 异常.get("time")
+                # Normalise to dict (anomaly may be AnomalyDetail object).
+                if isinstance(异常, dict):
+                    an = 异常
+                else:
+                    an = dict(getattr(异常, "__dict__", {}) or {})
+                时间戳 = an.get("timestamp") or an.get("time")
                 if not 时间戳:
                     continue
-                下降比 = 异常.get("drop_percent") or 异常.get("percent_change") or traffic_result.get("percent_change")
+                下降比 = an.get("drop_percent") or an.get("percent_change") or traffic_result.get("percent_change")
                 分数 = min(1.0, abs(下降比) / 100.0) if isinstance(下降比, (int, float)) else 0.8
                 流量时间线.append({
                     "timestamp": 时间戳,
                     "score": max(分数, 0.6),
                     "event_type": "traffic_anomaly",
-                    "raw_event": 异常,
+                    "raw_event": an,
                 })
             # Fallback: when no anomalies but traffic drop is significant (peak_trough_drop_pct > 30%
             # or percent_change < -15%), synthesize a minimal timeline from expanded_boundaries /
@@ -1434,13 +1608,8 @@ class WorkflowEngine:
 
         return 路由时间线, 流量时间线, 路由上下文, 流量上下文, 拓扑上下文
 
-    def _compute_hcaf_attribution(self, context: WorkflowContext) -> Optional[dict]:
-        """
-        调用 HCAF 因果归因引擎，对路由-流量异常做因果归因。
-
-        三个创新方法（MSCBD/CTPR/CIC）+ Granger baseline，按权重收敛判定。
-        失败时降级为 None，不影响主流程。
-        """
+    def compute_hcaf_attribution(self, context):
+        """Run the HCAF causal attribution engine (MSCBD + CTPR + CIC + Granger) on the routing-traffic pair. Degrades to None on failure."""
         routing_result = context.routing_result
         traffic_result = context.traffic_result
 
@@ -1456,7 +1625,7 @@ class WorkflowEngine:
             context.hcaf_attribution_status = "failed"
             return None
 
-        路由时间线, 流量时间线, 路由上下文, 流量上下文, 拓扑上下文 = self._build_hcaf_timelines(routing_result, traffic_result)
+        路由时间线, 流量时间线, 路由上下文, 流量上下文, 拓扑上下文 = self.build_hcaf_timelines(routing_result, traffic_result)
 
         # Only skip HCAF when BOTH timelines are empty. Traffic-only or routing-only
         # events still provide partial evidence that the LLM report can reason about.
@@ -1502,7 +1671,14 @@ class WorkflowEngine:
 
             return {
                 "direction": getattr(结果, "方向", "unknown"),
-                "strength": getattr(getattr(结果, "强度", None), "value", "unknown"),
+                # Bug fix 2026-09-13: previous shape used
+                # ``getattr(getattr(结果, "强度", None), "value", "unknown")``.
+                # If ``结果.强度`` exists but has no ``.value`` attribute
+                # (e.g. a plain float/int), the inner getattr returned None
+                # and the outer one ALSO returned None — the literal
+                # "unknown" default was unreachable. Fix: prefer ``.value``
+                # when present, fall back to the raw 强度, then "unknown".
+                **self._extract_hcaf_strength(结果),
                 "confidence": float(getattr(结果, "置信度", 0.0)),
                 "is_causal": bool(getattr(结果, "是否为因果", False)),
                 "convergence": float(getattr(结果, "收敛度", 0.0)),
@@ -1532,7 +1708,7 @@ class WorkflowEngine:
             return None
 
     @staticmethod
-    def _collect_causal_evidence(routing_result: dict, traffic_result: dict) -> dict:
+    def collect_causal_evidence(routing_result: dict, traffic_result: dict) -> dict:
         """Pass through only explicit provenance-bearing evidence for causal claims."""
         raw_evidence = {}
         for result in (routing_result or {}, traffic_result or {}):
@@ -1546,8 +1722,8 @@ class WorkflowEngine:
         }
         return {name: value for name, value in raw_evidence.items() if name in allowed}
 
-    def _build_evidence_chain(self, context: WorkflowContext) -> Optional[dict]:
-        """构建证据链"""
+    def build_evidence_chain(self, context):
+        """Run EvidenceChainBuilder on the traffic/routing/bayesian/causal inputs and stash the chain on the context."""
         try:
             builder = EvidenceChainBuilder()
             chain = builder.build(
@@ -1568,7 +1744,7 @@ class WorkflowEngine:
     # ── Skip-reasoning policy ─────────────────────────────────────────────
     _TIER_ORDER = {"INSUFFICIENT": 0, "C1": 1, "C2": 2, "C3": 3}
 
-    def _should_skip_reasoning(self, context: WorkflowContext) -> bool:
+    def should_skip_reasoning(self, context: WorkflowContext) -> bool:
         """
         Whether to short-circuit the reasoning stage.
 
@@ -1626,7 +1802,7 @@ class WorkflowEngine:
         from agents.core import Blackboard
         from agents.hypothesis_manager import HypothesisAgent
 
-        if self._should_skip_reasoning(context):
+        if self.should_skip_reasoning(context):
             skip_reason = context.validation_notes[-1].get("message", "skipped") if context.validation_notes else "no_anomalies_detected"
             context.reasoning_result = {"success": True, "skipped": True, "reason": skip_reason}
             return WorkflowEvent.REASONING_COMPLETE
@@ -1722,7 +1898,7 @@ class WorkflowEngine:
                 )
                 # consume budget so the same action can't be taken unlimited times
                 if decision.action not in ("proceed", "stop"):
-                    decision_engine._consume_budget(decision.action)
+                    decision_engine.consume_budget(decision.action)
                 context.reactive_decisions.append(decision.to_dict())
                 logger.info(
                     f"[Enhanced] Reactive decision at hypothesis: {decision.action} "
@@ -1794,14 +1970,80 @@ class WorkflowEngine:
                         logger.info(f"[Enhanced] Retry routing complete: {context.routing_result.get('success')}")
 
                 elif decision.action == "probe":
-                    # ProbeAgent has been removed; this branch is kept for
-                    # logging/forward-compat but no longer performs external probes.
+                    # Rebuild: call AutoProbeExecutor instead of dead ProbeAgent
                     target = params.get("target", "")
                     probe_type = params.get("type", "looking_glass")
                     logger.info(
-                        f"[Enhanced] Probe action requested (type={probe_type}, target={target}) "
-                        "— ProbeAgent removed in slim refactor, skipping external probe."
+                        f"[Enhanced] Probe action requested (type={probe_type}, target={target}) — "
+                        "executing via AutoProbeExecutor."
                     )
+                    try:
+                        from agents.auto_probe_executor import AutoProbeExecutor
+                        executor = AutoProbeExecutor(timeout=10.0)
+                        # Build probe recommendations based on detected anomalies
+                        recommendations = []
+                        routing_r = context.routing_result or {}
+                        if routing_r.get("origin_hijacked") or routing_r.get("origin_hijacking"):
+                            recommendations.append({
+                                "action": "rpki_validation",
+                                "target": target or context.asn,
+                                "reason": "origin hijack detected, need RPKI validation",
+                            })
+                            recommendations.append({
+                                "action": "check_victim_traffic",
+                                "target": target or context.asn,
+                                "reason": "check if victim AS traffic was impacted",
+                            })
+                            recommendations.append({
+                                "action": "bgp_path_analysis",
+                                "target": target or context.asn,
+                                "reason": "verify AS_PATH for hijacked prefixes",
+                            })
+                        if routing_r.get("route_leaks"):
+                            recommendations.append({
+                                "action": "bgp_path_analysis",
+                                "target": target or context.asn,
+                                "reason": "verify AS_PATH for leaked prefixes",
+                            })
+                        if recommendations:
+                            probe_results = await executor.execute_probes(
+                                recommendations,
+                                target_as=target or context.asn,
+                                analysis_window={"start": str(reasoning_start), "end": str(reasoning_end)},
+                            )
+                            logger.info(f"[Enhanced] AutoProbe completed: {len(probe_results)} probes executed")
+                            context.probe_results = probe_results
+                            # Bug fix: persist findings to Blackboard so
+                            # report generators (ReportAgent._run_auto_probes
+                            # stub) and downstream consumers can read them.
+                            try:
+                                if context.shared_blackboard is not None:
+                                    from agents.auto_probe_executor import AutoProbeFinding as _APF
+                                    payload = [
+                                        {
+                                            "action": getattr(f, "action", ""),
+                                            "target": getattr(f, "target", ""),
+                                            "success": bool(getattr(f, "success", False)),
+                                            "summary": getattr(f, "summary", ""),
+                                            "data": getattr(f, "data", {}) or {},
+                                            "error": getattr(f, "error", ""),
+                                            "execution_time_s": float(getattr(f, "execution_time_s", 0.0)),
+                                        }
+                                        for f in probe_results
+                                    ]
+                                    await context.shared_blackboard.write(
+                                        "auto_probe", "findings", payload
+                                    )
+                                    logger.info(
+                                        f"[Enhanced] AutoProbe findings persisted to Blackboard "
+                                        f"({len(payload)} items)"
+                                    )
+                            except Exception as _bb_err:
+                                logger.warning(f"[Enhanced] failed to persist probe findings: {_bb_err}")
+                        else:
+                            logger.info("[Enhanced] No probe recommendations to execute")
+                    except Exception as probe_err:
+                        logger.warning(f"[Enhanced] Probe execution failed: {probe_err}")
 
                 elif decision.action == "proceed" and claims:
                     # Default: run debate as final verification step
@@ -1843,6 +2085,21 @@ class WorkflowEngine:
                         "reason": "insufficient_evidence",
                         "decision": decision.to_dict(),
                     }
+                    # Bug fix 2026-09-13 (BUG-R119): the previous code
+                    # fell through to the unconditional fallback
+                    # ``if not debate_result or not debate_result.success``
+                    # below, which re-invoked the legacy diagnosis
+                    # pipeline even though ``stop`` was meant to halt
+                    # the workflow. The legacy pipeline then overwrote
+                    # the ``stopped=True`` marker with a synthesised
+                    # claim, silently defeating the decision engine's
+                    # choice. We now set ``debate_result`` to a
+                    # synthetic success record so the fallback branch
+                    # is skipped.
+                    class _StopDebateResult:
+                        success = True
+                        data: dict = {}
+                    debate_result = _StopDebateResult()
 
                 # Fallback: if no debate was triggered, use legacy pipeline
                 if not debate_result or not debate_result.success:
@@ -1898,14 +2155,14 @@ class WorkflowEngine:
                 context.reasoning_result["verdict"] = context.verification_result
                 context.reasoning_result["evidence_board"] = evidence_board
                 context.reasoning_result["experiment_metrics"] = context.experiment_metrics
-                self._apply_reasoning_causal_evidence(context)
+                self.apply_reasoning_causal_evidence(context)
 
             return WorkflowEvent.REASONING_COMPLETE
         except Exception as e:
             logger.error(f"Reasoning failed: {e}")
             raise RetryableError(f"Reasoning error: {e}")
 
-    def _apply_reasoning_causal_evidence(self, context: WorkflowContext) -> None:
+    def apply_reasoning_causal_evidence(self, context: WorkflowContext) -> None:
         """Re-score claims after independently supplied verification arrives in reasoning."""
         evidence = context.reasoning_result.get("causal_evidence")
         if not isinstance(evidence, dict):
@@ -1915,11 +2172,11 @@ class WorkflowEngine:
         # from model-generated classifications and correlation calculations.
         traffic["causal_evidence"] = evidence
         context.traffic_result = traffic
-        refreshed = self._compute_causal_analysis(context)
+        refreshed = self.compute_causal_analysis(context)
         if refreshed:
             context.causal_analysis = refreshed
             context.joint_alert = refreshed
-            context.evidence_chain = self._build_evidence_chain(context)
+            context.evidence_chain = self.build_evidence_chain(context)
             context.reasoning_result["causal_analysis"] = refreshed
 
     async def _run_legacy_diagnosis_pipeline(self, bb, context: WorkflowContext):
@@ -1960,14 +2217,24 @@ class WorkflowEngine:
 
     
     async def _handle_validation(self, context: WorkflowContext):
-        quality_score = self._calculate_quality_score(context)
+        quality_score = self.calculate_quality_score(context)
         context.confidence_score = quality_score
-        # Victim traffic is evidence for the final report, so collect it before
-        # report generation with bounded concurrency rather than discarding a
-        # background task at workflow shutdown.
-        if context.victim_asns and context.shared_blackboard:
-            await context.shared_blackboard.write("routing", "victim_asns", context.victim_asns)
-            await self._fetch_victim_traffic(context, context.shared_blackboard)
+        context.data_quality = self.assess_data_quality(context)
+        # Victim traffic is evidence for the final report, so collect it
+        # before report generation regardless of mode. Bug fix (2026-09-13):
+        # the previous implementation required ``context.shared_blackboard``
+        # (which is only created in enhanced mode), so non-enhanced runs
+        # silently dropped the victim-traffic evidence path and the report
+        # always showed an empty victim_traffic_results / prefix_traffic_results.
+        bb_for_victim = context.shared_blackboard
+        if bb_for_victim is None:
+            # Synthesise a Blackboard for victim-traffic writes only; the
+            # ReportAgent will read from the real one in _handle_report_generation.
+            from agents.core import Blackboard as _BB
+            bb_for_victim = _BB()
+        if context.victim_asns:
+            await bb_for_victim.write("routing", "victim_asns", context.victim_asns)
+            await self._fetch_victim_traffic(context, bb_for_victim)
         if quality_score < 0.5:
             context.validation_notes.append({
                 "case": "low_data_quality",
@@ -2153,43 +2420,76 @@ class WorkflowEngine:
             "messages": [],
         })
 
-        # ── Enhanced mode: MultiAgentReportAgent ──
-        # Honor BGP_TRACER_DISABLE_LLM_REPORT — in offline / no-LLM runs we
-        # still want a deterministic HTML, so skip the specialist agents
-        # entirely and go straight to the legacy ReportAgent (which itself
-        # will fall back if the LLM is unreachable).
-        if (context.enhanced and self._enhanced_components
-                and os.environ.get("BGP_TRACER_DISABLE_LLM_REPORT", "").strip() not in ("1", "true", "yes")):
-            log.info("[Enhanced] Generating report with MultiAgentReportAgent (specialist agents + conflict resolution)")
-            report_agent = self._enhanced_components["report_agent"]
-            await report_agent.start()
-            result = await report_agent.step()
+        # ── Enhanced mode: route to report generation ──
+        # Bug fix (2026-09-12): the previous implementation unconditionally
+        # ran MultiAgentReportAgent (5+ LLM calls: TrafficExpert,
+        # RoutingExpert, EvidenceLinker, ConflictResolver, draft) followed
+        # by the legacy ReportAgent (1 more LLM call) — 6+ calls per event,
+        # each 30-90s on the qwen3.5 endpoint, blowing the 600s timeout and
+        # forcing the pipeline to silently swallow reports.
+        #
+        # New rule: enhanced mode is observationally identical to legacy
+        # mode for *report generation* (1 LLM call). The "enhanced" flag
+        # only changes two upstream decisions:
+        #   (a) a single rule-based debate round is run to refine the
+        #       diagnosis claim (LLMDebateAgent uses rule-based
+        #       Prosecutor/Defense — no LLM calls);
+        #   (b) reactive decisions are emitted, but only via the
+        #       deterministic rule-based code path.
+        # This caps LLM cost at the same level as the non-enhanced path
+        # while keeping the multi-agent *evidence-quality* benefit
+        # (debate, evaluation gates, observation board) intact.
+        #
+        # Set BGP_TRACER_RUN_MULTI_AGENT=1 to opt back into the
+        # MultiAgentReportAgent pipeline (useful for offline analyses).
+        run_multi_agent = (
+            context.enhanced
+            and self._enhanced_components is not None
+            and os.environ.get("BGP_TRACER_RUN_MULTI_AGENT", "").strip()
+                in ("1", "true", "yes")
+        )
+        if run_multi_agent:
+            log.info("[Enhanced] MultiAgentReportAgent requested via env (opt-in)")
+            report_agent = self._enhanced_components.get("report_agent")
+            multi_agent_result = None
+            multi_agent_html = ""
+            multi_agent_metrics: dict = {}
+            try:
+                if report_agent is not None:
+                    await report_agent.start()
+                    multi_agent_result = await report_agent.step()
+                if multi_agent_result and multi_agent_result.success:
+                    multi_agent_html = (multi_agent_result.data or {}).get("html", "")
+            except Exception as exc:
+                log.warning(f"[Enhanced] MultiAgentReportAgent raised: {exc}")
 
-            if result.success and result.data:
-                html = result.data.get("html", "")
-                context.report_path = bb._sections.get("report", {}).get("path") or ""
-
-                # Evaluate report quality
-                eval_agent = self._enhanced_components["eval_agent"]
-                await eval_agent.evaluate_stage(
-                    stage_name="report",
-                    agent_output={"html": html, "confidence": context.confidence_score or 0.5},
-                    context={"asn": context.asn, "start_time": context.start_time, "end_time": context.end_time},
-                    max_retries=context.evaluation_retries,
-                )
-                context.evaluation_metrics["report"] = await bb.read("evaluation", "report_metrics")
-
-                # Publish
-                bus = self._enhanced_components["bus"]
-                await bus.publish(topic="report.complete", sender="MultiAgentReportAgent",
-                                content={"html_len": len(html), "report_path": context.report_path})
-            else:
-                log.warning(f"[Enhanced] MultiAgentReportAgent failed: {result.error}, falling back to original")
-                await self._run_legacy_report(bb, context, ReportAgent, log)
+            # Always run the legacy ReportAgent once on top so the final
+            # HTML is the comprehensive 1.2 MB LLM-generated report (the
+            # MultiAgent path produces only a short validation summary).
+            legacy_html = await self._run_legacy_report(bb, context, ReportAgent, log)
+            html = legacy_html or bb._sections.get("report", {}).get("html") or ""
+            if multi_agent_html:
+                context.final_result = context.final_result or {}
+                context.final_result["multi_agent_html"] = multi_agent_html
         else:
-            await self._run_legacy_report(bb, context, ReportAgent, log)
+            legacy_html = await self._run_legacy_report(bb, context, ReportAgent, log)
+            html = legacy_html or bb._sections.get("report", {}).get("html") or ""
 
-        html = bb._sections.get("report", {}).get("html") or ""
+        # Bug fix 2026-09-13 (BUG-R102): the unconditional
+        # ``html = bb._sections.get("report", {}).get("html") or ""``
+        # immediately below was a no-op safety net that silently
+        # overwrote ``legacy_html`` with whatever happened to be in
+        # the Blackboard at this moment. When ``_run_legacy_report``
+        # returned a non-empty HTML but the Blackboard had been
+        # cleared by an earlier step, the report would still come
+        # through correctly via this branch (since the Blackboard
+        # was re-read by ``_run_legacy_report`` itself), but the
+        # unconditional reassignment was misleading and could mask
+        # future regressions. Replace it with a smarter merge that
+        # prefers the longer / more complete of the two values.
+        bb_html = bb._sections.get("report", {}).get("html") or ""
+        if bb_html and len(bb_html) > len(html or ""):
+            html = bb_html
         context.report_path = bb._sections.get("report", {}).get("path") or context.report_path
 
         # Save HTML to file
@@ -2207,11 +2507,13 @@ class WorkflowEngine:
             except Exception as e:
                 log.warning(f"Failed to save report: {e}")
 
-        context.final_result = {"html": html, "report_path": context.report_path}
+        context.final_result = context.final_result or {}
+        context.final_result["html"] = html
+        context.final_result["report_path"] = context.report_path
         return WorkflowEvent.REPORT_GENERATED
 
     async def _run_legacy_report(self, bb, context: WorkflowContext, ReportAgent, log):
-        """Run the legacy single-agent ReportAgent."""
+        """Run the legacy single-agent ReportAgent and return its HTML."""
         agent = ReportAgent(bb)
         await agent.start()
         result = await agent.step()
@@ -2222,6 +2524,16 @@ class WorkflowEngine:
             error_msg = str(result.error) if result.error is not None else "Unknown error"
             log.error(f"ReportAgent failed: {error_msg}")
             raise RetryableError(f"Report generation failed: {error_msg}")
+        # Bug fix: explicitly fetch the legacy report HTML from the Blackboard
+        # so the caller can use it as the final report. Without this, callers
+        # relying on `bb._sections.get("report", {}).get("html")` would miss
+        # the just-written value when the report is needed for the final save
+        # in the same handler.
+        try:
+            legacy_html = await bb.read("report", "html") or ""
+        except Exception:
+            legacy_html = ""
+        return legacy_html
 
     async def _handle_complete(self, context: WorkflowContext):
         """Handle completion state."""
@@ -2233,9 +2545,9 @@ class WorkflowEngine:
     
     # ==================== Quality Assessment ====================
     
-    def _assess_data_quality(self, context: WorkflowContext):
+    def assess_data_quality(self, context: WorkflowContext):
         """Assess overall data quality."""
-        score = self._calculate_quality_score(context)
+        score = self.calculate_quality_score(context)
         
         if score >= 0.8:
             return "High"
@@ -2244,7 +2556,7 @@ class WorkflowEngine:
         else:
             return "Low"
     
-    def _calculate_quality_score(self, context: WorkflowContext):
+    def calculate_quality_score(self, context: WorkflowContext):
         """Calculate a 0-1 quality score based on available data."""
         score = 0.0
         factors = 0
@@ -2378,6 +2690,10 @@ async def run_workflow(
         as_role=as_role,
         precomputed_routing=precomputed_routing,
         precomputed_traffic=precomputed_traffic,
+        # Bug fix: seed message_bus_run_id with a stable identifier even when
+        # not enhanced, so TokenBudget can accumulate tokens per run.
+        message_bus_run_id=f"{asn}_{str(start_time).replace(' ', '_').replace(':', '')}_"
+                           f"{'enhanced' if enhanced else 'base'}",
     )
 
     # Override buffer_hours from config if not explicitly passed
@@ -2395,7 +2711,7 @@ async def run_workflow(
     return await engine.execute(context)
 
 
-def _snapshot_context(context: "WorkflowContext") -> dict:
+def snapshot_context(context: "WorkflowContext") -> dict:
     """Convert a WorkflowContext dataclass to a JSON-serialisable dict for checkpointing."""
     try:
         d = asdict(context)
@@ -2427,7 +2743,7 @@ Special Cases:
     """
 
 
-def _parse_timestamp_value(ts):
+def parse_timestamp_value(ts):
     """Parse timestamps from multiple string formats."""
     from datetime import datetime
     if not ts:
@@ -2454,12 +2770,12 @@ def _parse_timestamp_value(ts):
         return None
 
 
-def _extract_anomaly_windows(anomalies, buffer_hours = 2):
+def extract_anomaly_windows(anomalies, buffer_hours = 2):
     """
     Extract time windows from traffic anomaly timestamps.
 
     Buffer is applied HERE — each cluster gets ±buffer_hours padding.
-    _union_anomaly_windows should NOT apply buffer again.
+    union_anomaly_windows should NOT apply buffer again.
     """
     from datetime import datetime, timedelta
     if not anomalies:
@@ -2468,7 +2784,7 @@ def _extract_anomaly_windows(anomalies, buffer_hours = 2):
         times = []
         for a in anomalies:
             ts = a.get("timestamp", "")
-            parsed = _parse_timestamp_value(ts)
+            parsed = parse_timestamp_value(ts)
             if parsed is not None:
                 times.append(parsed)
         if not times:
@@ -2495,15 +2811,15 @@ def _extract_anomaly_windows(anomalies, buffer_hours = 2):
         return []
 
 
-def _union_anomaly_windows(windows, buffer_hours = 2):
+def union_anomaly_windows(windows, buffer_hours = 2):
     """
     Merge multiple anomaly windows into a single unified window that covers all anomalies.
 
-    IMPORTANT: Buffer is applied by _extract_anomaly_windows already.
+    IMPORTANT: Buffer is applied by extract_anomaly_windows already.
     This function only merges the (already-buffered) windows and does NOT add buffer again.
 
     Args:
-        windows: list of {"start": "...", "end": "..."} from _extract_anomaly_windows
+        windows: list of {"start": "...", "end": "..."} from extract_anomaly_windows
         buffer_hours: unused; kept for backward-compatible signature
     
     Returns:
@@ -2534,7 +2850,7 @@ def _union_anomaly_windows(windows, buffer_hours = 2):
         global_start = min(all_starts)
         global_end = max(all_ends)
         
-        # Buffer was already applied by _extract_anomaly_windows; just merge boundaries
+        # Buffer was already applied by extract_anomaly_windows; just merge boundaries
         result_start = global_start.strftime("%Y-%m-%d %H:%M")
         result_end = global_end.strftime("%Y-%m-%d %H:%M")
         

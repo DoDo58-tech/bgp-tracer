@@ -7,8 +7,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
-from typing import Dict, List, Set, Tuple, Optional
-import pandas as pd
+from typing import Dict, List, Optional, Set, Tuple
+import polars as pl
 from ipaddress import ip_network
 
 # Data directory: bgp_tracer/data/ instead of detectors/outage/data/
@@ -17,6 +17,9 @@ CSV_FILE = DATA_DIR / "traffic-outage-info.csv"
 UPDATES_DIR = DATA_DIR / "updates_rrc00" / "decoded"
 OUTPUT_DIR = DATA_DIR / "event_features"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# RIPE RIS download URL
+RIPE_RIS_URL = "http://data.ris.ripe.net/rrc00/"
 
 # Log directory: bgp_tracer/logs/
 import sys as _sys
@@ -51,7 +54,7 @@ USE_PROCESSES = True
 
 
 def parse_as_list(as_string):
-    if pd.isna(as_string) or not as_string or as_string.strip() == '':
+    if as_string is None or as_string == '' or (isinstance(as_string, str) and as_string.strip() == ''):
         return set()
     
     as_set = set()
@@ -75,7 +78,7 @@ def parse_as_list(as_string):
 
 
 def parse_datetime(dt_string):
-    if pd.isna(dt_string):
+    if dt_string is None or dt_string == '' or (isinstance(dt_string, str) and dt_string.strip() == ''):
         raise ValueError("Empty datetime string")
     
     dt_string = str(dt_string).strip()
@@ -94,27 +97,130 @@ def parse_datetime(dt_string):
             continue
     
     try:
-        return pd.to_datetime(dt_string).to_pydatetime()
+        return pl.Series([dt_string]).str.to_datetime()[0].to_pydatetime()
     except Exception as e:
         raise ValueError(f"cannot parse datetime: {dt_string}, error: {e}")
 
 
-def find_update_files(time_start, time_end):
+def _download_and_decode(url: str, gz_path: Path, txt_path: Path) -> bool:
+    """Download a gz file and decode it to txt using bgpdump. Returns True on success."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["wget", "-q", "-c", "-T", "120", "-O", str(gz_path), url],
+            capture_output=True, timeout=150
+        )
+        if result.returncode != 0:
+            return False
+        if not gz_path.exists() or gz_path.stat().st_size < 100:
+            return False
+        # Decode with bgpdump. Use the proc as a context manager so the
+        # stdout pipe is always closed and the child reaped, even if the
+        # consumer raises mid-stream — without this the bgpdump process
+        # could outlive this helper as a zombie if writing the txt fails.
+        proc = subprocess.Popen(
+            ["bgpdump", "-M", "-t", "change", str(gz_path)],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        )
+        written = 0
+        try:
+            with open(txt_path, 'w', encoding='utf-8') as out:
+                assert proc.stdout is not None
+                try:
+                    for line in proc.stdout:
+                        decoded = line.decode('utf-8', errors='ignore').strip()
+                        if decoded:
+                            out.write(decoded + '\n')
+                            written += 1
+                finally:
+                    if proc.stdout is not None:
+                        proc.stdout.close()
+            retcode = proc.wait()
+        except Exception:
+            # Make sure we don't leak a running bgpdump if the consumer
+            # raises before ``proc.wait()`` runs.
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+            raise
+        if retcode != 0:
+            return False
+        return written > 0
+    except Exception as e:
+        logger.debug(f"Download/decode failed for {url}: {e}")
+        return False
+
+
+def find_update_files(time_start, time_end, auto_download=True):
+    """
+    Find local decoded BGP update files for the time range.
+    If auto_download=True, missing files are downloaded from RIPE RIS and decoded.
+
+    Concurrency: uses a ThreadPoolExecutor to parallelise the per-bucket
+    download+decode step. The previous implementation iterated sequentially
+    which made 24h baseline windows stall for 5-15 minutes on RIPE RIS latency.
+    RIPE RIS allows ~8 concurrent connections; we cap at 8 workers. Workers
+    can be tuned via the BGP_OUTAGE_DOWNLOAD_WORKERS env var.
+    """
+    import os as _os
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     files = []
-    
+    missing = []
+
     current = time_start
     while current <= time_end:
         minute = (current.minute // BUCKET_MINUTES) * BUCKET_MINUTES
         rounded_time = current.replace(minute=minute, second=0, microsecond=0)
-        
+
         filename = f"updates.{rounded_time.strftime('%Y%m%d.%H%M')}.txt"
         filepath = UPDATES_DIR / filename
-        
+
         if filepath.exists():
             files.append(filepath)
-        
+        else:
+            missing.append((rounded_time, filepath))
+
         current += timedelta(minutes=BUCKET_MINUTES)
-    
+
+    if not missing or not auto_download:
+        return sorted(files)
+
+    # Auto-download missing files from RIPE RIS in parallel.
+    logger.info(f"Auto-downloading {len(missing)} missing BGP update files from RIPE RIS...")
+    workers = int(_os.environ.get("BGP_OUTAGE_DOWNLOAD_WORKERS", "8"))
+    workers = max(1, min(workers, 16))
+
+    def _task(item):
+        rounded_time, txt_path = item
+        ym = rounded_time.strftime("%Y.%m")
+        time_str = rounded_time.strftime("%Y%m%d.%H%M")
+        url = f"{RIPE_RIS_URL}{ym}/updates.{time_str}.gz"
+        gz_path = UPDATES_DIR / f"updates.{time_str}.gz"
+        ok = _download_and_decode(url, gz_path, txt_path)
+        return (item, ok)
+
+    downloaded = 0
+    completed_files = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="outage-dl") as ex:
+        futures = [ex.submit(_task, m) for m in missing]
+        for fut in as_completed(futures):
+            try:
+                (rounded_time, txt_path), ok = fut.result()
+            except Exception as exc:
+                logger.debug(f"download worker crashed: {exc}")
+                continue
+            if ok:
+                completed_files.append(txt_path)
+                downloaded += 1
+                if downloaded % 10 == 0 or downloaded == len(missing):
+                    logger.info(f"Outage baseline download: {downloaded}/{len(missing)}")
+
+    files.extend(completed_files)
+    logger.info(f"Downloaded and decoded {downloaded}/{len(missing)} files (workers={workers})")
     return sorted(files)
 
 
@@ -133,13 +239,25 @@ def parse_bgp_line(line):
         as_path = parts[6] if len(parts) > 6 and parts[6].strip() else ""
         
         timestamp_str = parts[1]
-        try:
-            timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
-        except ValueError:
+        if not timestamp_str:
+            return None
+        timestamp = None
+        # Try multiple timestamp formats (RIPE RIS decoded data uses MM/DD/YY).
+        for fmt in (
+            '%Y-%m-%d %H:%M:%S',  # ISO 2024-01-03 14:45:00
+            '%Y-%m-%d %H:%M',
+            '%m/%d/%y %H:%M:%S',  # RIPE RIS MM/DD/YY HH:MM:SS
+            '%m/%d/%y %H:%M',
+            '%m/%d/%Y %H:%M:%S',  # 4-digit year variant
+            '%m/%d/%Y %H:%M',
+        ):
             try:
-                timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M')
+                timestamp = datetime.strptime(timestamp_str, fmt)
+                break
             except ValueError:
-                return None
+                continue
+        if timestamp is None:
+            return None
         
         return {
             'timestamp': timestamp,
@@ -153,7 +271,7 @@ def parse_bgp_line(line):
 
 
 def extract_as_from_path(as_path):
-    if not as_path or pd.isna(as_path):
+    if not as_path or as_path is None or (isinstance(as_path, str) and as_path.strip() == ''):
         return set()
     
     as_set = set()
@@ -561,7 +679,15 @@ def extract_timeseries_for_as(update_files, target_as_set):
         with ProcessPoolExecutor(max_workers=actual_workers) as ex:
             futures = [ex.submit(process_single_file_timeseries, fp, target_as_list) for fp in files]
             for fut in as_completed(futures):
-                part = fut.result()
+                try:
+                    part = fut.result()
+                except Exception as worker_exc:
+                    # A worker process crashed (e.g. Broken pipe / EOFError /
+                    # OOM).  Log it and move on — losing one file's worth of
+                    # features is acceptable for outage fallback behaviour.
+                    logger.debug(f"Outage worker failed (file skipped): {worker_exc}")
+                    completed += 1
+                    continue
                 for ts, feat in part.items():
                     if ts not in results:
                         results[ts] = feat
@@ -960,7 +1086,7 @@ def process_event(row):
                 if len(parts) >= 2:
                     time_str = parts[1]  # YYYYMMDD.HHMM
                     return datetime.strptime(time_str, '%Y%m%d.%H%M')
-            except:
+            except Exception:
                 pass
             return datetime.min
         
@@ -1013,16 +1139,20 @@ def process_event(row):
                 try:
                     ts_dt = datetime.fromisoformat(ts_str)
                     row = {'timestamp': ts_dt.strftime('%Y-%m-%d %H:%M:%S')}
-                except:
+                except Exception:
                     row = {'timestamp': ts_str}
                 row.update(features)
                 csv_data.append(row)
             
             if csv_data:
-                df_csv = pd.DataFrame(csv_data)
-                df_csv['timestamp'] = pd.to_datetime(df_csv['timestamp'])
-                df_csv = df_csv.sort_values('timestamp')
-                df_csv['timestamp'] = df_csv['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
+                df_csv = pl.DataFrame(csv_data)
+                df_csv = df_csv.with_columns([
+                    pl.col('timestamp').str.to_datetime().alias('timestamp')
+                ])
+                df_csv = df_csv.sort('timestamp')
+                df_csv = df_csv.with_columns([
+                    pl.col('timestamp').dt.strftime('%Y-%m-%d %H:%M:%S').alias('timestamp')
+                ])
                 
                 feature_columns = [
                     'announcement_count',
@@ -1037,10 +1167,10 @@ def process_event(row):
                     'unique_as_count'
                 ]
                 available_columns = ['timestamp'] + [col for col in feature_columns if col in df_csv.columns]
-                df_csv = df_csv[available_columns]
+                df_csv = df_csv.select(available_columns)
                 
                 csv_file = csv_output_dir / f"{event_name}_timeseries.csv"
-                df_csv.to_csv(csv_file, index=False, encoding='utf-8')
+                df_csv.write_csv(csv_file)
                 print(f"  Saved timeseries CSV: {csv_file} ({len(df_csv)} rows, {len(available_columns)-1} features)")
         
         result = {
@@ -1080,11 +1210,11 @@ def main():
         return
     
     print(f"Reading events table: {CSV_FILE}")
-    df = pd.read_csv(CSV_FILE)
+    df = pl.read_csv(CSV_FILE)
     print(f"Found {len(df)} events")
     
     results = []
-    for idx, row in df.iterrows():
+    for row in df.iter_rows(named=True):
         result = process_event(row)
         if result:
             results.append(result)

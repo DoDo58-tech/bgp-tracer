@@ -6,7 +6,7 @@ import subprocess
 from datetime import datetime
 import numpy as np
 from pathlib import Path
-from typing import Dict, Set, List
+from typing import Dict, List, Set
 from urllib.parse import urljoin
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

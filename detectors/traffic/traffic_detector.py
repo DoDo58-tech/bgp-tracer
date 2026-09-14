@@ -22,16 +22,22 @@ from config import (
 )
 from data.asorg_loader import get_asn_org_info
 from detectors.traffic.traffic_plotting import plot_traffic_comparison_beautiful
-from detectors.traffic.traffic_analysis_utils import (
-    detect_anomalies_combined,
-    detect_anomalies_non_periodic,
-    detect_anomalies_by_event_type,
-    preprocess_traffic_data,
-    preprocess_traffic_data_aligned,
-    calculate_traffic_statistics,
-    detect_period_automatically,
+# Periodicity + preprocessing
+from detectors.traffic.periodicity import detect_period_automatically
+from detectors.traffic.preprocessing import filter_consecutive_anomalies, preprocess_traffic_data
+from detectors.traffic.preprocessing_aligned import preprocess_traffic_data_aligned
+# Clustering + stats
+from detectors.traffic.clustering import (
     cluster_and_expand_anomaly_windows,
+    calculate_traffic_statistics,
 )
+# Combined / sustained / sudden detectors
+from detectors.traffic.combined import detect_anomalies_combined
+from detectors.traffic.sustained import (
+    detect_anomalies_by_event_type,
+    detect_anomalies_non_periodic,
+)
+from detectors.traffic.sudden import detect_anomalies_sudden_jump
 from detectors.traffic.multi_scale_baseline import MultiScaleBaseline
 from detectors.unified_result import wrap, DetectionType
 
@@ -141,6 +147,14 @@ def _extract_ts_values(resp_json, asn):
                 return ts, [float(v) for v in vals if v is not None]
             except (ValueError, TypeError) as e:
                 logger.warning(f"Data conversion error for AS{asn}: {e}")
+        # ── Diagnose WHY the result was unusable ─────────────────────────────
+        result = resp_json["result"]
+        logger.warning(
+            f"Cloudflare Radar returned HTTP 200 for AS{asn} but no usable "
+            f"timeseries. resp_json.keys()={list(resp_json.keys())}, "
+            f"result type={type(result).__name__}, result.keys()="
+            f"{list(result.keys()) if isinstance(result, dict) else type(result)}"
+        )
     return None, None
 
 
@@ -152,7 +166,13 @@ def _response_error(resp):
 
 
 def _request_with_location(api, params, asn):
-    """向 Cloudflare Radar 发起请求，必要时去掉 location 回退一次。"""
+    """向 Cloudflare Radar 发起请求，必要时去掉 location 回退一次。
+
+    Fallback strategy when HTTP 400 is returned:
+    1. Try coarser aggInterval + no location (handles "interval too granular")
+    2. Try even coarser aggInterval = 1d
+    3. Log the actual error text for diagnostics.
+    """
     for attempt in range(5):
         if attempt > 0:
             wait = min(2 ** attempt + 0.5, 30)
@@ -180,14 +200,51 @@ def _request_with_location(api, params, asn):
             err_text = str(_response_error(resp)).lower()
             if any(s in err_text for s in ("missing x-auth-key", "authorization headers", "missing authorization", "invalid api token")):
                 raise PermissionError(f"Cloudflare Radar auth failed for AS{asn}: HTTP 400")
+
+            # NEW: Multi-step fallback for HTTP 400.
+            # Cloudflare's Radar API limits how many data points it returns.
+            # If aggInterval is too granular for the time range, return 400.
+            # Try progressively coarser intervals + drop location.
+            current_interval = params.get("aggInterval", "15m")
+            coarser_map = {"1m": "15m", "5m": "1h", "15m": "1h", "30m": "1h", "1h": "1d"}
+            coarser = coarser_map.get(current_interval)
+
+            if coarser:
+                fallback_params = {k: v for k, v in params.items() if k != "location"}
+                fallback_params["aggInterval"] = coarser
+                logger.warning(
+                    f"AS{asn}: HTTP 400, retrying with aggInterval={coarser} "
+                    f"and no location. error={err_text[:300]}"
+                )
+                fb = api.session.get(api.base_url, params=fallback_params, timeout=CLOUDFLARE_TIMEOUT)
+                if fb.status_code == 200:
+                    ts, vals = _extract_ts_values(fb.json(), asn)
+                    if ts:
+                        return ts, vals
+                # Try even coarser (1d)
+                fallback_params2 = {k: v for k, v in params.items() if k != "location"}
+                fallback_params2["aggInterval"] = "1d"
+                logger.warning(
+                    f"AS{asn}: HTTP 400, retrying with aggInterval=1d and no location"
+                )
+                fb2 = api.session.get(api.base_url, params=fallback_params2, timeout=CLOUDFLARE_TIMEOUT)
+                if fb2.status_code == 200:
+                    ts, vals = _extract_ts_values(fb2.json(), asn)
+                    if ts:
+                        return ts, vals
+                raise Exception(
+                    f"AS{asn}: HTTP 400 even after aggInterval fallback. "
+                    f"error={err_text[:300]}"
+                )
+
             if "location" not in params:
-                raise Exception(f"AS{asn}: HTTP 400")
+                raise Exception(f"AS{asn}: HTTP 400: {err_text[:300]}")
             fb = api.session.get(api.base_url, params={k: v for k, v in params.items() if k != "location"}, timeout=CLOUDFLARE_TIMEOUT)
             if fb.status_code == 200:
                 ts, vals = _extract_ts_values(fb.json(), asn)
                 if ts:
                     return ts, vals
-            raise Exception(f"AS{asn}: HTTP 400 after removing location")
+            raise Exception(f"AS{asn}: HTTP 400 after removing location: {err_text[:300]}")
         raise Exception(f"AS{asn}: HTTP {resp.status_code}")
     raise Exception(f"AS{asn}: HTTP 429 after 4 retries")
 
@@ -400,25 +457,43 @@ class CloudflareRadarAPI:
                 current_values=current_values, historical_means=historical_means,
                 historical_stds=historical_stds, historical_values=historical_values_list,
                 timestamps=timestamps, threshold=adj_threshold,
-                detect_direction="both", context_window=1, context_threshold=0.35)
+                detect_direction="both", context_window=1, context_threshold=0.35,
+                event_start_time=event_start_time, event_end_time=event_end_time,)
             anomalies = filtered_anomalies
 
-            # Fallback: if no anomalies detected but peak-trough shows clear drop,
-            # force-run peak_trough detection directly
+            # Fallback: if no anomalies detected but peak-trough shows EXTREME drop
+            # AND the trough is significantly below historical baseline (not just
+            # normal periodic day/night variation), force-run peak_trough.
+            # P0 fix (2026-09-04): Pure periodic data has natural peak-trough that
+            # exceeds 30% — must require historical deviation too.
             if not anomalies:
                 stats = calculate_traffic_statistics(current_values, historical_means)
                 peak_drop = stats.get("peak_trough_drop_pct", 0.0)
-                if peak_drop > 30.0:  # >30% drop from peak to trough
-                    logger.info(f"⚠️ No anomalies from combined detection but peak-drop={peak_drop:.1f}%, forcing peak-trough analysis")
+                curr_min = stats.get("trough_value", 0.0)
+                hist_min = float(np.min(historical_means)) if len(historical_means) > 0 else 0.0
+                # Both conditions: >50% peak drop AND trough at least 30% below historical
+                hist_deviation = abs(curr_min - hist_min) / max(abs(hist_min), 1e-6) if hist_min > 0 else 0.0
+                if peak_drop > 50.0 and hist_deviation > 0.30:
+                    logger.info(
+                        f"⚠️ No anomalies from combined detection but extreme peak-drop={peak_drop:.1f}% "
+                        f"and hist_deviation={hist_deviation:.1%}, forcing peak-trough analysis"
+                    )
                     from detectors.traffic.combined import _detect_peak_trough_drops
                     pt_anomalies = _detect_peak_trough_drops(
                         current_values, historical_means, timestamps,
-                        min_drop_ratio=0.25, min_sustained_points=3,
+                        min_drop_ratio=0.40,  # 严格：40%以上才算
+                        min_sustained_points=3,
+                        min_historical_deviation_ratio=0.30,
                     )
                     if pt_anomalies:
                         logger.info(f"⚠️ Peak-trough fallback found {len(pt_anomalies)} anomalies")
                         anomalies = pt_anomalies
                         all_anomalies = pt_anomalies
+                elif peak_drop > 30.0:
+                    logger.info(
+                        f"ℹ️ peak-drop={peak_drop:.1f}% but hist_deviation={hist_deviation:.1%} — "
+                        f"normal periodic variation, not flagging as anomaly."
+                    )
         else:
             current_values_array = np.array(current_values)
             raw_anomalies = detect_anomalies_non_periodic(current_values_array, threshold=2.5)
@@ -650,7 +725,8 @@ class CloudflareRadarAPI:
                 current_values=current_arr, historical_means=historical_means,
                 historical_stds=historical_stds, historical_values=historical_list,
                 timestamps=timestamps, threshold=2.5, detect_direction="both",
-                context_window=1, context_threshold=0.2)
+                context_window=1, context_threshold=0.2,
+                event_start_time=start_time, event_end_time=end_time,)
             anomalies = filtered
 
         stats = calculate_traffic_statistics(current_arr, historical_means)

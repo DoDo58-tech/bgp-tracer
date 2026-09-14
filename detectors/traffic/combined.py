@@ -12,7 +12,7 @@
 """
 
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from detectors.traffic.detectors import (
     detect_anomalies_statistical,
@@ -41,8 +41,10 @@ def detect_anomalies_combined(
     threshold=3.0,
     detect_direction="both",
     context_window=1,
-    context_threshold=0.35,   # 降低：避免过滤掉持续性异常
-    min_consecutive_context=2,  # 新增：要求连续 N 个点都偏离才过滤
+    context_threshold=0.35,
+    min_consecutive_context=2,
+    event_start_time=None,    # P0 Fix 2026-09-07: 传入事件窗口
+    event_end_time=None,
 ):
     """
     组合多种异常检测方法。
@@ -55,6 +57,7 @@ def detect_anomalies_combined(
     """
     curr = np.array(current_values, dtype=float)
     n = len(curr)
+    hist = np.array(historical_means, dtype=float) if len(historical_means) == n else None
 
     # ── 1. 各方法独立检测 ────────────────────────────────────────────
     stat_anomalies = detect_anomalies_statistical(
@@ -225,15 +228,16 @@ def detect_anomalies_combined(
         except Exception as e:
             logger.warning(f"Percentile detection failed: {e}")
 
-    # ── 9. 峰谷检测（新增：直接分析当前数据形状）────────────────
-    # 这是对「持续数小时的流量下降」最直接的检测
-    # 图表中13:00-16:00的异常属于这种类型
+    # ── 9. 峰谷检测（针对「持续数小时的流量下降」）────────────────
     if n >= 4 and len(historical_means) == n:
         try:
             for oa in _detect_peak_trough_drops(
                 current_values, historical_means, timestamps,
                 min_drop_ratio=0.25,   # 峰值到谷值下降超过25%就算异常
-                min_sustained_points=3, # 至少持续3个数据点
+                min_sustained_points=3,  # 至少持续3个数据点
+                # P0 Fix 2026-09-07: 传入事件窗口，限制 peak/trough 搜索范围
+                event_start_timestamp=event_start_time if event_start_time else None,
+                event_end_timestamp=event_end_time if event_end_time else None,
             ):
                 idx = oa["index"]
                 if idx not in {a["index"] for a in combined}:
@@ -305,10 +309,35 @@ def detect_anomalies_combined(
             if idx is not None and idx < len(timestamps):
                 anom["timestamp"] = timestamps[idx]
 
-    # ── 12. 连续性过滤（降低要求）───────────────────────────────
+    # ── 12. 全局历史偏离过滤（P0 Fix 2026-09-07）────────────────────
+    # 所有方法都可能检出"贴近历史"的点（z<0.20），这些是误报。
+    # 即使是 sudden_jump / peak_trough（跳过了 context_filter）也要过滤。
+    # P1 Fix 2026-09-08: 阈值从 20% → 30%（更严格）
+    hist_filter_threshold = 0.30
+    hist_filtered = []
+    for anom in combined:
+        idx = anom.get("index", -1)
+        if idx < 0 or idx >= n:
+            hist_filtered.append(anom)
+            continue
+        cv = float(curr[idx])
+        hv = float(hist[idx]) if hist is not None and idx < len(hist) else float(np.mean(hist)) if hist is not None else cv
+        if abs(hv) > 1e-6:
+            hist_dev = abs(cv - hv) / abs(hv)
+        else:
+            hist_dev = 0.0
+        if hist_dev < hist_filter_threshold:
+            logger.info(
+                f"[ContextFilter] Dropping {anom.get('method','?')} anomaly at idx={idx}: "
+                f"val={cv:.4f} hist={hv:.4f} hist_dev={hist_dev:.1%} < {hist_filter_threshold:.0%} — not anomalous."
+            )
+            continue
+        hist_filtered.append(anom)
+    combined = hist_filtered
+
+    # ── 13. 连续性过滤 ──────────────────────────────────────────
     skip = [a for a in combined if a.get("_skip_context_filter")]
     others = [a for a in combined if not a.get("_skip_context_filter")]
-    # 降低 min_consecutive：从 2 → 1
     filtered = filter_consecutive_anomalies(others, min_consecutive=1)
     filtered.extend(skip)
 
@@ -325,19 +354,115 @@ def detect_anomalies_combined(
 
 
 # ─────────────────────────────────────────────────────────────────
+# 新增（P0 Fix 2026-09-07）：在事件窗口内寻找 peak / trough
+# ─────────────────────────────────────────────────────────────────
+
+def _parse_event_ts(s):
+    """统一解析事件时间戳为 datetime（无 tz）或 None。"""
+    if s is None:
+        return None
+    if isinstance(s, str):
+        s_clean = s.replace("Z", "").replace("T", " ").strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S.%f"):
+            try:
+                return datetime.strptime(s_clean, fmt)
+            except ValueError:
+                continue
+        return None
+    return s
+
+
+def _find_peak_trough_in_event_window(
+    curr, hist, timestamps, event_start_timestamp, event_end_timestamp,
+):
+    """
+    在事件窗口附近寻找 peak/trough，避免自然周期性波动被误标。
+
+    策略：
+    - 如果提供了事件窗口：peak 必须在 [event_start - 4h, event_end + 6h] 内，
+      trough 必须在事件结束后（这是关键：trough 在事件之后说明是恢复，不是周期）
+    - 如果没提供窗口：退回全局搜索（向后兼容）
+    """
+    n = len(curr)
+    if n == 0:
+        return None, None
+
+    ev_start = _parse_event_ts(event_start_timestamp)
+    ev_end = _parse_event_ts(event_end_timestamp)
+
+    # 如果没提供事件窗口或时间戳无效：退回全局搜索（兼容老调用）
+    if ev_start is None or ev_end is None or timestamps is None or len(timestamps) != n:
+        peak_idx = int(np.argmax(curr))
+        if peak_idx < n - 1:
+            trough_idx = peak_idx + int(np.argmin(curr[peak_idx:]))
+        else:
+            trough_idx = int(np.argmin(curr[:peak_idx + 1])) if peak_idx >= 0 else 0
+        return peak_idx, trough_idx
+
+    # ── 事件窗口约束的搜索 ─────────────────────────────────────────
+    parsed_ts = []
+    for ts in timestamps:
+        parsed_ts.append(_parse_event_ts(ts))
+
+    # 窗口设计：
+    # - 从 ev_start - 2h 开始：捕捉事件前的高峰（作为"正常基准"）
+    # - 到 ev_end + 12h 结束：覆盖 outage 后的恢复 trough（trough 常在事件结束后才出现）
+    #   Turkey: ev_end=19:00, trough=00:15, 需要 +9h 窗口才能覆盖
+    window_start = ev_start - timedelta(hours=2)
+    window_end = ev_end + timedelta(hours=12)
+
+    candidate_idx = [i for i, ts in enumerate(parsed_ts)
+                     if ts is not None and window_start <= ts <= window_end]
+
+    if not candidate_idx:
+        peak_idx = int(np.argmax(curr))
+        if peak_idx < n - 1:
+            trough_idx = peak_idx + int(np.argmin(curr[peak_idx:]))
+        else:
+            trough_idx = int(np.argmin(curr[:peak_idx + 1])) if peak_idx >= 0 else 0
+        return peak_idx, trough_idx
+
+    # 在窗口内找局部 peak
+    candidate_vals = [float(curr[i]) for i in candidate_idx]
+    local_peak_pos = int(np.argmax(candidate_vals))
+    peak_idx = candidate_idx[local_peak_pos]
+
+    # Trough 在 peak 之后（同一窗口内找最低点）
+    after_peak_window = [i for i in candidate_idx if i > peak_idx]
+    if not after_peak_window:
+        return peak_idx, None
+    trough_idx = min(after_peak_window, key=lambda i: float(curr[i]))
+    return peak_idx, trough_idx
+
+
+# ─────────────────────────────────────────────────────────────────
 # 新增：峰谷检测 — 针对「持续数小时的流量下降」
 # ─────────────────────────────────────────────────────────────────
 
 def _detect_peak_trough_drops(
     current_values, historical_means, timestamps=None,
     min_drop_ratio=0.25, min_sustained_points=3,
+    min_historical_deviation_ratio=0.20,
+    event_start_timestamp=None, event_end_timestamp=None,
 ):
     """
     检测持续性流量下降：峰值 → 谷值 → 恢复
 
     适用于图表中 13:00-16:00 这种明显的「流量骤降然后恢复」场景。
-    与 sudden_drop 不同，sudden_drop 关注相邻点的变化，
-    peak_trough 关注整体形状（peak -> sustained low -> recovery）。
+    与 sudden_drop 不同，peak_trough 关注整体形状（peak -> sustained low -> recovery）。
+
+    关键改进（2026-09-04）：只有当 current values 显著偏离 historical_means 时
+    才标记为异常。纯周期性流量（peak-to-trough 是正常日周期）不被误判。
+
+    关键改进（2026-09-07）：限制搜索范围在事件窗口内（如果提供了）。
+    如果不提供 event_start_timestamp，则退化为在整个数组中搜索（向后兼容）。
+
+    Args:
+        min_historical_deviation_ratio: 谷值相对于历史均值的最小偏离比例（默认20%）。
+            如果谷值处的 current_value 接近 historical_mean，则这是正常周期波动。
+        event_start_timestamp / event_end_timestamp: 事件时间窗口（字符串或 datetime）。
+            Peak 和 trough 必须都在此窗口内（或峰紧邻事件前）才标记为异常。
+            这避免了"事件前一天下午高峰被误认为峰值"的问题。
     """
     curr = np.array(current_values, dtype=float)
     hist = np.array(historical_means, dtype=float) if len(historical_means) == len(curr) else None
@@ -347,23 +472,49 @@ def _detect_peak_trough_drops(
     if n < 4:
         return anomalies
 
-    # 找到峰值位置
-    peak_idx = int(np.argmax(curr))
+    # ── P0 Fix 2026-09-07: 限制搜索到事件窗口附近 ─────────────────────
+    # 解决"前一天下午高峰被误认为峰值、追溯到事件前"的问题
+    peak_idx, trough_idx = _find_peak_trough_in_event_window(
+        curr, hist, timestamps, event_start_timestamp, event_end_timestamp,
+    )
+
+    if peak_idx is None or trough_idx is None:
+        logger.info(
+            f"[PeakTrough] No suitable peak/trough found"
+            + (" in event window" if event_start_timestamp else "")
+            + ", returning empty."
+        )
+        return anomalies
+
     peak_val = float(curr[peak_idx])
-
-    # 找谷值：在峰值之后找最低点
-    if peak_idx < n - 1:
-        post_peak = curr[peak_idx:]
-        trough_idx_local = int(np.argmin(post_peak))
-        trough_idx = peak_idx + trough_idx_local
-    else:
-        # 峰值在最后，找前面的谷值
-        pre_peak = curr[:peak_idx + 1]
-        trough_idx = int(np.argmin(pre_peak))
-
     trough_val = float(curr[trough_idx])
 
-    # 计算下降比例
+    # ── P0 Fix: 只有当谷值显著偏离历史均值时才算异常 ─────────────────
+    # 纯周期性流量（如日周期：白天高、夜间低）在谷值处的 current 值
+    # 本身就接近历史同时段的均值。如果谷值接近历史均值，说明这是
+    # 正常周期，不需要标记为异常。
+    if hist is not None and trough_idx < len(hist):
+        hist_trough_val = float(hist[trough_idx])
+        hist_peak_val = float(hist[peak_idx]) if peak_idx < len(hist) else float(np.mean(hist))
+        # 计算当前谷值相对于历史谷值的偏离
+        if abs(hist_trough_val) > 1e-6:
+            hist_deviation = abs(trough_val - hist_trough_val) / hist_trough_val
+        elif abs(peak_val) > 1e-6:
+            # 如果历史谷值为0，改用相对峰值的偏离
+            hist_deviation = abs(peak_val - trough_val) / peak_val
+        else:
+            hist_deviation = 0.0
+
+        # 如果谷值没有显著偏离历史均值，这可能是正常日周期波动，不是异常
+        if hist_deviation < min_historical_deviation_ratio:
+            logger.info(
+                f"[PeakTrough] Skipping: trough={trough_val:.3f} vs hist_trough={hist_trough_val:.3f} "
+                f"(deviation={hist_deviation:.1%} < {min_historical_deviation_ratio:.1%}) — "
+                f"looks like normal periodic day/night variation, not an anomaly."
+            )
+            return anomalies
+
+    # 计算下降比例（相对于当前峰值的下降）
     if peak_val > 1e-6:
         drop_ratio = (peak_val - trough_val) / peak_val
     else:
@@ -376,9 +527,13 @@ def _detect_peak_trough_drops(
     # 找异常区间的起点（开始下降的位置）和终点（恢复到正常的位置）
     threshold = trough_val + (peak_val - trough_val) * 0.3  # 30% 恢复点
 
-    # 向前找下降起点
+    # 向前找下降起点（限制：最多向前搜索 8 个数据点，避免追溯到事件前）
+    # 解决 Starlink 案例："事件前一天下午高峰被错误追溯到事件前 13 小时"
+    max_lookback = min(8, peak_idx)
     drop_start = peak_idx
-    for i in range(peak_idx - 1, -1, -1):
+    for i in range(peak_idx - 1, peak_idx - max_lookback - 1, -1):
+        if i < 0:
+            break
         if curr[i] < curr[i + 1] * 0.98:  # 开始下降
             drop_start = i
         else:
@@ -398,6 +553,34 @@ def _detect_peak_trough_drops(
     # 如果持续点数不够，不算异常
     if sustained_points < min_sustained_points:
         return anomalies
+
+    # ── 关键修复（P0 Fix 2026-09-07）：区间内必须有足够多点的相对历史显著偏离 ──
+    # 之前的 bug：区间内每个点都被无条件加入 anomalies，结果自然下降段也被标为异常
+    # 现在：要求区间内 ≥ 50% 的点 vs 历史 hist 偏差 > 15%，否则是自然周期
+    if hist is not None:
+        sig_points = 0
+        total_points = 0
+        for idx in range(drop_start, recovery_end + 1):
+            if idx >= len(hist):
+                continue
+            cv = float(curr[idx])
+            hv = float(hist[idx])
+            total_points += 1
+            if abs(hv) > 1e-6:
+                dev = abs(cv - hv) / abs(hv)
+            else:
+                dev = 0.0
+            if dev > 0.15:  # 当前vs历史偏差>15%才算显著异常
+                sig_points += 1
+
+        sig_ratio = sig_points / total_points if total_points > 0 else 0.0
+        if sig_ratio < 0.5:
+            logger.info(
+                f"[PeakTrough] Interval {drop_start}→{recovery_end} only {sig_ratio:.1%} "
+                f"({sig_points}/{total_points}) points significantly deviate from history — "
+                f"natural periodic variation, not an anomaly."
+            )
+            return anomalies
 
     # 为区间内每个点添加异常标记
     for idx in range(drop_start, recovery_end + 1):
@@ -472,8 +655,12 @@ def _fallback_detection(
     except Exception as e:
         logger.debug(f"Fallback peak-trough failed: {e}")
 
-    # 方法2：简化Z-score（宽松阈值）
+    # 方法2：简化Z-score（严格阈值 P0 Fix 2026-09-07）
+    # 之前 z>2.0 太宽松，在历史std很小时 z=2 也是统计噪音（p>0.05）
+    # 现在要求 z>3.0 且 连续 N 个点才算异常
     if hist is not None:
+        z_threshold = 3.0
+        z_anomalies_idx = []
         for i in range(n):
             cv = float(curr[i])
             hm = float(hist[i])
@@ -481,24 +668,50 @@ def _fallback_detection(
                 sv = float(stds[i])
                 z = abs(cv - hm) / sv
             elif abs(hm) > 1e-6:
-                z = abs(cv - hm) / (abs(hm) * 0.2)  # 用均值的20%作为std近似
+                z = abs(cv - hm) / (abs(hm) * 0.2)
             else:
                 z = 0.0
 
-            # 宽松阈值：z > 2.0 就算异常
-            if z > 2.0:
-                ts = timestamps[i] if timestamps and i < len(timestamps) else None
-                anomalies.append({
-                    "index": i,
-                    "timestamp": ts,
-                    "current_value": cv,
-                    "historical_mean": hm,
-                    "z_score": float(z),
-                    "method": "fallback_zscore",
-                    "severity": "high" if z > 3 else "medium",
-                    "confidence": "medium",
-                    "_skip_context_filter": True,
-                })
+            if z > z_threshold:
+                z_anomalies_idx.append(i)
+
+        # 要求连续 3 个点都异常才算
+        consecutive_idx = []
+        if len(z_anomalies_idx) > 0:
+            sorted_z = sorted(z_anomalies_idx)
+            groups, current = [], [sorted_z[0]]
+            for idx in sorted_z[1:]:
+                if idx == current[-1] + 1:
+                    current.append(idx)
+                else:
+                    groups.append(current)
+                    current = [idx]
+            groups.append(current)
+            for g in groups:
+                if len(g) >= 3:
+                    consecutive_idx.extend(g)
+
+        for i in sorted(set(consecutive_idx)):
+            cv = float(curr[i])
+            hm = float(hist[i])
+            if stds is not None and abs(float(stds[i])) > 1e-6:
+                z = abs(cv - hm) / float(stds[i])
+            elif abs(hm) > 1e-6:
+                z = abs(cv - hm) / (abs(hm) * 0.2)
+            else:
+                z = 0.0
+            ts = timestamps[i] if timestamps and i < len(timestamps) else None
+            anomalies.append({
+                "index": i,
+                "timestamp": ts,
+                "current_value": cv,
+                "historical_mean": hm,
+                "z_score": float(z),
+                "method": "fallback_zscore",
+                "severity": "high" if z > 5 else "medium",
+                "confidence": "medium",
+                "_skip_context_filter": True,
+            })
 
     # 方法3：连续下降段检测
     drops = []

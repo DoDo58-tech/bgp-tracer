@@ -203,7 +203,17 @@ def process_asorg(target_time):
     if not txt_path.exists():
         logger.info(f"Downloading {url}")
         try:
-            subprocess.run(["wget", "-q", url, "-O", str(gz_path)], check=True)
+            # Bug fix 2026-09-13 (BUG-R87): the previous call had no
+            # timeout — a hung RIPE RIS connection would block the
+            # whole loader indefinitely. The CAIDA mirror rarely
+            # responds in <60s on a bad day, so 180s is a generous
+            # ceiling that still surfaces genuine connectivity issues
+            # rather than masking them.
+            subprocess.run(
+                ["wget", "-q", url, "-O", str(gz_path)],
+                check=True,
+                timeout=180,
+            )
             # 用 Python 内置 gzip 解压，不依赖外部 gzip 命令，避免被信号打断
             with gzip.open(gz_path, 'rb') as f_in:
                 with open(txt_path, 'wb') as f_out:

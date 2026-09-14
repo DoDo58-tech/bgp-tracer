@@ -29,7 +29,7 @@ except ImportError:
 
 def detect_multi_scale_breakpoints(routing_series, traffic_series, timestamps=None):
     if not PYWT_OK:
-        return _msbd_fallback(routing_series, traffic_series)
+        return msbd_fallback(routing_series, traffic_series)
     n = min(len(routing_series), len(traffic_series))
     if n < 10:
         return {"direction": "unknown", "strength": 0.0, "significant": False, "interpretation": "数据点不足"}
@@ -43,23 +43,23 @@ def detect_multi_scale_breakpoints(routing_series, traffic_series, timestamps=No
         r_coeffs = pywt.wavedec(routing, wavelet, level=max_level)
         t_coeffs = pywt.wavedec(traffic, wavelet, level=max_level)
     except Exception:
-        return _msbd_fallback(routing_series, traffic_series)
+        return msbd_fallback(routing_series, traffic_series)
     scale_results = []
     for idx in range(1, len(r_coeffs)):
         rd, td = r_coeffs[idx], t_coeffs[idx]
         if len(rd) < 2:
             continue
-        r_bp = _msbd_find_bp(rd)
-        t_bp = _msbd_find_bp(td)
-        sync = _msbd_sync(r_bp, t_bp, len(rd))
+        r_bp = msbd_find_bp(rd)
+        t_bp = msbd_find_bp(td)
+        sync = msbd_sync(r_bp, t_bp, len(rd))
         energy = (np.sum(rd**2) + np.sum(td**2)) / (np.sum(routing**2) + np.sum(traffic**2) + 1e-10)
         scale_results.append({"scale": idx, "sync_score": sync, "energy": energy})
     if not scale_results:
         return {"direction": "unknown", "strength": 0.0, "significant": False, "interpretation": "尺度分解失败"}
     total_e = sum(s["energy"] for s in scale_results) + 1e-10
     weighted_sync = sum(s["sync_score"] * s["energy"] for s in scale_results) / total_e
-    consistency = _msbd_consistency(scale_results)
-    direction = _msbd_direction(weighted_sync, routing, traffic)
+    consistency = msbd_consistency(scale_results)
+    direction = msbd_direction(weighted_sync, routing, traffic)
     return {"direction": direction, "strength": weighted_sync,
             "significant": consistency >= 0.6 and weighted_sync >= 0.3,
             "scale_sync": weighted_sync, "scale_consistency": consistency,
@@ -67,7 +67,7 @@ def detect_multi_scale_breakpoints(routing_series, traffic_series, timestamps=No
             "scale_results": scale_results}
 
 
-def _msbd_find_bp(coeffs):
+def msbd_find_bp(coeffs):
     if len(coeffs) < 3:
         return []
     abs_c = np.abs(coeffs)
@@ -75,7 +75,7 @@ def _msbd_find_bp(coeffs):
     return [i for i, v in enumerate(abs_c) if v > threshold]
 
 
-def _msbd_sync(r_bp, t_bp, scale_len):
+def msbd_sync(r_bp, t_bp, scale_len):
     if not r_bp or not t_bp:
         return 0.0
     tol = max(1, scale_len // 10)
@@ -84,7 +84,7 @@ def _msbd_sync(r_bp, t_bp, scale_len):
     return 2.0 * matched / total if total > 0 else 0.0
 
 
-def _msbd_consistency(results):
+def msbd_consistency(results):
     if not results:
         return 0.0
     scores = [s["sync_score"] for s in results]
@@ -94,7 +94,7 @@ def _msbd_consistency(results):
     return 1.0 - min(std_s / mean_s, 1.0) if mean_s > 0.01 else 0.0
 
 
-def _msbd_direction(sync, routing, traffic):
+def msbd_direction(sync, routing, traffic):
     # sync<0.2 时改用 peak_position fallback，避免 HCAF 投票缺位
     if sync >= 0.6:
         # 高同步度时仍信任断点重叠，但 peak 位置严重矛盾则判独立
@@ -113,7 +113,7 @@ def _msbd_direction(sync, routing, traffic):
     return "independent"
 
 
-def _msbd_fallback(routing_series, traffic_series):
+def msbd_fallback(routing_series, traffic_series):
     n = min(len(routing_series), len(traffic_series))
     if n < 10:
         return {"direction": "unknown", "strength": 0.0, "significant": False, "interpretation": "数据点不足"}
@@ -130,28 +130,28 @@ def _msbd_fallback(routing_series, traffic_series):
 
 def reconstruct_transmission_path(routing_events, traffic_events, as_topology, target_as):
     if not routing_events or not traffic_events:
-        return _ctpr_empty()
-    sources = _ctpr_identify_source(routing_events)
+        return ctpr_empty()
+    sources = ctpr_identify_source(routing_events)
     chains = []
     for src in sources:
-        chain = _ctpr_build_chain(src)
+        chain = ctpr_build_chain(src)
         if chain:
             chains.append(chain)
     if not chains:
-        return _ctpr_empty()
-    matched = _ctpr_match_chain(chains, traffic_events)
+        return ctpr_empty()
+    matched = ctpr_match_chain(chains, traffic_events)
     if not matched:
         # 匹配失败时不再硬编码 routing_to_traffic，改为 unknown
-        return _ctpr_empty()
-    strength, sig = _ctpr_strength(matched, traffic_events)
+        return ctpr_empty()
+    strength, sig = ctpr_strength(matched, traffic_events)
     root = matched[0] if matched else None
     return {"direction": "routing_to_traffic", "strength": strength, "significant": sig,
             "transmission_path": matched, "root_cause_as": root["asn"] if root else None,
-            "path_length": len(matched), "propagation_delay": _ctpr_delay(matched),
-            "interpretation": _ctpr_desc(matched, root, strength)}
+            "path_length": len(matched), "propagation_delay": ctpr_delay(matched),
+            "interpretation": ctpr_desc(matched, root, strength)}
 
 
-def _ctpr_identify_source(events):
+def ctpr_identify_source(events):
     sources, seen = [], set()
     for ev in sorted(events, key=lambda e: e.get("timestamp", "")):
         path = ev.get("as_path", [])
@@ -165,36 +165,36 @@ def _ctpr_identify_source(events):
     return sources[:5]
 
 
-def _ctpr_build_chain(source):
+def ctpr_build_chain(source):
     chain = [{"asn": source["asn"], "timestamp": source["timestamp"],
               "role": "source", "delay_contribution": 0}]
     path = source.get("as_path", [])
     delay = 0
     for idx, asn in enumerate(path[:-1]):
-        delay += _ctpr_step_delay(asn, path[idx + 1] if idx + 1 < len(path) else None)
+        delay += ctpr_step_delay(asn, path[idx + 1] if idx + 1 < len(path) else None)
         chain.append({"asn": asn, "role": "transit", "step_index": idx,
                      "cumulative_delay": delay, "downstream": path[idx + 1] if idx + 1 < len(path) else None})
     return chain
 
 
-def _ctpr_step_delay(f, t):
+def ctpr_step_delay(f, t):
     if f is None or t is None:
         return 60
     return 60 + hash((f, t)) % 120
 
 
-def _ctpr_match_chain(chains, traffic_events):
+def ctpr_match_chain(chains, traffic_events):
     if not chains or not traffic_events:
         return chains[0] if chains else None
     primary = max(traffic_events, key=lambda e: e.get("drop_ratio", 0))
-    tt = _ctpr_parse_time(primary.get("timestamp"))
+    tt = ctpr_parse_time(primary.get("timestamp"))
     if not tt:
         return chains[0]
     best, best_diff = None, None
     for chain in chains:
         if not chain:
             continue
-        ct = _ctpr_parse_time(chain[0].get("timestamp"))
+        ct = ctpr_parse_time(chain[0].get("timestamp"))
         if not ct:
             continue
         diff = abs((tt - ct).total_seconds())
@@ -203,7 +203,7 @@ def _ctpr_match_chain(chains, traffic_events):
     return best
 
 
-def _ctpr_strength(chain, traffic_events):
+def ctpr_strength(chain, traffic_events):
     if not chain or not traffic_events:
         return 0.0, False
     drop = max(traffic_events, key=lambda e: e.get("drop_ratio", 0)).get("drop_ratio", 0)
@@ -212,11 +212,11 @@ def _ctpr_strength(chain, traffic_events):
     return strength, strength >= 0.4 and drop >= 0.3
 
 
-def _ctpr_delay(chain):
+def ctpr_delay(chain):
     return chain[-1].get("cumulative_delay", 0) if chain else 0
 
 
-def _ctpr_desc(chain, root, strength):
+def ctpr_desc(chain, root, strength):
     if not chain:
         return "未能重建传播路径"
     path_str = " -> ".join(str(n["asn"]) for n in chain)
@@ -224,7 +224,7 @@ def _ctpr_desc(chain, root, strength):
             f"强度={strength:.2f}。")
 
 
-def _ctpr_parse_time(time_str):
+def ctpr_parse_time(time_str):
     if not time_str:
         return None
     try:
@@ -233,7 +233,7 @@ def _ctpr_parse_time(time_str):
         return None
 
 
-def _ctpr_empty():
+def ctpr_empty():
     return {"direction": "unknown", "strength": 0.0, "significant": False,
             "transmission_path": [], "root_cause_as": None, "interpretation": "无可用事件"}
 
@@ -244,21 +244,21 @@ def _ctpr_empty():
 def estimate_counterfactual_cascade(intervention_as, intervention_type, routing_state,
                                     as_topology, traffic_baseline, affected_prefix):
     if not as_topology:
-        return _cic_empty()
-    cascade = _cic_propagate(intervention_as, as_topology, routing_state, intervention_type, affected_prefix)
+        return cic_empty()
+    cascade = cic_propagate(intervention_as, as_topology, routing_state, intervention_type, affected_prefix)
     if not cascade:
-        return _cic_empty()
-    impacts = [_cic_node_impact(n, intervention_type, traffic_baseline) for n in cascade]
-    total = _cic_aggregate(impacts)
-    strength, sig = _cic_strength(total, impacts)
+        return cic_empty()
+    impacts = [cic_node_impact(n, intervention_type, traffic_baseline) for n in cascade]
+    total = cic_aggregate(impacts)
+    strength, sig = cic_strength(total, impacts)
     return {"direction": "routing_to_traffic", "strength": strength, "significant": sig,
             "cascade_chain": cascade, "impact_estimates": impacts, "total_impact": total,
             "affected_as_count": len(cascade),
-            "counterfactual_summary": _cic_cf_summary(intervention_as, total),
-            "interpretation": _cic_desc(intervention_as, cascade, total, strength)}
+            "counterfactual_summary": cic_cf_summary(intervention_as, total),
+            "interpretation": cic_desc(intervention_as, cascade, total, strength)}
 
 
-def _cic_propagate(start_as, topology, routing_state, int_type, prefix):
+def cic_propagate(start_as, topology, routing_state, int_type, prefix):
     visited, chain, queue = set(), [], [(start_as, 0, None)]
     while queue:
         current, depth, upstream = queue.pop(0)
@@ -266,7 +266,7 @@ def _cic_propagate(start_as, topology, routing_state, int_type, prefix):
             continue
         visited.add(current)
         chain.append({"asn": current, "depth": depth, "upstream_as": upstream,
-                     "has_route": _cic_has_pfx(current, prefix, routing_state)})
+                     "has_route": cic_has_pfx(current, prefix, routing_state)})
         if depth >= 5:
             continue
         for neighbor in topology.get(current, []):
@@ -275,13 +275,13 @@ def _cic_propagate(start_as, topology, routing_state, int_type, prefix):
     return chain
 
 
-def _cic_has_pfx(asn, prefix, routing_state):
+def cic_has_pfx(asn, prefix, routing_state):
     if not prefix or not routing_state:
         return False
     return prefix in routing_state.get(asn, [])
 
 
-def _cic_node_impact(node, int_type, baseline):
+def cic_node_impact(node, int_type, baseline):
     asn, depth = node["asn"], node["depth"]
     bl = baseline.get(asn, 1.0)
     has_route = node["has_route"]
@@ -298,7 +298,7 @@ def _cic_node_impact(node, int_type, baseline):
             "impact_ratio": impact / bl if bl > 0 else 0, "has_route": has_route}
 
 
-def _cic_aggregate(impacts):
+def cic_aggregate(impacts):
     if not impacts:
         return {"total": 0, "affected_count": 0, "avg_impact": 0, "max_impact": 0}
     total = sum(e["impact"] for e in impacts)
@@ -308,7 +308,7 @@ def _cic_aggregate(impacts):
     return {"total": total, "affected_count": affected, "avg_impact": avg, "max_impact": mx}
 
 
-def _cic_strength(total, impacts):
+def cic_strength(total, impacts):
     if not impacts:
         return 0.0, False
     ratio = total["affected_count"] / len(impacts)
@@ -316,12 +316,12 @@ def _cic_strength(total, impacts):
     return strength, strength >= 0.3 and total["affected_count"] >= 2
 
 
-def _cic_cf_summary(intervention_as, total):
+def cic_cf_summary(intervention_as, total):
     return (f"若 AS{intervention_as} 不发生干预，{total['affected_count']} 个下游 AS "
             f"流量保持基线，不发生 {abs(total['total']):.1%} 的累计变化。")
 
 
-def _cic_desc(intervention_as, cascade, total, strength):
+def cic_desc(intervention_as, cascade, total, strength):
     if not cascade:
         return "未识别级联路径"
     depth_counts = defaultdict(int)
@@ -332,7 +332,7 @@ def _cic_desc(intervention_as, cascade, total, strength):
             f"影响 {total['affected_count']} 个 AS，因果强度 {strength:.2f}。")
 
 
-def _cic_empty():
+def cic_empty():
     return {"direction": "unknown", "strength": 0.0, "significant": False,
             "cascade_chain": [], "impact_estimates": [], "total_impact": {"total": 0, "affected_count": 0},
             "interpretation": "无 AS 拓扑数据"}
@@ -387,22 +387,22 @@ class GrangerEngine:
 
     def test(self, routing_timeline, traffic_timeline):
         if not STATSMODELS_OK:
-            return _granger_fb(routing_timeline, traffic_timeline)
-        r_series, t_series = _granger_align(routing_timeline, traffic_timeline)
+            return granger_fb(routing_timeline, traffic_timeline)
+        r_series, t_series = granger_align(routing_timeline, traffic_timeline)
         n = len(r_series)
         if n < 10:
-            return _granger_insuf(n)
-        lead = _granger_lead(routing_timeline, traffic_timeline)
+            return granger_insuf(n)
+        lead = granger_lead(routing_timeline, traffic_timeline)
         try:
-            rt = _granger_gt(r_series, t_series, self.max_lag, self.significance)
-            tr = _granger_gt(t_series, r_series, self.max_lag, self.significance)
-            return _granger_synth(rt, tr, lead, n)
+            rt = granger_gt(r_series, t_series, self.max_lag, self.significance)
+            tr = granger_gt(t_series, r_series, self.max_lag, self.significance)
+            return granger_synth(rt, tr, lead, n)
         except Exception as e:
             logger.warning(f"Granger failed: {e}")
-            return _granger_fb(routing_timeline, traffic_timeline)
+            return granger_fb(routing_timeline, traffic_timeline)
 
 
-def _granger_align(routing, traffic):
+def granger_align(routing, traffic):
     r_sorted = sorted(routing, key=lambda x: x.get("timestamp", ""))
     t_sorted = sorted(traffic, key=lambda x: x.get("timestamp", ""))
     r_scores = [float(r.get("score", 0)) for r in r_sorted]
@@ -411,7 +411,7 @@ def _granger_align(routing, traffic):
     return r_scores[:n], t_scores[:n]
 
 
-def _granger_lead(routing, traffic):
+def granger_lead(routing, traffic):
     r_sorted = sorted(routing, key=lambda x: x.get("timestamp", ""))
     t_sorted = sorted(traffic, key=lambda x: x.get("timestamp", ""))
     first_r = next((r for r in r_sorted if r.get("score", 0) > 0.5), None)
@@ -426,7 +426,7 @@ def _granger_lead(routing, traffic):
         return None
 
 
-def _granger_gt(x, y, max_lag, sig):
+def granger_gt(x, y, max_lag, sig):
     data = np.column_stack([y, x])
     try:
         ml = min(max_lag, len(data) // 3)
@@ -449,7 +449,7 @@ def _granger_gt(x, y, max_lag, sig):
         return {"significant": False, "p": 1.0, "f": 0.0, "lag": 0}
 
 
-def _granger_synth(rt, tr, lead, n):
+def granger_synth(rt, tr, lead, n):
     rt_sig, rt_p, rt_f = rt["significant"], rt["p"], rt["f"]
     tr_sig, tr_p, tr_f = tr["significant"], tr["p"], tr["f"]
     rt_s = rt_f / (rt_f + 5.0) if rt_f > 0 else 0.0
@@ -473,14 +473,14 @@ def _granger_synth(rt, tr, lead, n):
             "data_points": n, "association": max(rt_s, tr_s)}
 
 
-def _granger_insuf(n):
+def granger_insuf(n):
     return {"direction": "unknown", "strength": 0.0, "p_value": 1.0, "significant": False,
             "f_statistic": 0.0, "temporal_lead": None, "interpretation": f"数据点不足（n={n}）",
             "data_points": n, "association": 0.0}
 
 
-def _granger_fb(routing, traffic):
-    lead = _granger_lead(routing, traffic)
+def granger_fb(routing, traffic):
+    lead = granger_lead(routing, traffic)
     ra = sum(1 for r in routing if r.get("score", 0) > 0.5)
     ta = sum(1 for t in traffic if t.get("score", 0) > 0.5)
     n = max(len(routing), len(traffic))
@@ -592,15 +592,15 @@ class 因果归因引擎:
 
         # BOTH timelines empty → cannot make any causal claim
         if not 路由时间线 and not 流量时间线:
-            return self._空结果()
+            return self.空结果()
 
         # Only one timeline present → degrade gracefully to a single-sided analysis
         # so the report still records a direction guess / confidence based on what we have.
         if not 路由时间线:
-            return self._单边结果(流量时间线=流量时间线, 流量上下文=流量上下文,
+            return self.单边结果(流量时间线=流量时间线, 流量上下文=流量上下文,
                                 拓扑上下文=拓扑上下文, 目标AS=目标AS, side="traffic_only")
         if not 流量时间线:
-            return self._单边结果(路由时间线=路由时间线, 路由上下文=路由上下文,
+            return self.单边结果(路由时间线=路由时间线, 路由上下文=路由上下文,
                                 拓扑上下文=拓扑上下文, 目标AS=目标AS, side="routing_only")
 
         混杂列表 = self.confounder_detector.detect(路由上下文, 流量上下文, 拓扑上下文)
@@ -611,8 +611,8 @@ class 因果归因引擎:
             timestamps=[p.get("timestamp") for p in 路由时间线]
         )
 
-        路由事件 = self._提取路由事件(路由时间线, 路由上下文)
-        流量事件 = self._提取流量事件(流量时间线, 流量上下文)
+        路由事件 = self.提取路由事件(路由时间线, 路由上下文)
+        流量事件 = self.提取流量事件(流量时间线, 流量上下文)
         路径结果 = reconstruct_transmission_path(
             路由事件, 流量事件, 拓扑上下文.get("adjacency", {}), 目标AS
         )
@@ -638,9 +638,9 @@ class 因果归因引擎:
 
         granger结果 = self.granger.test(路由时间线, 流量时间线)
 
-        收敛 = self._评估收敛(断点结果, 路径结果, 级联结果, granger结果)
-        方向, 路由致流量, 流量致路由 = self._判定方向(收敛)
-        强度, 置信度, 是因果 = self._计算最终分数(收敛, 断点结果, 路径结果, 级联结果)
+        收敛 = self.评估收敛(断点结果, 路径结果, 级联结果, granger结果)
+        方向, 路由致流量, 流量致路由 = self.判定方向(收敛)
+        强度, 置信度, 是因果 = self.计算最终分数(收敛, 断点结果, 路径结果, 级联结果)
 
         发现列表 = [
             创新发现("多尺度因果断点检测", 断点结果.get("direction", "unknown"),
@@ -657,8 +657,8 @@ class 因果归因引擎:
                    granger结果.get("significant", False), granger结果.get("interpretation", ""), granger结果),
         ]
 
-        解释 = self._生成解释(方向, 强度, 路由致流量, 流量致路由, 收敛, 发现列表)
-        局限 = self._识别局限(发现列表, 混杂列表, len(路由时间线))
+        解释 = self.生成解释(方向, 强度, 路由致流量, 流量致路由, 收敛, 发现列表)
+        局限 = self.识别局限(发现列表, 混杂列表, len(路由时间线))
 
         return 因果归因结果(
             方向=方向, 强度=强度, 置信度=置信度,
@@ -676,7 +676,7 @@ class 因果归因引擎:
             }
         )
 
-    def _提取路由事件(self, 时间线, 上下文):
+    def 提取路由事件(self, 时间线, 上下文):
         事件列表 = []
         as_path = 上下文.get("as_path", [])
         for 点 in 时间线:
@@ -688,7 +688,7 @@ class 因果归因引擎:
                 })
         return 事件列表
 
-    def _提取流量事件(self, 时间线, 上下文):
+    def 提取流量事件(self, 时间线, 上下文):
         事件列表 = []
         for 点 in 时间线:
             if 点.get("score", 0) > 0.5:
@@ -699,7 +699,7 @@ class 因果归因引擎:
                 })
         return 事件列表
 
-    def _评估收敛(self, 断点, 路径, 级联, granger):
+    def 评估收敛(self, 断点, 路径, 级联, granger):
         """4 个方法投票，按权重求和（创新各 0.30，Granger 0.15）。
 
         当 3 个创新方法全部返回 unknown 时（如缺拓扑），不能让
@@ -738,7 +738,7 @@ class 因果归因引擎:
         return {"score": 占比 * (1.0 if 主导 != "independent" else 0.5),
                 "dominant": 主导, "method_agreement": 一致 and 占比 >= 0.5}
 
-    def _判定方向(self, 收敛):
+    def 判定方向(self, 收敛):
         主导 = 收敛["dominant"]
         if not 收敛.get("method_agreement"):
             # 即使 method_agreement=False，只要 dominant 是 routing_to_traffic
@@ -759,7 +759,7 @@ class 因果归因引擎:
         }
         return 映射.get(主导, ("unknown", False, False))
 
-    def _计算最终分数(self, 收敛, 断点, 路径, 级联):
+    def 计算最终分数(self, 收敛, 断点, 路径, 级联):
         创新强度 = (断点.get("strength", 0.0) + 路径.get("strength", 0.0) + 级联.get("strength", 0.0)) / 3.0
         基础 = 收敛["score"] * 0.6 + 创新强度 * 0.4
         因子 = 0.9 if 断点.get("scale_results") else 0.6
@@ -775,7 +775,7 @@ class 因果归因引擎:
         是因果 = 收敛.get("method_agreement") and 基础 >= 0.4 and 置信度 >= 0.3
         return 强度, 置信度, 是因果
 
-    def _生成解释(self, 方向, 强度, 路由致流量, 流量致路由, 收敛, 发现列表):
+    def 生成解释(self, 方向, 强度, 路由致流量, 流量致路由, 收敛, 发现列表):
         if 强度 == 因果强度.无 or 方向 == "undetermined":
             return "三个创新方法均未达成收敛，因果判定依据不足。"
         if 路由致流量:
@@ -789,7 +789,7 @@ class 因果归因引擎:
             return f"判定结论：流量异常可能触发了路由调整（强度：{强度.value}）。"
         return "路由与流量变化存在关联，但因果方向不明。"
 
-    def _识别局限(self, 发现列表, 混杂列表, 数据点数):
+    def 识别局限(self, 发现列表, 混杂列表, 数据点数):
         局限 = []
         if 数据点数 < 10:
             局限.append("数据点不足（<10）。")
@@ -799,7 +799,7 @@ class 因果归因引擎:
                 局限.append(f"识别到 {len(外部)} 个外部混杂变量。")
         return " ".join(局限) or "未发现明显方法学局限。"
 
-    def _空结果(self):
+    def 空结果(self):
         return 因果归因结果(
             方向="unknown", 强度=因果强度.无, 置信度=0.0,
             路由导致流量=False, 流量导致路由=False,
@@ -809,11 +809,11 @@ class 因果归因引擎:
             局限="需要至少包含有效时间戳和异常分数的数据点。",
             证据支撑={})
 
-    def _单边结果(self, 路由时间线=None, 流量时间线=None, 路由上下文=None,
+    def 单边结果(self, 路由时间线=None, 流量时间线=None, 路由上下文=None,
                 流量上下文=None, 拓扑上下文=None, 目标AS=None, side="routing_only"):
         """仅一侧有时间线时的退化分析。
 
-        与 _空结果 不同，这里仍然产出方向猜测 + 弱置信度，让 HCAF 报告
+        与 空结果 不同，这里仍然产出方向猜测 + 弱置信度，让 HCAF 报告
         不再完全是"unknown/none/0%"。基于事件类型 + 流量上下文里的 drop_ratio
         推断方向（与 quick_cascade_estimate 同源）。
         """

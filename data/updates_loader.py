@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 from dateutil.relativedelta import relativedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
-import pandas as pd
+import polars as pl
 import psutil
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -22,7 +22,7 @@ SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 BGPDUMP_BIN = "/usr/bin/bgpdump"
 
 
-def is_valid_gz_file(file_path: Path, min_size: int = GZ_MIN_SIZE) -> bool:
+def is_valid_gz_file(file_path: Path, min_size = GZ_MIN_SIZE):
     if not isinstance(file_path, Path):
         file_path = Path(file_path)
     if not file_path.exists():
@@ -42,29 +42,48 @@ def _convert_timestamp(line):
     return line
 
 
-def decode_gz_to_txt(gz_path: Path, txt_path: Path) -> bool:
+def decode_gz_to_txt(gz_path: Path, txt_path: Path):
     """使用 bgpdump 将 MRT gz 文件解码并写入 decoded 目录，返回是否成功。"""
+    proc = None
     try:
         proc = subprocess.Popen(
             ["bgpdump", "-M", "-t", "change", str(gz_path)],
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL,
+            bufsize=65536,
         )
         written = 0
-        with open(txt_path, 'w', encoding='utf-8') as out:
-            for line in proc.stdout:
-                decoded_line = line.decode('utf-8', errors='ignore').strip()
-                if decoded_line:
-                    converted = _convert_timestamp(decoded_line)
-                    out.write(converted + '\n')
-                    written += 1
-        proc.wait()
-        if proc.returncode != 0:
-            raise subprocess.CalledProcessError(proc.returncode, "bgpdump")
+        # Stream decode → write → close → wait to avoid zombie bgpdump
+        # if the consumer raises mid-stream.
+        with proc:
+            with open(txt_path, 'w', encoding='utf-8') as out:
+                try:
+                    assert proc.stdout is not None
+                    for line in proc.stdout:
+                        decoded_line = line.decode('utf-8', errors='ignore').strip()
+                        if decoded_line:
+                            converted = _convert_timestamp(decoded_line)
+                            out.write(converted + '\n')
+                            written += 1
+                finally:
+                    if proc.stdout is not None:
+                        proc.stdout.close()
+            retcode = proc.wait()
+            if retcode != 0:
+                raise subprocess.CalledProcessError(retcode, "bgpdump")
         logger.debug(f"Decoded {gz_path.name} -> {txt_path.name} ({written} lines)")
         return True
     except Exception as e:
         logger.error(f"Failed to decode {gz_path.name}: {e}")
+        # If the process is still running, terminate it before returning
+        # so we don't leak a bgpdump zombie when downstream code is
+        # unwinding.
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
         if txt_path.exists():
             txt_path.unlink()
         return False
@@ -125,15 +144,41 @@ def download_data(url, max_retries=3, retry_delay=5):
         outpath.unlink()
 
     if outpath.exists():
-        return outpath
+        # Bug fix 2026-09-13 (BUG-R72): ``is_valid_gz_file`` only checks the
+        # gzip magic bytes and the first decompressed byte. A truncated
+        # partial download (e.g. an interrupted ``wget -c`` run that wrote
+        # 99% of a gz and then crashed) passes this check, so the function
+        # returned the half-written file to callers, who would then feed
+        # it to ``bgpdump`` and either crash or produce garbled output.
+        # We now do a more thorough integrity probe: ``zcat | wc -c``
+        # and confirm the tail of the file is non-truncated. If the gz
+        # can be parsed end-to-end without error, we trust it.
+        try:
+            import gzip as _gzip
+            with _gzip.open(outpath, "rb") as _gzf:
+                while _gzf.read(1 << 20):
+                    pass
+        except Exception as _exc:
+            logger.warning(
+                f"Removing partial/unreadable gz (probe failed): {outpath}: {_exc}"
+            )
+            try:
+                outpath.unlink()
+            except OSError:
+                pass
+        if outpath.exists():
+            return outpath
 
     os.makedirs(outpath.parent, exist_ok=True)
 
     for attempt in range(max_retries):
         try:
-            subprocess.check_call(["wget", "-q", "-c", url, "-O", str(outpath)], timeout=DOWNLOAD_TIMEOUT)
+            subprocess.check_call(
+                ["wget", "-q", "-c", "-T", "120", url, "-O", str(outpath)],
+                timeout=150
+            )
         except subprocess.TimeoutExpired:
-            logger.error(f"Download timeout (attempt {attempt+1}/{max_retries}): {url}")
+            logger.warning(f"Download timeout (attempt {attempt+1}/{max_retries}): {fname}")
             if outpath.exists():
                 outpath.unlink()
             if attempt < max_retries - 1:
@@ -141,7 +186,7 @@ def download_data(url, max_retries=3, retry_delay=5):
                 time.sleep(retry_delay)
             continue
         except Exception as e:
-            logger.error(f"Failed to download (attempt {attempt+1}/{max_retries}): {url}: {e}")
+            logger.warning(f"Failed to download (attempt {attempt+1}/{max_retries}): {fname}: {e}")
             if outpath.exists():
                 outpath.unlink()
             if attempt < max_retries - 1:
@@ -178,150 +223,310 @@ def _disk_busy(threshold = 80, sample_seconds = 0.2):
         return False
 
 
+# 大文件阈值 (500MB)，超过这个大小使用分块读取
+LARGE_FILE_THRESHOLD = 500 * 1024 * 1024  # 500MB
+
 def read_updates_file(file_path, columns):
-    data = []
+    """
+    Read a BGP update file into a Polars DataFrame.
+
+    Uses pl.read_csv() with explicit column count to avoid predicate-pushdown
+    column pruning that breaks files with fewer columns than expected.
     
+    For large files (>500MB), uses chunked reading to prevent OOM.
+    Falls back to manual line parsing if read fails.
+    """
     try:
-        if file_path.suffix == '.gz':
-            f = gzip.open(file_path, 'rt', encoding='utf-8')
-        else:
-            f = open(file_path, 'r', encoding='utf-8')
+        separator = '|'
         
-        with f:
+        # 检查文件大小，超过阈值使用分块读取
+        file_size = file_path.stat().st_size if isinstance(file_path, Path) else Path(file_path).stat().st_size
+        if file_size > LARGE_FILE_THRESHOLD:
+            logger.debug(f"Large file detected ({file_size/1024/1024:.0f}MB), using chunked reading: {file_path.name}")
+            return _read_updates_chunked(file_path, columns, separator)
+        
+        df = pl.read_csv(
+            file_path,
+            separator=separator,
+            has_header=False,
+            dtypes={str(i): pl.Utf8 for i in range(len(columns))},
+            ignore_errors=True,
+            low_memory=True,
+        )
+        # Filter for Announce messages only
+        df = df.filter(pl.col('column_3') == 'A')
+        # Rename columns — only alias columns that actually exist in the file
+        # (MRT files can have 8 or 15+ columns depending on router config)
+        df = df.select([
+            pl.col(f'column_{i}').alias(col)
+            for i, col in enumerate(columns, start=1)
+            if f'column_{i}' in df.columns
+        ])
+
+        if df.is_empty():
+            return None
+        return df
+
+    except Exception as e:
+        # Fallback: manual line-by-line parsing
+        logger.debug(f"read_csv failed for {file_path}, using fallback: {e}")
+        return _read_updates_line_by_line(file_path, columns)
+
+
+def _read_updates_chunked(file_path, columns, separator='|', chunk_size=50000):
+    """
+    分块读取大文件，按chunk_size行分批处理，最后合并。
+    如果合并后仍过大，则逐块yield出去。
+    """
+    try:
+        opener = gzip.open if (isinstance(file_path, Path) and file_path.suffix == '.gz') or (isinstance(file_path, str) and file_path.endswith('.gz')) else open
+        with opener(file_path, 'rt', encoding='utf-8') as f:
+            data = []
+            line_count = 0
             for line in f:
                 line = line.strip()
-                if not line:
+                if not line or '|A|' not in line:
                     continue
-                if '|A|' not in line:
-                    continue
-                
                 parts = line.split('|')
                 if len(parts) >= 6:
                     parts.extend([''] * (len(columns) - len(parts)))
                     data.append(parts[:len(columns)])
-    
+                    line_count += 1
+                    
+                    if len(data) >= chunk_size:
+                        # 累积到chunk_size后先yield出去，防止内存爆炸
+                        chunk_df = pl.DataFrame(data, schema=columns, strict=False)
+                        yield chunk_df
+                        data = []
+                        gc.collect()
+            
+            if data:
+                chunk_df = pl.DataFrame(data, schema=columns, strict=False)
+                yield chunk_df
+                del data
+                gc.collect()
+    except Exception as e:
+        logger.error(f"Chunked reading failed for {file_path}: {e}")
+        return
+
+
+def _read_updates_line_by_line(file_path, columns):
+    """逐行解析作为最终fallback"""
+    data = []
+    try:
+        opener = gzip.open if (isinstance(file_path, Path) and file_path.suffix == '.gz') or (isinstance(file_path, str) and file_path.endswith('.gz')) else open
+        with opener(file_path, 'rt', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or '|A|' not in line:
+                    continue
+                parts = line.split('|')
+                if len(parts) >= 6:
+                    parts.extend([''] * (len(columns) - len(parts)))
+                    data.append(parts[:len(columns)])
         if not data:
             return None
-        
-        df = pd.DataFrame(data, columns=columns)
-        return df if not df.empty else None
-    except Exception as e:
-        logger.error(f"Error reading file {file_path}: {e}")
+        df = pl.DataFrame(data, schema=columns, strict=False)
+        return df if not df.is_empty() else None
+    except Exception as inner:
+        logger.error(f"Line-by-line fallback also failed for {file_path}: {inner}")
         return None
 
 
-def get_updates_streaming(start_time, end_time, workers: int = 16, io_busy_threshold: int = 85, auto_download: bool = True):
-    columns = [
-        'type', 'timestamp', 'A/W', 'peer_ip', 'peer_as', 'prefix',
-        'as-path', 'origin', 'next-hop', 'local-pref', 'med',
-        'communities', 'atomic-aggregate', 'aggregator', 'unknown'
-    ]
+def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold = 85, auto_download = True):
+    """Stream BGP announcements for [start_time, end_time] as Polars DataFrames.
 
+    Single-source-of-truth backed by `data.parquet_cache`, which already
+    implements a four-layer cache:
+
+        1. {file}.parquet  – pre-parsed binary (5-25x smaller than txt)
+        2. decoded/*.txt   – already bgpdump-decoded text
+        3. .gz             – raw MRT gz archived by RIPE RIS
+        4. Network         – download from RIPE RIS, then decode
+
+    On first hit that misses every layer the function transparently downloads
+    the missing .gz files into UPDATES_DIR, decodes them into DECODED_DIR, and
+    relies on `parquet_cache.iter_window_chunks` to populate the parquet index
+    on the fly. Subsequent runs hit layer 1 and skip network entirely.
+
+    Each yielded DataFrame carries the canonical schema:
+        type, timestamp, A/W, peer_ip, peer_as, prefix,
+        as-path, origin, next-hop, local-pref, med,
+        communities, atomic-aggregate, aggregator, unknown, ts
+
+    Args:
+        start_time, end_time: window (UTC, datetime).
+        workers: thread-pool size for the in-process decode fallback only
+            (most chunks are already cached; workers is unused on warm cache).
+        io_busy_threshold / auto_download: kept for backward compatibility.
+    """
+    from data.parquet_cache import (
+        iter_window_chunks,
+        list_window_files,
+        UPDATES_ROOT,
+        DECODED_DIR,
+    )
+
+    start_time = _to_utc_naive(start_time)
+    end_time = _to_utc_naive(end_time)
+    if start_time is None and end_time is None:
+        # Both bounds missing — caller is in an error state. Bail out
+        # quietly rather than raising on the ``None < None`` comparison
+        # below (Bug fix 2026-09-13 BUG-R61 corollary).
+        return
+    if end_time is not None and start_time is not None and end_time < start_time:
+        return
+
+    # 1) figure out which 5-minute buckets fall inside the requested window
+    files_to_ensure = list_window_files(start_time, end_time)
+    missing_buckets: list[datetime] = []
+    for p in files_to_ensure:
+        if not p.exists() or p.stat().st_size == 0:
+            missing_buckets.append(_bucket_start_from_path(p))
+
+    # 2) download + decode whatever is missing
+    if missing_buckets and auto_download:
+        logger.info(f"Auto-downloading {len(missing_buckets)} missing BGP buckets for {start_time}→{end_time}")
+        _download_and_decode_buckets(missing_buckets)
+
+    # 3) stream through the cache; on_missing='skip' returns nothing for
+    #    still-missing buckets without raising (e.g. RIPE outage window).
+    #    Downstream detectors (hijack/leak) historically read the
+    #    `A/W` column from txt dumps; parquet_cache stores it as `announce`.
+    #    Re-alias on the way out so we don't have to touch every caller.
+    for chunk in iter_window_chunks(start_time, end_time, on_missing="skip"):
+        if "announce" in chunk.columns and "A/W" not in chunk.columns:
+            chunk = chunk.rename({"announce": "A/W"})
+        yield chunk
+
+
+def _to_utc_naive(dt):
+    """Normalise any datetime into a UTC-naive datetime.
+
+    The cache layer stores timestamps as UTC-naive `Datetime` columns. Mixing
+    tz-aware and tz-naive values in Polars filters silently returns zero rows,
+    so we force UTC + drop tzinfo before handing the window to the cache.
+    """
+    if dt is None:
+        return None
+    try:
+        from datetime import datetime as _dt
+        if isinstance(dt, _dt):
+            if dt.tzinfo is not None:
+                from datetime import timezone
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+    except Exception:
+        pass
+    return dt
+
+
+def _bucket_start_from_path(path) -> datetime:
+    """Parse updates.YYYYMMDD.HHMM.{txt,gz} -> datetime at bucket start (UTC)."""
+    from datetime import datetime as _dt
+    name = Path(path).name
+    stem = name.rsplit(".", 1)[0]              # updates.YYYYMMDD.HHMM
+    parts = stem.split(".")
+    return _dt.strptime(f"{parts[1]}{parts[2]}", "%Y%m%d%H%M")
+
+
+def _download_and_decode_buckets(buckets):
+    """下载并解码所有缺失的 bucket。
+
+    设计：下载并行 (16 线程), 解码并行 (4 workers, 受 bgpdump CPU 限制)。
+    decode 用独立线程池，避免 bgpdump 多进程带来的 fork 负担。
+    Each bucket is independent so failures don't cascade.
+    """
     decoded_dir = UPDATES_DIR / "decoded"
+    decoded_dir.mkdir(parents=True, exist_ok=True)
 
-    start_minute = (start_time.minute // 5) * 5
-    current_time = start_time.replace(minute=start_minute, second=0, microsecond=0)
+    # First: parallel download all missing gz files
+    todo = []
+    for file_time in buckets:
+        ym = file_time.strftime("%Y.%m")
+        time_str = file_time.strftime("%Y%m%d.%H%M")
+        url = f"{RIPE_RIS_URL}{ym}/updates.{time_str}.gz"
+        gz_path = UPDATES_DIR / f"updates.{time_str}.gz"
+        todo.append((file_time, url, gz_path))
 
-    files_to_process = []
-    missing_files = []
-
-    while current_time <= end_time:
-        time_str = current_time.strftime("%Y%m%d.%H%M")
-        decoded_file = decoded_dir / f"updates.{time_str}.txt"
-        gz_file = UPDATES_DIR / f"updates.{time_str}.gz"
-
-        if decoded_file.exists():
-            files_to_process.append(decoded_file)
-        elif gz_file.exists() and is_valid_gz_file(gz_file):
-            if decode_gz_to_txt(gz_file, decoded_file):
-                files_to_process.append(decoded_file)
-            else:
-                missing_files.append((current_time, gz_file))
-        else:
-            if gz_file.exists():
-                logger.warning(f"Removing invalid file: {gz_file}")
-                gz_file.unlink()
-            missing_files.append((current_time, gz_file))
-
-        current_time += timedelta(minutes=5)
-
-    if missing_files and auto_download:
-        logger.info(f"Auto-downloading {len(missing_files)} missing BGP update files...")
-        downloaded_count = 0
-        for file_time, gz_file in missing_files:
+    download_workers = min(8, len(todo))
+    logger.info(f"[backfill] parallel downloading {len(todo)} gz files (workers={download_workers})")
+    with ThreadPoolExecutor(max_workers=download_workers) as ex:
+        futs = [ex.submit(download_data, url) for (_, url, _) in todo]
+        for f in as_completed(futs):
             try:
-                ym = file_time.strftime("%Y.%m")
-                time_str = file_time.strftime("%Y%m%d.%H%M")
-                url = f"{RIPE_RIS_URL}{ym}/updates.{time_str}.gz"
-
-                logger.debug(f"Downloading {url}")
-                local_gz = download_data(url)
-                decoded_txt = decoded_dir / f"updates.{time_str}.txt"
-                if decode_gz_to_txt(local_gz, decoded_txt):
-                    files_to_process.append(decoded_txt)
-                    downloaded_count += 1
-
-                if downloaded_count >= 10:
-                    logger.info(f"Downloaded and decoded {downloaded_count} files, continuing with available data...")
-                    break
-
+                f.result()
             except Exception as e:
-                logger.debug(f"Failed to download {gz_file.name}: {e}")
-                continue
+                logger.debug(f"[backfill] download sub-task failed: {e}")
 
-        logger.info(f"Successfully downloaded and decoded {downloaded_count} BGP update files")
-
-    if not files_to_process:
-        logger.warning(f"No update files found for time range {start_time} to {end_time}")
-        return
-
-    logger.info(f"Found {len(files_to_process)} files to process")
-
-    if workers <= 1:
-        yield from _read_files_sequential(files_to_process, columns)
-        return
-
-    disk_busy = _disk_busy(io_busy_threshold)
-    if disk_busy:
-        logger.info("I/O busy, reducing workers to 1")
-        yield from _read_files_sequential(files_to_process, columns)
-        return
-
-    logger.info(f"Reading updates with {workers} workers")
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(read_updates_file, fp, columns): fp for fp in files_to_process}
-        for future in as_completed(futures):
-            fp = futures[future]
+    # Second: parallel decode (bgpdump-bound; 4 workers = ~ ok on 2-core VM)
+    decode_workers = min(4, max(1, (os.cpu_count() or 2)))
+    ok = err = 0
+    if decode_workers == 1:
+        # No ThreadPool overhead
+        for (_, _, gz_path) in todo:
+            time_str = gz_path.stem.replace("updates.", "")
+            txt_path = decoded_dir / f"updates.{time_str}.txt"
             try:
-                df = future.result()
-                if df is None or df.empty:
-                    continue
-                yield df
+                if decode_gz_to_txt(gz_path, txt_path):
+                    ok += 1
+                else:
+                    err += 1
             except Exception as e:
-                logger.error(f"Error processing file {fp}: {e}")
+                logger.debug(f"decode {gz_path.name} failed: {e}")
+                err += 1
+    else:
+        logger.info(f"[backfill] parallel decoding {len(todo)} gz files (workers={decode_workers})")
+        def _decode_one(args):
+            _, _, gz_path = args
+            time_str = gz_path.stem.replace("updates.", "")
+            txt_path = decoded_dir / f"updates.{time_str}.txt"
+            try:
+                return (True, decode_gz_to_txt(gz_path, txt_path))
+            except Exception as e:
+                return (False, e)
+
+        with ThreadPoolExecutor(max_workers=decode_workers) as ex:
+            for ok_, res in ex.map(_decode_one, todo):
+                if ok_ and res:
+                    ok += 1
+                else:
+                    err += 1
+
+    logger.info(f"Bucket download/decode: ok={ok}, err={err}")
 
 
 def _read_files_sequential(files_to_process, columns):
     file_count = 0
     for file_path in sorted(files_to_process):
         try:
-            df = read_updates_file(file_path, columns)
-            if df is None or df.empty:
+            result = read_updates_file(file_path, columns)
+            if result is None:
                 continue
-            yield df
-            file_count += 1
-            if file_count % 10 == 0:
-                del df
-                gc.collect()
+            
+            # 处理分块读取返回的generator
+            if hasattr(result, '__iter__') and not isinstance(result, pl.DataFrame):
+                for chunk_df in result:
+                    if chunk_df is not None and not chunk_df.is_empty():
+                        file_count += 1
+                        yield chunk_df
+                        if file_count % 10 == 0:
+                            del chunk_df
+                            gc.collect()
             else:
-                del df
+                if not result.is_empty():
+                    file_count += 1
+                    yield result
+                    if file_count % 10 == 0:
+                        del result
+                        gc.collect()
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
             continue
     gc.collect()
 
 
-def ensure_updates_available_for_event(event_start, event_end, pre_days: int = 7, post_days: int = 0, max_workers: int = 16):
+def ensure_updates_available_for_event(event_start, event_end, pre_days = 7, post_days = 0, max_workers = 16):
     if event_end <= event_start:
         logger.error("event_end must be after event_start")
         return []
@@ -379,16 +584,17 @@ def ensure_updates_available_for_event(event_start, event_end, pre_days: int = 7
 
 def ensure_updates_from_xlsx(
     xlsx_path: Path,
-    start_col: str = "start_time",
-    end_col: str = "end_time",
-    pre_days: int = 7,
-    post_days: int = 0,
-    max_workers: int = 16,
+    start_col = "start_time",
+    end_col = "end_time",
+    pre_days = 7,
+    post_days = 0,
+    max_workers = 16,
 ):
     logger.info(f"Loading events table: {xlsx_path}")
-    df = pd.read_excel(xlsx_path)
+    # Use polars for reading Excel files (faster than pandas)
+    df = pl.read_excel(xlsx_path)
     all_paths = set()
-    for idx, row in df.iterrows():
+    for idx, row in enumerate(df.iter_rows(named=True)):
         def parse_datetime(val):
             if isinstance(val, datetime):
                 return val

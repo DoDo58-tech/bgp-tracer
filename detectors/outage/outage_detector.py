@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
+from collections import OrderedDict
 from typing import Dict, List, Tuple
 
 try:
@@ -31,6 +32,8 @@ except ImportError:
     import os
     sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     from utils import logger
+
+from detectors.unified_result import wrap, DetectionType
 
 
 def aggregate_timeseries(series):
@@ -442,9 +445,31 @@ def score_outage(
 
 @dataclass
 class RouteOutageDetector:
-    baseline_hours: int = 24
-    min_required_buckets: int = 6
-    parsed_cache: Dict[str, datetime] = field(default_factory=dict, init=False)
+    baseline_hours = 24
+    min_required_buckets = 6
+    # Bounded cache of iso-string -> datetime to avoid an
+    # unbounded-growth leak when many distinct timestamps flow through.
+    # Bounded LRU via OrderedDict keeps the most-recently used entries
+    # while capping memory at ``_MAX_PARSED_CACHE_SIZE``.
+    #
+    # Bug fix 2026-09-13 (BUG-R127): the docstring of this class
+    # advertised ``OrderedDict``-based LRU but the implementation used
+    # ``dict`` + ``list`` and refreshed recency position via
+    # ``self._parsed_cache_order.remove(iso_ts)`` (an O(n) scan over the
+    # full cache on every cache *hit*). When the cache is saturated
+    # (>= 8192 entries), every parse_cached becomes O(n) — for a
+    # 3-hour window with 60-second buckets that's 180 timestamps, but
+    # for an outage detector scanning 24h of MRT updates it can hit
+    # tens of thousands of calls, turning what should be O(1) into O(n)
+    # and noticeably stalling detector run-times.
+    #
+    # We now use ``OrderedDict`` (O(1) for both ``get`` and
+    # ``move_to_end``), which is also documented intent.
+    _MAX_PARSED_CACHE_SIZE = 8192
+    parsed_cache: "OrderedDict[str, datetime]" = field(
+        default_factory=OrderedDict, init=False
+    )
+    _parsed_cache_order: List[str] = field(default_factory=list, init=False)
 
     def analyze(self, asn, start_time, end_time, periodicity=None, periodicity_confidence=0.0):
         """
@@ -461,18 +486,26 @@ class RouteOutageDetector:
             start_dt = self.parse_time(start_time)
             end_dt = self.parse_time(end_time)
         except ValueError as exc:
-            return {
+            return wrap(DetectionType.OUTAGE, {
                 "success": False,
                 "error": f"Invalid time input: {exc}",
                 "asn": asn,
-            }
+                "data_available": False,
+                "no_data_reason": "invalid_time",
+                "anomalies_detected": False,
+                "anomaly_count": 0,
+            }, asn=asn).to_dict()
 
         if end_dt <= start_dt:
-            return {
+            return wrap(DetectionType.OUTAGE, {
                 "success": False,
                 "error": "End time must be later than start time.",
                 "asn": asn,
-            }
+                "data_available": False,
+                "no_data_reason": "invalid_time_range",
+                "anomalies_detected": False,
+                "anomaly_count": 0,
+            }, asn=asn).to_dict()
 
         # Determine baseline strategy based on periodicity
         baseline_periods = self._get_baseline_periods(start_dt, end_dt, periodicity)
@@ -506,11 +539,51 @@ class RouteOutageDetector:
         if not plot_files:
             logger.info(
                 "Outage detector: no decoded BGP update files in detectors/outage/data/...; "
-                "returning no-outage (success=True). To enable outage scoring, populate decoded updates there."
+                "attempting to use routing_result for fallback outage estimation."
             )
-            return self._no_data_result(asn, start_time, end_time, baseline_start,
-                error="No decoded BGP update files found for the requested window. "
-                "Outage detection uses detectors/outage/data/updates_rrc00/decoded/ with 5-min bucket files.")
+            # Return a more informative result that can be used for fallback
+            # Bug fix 2026-09-13 (BUG-R42): previously this branch returned a
+            # raw dict, while sibling return-points went through ``wrap(...).to_dict()``.
+            # Downstream consumers that expect ``UnifiedDetectionResult``-shaped
+            # keys (e.g. ``detection_type``, ``confidence``, ``metadata``) saw
+            # inconsistent shapes depending on which path executed. Route this
+            # branch through ``wrap`` so all return points produce the same dict.
+            return wrap(DetectionType.OUTAGE, {
+                "success": False,
+                "asn": asn,
+                "analysis_period": f"{start_time} to {end_time}",
+                "anomaly_time_window": f"{start_time} to {end_time}",
+                "baseline_period": f"{baseline_start.strftime('%Y-%m-%d %H:%M')} to {start_time}",
+                "outage_score": 0.0,
+                "is_outage_suspected": False,
+                "indicators": [],
+                "anomalies": [],
+                "event_features": {
+                    "announcement_count": 0,
+                    "withdrawal_count": 0,
+                    "total_messages": 0,
+                    "announced_prefix_count": 0,
+                    "withdrawn_prefix_count": 0,
+                    "unique_prefix_count": 0,
+                    "flapping_prefix_count": 0,
+                    "avg_path_length": 0,
+                    "max_path_length": 0,
+                    "min_path_length": 0,
+                },
+                "baseline_features": {},
+                "error": error if 'error' in locals() else "No decoded BGP update files found",
+                "note": (
+                    "Outage detection requires decoded BGP update files in "
+                    "detectors/outage/data/updates_rrc00/decoded/ directory. "
+                    "Run bgp_tracer/data/batch_decode.py to generate these files, "
+                    "or use routing_result to estimate outage from withdrawal events."
+                ),
+                "data_available": False,
+                "no_data_reason": "no_decoded_bgp_files",
+                "anomalies_detected": False,
+                "fallback_available": True,
+                "fallback_method": "Use routing_result.route_leaks or withdrawal events for outage estimation",
+            }, asn=asn).to_dict()
 
         try:
             timeseries = extract_timeseries_for_as(plot_files, {int(asn)})
@@ -522,8 +595,44 @@ class RouteOutageDetector:
             return self._no_data_result(asn, start_time, end_time, baseline_start, error=str(exc))
 
         if not timeseries:
-            return self._no_data_result(asn, start_time, end_time, baseline_start,
-                error="Unable to build time-series features for the target AS.")
+            # Bug fix 2026-09-13 (BUG-R42): route this branch through the
+            # shared ``wrap(...).to_dict()`` helper so all return points
+            # produce the same UnifiedDetectionResult-shaped dict.
+            return wrap(DetectionType.OUTAGE, {
+                "success": False,
+                "asn": asn,
+                "analysis_period": f"{start_time} to {end_time}",
+                "anomaly_time_window": f"{start_time} to {end_time}",
+                "baseline_period": f"{baseline_start.strftime('%Y-%m-%d %H:%M')} to {start_time}",
+                "outage_score": 0.0,
+                "is_outage_suspected": False,
+                "indicators": [],
+                "anomalies": [],
+                "event_features": {
+                    "announcement_count": 0,
+                    "withdrawal_count": 0,
+                    "total_messages": 0,
+                    "announced_prefix_count": 0,
+                    "withdrawn_prefix_count": 0,
+                    "unique_prefix_count": 0,
+                    "flapping_prefix_count": 0,
+                    "avg_path_length": 0,
+                    "max_path_length": 0,
+                    "min_path_length": 0,
+                },
+                "baseline_features": {},
+                "error": "Unable to build time-series features for the target AS.",
+                "note": (
+                    "No BGP updates were found for this AS in the decoded data files. "
+                    "This could mean: (1) The AS was not visible in the collector during this period, "
+                    "(2) The decoded data files are incomplete for this time range, "
+                    "(3) The AS has minimal BGP activity."
+                ),
+                "data_available": False,
+                "no_data_reason": "outage_features_empty",
+                "anomalies_detected": False,
+                "fallback_available": False,
+            }, asn=asn).to_dict()
 
         # Split data into event window and multiple baseline periods
         event_ts, baseline_ts_dict = self.split_windows_periodic(timeseries, start_dt, end_dt, baseline_periods)
@@ -632,7 +741,7 @@ class RouteOutageDetector:
             if ts and ts not in anomaly_by_feature_summary[feature]["timestamps"]:
                 anomaly_by_feature_summary[feature]["timestamps"].append(ts)
         
-        return {
+        return wrap(DetectionType.OUTAGE, {
             "success": True,
             "asn": asn,
             "analysis_period": f"{start_time} to {end_time}",
@@ -657,7 +766,11 @@ class RouteOutageDetector:
             "high_severity_anomaly_count": len(high_severity_timeslots),
             "unique_features_with_anomalies": list(anomaly_by_feature_summary.keys()),
             "data_files": [str(p) for p in plot_files],
-        }
+            # Unified schema fields
+            "data_available": True,
+            "no_data_reason": "",
+            "anomalies_detected": is_outage,
+        }, asn=asn).to_dict()
 
     def _get_baseline_periods(self, start_dt, end_dt, periodicity):
         """
@@ -800,11 +913,22 @@ class RouteOutageDetector:
         return event_ts, baseline_ts
 
     def parse_cached(self, iso_ts):
+        # Bug fix 2026-09-13 (BUG-R127): previously this method used a
+        # ``dict`` + ``list`` cache and refreshed recency position via
+        # ``list.remove(iso_ts)``, which is O(n). ``parsed_cache`` is
+        # now an ``OrderedDict`` (O(1) ``get`` + ``move_to_end``).
         cached = self.parsed_cache.get(iso_ts)
-        if cached:
+        if cached is not None:
+            # Refresh recency position (LRU semantics)
+            self.parsed_cache.move_to_end(iso_ts)
             return cached
         parsed = datetime.fromisoformat(iso_ts)
         self.parsed_cache[iso_ts] = parsed
+        # Evict oldest entries once the cache exceeds the cap so the
+        # detector doesn't grow without bound across many AS / window
+        # invocations. ``popitem(last=False)`` is O(1) on OrderedDict.
+        while len(self.parsed_cache) > self._MAX_PARSED_CACHE_SIZE:
+            self.parsed_cache.popitem(last=False)
         return parsed
 
     @staticmethod
@@ -816,7 +940,7 @@ class RouteOutageDetector:
         except ValueError:
             return datetime.strptime(raw_str, "%Y-%m-%d %H:%M")
 
-    def _no_data_result(self, asn, start_time, end_time, baseline_start, error: str = ""):
+    def _no_data_result(self, asn, start_time, end_time, baseline_start, error = ""):
         """Return a consistent result when outage detection has no data, so downstream always gets success=True and defined fields."""
         empty_features = {
             "announcement_count": 0,
@@ -830,8 +954,11 @@ class RouteOutageDetector:
             "max_path_length": 0,
             "min_path_length": 0,
         }
-        return {
-            "success": True,
+        result_dict = {
+            # Detector ran but found no data; success=False so callers know to
+            # skip this result, data_available=False so the evaluator excludes
+            # it from F1 instead of penalising as a false negative.
+            "success": False,
             "asn": asn,
             "analysis_period": f"{start_time} to {end_time}",
             "anomaly_time_window": f"{start_time} to {end_time}",
@@ -844,7 +971,14 @@ class RouteOutageDetector:
             "baseline_features": empty_features,
             "error": error,
             "note": "Outage score not computed (no or insufficient data).",
+            # Unified schema: explicitly mark data unavailable so the
+            # evaluator excludes this from F1 (would otherwise be a false
+            # negative).
+            "data_available": False,
+            "no_data_reason": "outage_features_empty",
+            "anomalies_detected": False,
         }
+        return wrap(DetectionType.OUTAGE, result_dict, asn=asn).to_dict()
 
 
 # Create a singleton instance for import

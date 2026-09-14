@@ -190,14 +190,45 @@ def process_prefix2as(target_time):
     
     prefix_to_as = load_prefix2as(filepath)
     logger.info(f"Loaded {len(prefix_to_as)} prefix-to-AS mappings")
-    
+
     try:
-        with open(parsed_filepath, 'w', encoding='utf-8') as f:
-            json.dump(prefix_to_as, f, indent=2, ensure_ascii=False)
-        logger.info(f"Saved processed prefix2as mappings to: {parsed_filepath}")
-        if filepath.exists():   
-            os.remove(filepath)
-        return str(parsed_filepath)
+        # Bug fix 2026-09-13 (BUG-R128): the previous code wrote
+        # ``json.dump(prefix_to_as, ...)`` directly via
+        # ``open(parsed_filepath, "w")`` — a non-atomic operation
+        # that could leave a partial JSON file at ``parsed_filepath``
+        # if the process died mid-write. The cache-hit check at line
+        # 182 ``if parsed_filepath.exists(): return str(...)`` would
+        # then hand the truncated file to callers, and ``json.load``
+        # in this very file's ``__main__`` block would crash; in
+        # production code (chief_agent.py::_light_origin_hijack) the
+        # same path triggers a generic ``except Exception`` and
+        # silently degrades to the streaming-detector fallback. The
+        # fix is the same atomic-write pattern used in BUG-R93 / R113
+        # / R116 / R122: write to ``.tmp`` first, fsync, then
+        # ``os.replace`` onto the real path.
+        import os as _os
+        tmp_path = parsed_filepath.with_suffix(parsed_filepath.suffix + ".tmp")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(prefix_to_as, f, indent=2, ensure_ascii=False)
+                try:
+                    f.flush()
+                    _os.fsync(f.fileno())
+                except (AttributeError, OSError):
+                    pass
+            _os.replace(tmp_path, parsed_filepath)
+            logger.info(f"Saved processed prefix2as mappings to: {parsed_filepath}")
+            if filepath.exists():
+                os.remove(filepath)
+            return str(parsed_filepath)
+        except Exception as _wk_err:
+            try:
+                if tmp_path.exists():
+                    tmp_path.unlink()
+            except OSError:
+                pass
+            logger.error(f"Failed to save processed prefix2as mappings: {_wk_err}")
+            return ""
     except Exception as e:
         logger.error(f"Failed to save processed prefix2as mappings: {e}")
         return ""

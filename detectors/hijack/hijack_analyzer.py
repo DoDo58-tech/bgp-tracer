@@ -2,7 +2,7 @@ import sys
 import os
 import json
 from datetime import datetime
-from typing import List, Dict, Any, Tuple
+from typing import Any, Dict, List, Tuple
 from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -11,10 +11,13 @@ from utils.logger import logger
 
 def aggregate_anomalies(anomalies):
     try:
-        if not anomalies:
+        import collections.abc
+        if isinstance(anomalies, collections.abc.Iterator):
+            anomalies = iter(anomalies)
+        elif not anomalies:
             return []
 
-        logger.info(f"Aggregating {len(anomalies)} anomalies")
+        logger.info("Starting memory-efficient anomaly aggregation")
 
         aggregated = {}
         time_window_seconds = 300
@@ -28,7 +31,7 @@ def aggregate_anomalies(anomalies):
                 try:
                     dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                     time_key = int(dt.timestamp() // time_window_seconds) * time_window_seconds
-                except:
+                except Exception:
                     time_key = 0
 
                 group_key = f"{anomaly_type}|{prefix}|{time_key}"
@@ -39,7 +42,6 @@ def aggregate_anomalies(anomalies):
                         'prefix': prefix,
                         'time_window_start': time_key,
                         'count': 0,
-                        'anomalies': [],
                         'first_seen': timestamp,
                         'last_seen': timestamp,
                         'confidence': anomaly.get('confidence', 'low')
@@ -47,7 +49,6 @@ def aggregate_anomalies(anomalies):
 
                 agg = aggregated[group_key]
                 agg['count'] += 1
-                agg['anomalies'].append(anomaly)
                 agg['last_seen'] = timestamp
 
                 if agg['count'] >= 5:
@@ -62,12 +63,73 @@ def aggregate_anomalies(anomalies):
         result = list(aggregated.values())
         result.sort(key=lambda x: x['count'], reverse=True)
 
-        logger.info(f"Aggregated into {len(result)} anomaly groups")
+        logger.info(f"Aggregated {len(result)} anomaly groups")
         return result
 
     except Exception as e:
         logger.error(f"Error aggregating anomalies: {e}")
-        return anomalies
+        return []
+
+
+class StreamingAnomalyAggregator:
+    def __init__(self):
+        self._groups: dict = {}
+        self._time_window_seconds = 300
+
+    def add_chunk(self, chunk_alerts: list):
+        """Process and aggregate one chunk's alerts; they are discarded after return."""
+        if not chunk_alerts:
+            return
+
+        for anomaly in chunk_alerts:
+            try:
+                atype = anomaly.get('type', 'unknown')
+                prefix = anomaly.get('prefix', 'unknown')
+                timestamp = anomaly.get('timestamp', '')
+
+                try:
+                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                    time_key = int(dt.timestamp() // self._time_window_seconds) * self._time_window_seconds
+                except Exception:
+                    time_key = 0
+
+                key = f"{atype}|{prefix}|{time_key}"
+
+                if key not in self._groups:
+                    self._groups[key] = {
+                        'type': atype,
+                        'prefix': prefix,
+                        'time_window_start': time_key,
+                        'count': 0,
+                        'first_seen': timestamp,
+                        'last_seen': timestamp,
+                        'confidence': anomaly.get('confidence', 'low')
+                    }
+
+                g = self._groups[key]
+                g['count'] += 1
+                g['last_seen'] = timestamp
+
+                if g['count'] >= 5:
+                    g['confidence'] = 'high'
+                elif g['count'] >= 2:
+                    g['confidence'] = 'medium'
+
+            except Exception:
+                continue
+
+        # Allow GC to reclaim the chunk list immediately
+        chunk_alerts.clear()
+
+    def finalize(self) -> list:
+        """Return the sorted list of aggregated groups."""
+        result = list(self._groups.values())
+        result.sort(key=lambda x: x['count'], reverse=True)
+        self._groups.clear()
+        return result
+
+    def group_count(self) -> int:
+        return len(self._groups)
 
 
 def pick_timestamp(current, candidate, prefer_min = True):

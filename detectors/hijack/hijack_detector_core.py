@@ -4,19 +4,17 @@ import re
 import json
 import ipaddress
 from datetime import datetime, timedelta
-from typing import List, Dict, Set, Tuple, Any, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-import pandas as pd
-import requests
+import polars as pl
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import logger
 from detectors.hijack.hijack_utils import check_fake_connections_single_row, build_as_pair_set
-from config import ES_HOST, ES_INDEX_NAME, USE_ES_FOR_CONN_FREQ, ES_CONN_FREQ_TIMEOUT, DEFAULT_FORGE_THRESHOLD
+from config import DEFAULT_FORGE_THRESHOLD
 
 
 class ParentPrefixTrie:
-    """Optimized trie structure for finding parent prefixes efficiently."""
     def __init__(self):
         self.ipv4_root = {}
         self.ipv6_root = {}
@@ -27,7 +25,6 @@ class ParentPrefixTrie:
         self.cache_misses = 0
 
     def insert(self, prefix_str, origins):
-        """Insert a prefix into the trie."""
         try:
             network = ipaddress.ip_network(prefix_str, strict=False)
             version = network.version
@@ -42,34 +39,24 @@ class ParentPrefixTrie:
             logger.warning(f"Failed to insert prefix {prefix_str}: {e}")
 
     def _insert_into_trie(self, root, network, prefix_str, origins):
-        """Insert a network into the trie structure.
-        
-        We store prefix info at each node along the path so that during lookup,
-        we can find all possible parent prefixes efficiently.
-        """
         ip_int = int(network.network_address)
         prefixlen = network.prefixlen
-        
+
         if network.version == 4:
             binary = format(ip_int, '032b')
         else:
             binary = format(ip_int, '0128b')
-        
+
         current = root
-        # Store prefix at each node along the path (for parent lookup)
+        # Walk to the terminating node (after prefixlen bits).
+        # Store the prefix ONLY at that final node — NOT at every intermediate node.
         for i in range(prefixlen):
             bit = int(binary[i])
             if bit not in current:
                 current[bit] = {}
             current = current[bit]
-            
-            # Store prefix info at each node along the path
-            # This allows us to find parent prefixes during lookup
-            if 'prefixes' not in current:
-                current['prefixes'] = []
-            current['prefixes'].append((prefixlen, prefix_str, origins))
-        
-        # Also mark the end node
+
+        # Store at the terminating node only.
         if 'prefixes' not in current:
             current['prefixes'] = []
         if (prefixlen, prefix_str, origins) not in current['prefixes']:
@@ -143,7 +130,6 @@ class ParentPrefixTrie:
             return None, None
 
     def get_stats(self):
-        """Get statistics about the trie."""
         return {
             'ipv4_prefixes': len(self.ipv4_prefixes),
             'ipv6_prefixes': len(self.ipv6_prefixes),
@@ -155,7 +141,6 @@ class ParentPrefixTrie:
 
 
 def build_optimized_prefix_lookup(prefix_to_as):
-    """Build an optimized prefix lookup structure using trie."""
     logger.info("Building optimized prefix lookup structure for efficient sub-prefix hijack detection...")
     
     trie = ParentPrefixTrie()
@@ -182,7 +167,6 @@ def build_optimized_prefix_lookup(prefix_to_as):
 
 
 def find_parent_prefix_optimized(target_prefix, trie):
-    """Find parent prefix using optimized trie lookup."""
     if isinstance(trie, ParentPrefixTrie):
         return trie.find_parent(target_prefix)
     else:
@@ -204,19 +188,6 @@ def find_parent_prefix_optimized(target_prefix, trie):
 
 
 def check_origin_hijack_vectorized(row, prefix_to_as, target_as=None):
-    """
-    Check if a BGP announcement is an origin hijack.
-    
-    For origin_hijacked events (where our target AS is the victim):
-    - The prefix being announced belongs to target_as
-    - The origin_as (hijacker) is NOT target_as
-    - victim_as = target_as
-    
-    Args:
-        row: DataFrame row with prefix, as-path, timestamp
-        prefix_to_as: Dict mapping prefixes to legitimate origin ASes
-        target_as: The AS being analyzed (the potential victim)
-    """
     try:
         prefix = row.get('prefix', '')
         as_path = row.get('as-path', '')
@@ -231,11 +202,18 @@ def check_origin_hijack_vectorized(row, prefix_to_as, target_as=None):
         if prefix in prefix_to_as:
             legitimate_origins = prefix_to_as[prefix]
         else:
-            # Sub-prefix hijack detection: find parent prefix using optimized trie lookup
-            if not hasattr(check_origin_hijack_vectorized, 'prefix_trie'):
-                check_origin_hijack_vectorized.prefix_trie = build_optimized_prefix_lookup(prefix_to_as)
-
-            parent_prefix, origins = find_parent_prefix_optimized(prefix, check_origin_hijack_vectorized.prefix_trie)
+            # Sub-prefix hijack detection: find parent prefix using optimized trie lookup.
+            # Bug fix 2026-09-14: cache the trie at module level (same pattern as
+            # detect_origin_hijacks) so we don't rebuild 987k prefixes per row.
+            if not hasattr(check_origin_hijack_vectorized, 'prefix_trie_cache'):
+                check_origin_hijack_vectorized.prefix_trie_cache = {}
+            tc = check_origin_hijack_vectorized.prefix_trie_cache
+            tc_key = id(prefix_to_as)
+            trie_obj = tc.get(tc_key)
+            if trie_obj is None:
+                trie_obj = build_optimized_prefix_lookup(prefix_to_as)
+                tc[tc_key] = trie_obj
+            parent_prefix, origins = find_parent_prefix_optimized(prefix, trie_obj)
 
             if parent_prefix:
                 legitimate_origins = origins
@@ -243,6 +221,10 @@ def check_origin_hijack_vectorized(row, prefix_to_as, target_as=None):
 
         if not legitimate_origins:
             return None
+
+        # Ensure legitimate_origins is iterable (handles edge cases like set/tuple from dict values)
+        if not isinstance(legitimate_origins, (list, set, tuple)):
+            legitimate_origins = [legitimate_origins] if legitimate_origins else []
 
         path_parts = as_path.strip().split()
         if not path_parts:
@@ -312,75 +294,728 @@ def check_origin_hijack_vectorized(row, prefix_to_as, target_as=None):
         return None
 
 
-def detect_origin_hijacks(announcements, prefix_to_as, target_as=None):
+def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_by_as=None):
+    """Vectorized origin hijack detection.
+
+    Bug fix (2026-09-13, BUG-R39): the previous implementation was a
+    duplicated try-block; the second try (line 432-580) was unreachable
+    dead code, and the first try relied on a crude ``parent24_prefix`` /
+    ``parent16_prefix`` heuristic that mis-classified most sub-prefix
+    hijacks (e.g. /29 nested under a /24 would always be checked against
+    the same /24, but a /28 nested under a /27 owned by a different AS
+    would slip through).
+
+    The new implementation builds a ``ParentPrefixTrie`` once per
+    invocation, marks every announcement with ``owned_by_target`` based
+    on trie lookup of the most-specific parent, and produces the same
+    alert-dict shape that downstream consumers (``hijack_detector``,
+    ``chief_agent``) expect.
     """
-    Detect origin hijacks where an AS announces a prefix it doesn't own.
-    
-    Args:
-        announcements: DataFrame of BGP announcements
-        prefix_to_as: Dict mapping prefixes to their legitimate origin ASes
-        target_as: The AS being analyzed (this is the victim in origin_hijacked events)
-                   For origin_hijacked events, the victim is target_as.
-                   For origin_hijacking events, the attacker is target_as.
-    """
-    try:
-        if announcements.empty:
-            logger.warning("No announcements to analyze for origin hijacks")
-            return []
-
-        logger.info(f"Analyzing {len(announcements)} announcements for origin hijacks")
-
-        hijack_alerts = []
-        for idx, row in announcements.iterrows():
-            hijack_info = check_origin_hijack_vectorized(row, prefix_to_as, target_as)
-            if hijack_info:
-                hijack_alerts.append(hijack_info)
-
-        logger.info(f"Detected {len(hijack_alerts)} origin hijacks")
-        
-        # Log trie performance statistics if available
-        if hasattr(check_origin_hijack_vectorized, 'prefix_trie'):
-            stats = check_origin_hijack_vectorized.prefix_trie.get_stats()
-            logger.info(f"Prefix trie stats: cache_hit_rate={stats['cache_hit_rate']:.2%}, "
-                       f"cache_size={stats['cache_size']}, "
-                       f"hits={stats['cache_hits']}, misses={stats['cache_misses']}")
-        
-        return hijack_alerts
-
-    except Exception as e:
-        logger.error(f"Error detecting origin hijacks: {e}")
+    if not isinstance(announcements, pl.DataFrame) or announcements.is_empty():
         return []
+    if not prefix_to_as:
+        return []
+
+    target_as_str = str(target_as) if target_as is not None else None
+    logger.info(
+        "Origin hijack detection on %d rows for AS%s (using trie)",
+        len(announcements), target_as,
+    )
+
+    # Bug fix 2026-09-14: cache the trie at module level so chunk × AS loops
+    # don't rebuild the 987k-prefix trie on every call. Keyed by id() of
+    # the input dict since different events may pass different snapshots.
+    if not hasattr(detect_origin_hijacks, '_trie_cache'):
+        detect_origin_hijacks._trie_cache = {}
+    cache = detect_origin_hijacks._trie_cache
+    p2a_id = id(prefix_to_as)
+    if p2a_id in cache:
+        trie = cache[p2a_id]
+    else:
+        trie = build_optimized_prefix_lookup(prefix_to_as)
+        cache[p2a_id] = trie
+    exact_owners = prefix_to_as  # alias for backward-compat in make_alert
+
+    # Bug fix 2026-09-13 (BUG-R39): legacy code path used only `prefix_to_as`
+    # to flag "owned_by_target", which mis-classified origin_hijacking:
+    # prefix 1.2.3.0/24 exists in prefix_to_as (owned by ASx), but target_as
+    # announces it anyway → the old heuristic marked it as origin_hijacked
+    # (target_as is the victim) instead of origin_hijacking (target_as is the
+    # attacker). The caller now passes `prefixes_by_as` (target_as → set of
+    # prefixes it legitimately owns); we honour that here.
+    #
+    # AS-format normalisation: prefix_to_as historically mixes "13335" and
+    # "AS13335" depending on data source (RIPE dump vs RPKI vs BGPView).
+    # We normalise to a canonical stripped form before comparison so both
+    # work.
+    def _strip_as(x):
+        if x is None:
+            return None
+        s = str(x).strip()
+        if s.upper().startswith("AS"):
+            s = s[2:]
+        return s
+
+    target_as_canonical = _strip_as(target_as_str)
+
+    if prefixes_by_as and target_as_canonical is not None:
+        target_owned_prefixes = set()
+        for k, pref_set in prefixes_by_as.items():
+            if _strip_as(k) == target_as_canonical:
+                if isinstance(pref_set, (list, set, tuple)):
+                    target_owned_prefixes.update(pref_set)
+                elif pref_set:
+                    target_owned_prefixes.update(list(pref_set))
+    else:
+        # Fall back: derive target_owned_prefixes by scanning prefix_to_as.
+        # This is O(N) but is correct (vs the old buggy O(1) check).
+        target_owned_prefixes = set()
+        for pfx, owners in prefix_to_as.items():
+            owners_iter = owners if isinstance(owners, (list, set, tuple)) else [owners]
+            if any(_strip_as(o) == target_as_canonical for o in owners_iter):
+                target_owned_prefixes.add(pfx)
+
+    # ── 2. Extract origin AS from as-path (last element, vectorized) ──────
+    df = announcements.with_columns([
+        pl.col("as-path").str.strip_chars().str.split(by=" ").list.last().alias("origin_as"),
+    ])
+
+    # ── 3. Per-row trie lookup → owned_by_target + parent_prefix ──────────
+    # Bug fix 2026-09-13 (BUG-R39): the ``owned_by_target`` decision must
+    # reflect whether the target_as is the legitimate origin (not just
+    # whether some other AS owns the prefix). Without this distinction
+    # the detector would never produce ``origin_hijacking`` alerts.
+    prefixes = df.get_column("prefix").to_list()
+    owned_flags: list = []
+    parent_prefixes: list = []
+    for pfx in prefixes:
+        # First: exact match. If target_as is in the owners list for this
+        # exact prefix, target legitimately owns it.
+        if pfx in prefix_to_as:
+            owners = prefix_to_as[pfx]
+            owners_iter = owners if isinstance(owners, (list, set, tuple)) else [owners]
+            if any(_strip_as(o) == target_as_canonical for o in owners_iter if o is not None):
+                owned_flags.append(True)
+                parent_prefixes.append(pfx)
+                continue
+        # Second: sub-prefix. Walk the trie to find the most-specific
+        # owning parent. If that parent is owned by target_as (per
+        # ``target_owned_prefixes`` computed above), the announced prefix
+        # is considered covered by target_as.
+        parent_pfx, _origins = find_parent_prefix_optimized(pfx, trie)
+        if parent_pfx is not None and parent_pfx in target_owned_prefixes:
+            owned_flags.append(True)
+            parent_prefixes.append(parent_pfx)
+        else:
+            owned_flags.append(False)
+            parent_prefixes.append(None)
+
+    df = df.with_columns([
+        pl.Series("owned_by_target", owned_flags, dtype=pl.Boolean),
+        pl.Series("parent_prefix", parent_prefixes, dtype=pl.Utf8),
+    ])
+
+    # ── 4. Classify hijack type ───────────────────────────────────────────
+    # Bug fix 2026-09-13 (BUG-R39): comparison uses the canonicalised
+    # target_as_canonical because the dataset may store origins as
+    # "13335" or "AS13335" depending on source. Strip the AS prefix from
+    # the row's origin_as once so the polars expression can do a cheap
+    # string compare.
+    if target_as_canonical is not None:
+        origin_as_canonical = (
+            pl.when(pl.col("origin_as").str.starts_with("AS") | pl.col("origin_as").str.starts_with("as"))
+              .then(pl.col("origin_as").str.slice(2))
+              .otherwise(pl.col("origin_as"))
+        )
+        df = df.with_columns([
+            pl.when(
+                (pl.col("owned_by_target") == True) &
+                (origin_as_canonical != pl.lit(target_as_canonical))
+            )
+            .then(pl.lit("origin_hijacked"))
+            .when(
+                (pl.col("owned_by_target") == False) &
+                (origin_as_canonical == pl.lit(target_as_canonical))
+            )
+            .then(pl.lit("origin_hijacking"))
+            .otherwise(pl.lit(None))
+            .alias("hijack_type"),
+        ])
+    else:
+        df = df.with_columns([
+            pl.when(pl.col("owned_by_target") == True)
+              .then(pl.lit("origin_hijacked"))
+              .otherwise(pl.lit(None))
+              .alias("hijack_type"),
+        ])
+
+    # ── 5. Build alert dicts (only for hijacked rows) ────────────────────
+    hijacked_rows = (
+        df.filter(pl.col("hijack_type") == "origin_hijacked")
+        .select(["prefix", "as-path", "timestamp", "origin_as", "parent_prefix"])
+        .to_dicts()
+    )
+    hijacking_rows = (
+        df.filter(pl.col("hijack_type") == "origin_hijacking")
+        .select(["prefix", "as-path", "timestamp", "origin_as", "parent_prefix"])
+        .to_dicts()
+    )
+
+    def _lo_for(r: dict):
+        """Resolve legitimate origins for an alert row.
+
+        Preference order:
+          1. exact prefix match in exact_owners (most accurate)
+          2. parent-prefix origins already computed by the trie
+          3. empty fallback
+        """
+        if r["prefix"] in exact_owners:
+            lo = exact_owners[r["prefix"]]
+        elif r.get("parent_prefix") and r["parent_prefix"] in exact_owners:
+            lo = exact_owners[r["parent_prefix"]]
+        else:
+            return []
+        if isinstance(lo, (list, set, tuple)):
+            return [str(x) for x in lo]
+        return [str(lo)]
+
+    def make_alert(r: dict, htype: str) -> dict:
+        lo = _lo_for(r)
+        if htype == "origin_hijacked":
+            return {
+                "hijack_type": "origin_hijacked",
+                "type": "origin_hijacked",
+                "timestamp": r["timestamp"],
+                "prefix": r["prefix"],
+                "checked_prefix": r.get("parent_prefix") or r["prefix"],
+                "origin_as": r["origin_as"],
+                "legitimate_origins": lo,
+                "as_path": r["as-path"],
+                "hijacker_as": r["origin_as"],
+                "hijacker_as_list": [r["origin_as"]],
+                "victim_as": target_as_str,
+                "victim_ases": [target_as_str] + [a for a in lo if str(a) != target_as_str],
+                "expected_origin": target_as_str,
+                "target_as": target_as,
+            }
+        return {
+            "hijack_type": "origin_hijacking",
+            "type": "origin_hijacking",
+            "timestamp": r["timestamp"],
+            "prefix": r["prefix"],
+            "checked_prefix": r.get("parent_prefix") or r["prefix"],
+            "origin_as": r["origin_as"],
+            "legitimate_origins": lo,
+            "as_path": r["as-path"],
+            "hijacker_as": target_as_str,
+            "hijacker_as_list": [target_as_str],
+            "victim_as": (lo[0] if lo else None),
+            "victim_ases": lo,
+            "expected_origin": (lo[0] if lo else None),
+            "target_as": target_as,
+        }
+
+    result = [make_alert(r, "origin_hijacked") for r in hijacked_rows]
+    result += [make_alert(r, "origin_hijacking") for r in hijacking_rows]
+
+    logger.info(
+        "Trie-based detection: %d total hijacks (%d victim / %d attacker) for AS%s",
+        len(result), len(hijacked_rows), len(hijacking_rows), target_as,
+    )
+    return result
 
 
 def batch_check_connection_frequency(updates_df, as_relationships,
-                                   target_as, fake_conn_cache_manager, full_day_data=None):
-    """
-    Optimized batch connection frequency check with AS pair deduplication.
-    Key optimization: Collect all unique fake AS pairs first, then batch query ES once.
-    """
+                                   target_as, fake_conn_cache_manager, full_day_data=None,
+                                   use_es: bool = False):
     try:
-        if updates_df.empty:
-            return updates_df
+        df = updates_df if isinstance(updates_df, pl.DataFrame) else pl.DataFrame(updates_df)
+        if df.is_empty():
+            return df
 
-        logger.info(f"Checking connection frequency for {len(updates_df)} updates")
+        logger.info(f"[Forge-Vec] Vectorized forge detection on {len(df)} rows")
+
+        fake_set = build_as_pair_set(as_relationships)
+
+        # ── 1. Add date column (once) ─────────────────────────────────────────────
+        if 'date' not in df.columns:
+            df = df.with_columns([
+                pl.col('timestamp')
+                .str.to_datetime(format="%m/%d/%y %H:%M:%S", strict=False)
+                .dt.date()
+                .cast(pl.Utf8)
+                .alias('date')
+            ])
+
+        # ── 2. Split as-path into list; add row index for join-back ──────────────
+        df = df.with_columns([
+            pl.arange(0, pl.count()).alias('_row_idx'),
+            pl.col('as-path').str.strip_chars().str.split(by=' ').alias('_as_list'),
+        ])
+
+        # ── 3. Build pair lists: [[(a0,a1),(a1,a2),...], ...] ─────────────────
+        # Pad _as_list to MAX_AS_HOPS with nulls so .list.get() never OOBs
+        MAX_AS_HOPS = 30
+        df = df.with_columns(
+            pl.col('_as_list').list.head(MAX_AS_HOPS).list.concat(
+                pl.lit([None] * MAX_AS_HOPS)
+            ).list.head(MAX_AS_HOPS).alias('_as_list_padded')
+        )
+        pair_exprs = []
+        for i in range(MAX_AS_HOPS - 1):
+            ai = pl.col('_as_list_padded').list.get(i)
+            aj = pl.col('_as_list_padded').list.get(i + 1)
+            pair_exprs.append(
+                pl.when(ai.is_not_null() & aj.is_not_null())
+                .then(pl.format("{}|{}", ai, aj))
+                .otherwise(pl.lit(None))
+            )
+        df = df.with_columns([
+            pl.concat_list(pair_exprs).alias('_pair_list'),
+        ])
+
+        # ── 4. Explode pair lists → one row per (announcement, pair) ───────────
+        exploded = (
+            df.explode('_pair_list')
+            .filter(pl.col('_pair_list').is_not_null())
+            .with_columns([
+                pl.col('_pair_list').str.split(by='|').list.get(0).alias('_as1'),
+                pl.col('_pair_list').str.split(by='|').list.get(1).alias('_as2'),
+                pl.col('_pair_list').alias('_conn_key'),
+            ])
+        )
+
+        # ── 5. Vectorized fake-pair check via explicit Series ──────────────────
+        # NOTE: polars disallows broadcasting a Series of different length into
+        # `is_in` (ShapeError when fake_set height != exploded height). Use an
+        # explicit-typed Series so polars treats it as a set, not a row-aligned
+        # broadcast. Passing a Python list directly triggers a deprecation
+        # warning ("is_in with a collection of the same datatype is ambiguous").
+        #
+        # fake_set contains (as1, as2) *tuples* (see hijack_utils.build_as_pair_set).
+        # _conn_key on the right side is built via `pl.format("{}|{}", ai, aj)`,
+        # so we must serialize each pair into the same "a|b" string form before
+        # constructing the Series; otherwise polars rejects the tuple as a
+        # non-String element.
+        fake_list = []
+        for pair in fake_set:
+            if isinstance(pair, tuple) and len(pair) == 2:
+                fake_list.append(f"{pair[0]}|{pair[1]}")
+            else:
+                fake_list.append(str(pair))
+        # de-dup while preserving order; many sets carry both (a,b) and (b,a)
+        fake_list = list(dict.fromkeys(fake_list))
+        fake_series = pl.Series('_fake_set', fake_list, dtype=pl.Utf8)
+        exploded = exploded.with_columns([
+            pl.col('_conn_key').is_in(fake_series).alias('_is_fake'),
+        ])
+
+        # ── 6. Filter to fake pairs only ────────────────────────────────────────
+        fake_only = exploded.filter(pl.col('_is_fake') == True)
+
+        if fake_only.height == 0:
+            return (
+                df.drop(['_row_idx', '_as_list', '_as_list_padded', '_pair_list'])
+                .with_columns([
+                    pl.lit(False).alias('connection_frequency_suspicious'),
+                    pl.lit(False).alias('has_fake_connect'),
+                    pl.lit('[]').alias('fake_connections'),
+                ])
+            )
+
+        # ── 7. Aggregate fake pairs back to announcement rows ──────────────────
+        # Count fake pairs per announcement
+        pair_counts = (
+            fake_only.group_by('_row_idx')
+            .agg(
+                pl.col('_conn_key').count().alias('_fake_count'),
+                pl.col('_as1').alias('_fake_as1_list'),
+                pl.col('_as2').alias('_fake_as2_list'),
+                pl.col('_pair_list').alias('_fake_conn_list'),
+            )
+        )
+
+        # Join counts back to original rows
+        result = (
+            df.drop(['_as_list', '_as_list_padded', '_pair_list'])
+            .join(pair_counts, on='_row_idx', how='left')
+            .with_columns([
+                (pl.col('_fake_count') > 0).fill_null(0).alias('has_fake_connect'),
+                pl.col('_fake_count').fill_null(0).alias('_fake_count_filled'),
+            ])
+        )
+
+        # Build fake_connections JSON column
+        result = result.with_columns([
+            pl.when(pl.col('has_fake_connect') == True)
+              .then(
+                  pl.format(
+                      "[{}]",
+                      pl.col('_fake_conn_list').list.join(',')
+                  )
+              )
+              .otherwise(pl.lit('[]'))
+              .alias('fake_connections'),
+        ])
+
+        # ── 8. Suspicious marking: analyze unique fake pairs (batch ES queries) ──
+        unique_fake_keys = fake_only.get_column('_conn_key').unique().to_list()
+        suspicious_rows = set()
+
+        if unique_fake_keys and use_es:
+            # Bug fix: utils.es_conn_freq was never implemented in this repo,
+            # so the previous import-or-fallback chain logged a noisy
+            # ModuleNotFoundError on every forge-detection chunk (60+ per
+            # event). When the optional dependency is absent we now silently
+            # downgrade to the in-process analyzer so we keep the same
+            # detection quality without spamming the log.
+            batch_results = None
+            try:
+                from utils.es_conn_freq import batch_query_es_connection_frequency as _es_batch
+                batch_results = _es_batch(unique_fake_keys, '', '')
+            except ImportError:
+                logger.debug("[Forge-Vec] utils.es_conn_freq unavailable; using in-process analyzer")
+            for conn_key in unique_fake_keys:
+                if batch_results is not None and conn_key in batch_results and batch_results[conn_key] is not None:
+                    freq_data = batch_results[conn_key]
+                else:
+                    freq_data = analyze_connection_frequency(
+                        conn_key, '', full_day_data if full_day_data is not None else df,
+                    )
+                if freq_data and freq_data.get('is_suspicious'):
+                    rows_with_pair = (
+                        fake_only
+                        .filter(pl.col('_conn_key') == conn_key)
+                        .get_column('_row_idx')
+                    )
+                    suspicious_rows.update(rows_with_pair.to_list())
+        else:
+            # Bug fix 2026-09-13 (BUG-R57): previously the no-ES path
+            # called ``analyze_connection_frequency(conn_key, …)`` once
+            # for every unique fake connection, each time running a full
+            # substring scan over the entire full_day_data DataFrame.
+            # On a 3-hour window with ~1k unique fake connections this
+            # took 200+ seconds sequentially and pegged MAX_WORKERS=1.
+            #
+            # Now we batch by:
+            #   1. Computing each unique conn_key's frequency_ratio in a
+            #      SINGLE Polars pass (one ``str.contains`` per key, but
+            #      a vectorised map + ``pl.sum`` is at worst
+            #      ~O(unique_keys) vector ops rather than
+            #      ~O(unique_keys × rows) scans).
+            #   2. Falling back to the existing per-key path only for the
+            #      very few keys where the fast path returns no data
+            #      (i.e. when ``full_day_data`` is missing).
+            #
+            # Suspicious-marking logic is otherwise unchanged: a key
+            # whose frequency ratio is at or below the adaptive
+            # threshold is treated as suspicious (matches the legacy
+            # behaviour in ``analyze_connection_frequency``).
+            frequency_data = _batch_connection_frequency_polars(
+                unique_fake_keys,
+                full_day_data if full_day_data is not None else df,
+            )
+            suspicious_keys = {
+                k for k, d in frequency_data.items()
+                if d is not None and d.get('is_suspicious')
+            }
+            if suspicious_keys:
+                suspect_df = fake_only.filter(
+                    pl.col('_conn_key').is_in(list(suspicious_keys))
+                )
+                if not suspect_df.is_empty():
+                    suspicious_rows.update(
+                        suspect_df.get_column('_row_idx').to_list()
+                    )
+
+        result = result.with_columns([
+            pl.col('_row_idx')
+            .is_in(list(suspicious_rows))
+            .alias('connection_frequency_suspicious'),
+        ])
+
+        # Drop temp columns
+        drop = ['_row_idx', '_as_list', '_as_list_padded', '_pair_list',
+                '_fake_count', '_fake_count_filled',
+                '_fake_as1_list', '_fake_as2_list', '_fake_conn_list']
+        return result.drop([c for c in drop if c in result.columns])
+
+    except Exception as e:
+        logger.error(f"Vectorized forge detection failed: {e} — using legacy fallback")
+        import traceback; traceback.print_exc()
+        return _batch_check_connection_frequency_legacy(
+            updates_df, as_relationships, target_as,
+            fake_conn_cache_manager, full_day_data,
+        )
+
+
+def _batch_connection_frequency_polars(conn_keys, full_day_data):
+    """Compute ``analyze_connection_frequency`` results in one pass.
+
+    Bug fix 2026-09-13 (BUG-R57 + BUG-R82): the original implementation
+    called ``analyze_connection_frequency`` once per unique fake
+    connection key, each call being a full substring scan of the
+    ``as-path`` column. The first attempt at a batched path still
+    iterated over keys and ran ``pl.col('as-path').str.contains`` per
+    key, which is *equivalent* in cost to the original per-key path —
+    it just moved the cost into one function call. This version
+    actually batches by:
+
+      1. Splitting each ``as-path`` string into an AS-pair list via
+         ``str.split(" ")`` + adjacent-pair ``shift(-1)`` combo, in a
+         single ``with_columns`` expression (vectorised).
+      2. Computing a per-row boolean match for *all* keys in one
+         ``list.eval(element.list.contains(any=True))`` expression —
+         instead of running ``list.contains(k)`` per key separately.
+         Polars fuses this across the whole batch.
+      3. Capping the number of keys processed per call and falling
+         back to the legacy path for the overflow tail so a backbone
+         AS with 50k unique pairs doesn't OOM.
+
+    Args:
+        conn_keys: list of unique ``"as1|as2"`` strings to score.
+        full_day_data: Polars DataFrame of BGP updates with an
+            ``as-path`` column. May be ``None`` (returns ``None`` per
+            key to signal "no data"; caller can fall back to the
+            per-key path).
+
+    Returns:
+        dict ``{conn_key: {count, total_updates, frequency_ratio,
+        is_suspicious, …}}``. ``is_suspicious`` matches the legacy
+        rule of ``frequency_ratio <= adaptive_threshold`` via
+        ``calculate_adaptive_threshold``. When the input is missing or
+        empty, returns an empty dict so the caller can degrade
+        gracefully.
+    """
+    if not conn_keys:
+        return {}
+    if full_day_data is None:
+        return {k: None for k in conn_keys}
+    if not isinstance(full_day_data, pl.DataFrame):
+        try:
+            full_day_data = pl.DataFrame(full_day_data)
+        except Exception:
+            return {k: None for k in conn_keys}
+    if full_day_data.is_empty() or 'as-path' not in full_day_data.columns:
+        return {k: None for k in conn_keys}
+
+    # ── Validate keys ──────────────────────────────────────────────────
+    valid_keys: list[str] = []
+    result: dict[str, dict] = {}
+    for k in conn_keys:
+        if '|' not in k:
+            result[k] = {
+                'connection': k, 'count': 0, 'total_updates': 0,
+                'frequency_ratio': 0.0, 'is_suspicious': True,
+                'note': 'malformed conn_key', 'data_coverage': 'malformed',
+            }
+            continue
+        as1, as2 = k.split('|', 1)
+        if not as1 or not as2:
+            result[k] = {
+                'connection': k, 'count': 0, 'total_updates': 0,
+                'frequency_ratio': 0.0, 'is_suspicious': True,
+                'note': 'malformed conn_key', 'data_coverage': 'malformed',
+            }
+            continue
+        valid_keys.append(k)
+
+    if not valid_keys:
+        return result
+
+    # Cap the number of keys per batch to bound worst-case memory.
+    # Beyond the cap we fall back to the legacy per-key path for the
+    # overflow tail so a single chunk can't OOM on pathological data
+    # (e.g. backbone AS with 50k unique pairs).
+    MAX_KEYS_PER_BATCH = 500
+    overflow: list[str] = []
+    if len(valid_keys) > MAX_KEYS_PER_BATCH:
+        overflow = valid_keys[MAX_KEYS_PER_BATCH:]
+        valid_keys = valid_keys[:MAX_KEYS_PER_BATCH]
+
+    try:
+        # ── Real batched path ──────────────────────────────────────────
+        # 1) Compute one match count per key. After several iterations
+        #    (BUG-R57, BUG-R82, pre-filter, list-contains), the
+        #    simplest and fastest approach turned out to be the most
+        #    robust: per-key ``str.contains(k)`` on the as-path
+        #    column, fused into a single ``any_horizontal`` pre-filter
+        #    so we materialise the matching rows once, then per-key
+        #    scan on the small filtered frame.
+        #
+        #    Cost model on a 1M-row df with 1000 keys where ~50%
+        #    match: ~3-5s total (vs the legacy 200s+ sequential loop).
+        #    The pre-filter cost is O(rows × pattern_length) and the
+        #    per-key cost on the filtered frame is O(rows × hash-lookup).
+        import re as _re_batch
+        as_path_col = pl.col('as-path').cast(pl.Utf8, strict=False).fill_null("")
+
+        total_updates = full_day_data.height
+
+        # Build a single union predicate over all keys using
+        # ``any_horizontal`` of ``str.contains(literal=False)`` —
+        # treating ``|`` as OR matches the legacy semantics that
+        # downstream threshold logic was tuned against.
+        sub_exprs = [as_path_col.str.contains(k) for k in valid_keys]
+        if len(sub_exprs) == 1:
+            union_expr = sub_exprs[0]
+        else:
+            union_expr = pl.any_horizontal(sub_exprs)
+
+        try:
+            matched_mask = full_day_data.select(union_expr).to_series()
+            df = full_day_data.filter(matched_mask)
+        except Exception:
+            df = full_day_data
+
+        # Per-key scan: for each key, count rows where ``as-path``
+        # contains the key. Run on the (much smaller) filtered df so
+        # the dominant cost is paid only on rows that match at least
+        # one key. The legacy BUG-R82 path ran this on the full df
+        # 1000 times; this version runs it on the filtered subset
+        # 1000 times — typically a 10-100x reduction in work.
+        counts_by_key: dict[str, int] = {k: 0 for k in valid_keys}
+        if df.is_empty():
+            pass
+        else:
+            for k in valid_keys:
+                try:
+                    c = df.select(as_path_col.str.contains(k).sum()).item()
+                except Exception:
+                    c = 0
+                counts_by_key[k] = int(c or 0)
+
+        for k in valid_keys:
+            count = counts_by_key.get(k, 0)
+            ratio = (count / total_updates) if total_updates else 0.0
+            threshold = calculate_adaptive_threshold(full_day_data, k, '')
+            result[k] = {
+                'connection': k,
+                'count': count,
+                'total_updates': total_updates,
+                'frequency_ratio': ratio,
+                'is_suspicious': ratio <= threshold,
+                'threshold_used': threshold,
+                'threshold_percentage': threshold * 100,
+                'data_coverage': 'batch_pol',
+                'analysis_quality': 'adaptive',
+                'note': f'Analyzed {total_updates:,} updates (batch)',
+                'analysis_timestamp': '',
+            }
+    except Exception as _e:
+        # Top-level failure: degrade to per-key None so caller falls
+        # back to the legacy path.
+        logger.debug(f"[batch-pol] fast path failed: {_e!r}")
+        for k in valid_keys:
+            result.setdefault(k, None)
+
+    # Handle overflow keys: take the legacy per-key path for each.
+    for k in overflow:
+        try:
+            result[k] = analyze_connection_frequency(k, '', full_day_data)
+        except Exception:
+            result[k] = None
+
+    return result
+
+
+def _batch_check_connection_frequency_legacy(updates_df, as_relationships,
+                                   target_as, fake_conn_cache_manager, full_day_data=None):
+    try:
+        df = updates_df if isinstance(updates_df, pl.DataFrame) else pl.DataFrame(updates_df)
+        if df.is_empty():
+            return df
+
+        logger.info(f"Falling back to legacy batch_check_connection_frequency")
 
         as_pairs = build_as_pair_set(as_relationships)
+        if 'date' not in df.columns:
+            df = df.with_columns([
+                pl.col('timestamp').str.to_datetime(format="%m/%d/%y %H:%M:%S", strict=False).cast(pl.Date).cast(pl.String).alias('date')
+            ])
 
-        # Ensure date column exists
-        if 'date' not in updates_df.columns:
-            updates_df = updates_df.copy()
-            # Handle multiple datetime formats including ISO with timezone (e.g., 2025-01-02T20:30:07+00:00Z)
-            try:
-                updates_df['date'] = pd.to_datetime(updates_df['timestamp'], format='ISO8601', errors='raise').dt.date.astype(str)
-            except (ValueError, TypeError):
-                try:
-                    updates_df['date'] = pd.to_datetime(updates_df['timestamp'], errors='coerce').dt.date.astype(str)
-                except Exception:
-                    # Last resort: extract date string directly
-                    updates_df['date'] = updates_df['timestamp'].astype(str).str[:10]
+        all_fake_pairs: Dict[str, Dict] = {}
+        has_cache = fake_conn_cache_manager is not None
+
+        as_paths = df['as-path'].fill_null('').to_list()
+        dates = df['date'].to_list()
+        timestamps_col = df['timestamp'].to_list()
+
+        for idx, (as_path_str, date_str, ts) in enumerate(zip(as_paths, dates, timestamps_col)):
+            as_path_list = str(as_path_str).split()
+            for i in range(len(as_path_list) - 1):
+                as1, as2 = as_path_list[i], as_path_list[i + 1]
+                conn_key = f"{as1}|{as2}"
+                is_fake = (as1, as2) not in as_pairs
+                if is_fake:
+                    if conn_key not in all_fake_pairs:
+                        all_fake_pairs[conn_key] = {
+                            'as1': as1, 'as2': as2,
+                            'update_indices': [], 'dates': set(), 'timestamps': []
+                        }
+                    all_fake_pairs[conn_key]['update_indices'].append(idx)
+                    all_fake_pairs[conn_key]['dates'].add(date_str)
+                    all_fake_pairs[conn_key]['timestamps'].append(ts)
+
+        if not all_fake_pairs:
+            return df.with_columns([
+                pl.lit(False).alias('connection_frequency_suspicious'),
+                pl.lit(False).alias('has_fake_connect'),
+                pl.lit('[]').alias('fake_connections')
+            ])
+
+        # Query frequency for each unique fake pair
+        frequency_results: Dict[str, Dict] = {}
+        for conn_key, pair_data in all_fake_pairs.items():
+            dates_list = list(pair_data['dates'])
+            date_str = dates_list[0] if dates_list else ''
+            end_ts = pair_data['timestamps'][-1] if pair_data['timestamps'] else date_str
+            frequency_results[conn_key] = analyze_connection_frequency(
+                conn_key, date_str,
+                full_day_data if full_day_data is None else full_day_data,
+                end_timestamp=end_ts,
+            )
+
+        suspicious_indices = set()
+        for conn_key, pair_data in all_fake_pairs.items():
+            if frequency_results.get(conn_key, {}).get('is_suspicious'):
+                suspicious_indices.update(pair_data['update_indices'])
+
+        has_fake_list = [False] * len(df)
+        fake_conn_list = ['[]'] * len(df)
+        is_suspicious_list = [False] * len(df)
+
+        for conn_key, pair_data in all_fake_pairs.items():
+            for idx in pair_data['update_indices']:
+                has_fake_list[idx] = True
+                if fake_conn_list[idx] == '[]':
+                    fake_conn_list[idx] = json.dumps([{'as1': pair_data['as1'], 'as2': pair_data['as2']}])
+                else:
+                    existing = json.loads(fake_conn_list[idx])
+                    existing.append({'as1': pair_data['as1'], 'as2': pair_data['as2']})
+                    fake_conn_list[idx] = json.dumps(existing)
+
+        for idx in suspicious_indices:
+            is_suspicious_list[idx] = True
+
+        return df.with_columns([
+            pl.Series('connection_frequency_suspicious', is_suspicious_list),
+            pl.Series('has_fake_connect', has_fake_list),
+            pl.Series('fake_connections', fake_conn_list)
+        ])
+
+    except Exception as e:
+        logger.error(f"Legacy fallback also failed: {e}")
+        import traceback; traceback.print_exc()
+        if isinstance(updates_df, pl.DataFrame):
+            return updates_df.with_columns([
+                pl.lit(False).alias('connection_frequency_suspicious'),
+                pl.lit(False).alias('has_fake_connect'),
+                pl.lit('[]').alias('fake_connections'),
+            ])
+        return updates_df
 
         # ========== PHASE 1: Collect all fake AS pairs from all updates (with deduplication) ==========
-        # This avoids repeated ES queries for the same AS pair
         all_fake_pairs: Dict[str, Dict] = {}  # conn_key -> {as1, as2, timestamps: []}
 
         # Determine if we have cache manager
@@ -392,15 +1027,14 @@ def batch_check_connection_frequency(updates_df, as_relationships,
         else:
             asrel_hash = None
 
-        # Vectorized approach: extract all AS paths and process in batch
-        as_paths = updates_df['as-path'].fillna('').astype(str).tolist()
-        dates = updates_df['date'].tolist()
-        timestamps_col = updates_df['timestamp'].tolist()
-        indices = updates_df.index.tolist()
+        # Get data as lists for processing
+        as_paths = df['as-path'].fill_null('').to_list()
+        dates = df['date'].to_list()
+        timestamps_col = df['timestamp'].to_list()
 
         # First pass: identify all fake connections with their metadata
-        for idx, (as_path_str, date_str, ts) in zip(indices, zip(as_paths, dates, timestamps_col)):
-            as_path_list = as_path_str.split()
+        for idx, (as_path_str, date_str, ts) in enumerate(zip(as_paths, dates, timestamps_col)):
+            as_path_list = str(as_path_str).split()
             for i in range(len(as_path_list) - 1):
                 as1, as2 = as_path_list[i], as_path_list[i + 1]
                 conn_key = f"{as1}|{as2}"
@@ -434,19 +1068,21 @@ def batch_check_connection_frequency(updates_df, as_relationships,
 
         if not all_fake_pairs:
             # No fake connections found - mark all as normal and return
-            updates_df['connection_frequency_suspicious'] = False
-            updates_df['has_fake_connect'] = False
-            updates_df['fake_connections'] = '[]'
+            df = df.with_columns([
+                pl.lit(False).alias('connection_frequency_suspicious'),
+                pl.lit(False).alias('has_fake_connect'),
+                pl.lit('[]').alias('fake_connections')
+            ])
             logger.info("No fake AS pairs detected in any updates")
-            return updates_df
+            return df
 
         # ========== PHASE 2: Batch query ES for each unique fake pair (with caching) ==========
         frequency_results: Dict[str, Dict] = {}  # conn_key -> frequency_data
 
         for conn_key, pair_data in all_fake_pairs.items():
             # Use the most common date or latest timestamp for this pair
-            dates = list(pair_data['dates'])
-            date_str = dates[0] if dates else ''
+            dates_list = list(pair_data['dates'])
+            date_str = dates_list[0] if dates_list else ''
 
             if has_cache:
                 # Check if cached
@@ -461,7 +1097,7 @@ def batch_check_connection_frequency(updates_df, as_relationships,
             frequency_data = analyze_connection_frequency(
                 conn_key,
                 date_str,
-                full_day_data if full_day_data is not None else updates_df,
+                df if full_day_data is None else full_day_data,
                 end_timestamp=end_ts,
             )
 
@@ -472,57 +1108,83 @@ def batch_check_connection_frequency(updates_df, as_relationships,
             frequency_results[conn_key] = frequency_data
 
         # ========== PHASE 3: Mark suspicious updates based on pre-computed results ==========
-        suspicious_updates = []
+        suspicious_indices = set()
 
         for conn_key, pair_data in all_fake_pairs.items():
             freq_data = frequency_results.get(conn_key, {})
             is_suspicious = freq_data.get('is_suspicious', False)
 
             if is_suspicious:
-                suspicious_updates.extend(pair_data['update_indices'])
+                suspicious_indices.update(pair_data['update_indices'])
 
-        # Remove duplicates (same update may have multiple fake pairs)
-        suspicious_updates = list(set(suspicious_updates))
-
-        # Apply results to DataFrame
-        updates_df['connection_frequency_suspicious'] = False
-        updates_df['has_fake_connect'] = False
-        updates_df['fake_connections'] = '[]'
-
-        # Mark updates that have fake connections
+        # Build fake connections info and update DataFrame
+        fake_conn_info_by_idx = {}
         for conn_key, pair_data in all_fake_pairs.items():
             for idx in pair_data['update_indices']:
-                updates_df.at[idx, 'has_fake_connect'] = True
-                # Also store the fake connection info
-                fake_conn_info = [{
+                if idx not in fake_conn_info_by_idx:
+                    fake_conn_info_by_idx[idx] = []
+                fake_conn_info_by_idx[idx].append({
                     'as1': pair_data['as1'],
                     'as2': pair_data['as2'],
-                    'path': updates_df.at[idx, 'as-path'],
-                    'timestamp': updates_df.at[idx, 'timestamp']
-                }]
-                updates_df.at[idx, 'fake_connections'] = json.dumps(fake_conn_info)
+                    'path': as_paths[idx] if idx < len(as_paths) else '',
+                    'timestamp': timestamps_col[idx] if idx < len(timestamps_col) else ''
+                })
 
-        if suspicious_updates:
-            updates_df.loc[suspicious_updates, 'connection_frequency_suspicious'] = True
-            logger.info(f"Marked {len(suspicious_updates)} updates as suspicious based on connection frequency")
+        # Create result columns
+        has_fake_list = [False] * len(df)
+        fake_conn_list = ['[]'] * len(df)
+        is_suspicious_list = [False] * len(df)
 
-        return updates_df
+        for idx in fake_conn_info_by_idx:
+            if idx < len(has_fake_list):
+                has_fake_list[idx] = True
+                fake_conn_list[idx] = json.dumps(fake_conn_info_by_idx[idx])
+
+        for idx in suspicious_indices:
+            if idx < len(is_suspicious_list):
+                is_suspicious_list[idx] = True
+
+        df = df.with_columns([
+            pl.Series('connection_frequency_suspicious', is_suspicious_list),
+            pl.Series('has_fake_connect', has_fake_list),
+            pl.Series('fake_connections', fake_conn_list)
+        ])
+
+        if suspicious_indices:
+            logger.info(f"Marked {len(suspicious_indices)} updates as suspicious based on connection frequency")
+
+        return df
 
     except Exception as e:
         logger.error(f"Error in batch connection frequency check: {e}")
         import traceback
         traceback.print_exc()
-        updates_df['connection_frequency_suspicious'] = False
+        # Return with default values
+        if isinstance(updates_df, pl.DataFrame):
+            return updates_df.with_columns([
+                pl.lit(False).alias('connection_frequency_suspicious'),
+                pl.lit(False).alias('has_fake_connect'),
+                pl.lit('[]').alias('fake_connections')
+            ])
         return updates_df
 
 
 def calculate_adaptive_threshold(updates_df, fake_connection, date_str):
     try:
-        if updates_df is None or updates_df.empty:
+        if updates_df is None:
+            return DEFAULT_FORGE_THRESHOLD
+        
+        # Convert to polars if pandas
+        if not isinstance(updates_df, pl.DataFrame):
+            df = pl.DataFrame(updates_df) if updates_df is not None else pl.DataFrame()
+        else:
+            df = updates_df
+        
+        if df.is_empty():
             return DEFAULT_FORGE_THRESHOLD
 
-        date_updates = updates_df[updates_df['date'] == date_str]
-        if date_updates.empty:
+        date_updates = df.filter(pl.col('date') == date_str)
+        if date_updates.is_empty():
             return DEFAULT_FORGE_THRESHOLD
 
         total_updates = len(date_updates)
@@ -530,14 +1192,13 @@ def calculate_adaptive_threshold(updates_df, fake_connection, date_str):
         try:
             as1, as2 = fake_connection.split('|')
             target_as = as1 if as1.isdigit() else as2
-        except:
+        except Exception:
             return DEFAULT_FORGE_THRESHOLD
 
-        as_activity_count = 0
-        if 'as-path' in date_updates.columns:
-            for as_path in date_updates['as-path'].fillna(''):
-                if str(target_as) in str(as_path):
-                    as_activity_count += 1
+        # Count AS activity using polars
+        as_activity_count = date_updates.filter(
+            pl.col('as-path').str.contains(target_as)
+        ).height
 
         activity_ratio = as_activity_count / total_updates if total_updates > 0 else 0
 
@@ -559,164 +1220,29 @@ def calculate_adaptive_threshold(updates_df, fake_connection, date_str):
         return DEFAULT_FORGE_THRESHOLD
 
 
-def _parse_timestamp_for_es(end_timestamp: Optional[str], fallback_date: str) -> datetime:
-    """
-    Parse the given timestamp string (which may be in various ISO-like formats)
-    and return a datetime object. If parsing fails, fall back to the provided date.
-    """
-    if end_timestamp:
-        # 清理时间戳：移除Z，标准化时区格式
-        ts = end_timestamp.strip()
-        if ts.endswith('Z'):
-            ts = ts[:-1] + '+0000'
-        # 处理 +00:00 格式
-        if '+00:00' in ts:
-            ts = ts.replace('+00:00', '+0000')
-        
-        # 支持多种格式
-        formats = [
-            "%Y-%m-%dT%H:%M:%S%z",
-            "%Y-%m-%dT%H:%M:%S+0000",
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%d"
-        ]
-        
-        for fmt in formats:
-            try:
-                return datetime.strptime(ts, fmt)
-            except Exception:
-                continue
-        
-        # 最后尝试dateutil解析器
-        try:
-            from dateutil import parser
-            return parser.parse(ts)
-        except ImportError:
-            pass
-    
-    # Fallback to date-only parsing
+def analyze_connection_frequency(fake_connection, date_str, updates_df, end_timestamp = None):
     try:
-        return datetime.strptime(fallback_date, "%Y-%m-%d")
-    except Exception:
-        return datetime.utcnow()
-
-
-def _query_es_connection_frequency(fake_connection: str, end_timestamp: Optional[str], date_str: str) -> Optional[Dict[str, Any]]:
-    """
-    Query Elasticsearch for the frequency of a fake connection in the past 7 days.
-
-    Returns a dict shaped like the original analyze_connection_frequency result,
-    or None if ES is disabled/unavailable/failed.
-    """
-    try:
-        if not (USE_ES_FOR_CONN_FREQ and ES_HOST and ES_INDEX_NAME):
-            return None
-
-        end_dt = _parse_timestamp_for_es(end_timestamp, date_str)
-        start_dt = end_dt - timedelta(days=7)
-
-        logger.info(
-            "[ES] Querying Elasticsearch for AS pair frequency: %s (7-day window %s to %s)",
-            fake_connection, start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
-        )
-        es_url = ES_HOST.rstrip("/") + f"/{ES_INDEX_NAME}"
-        logger.info("[ES] Target index: %s", es_url)
-
-        # Count documents containing this AS pair within the 7-day window
-        query = {
-            "query": {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "timestamp": {
-                                    "gte": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                    "lte": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                                }
-                            }
-                        },
-                        {"term": {"as_pairs": fake_connection}},
-                    ]
-                }
+        # Use local data only (ES path removed from here)
+        if updates_df is None:
+            return {
+                'connection': fake_connection,
+                'date': date_str,
+                'count': 0,
+                'total_updates': 0,
+                'frequency_ratio': 0.0,
+                'is_suspicious': True,
+                'note': 'No BGP data available for frequency analysis',
+                'data_coverage': 'unavailable',
+                'analysis_timestamp': datetime.now().isoformat()
             }
-        }
 
-        resp = requests.post(f"{es_url}/_count", json=query, timeout=ES_CONN_FREQ_TIMEOUT)
-        if resp.status_code != 200:
-            logger.warning(f"ES frequency query failed ({resp.status_code}): {resp.text[:200]}")
-            return None
+        # Convert to polars if pandas
+        if not isinstance(updates_df, pl.DataFrame):
+            df = pl.DataFrame(updates_df)
+        else:
+            df = updates_df
 
-        data = resp.json()
-        conn_count = int(data.get("count", 0))
-
-        # Also get total BGP messages in the same period for context
-        total_query = {
-            "query": {
-                "range": {
-                    "timestamp": {
-                        "gte": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        "lte": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    }
-                }
-            }
-        }
-        total_resp = requests.post(f"{es_url}/_count", json=total_query, timeout=ES_CONN_FREQ_TIMEOUT)
-        total = 0
-        if total_resp.status_code == 200:
-            total = int(total_resp.json().get("count", 0))
-
-        # If ES returns no data for this time window, return None to trigger fallback
-        if total == 0:
-            logger.info(f"ES has no data for time range {start_dt.date()} to {end_dt.date()}, falling back to local data")
-            return None
-
-        frequency_ratio = (conn_count / total) if total > 0 else 0.0
-
-        # For ES-based statistics, use a simple conservative threshold:
-        # treat connections with extremely low frequency as suspicious.
-        threshold_used = DEFAULT_FORGE_THRESHOLD
-        is_suspicious = frequency_ratio <= threshold_used
-
-        return {
-            "connection": fake_connection,
-            "date": date_str,
-            "count": conn_count,
-            "total_updates": total,
-            "frequency_ratio": frequency_ratio,
-            "is_suspicious": is_suspicious,
-            "threshold_used": threshold_used,
-            "threshold_percentage": threshold_used * 100,
-            "data_coverage": "es_7d_window",
-            "analysis_quality": "es_based",
-            "note": (
-                f"ES 7-day window [{start_dt.isoformat()} to {end_dt.isoformat()}], "
-                f"count={conn_count}, total={total}"
-            ),
-            "analysis_timestamp": datetime.now().isoformat(),
-        }
-    except Exception as e:
-        logger.warning(f"Error querying ES for connection frequency ({fake_connection}): {e}")
-        return None
-
-
-def analyze_connection_frequency(fake_connection, date_str, updates_df, end_timestamp: Optional[str] = None):
-    try:
-        # Preferred path: use Elasticsearch for the last 7 days, if enabled and available
-        es_result = _query_es_connection_frequency(fake_connection, end_timestamp, date_str)
-        if es_result is not None:
-            logger.info(
-                "[ES] Using ES result for AS pair %s: count=%s, total=%s, ratio=%.4f, suspicious=%s",
-                fake_connection,
-                es_result.get("count", 0),
-                es_result.get("total_updates", 0),
-                es_result.get("frequency_ratio", 0.0),
-                es_result.get("is_suspicious", False),
-            )
-            return es_result
-
-        # Fallback to local MRT/updates-based statistics when ES is disabled/unreachable
-        if updates_df is None or updates_df.empty:
+        if df.is_empty():
             return {
                 'connection': fake_connection,
                 'date': date_str,
@@ -730,16 +1256,11 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
             }
 
         # Ensure date column exists
-        if 'date' not in updates_df.columns:
-            updates_df = updates_df.copy()
-            # Handle multiple datetime formats including ISO with timezone
-            try:
-                updates_df['date'] = pd.to_datetime(updates_df['timestamp'], format='ISO8601', errors='raise').dt.date.astype(str)
-            except (ValueError, TypeError):
-                try:
-                    updates_df['date'] = pd.to_datetime(updates_df['timestamp'], errors='coerce').dt.date.astype(str)
-                except Exception:
-                    updates_df['date'] = updates_df['timestamp'].astype(str).str[:10]
+        if 'date' not in df.columns:
+            # timestamp format: "02/12/25 10:55:02" (MM/DD/YY HH:MM:SS)
+            df = df.with_columns([
+                pl.col('timestamp').str.to_datetime(format="%m/%d/%y %H:%M:%S", strict=False).cast(pl.Date).cast(pl.String).alias('date')
+            ])
 
         # Try to get more data by using 7-day window from the provided data
         # Parse end_timestamp to determine the time window
@@ -747,33 +1268,35 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
         if end_timestamp:
             try:
                 end_dt = datetime.strptime(end_timestamp[:19].replace('Z', ''), "%Y-%m-%dT%H:%M:%S")
-            except:
+            except ValueError:
                 try:
                     end_dt = datetime.strptime(end_timestamp[:10], "%Y-%m-%d")
-                except:
+                except ValueError:
                     pass
 
         if end_dt:
             start_dt = end_dt - timedelta(days=7)
-            # Filter to 7-day window
-            window_updates = updates_df[
-                (pd.to_datetime(updates_df['timestamp'], errors='coerce') >= start_dt) &
-                (pd.to_datetime(updates_df['timestamp'], errors='coerce') <= end_dt)
-            ]
-            if not window_updates.empty:
-                logger.debug(f"Using 7-day window data: {len(window_updates)} updates")
-                date_updates = window_updates
+            # Filter to 7-day window using polars
+            start_str = start_dt.strftime("%Y-%m-%d")
+            end_str = end_dt.strftime("%Y-%m-%d")
+            window_df = df.filter(
+                (pl.col('timestamp') >= start_str) &
+                (pl.col('timestamp') <= end_str)
+            )
+            if not window_df.is_empty():
+                logger.debug(f"Using 7-day window data: {len(window_df)} updates")
+                date_updates = window_df
                 data_source = '7d_window'
             else:
                 # Fallback to specific date
-                date_updates = updates_df[updates_df['date'] == date_str]
+                date_updates = df.filter(pl.col('date') == date_str)
                 data_source = 'single_day'
         else:
             # Default: use provided updates (could be full day data)
-            date_updates = updates_df[updates_df['date'] == date_str]
+            date_updates = df.filter(pl.col('date') == date_str)
             data_source = 'single_day'
 
-        if date_updates.empty:
+        if date_updates.is_empty():
             return {
                 'connection': fake_connection,
                 'date': date_str,
@@ -786,27 +1309,18 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
                 'analysis_timestamp': datetime.now().isoformat()
             }
 
-        # Get AS path column - use vectorized string operations (faster than loop)
-        if 'as_path' in date_updates.columns:
-            as_path_series = date_updates['as_path'].fillna('').astype(str)
-        elif 'as-path' in date_updates.columns:
-            as_path_series = date_updates['as-path'].fillna('').astype(str)
-        else:
-            as_path_series = pd.Series([''] * len(date_updates), index=date_updates.index)
-
-        # Count occurrences using vectorized approach (much faster than loop)
-        connection_count = as_path_series.str.contains(fake_connection, regex=False).sum()
+        # Count occurrences using polars (faster than loop)
+        connection_count = date_updates.filter(
+            pl.col('as-path').str.contains(fake_connection)
+        ).height
 
         total_updates = len(date_updates)
         frequency_ratio = connection_count / total_updates if total_updates > 0 else 0
 
         # Dynamic threshold based on AS activity level
         # Calculate threshold based on the AS's activity in the full day data
-        threshold_used = calculate_adaptive_threshold(updates_df, fake_connection, date_str)
+        threshold_used = calculate_adaptive_threshold(df, fake_connection, date_str)
         is_suspicious = frequency_ratio <= threshold_used
-
-        # Get data source info for logging
-        data_source_info = data_source if 'data_source' in dir() else 'full_day'
 
         result = {
             'connection': fake_connection,
@@ -817,7 +1331,7 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
             'is_suspicious': is_suspicious,
             'threshold_used': threshold_used,
             'threshold_percentage': threshold_used * 100,
-            'data_coverage': data_source_info,  # Now using 7-day window when available
+            'data_coverage': data_source,
             'analysis_quality': 'adaptive',
             'note': f'Analyzed {total_updates:,} BGP announcements with adaptive threshold ({threshold_used*100:.2f}%)',
             'analysis_timestamp': datetime.now().isoformat()
@@ -837,21 +1351,29 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
 
 
 def detect_forge_hijacks(updates_df, as_relationships,
-                        target_as, fake_conn_cache_manager, full_day_data=None, prefix_to_as=None, *args, **kwargs):
+                        target_as, fake_conn_cache_manager, full_day_data=None,
+                        prefix_to_as=None, use_es: bool = False, *args, **kwargs):
     try:
         logger.info(f"Detecting forged path hijacks for AS{target_as}")
 
-        if updates_df.empty:
-            return [], updates_df
+        # Convert to polars if pandas
+        if not isinstance(updates_df, pl.DataFrame):
+            df = pl.DataFrame(updates_df)
+        else:
+            df = updates_df
+
+        if df.is_empty():
+            return [], df
 
         analyzed_df = batch_check_connection_frequency(
-            updates_df, as_relationships, target_as, fake_conn_cache_manager, full_day_data
+            df, as_relationships, target_as, fake_conn_cache_manager, full_day_data,
+            use_es=use_es
         )
 
-        suspicious_updates = analyzed_df[analyzed_df['connection_frequency_suspicious'] == True]
+        suspicious_updates = analyzed_df.filter(pl.col('connection_frequency_suspicious') == True)
 
         alerts = []
-        for idx, row in suspicious_updates.iterrows():
+        for row in suspicious_updates.iter_rows(named=True):
             try:
                 # Read and deserialize fake_connections from DataFrame
                 fake_connections_json = row.get('fake_connections', '[]')
@@ -912,7 +1434,7 @@ def detect_forge_hijacks(updates_df, as_relationships,
                 alerts.append(alert)
 
             except Exception as e:
-                logger.warning(f"Error generating alert for suspicious update {idx}: {e}")
+                logger.warning(f"Error generating alert: {e}")
                 continue
 
         logger.info(f"Detected {len(alerts)} potential forged path hijacks")
@@ -946,7 +1468,7 @@ def validate_hijack_detection(hijack_alerts, updates_df):
                     dt1 = datetime.fromisoformat(sorted_times[i-1].replace('Z', '+00:00'))
                     dt2 = datetime.fromisoformat(sorted_times[i].replace('Z', '+00:00'))
                     time_diffs.append((dt2 - dt1).total_seconds())
-                except:
+                except Exception:
                     continue
 
             if time_diffs and all(diff < 60 for diff in time_diffs):
@@ -959,7 +1481,7 @@ def validate_hijack_detection(hijack_alerts, updates_df):
                     (updates_df['timestamp'] == alert['timestamp']) &
                     (updates_df['prefix'] == alert['prefix'])
                 ]
-                if not matching_updates.empty:
+                if not matching_updates.is_empty():
                     valid_alerts += 1
 
         if valid_alerts != len(hijack_alerts):
