@@ -901,9 +901,10 @@ Calibrate the confidence language. Return JSON:
     ]
 }}"""
 
+        _agent_name = "ConfidenceCalibrator"
         parsed = llm_json_call(
             self.llm, SYSTEM, user_prompt,
-            agent_name="ConfidenceCalibrator", max_retries=2, timeout=60.0,
+            agent_name=_agent_name, max_retries=2, timeout=60.0,
             run_id=run_id,
         )
         calibrated = parsed.get("calibrated_text") or report_text
@@ -930,7 +931,7 @@ Calibrate the confidence language. Return JSON:
                 and any(m in lower_calib for m in echo_markers)
             ):
                 logger.warning(
-                    f"[{agent_name}] Calibrator returned prompt echo "
+                    f"[{_agent_name}] Calibrator returned prompt echo "
                     f"(len={len(calibrated)}); falling back to original report"
                 )
                 calibrated = report_text

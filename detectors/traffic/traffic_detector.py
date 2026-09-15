@@ -92,15 +92,65 @@ def _get_as_country(asn, target_time=None):
 
 
 def _parse_iso(s):
+    """Parse a time string in any of several common formats.
+
+    Bug fix 2026-09-15: the previous implementation only accepted
+    ``"%Y-%m-%d %H:%M:%S"`` and ``"%Y-%m-%d %H:%M"`` — every other variant
+    (ISO 8601 with ``T`` separator, ``Z`` suffix, microseconds, ...) raised
+    ``ValueError`` and the tool returned a confusing "time data does not
+    match format" error to the ReAct agent. The ReAct loop would then
+    repeatedly retry with the same bad format, wasting both tokens and
+    time. Now we iterate over every supported format so that any input
+    the LLM generates is silently normalised.
+    """
+    if not s:
+        raise ValueError("empty time string")
+    s = str(s).strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+0000"
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    # Fall back to fromisoformat which handles many edge cases including
+    # offset suffixes that ``strptime`` cannot.
     try:
-        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
-    except ValueError:
-        return datetime.strptime(s, "%Y-%m-%d %H:%M")
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"time data {s!r} does not match any supported format"
+        ) from exc
 
 
 def _parse_iso_utc(s):
+    """Parse a UTC time string. Returns ``None`` on failure.
+
+    Bug fix 2026-09-15: ``fromisoformat`` accepts many formats including
+    plain ``"%Y-%m-%d %H:%M:%S"`` (no ``T``). Previously, non-ISO inputs
+    raised ``ValueError`` and we silently swallowed the error, returning
+    ``None`` — which then propagated as a confusing crash deeper in the
+    pipeline. Now we fall back to ``_parse_iso`` so we accept the same
+    wide range of inputs as the normal-time parser.
+    """
+    if not s:
+        return None
     try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00")).replace(tzinfo=None)
+        return datetime.fromisoformat(str(s).strip().replace("Z", "+00:00")).replace(tzinfo=None)
+    except (ValueError, TypeError):
+        pass
+    try:
+        return _parse_iso(s)
     except ValueError:
         return None
 

@@ -92,25 +92,29 @@ def _extract_message_text(message) -> str:
 
 
 def _extract_delta_text(delta) -> str:
-    """Combine streamed `content` and `reasoning_content` deltas.
+    """Extract visible assistant output from a streamed choice delta.
 
-    Handles three cases gracefully:
-    1. delta is a proper ChoiceDelta object with content/reasoning_content attrs
-    2. delta is None or has no usable attributes
-    3. response is entirely in reasoning_content (Kimi thinking mode fallback)
+    Always returns only the ``content`` field — the visible answer.
+
+    ``reasoning_content`` (the model's internal thinking trace) is NEVER
+    returned. This is essential for thinking models (S1-Base-Pro, Kimi
+    with thinking enabled, GLM-5) where the API streams the reasoning
+    trace and the visible answer as separate delta fields. The original
+    behaviour of appending both caused the thinking process to leak into
+    the visible HTML report output, which then triggered the deterministic
+    fallback renderer (BUG-R128, observed 2026-09-16).
+
+    For models that route everything through ``reasoning_content`` (rare
+    Kimi configurations), the report caller should set
+    ``LLM_THINKING_DISABLE`` to disable thinking mode so output flows
+    through ``content`` instead.
     """
     if delta is None:
         return ""
-    chunk = ""
-    # Primary field: content
+    # Primary field: content (the visible answer).
+    # Reasoning content is intentionally ignored.
     c = getattr(delta, "content", None)
-    if c:
-        chunk += str(c)
-    # Fallback: reasoning_content (used by Kimi thinking, GLM-5)
-    r = getattr(delta, "reasoning_content", None)
-    if r:
-        chunk += str(r)
-    return chunk
+    return str(c) if c else ""
 
 
 def build_token_counter():
@@ -159,6 +163,136 @@ def reset_global_token_counter() -> None:
             h.reset_counts()
         except Exception:
             continue
+
+
+# ── 429 Rate-Limit Circuit Breaker ──────────────────────────────────────────
+# Without this, when the upstream provider rate-limits us (HTTP 429), each
+# application-level retry stacks on top of the OpenAI SDK's own retry loop,
+# which can drag a single LLM call out for several minutes and burn through
+# the report-orchestration timeout (e.g. 900s) before the report is written.
+# Two safeguards here:
+#   1. Per-process rolling window of recent 429s. When consecutive 429s exceed
+#      a threshold (default 3), the next call fails fast with a dedicated
+#      ``LLMRateLimitedError`` so the caller can render the deterministic
+#      fallback HTML instead of hanging on a doomed retry chain.
+#   2. A short cool-off after a 429 hit (default 5s) so we don't hammer
+#      a rate-limited provider. The cool-off decays exponentially on
+#      repeat hits inside the same window.
+#
+# Tunable via env vars:
+#   LLM_429_BREAKER_THRESHOLD (default 3)    consecutive 429s before tripping
+#   LLM_429_BREAKER_WINDOW_S  (default 60)   rolling window length, seconds
+#   LLM_429_COOLDOWN_S        (default 5.0)  base cool-off after a 429
+import threading
+import collections
+
+
+class LLMRateLimitedError(RuntimeError):
+    """Raised when the rate-limit circuit breaker is open.
+
+    Carries the original exception as ``__cause__`` and a structured
+    ``breaker_info`` dict for the caller to log/fallback on.
+    """
+
+    def __init__(self, message: str, breaker_info: dict | None = None):
+        super().__init__(message)
+        self.breaker_info = breaker_info or {}
+
+
+class _RateLimitBreaker:
+    """Process-wide rolling-window circuit breaker for HTTP 429 responses."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # Deque of timestamps (monotonic seconds) at which a 429 was seen.
+        self._hits: collections.deque[float] = collections.deque()
+        # When the breaker tripped (0.0 means closed). Used by is_open()
+        # so we can distinguish "tripped" (hard block until cool-off ends)
+        # from "post-429 throttle" (soft cool-down, call still permitted).
+        self._tripped_at: float = 0.0
+        # Monotonic time at which the cool-off expires.
+        self._cooldown_until: float = 0.0
+
+    @staticmethod
+    def _now() -> float:
+        import time as _t
+        return _t.monotonic()
+
+    def record_hit(self) -> None:
+        """Record a 429. Returns True if the breaker just tripped open.
+
+        Two state transitions:
+          - Hit count reaches ``threshold``: trip the breaker. New calls
+            are blocked (``is_open() == True``) until cool-off elapses.
+          - Hit count stays below ``threshold``: apply a short soft
+            cool-off to throttle retries, but don't trip the breaker
+            (callers can still attempt after a few seconds).
+        """
+        now = self._now()
+        window = float(os.environ.get("LLM_429_BREAKER_WINDOW_S", "60"))
+        base_cooldown = float(os.environ.get("LLM_429_COOLDOWN_S", "5.0"))
+        threshold = int(os.environ.get("LLM_429_BREAKER_THRESHOLD", "3"))
+        with self._lock:
+            self._hits.append(now)
+            # Drop hits outside the rolling window.
+            cutoff = now - window
+            while self._hits and self._hits[0] < cutoff:
+                self._hits.popleft()
+            if len(self._hits) >= threshold and self._tripped_at == 0.0:
+                # Just-tripped: exponential cool-off based on overshoot
+                # so a sustained 429 storm gives the provider more
+                # breathing room (5s, 10s, 20s, capped at 60s).
+                cooldown = min(
+                    base_cooldown * (2 ** (len(self._hits) - threshold)),
+                    60.0,
+                )
+                self._tripped_at = now
+                self._cooldown_until = now + cooldown
+                return True
+            # Below threshold or already tripped — apply soft throttle.
+            self._cooldown_until = now + base_cooldown
+            return False
+
+    def is_open(self) -> tuple[bool, float]:
+        """Return (open?, seconds_remaining_until_closed).
+
+        Only True when the breaker has TRIPPED (not just throttled).
+        """
+        now = self._now()
+        with self._lock:
+            if self._tripped_at == 0.0 or now >= self._cooldown_until:
+                # Auto-recover: tripped-but-cooldown-elapsed → reset trip flag.
+                if self._tripped_at != 0.0 and now >= self._cooldown_until:
+                    self._tripped_at = 0.0
+                    self._hits.clear()
+                return False, 0.0
+            return True, self._cooldown_until - now
+
+    def get_window_hits(self) -> int:
+        now = self._now()
+        window = float(os.environ.get("LLM_429_BREAKER_WINDOW_S", "60"))
+        with self._lock:
+            cutoff = now - window
+            while self._hits and self._hits[0] < cutoff:
+                self._hits.popleft()
+            return len(self._hits)
+
+    def reset(self) -> None:
+        """Force-clear the breaker (test/admin helper)."""
+        with self._lock:
+            self._hits.clear()
+            self._cooldown_until = 0.0
+
+
+# Module-level singleton; shared across every OpenAICompatibleLLM instance
+# in this process so a 429 from one tool/call still trips the breaker for
+# every subsequent call until the cool-off elapses.
+_RATE_LIMIT_BREAKER = _RateLimitBreaker()
+
+
+def get_rate_limit_breaker() -> _RateLimitBreaker:
+    """Return the process-wide rate-limit circuit breaker (for diagnostics)."""
+    return _RATE_LIMIT_BREAKER
 
 
 class OpenAICompatibleLLM(LLM):
@@ -236,11 +370,22 @@ class OpenAICompatibleLLM(LLM):
                 pool=min(10.0, request_timeout),
             )
 
+            # Bug fix 2026-09-14 (BUG-R200): the OpenAI SDK retries on
+            # 429/5xx by default up to ``max_retries`` times with its own
+            # backoff (which reads Retry-After when present). That used
+            # to stack on top of the application-level retry loop,
+            # producing a multi-minute retry chain on a single rate-limit
+            # response and getting the entire orchestration subprocess
+            # SIGKILL'd by the 900s watchdog. Disable SDK-level retries
+            # at the client layer so the application owns the retry
+            # budget via the rate-limit circuit breaker instead.
+            sdk_max_retries = 0
+
             self._client = OAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=timeout,
-                max_retries=self.max_retries,
+                max_retries=sdk_max_retries,
             )
         return self._client
 
@@ -293,18 +438,69 @@ class OpenAICompatibleLLM(LLM):
                 code = getattr(status, "status_code", None)
                 if code in (400, 401, 403, 404, 422):
                     return False
-                if code in (429, 500, 502, 503, 504):
+                if code == 429:
+                    # Bug fix 2026-09-14 (BUG-R200): previously 429 was
+                    # retried by the application layer, which STACKS on top
+                    # of the OpenAI SDK's own internal retry loop. The
+                    # combined retry chain could drag a single call out for
+                    # several minutes, burning through the report
+                    # orchestration timeout (e.g. 900s) and getting the
+                    # whole subprocess SIGKILL'd without writing the
+                    # report. Now: 429 is NOT application-retryable. The
+                    # caller trips the rate-limit circuit breaker (which
+                    # short-circuits all subsequent calls in the cool-off
+                    # window with a dedicated ``LLMRateLimitedError``),
+                    # and the caller is expected to fall back to the
+                    # deterministic HTML renderer instead of hanging on
+                    # a doomed retry chain.
+                    return False
+                if code in (500, 502, 503, 504):
                     return True
         except Exception:
             pass
         kw = [
-            "rate limit", "429", "500", "502", "503", "504",
+            "500", "502", "503", "504",
             "connection", "timeout", "timed out", "network",
             "temporarily unavailable", "service unavailable",
             "internal server error", "gateway timeout", "bad gateway",
             "upstream connect error", "socket timeout",
         ]
+        # NOTE: "429" and "rate limit" are deliberately removed from the
+        # application-layer retry keys — see above. Those errors must
+        # propagate so the circuit breaker can record them.
         return any(k in err_lower for k in kw)
+
+    @staticmethod
+    def _is_rate_limit_error(exc: Exception) -> bool:
+        """Return True iff this exception represents an upstream 429."""
+        try:
+            status = getattr(exc, "response", None)
+            if status is not None and getattr(status, "status_code", None) == 429:
+                return True
+        except Exception:
+            pass
+        err_lower = str(exc).lower()
+        return "429" in err_lower or "rate limit" in err_lower
+
+    @staticmethod
+    def _breaker_guard():
+        """Raise ``LLMRateLimitedError`` immediately if the breaker is open.
+
+        Returning a value (None) means "proceed with the call". Used at
+        the top of every call site to short-circuit doomed requests.
+        """
+        is_open, remaining = _RATE_LIMIT_BREAKER.is_open()
+        if is_open:
+            raise LLMRateLimitedError(
+                f"LLM rate-limit circuit breaker is open "
+                f"({remaining:.1f}s remaining, "
+                f"{_RATE_LIMIT_BREAKER.get_window_hits()} hits in window). "
+                f"Failing fast so the caller can render the fallback report.",
+                breaker_info={
+                    "cooldown_remaining_s": round(remaining, 2),
+                    "window_hits": _RATE_LIMIT_BREAKER.get_window_hits(),
+                },
+            )
 
     @staticmethod
     def _extract_json(text: str):
@@ -371,8 +567,23 @@ class OpenAICompatibleLLM(LLM):
         json_mode=True: prepends a strict JSON-only system instruction so the
         model knows it must output only JSON (not markdown prose or commentary).
         Extraction retries up to max_retries before raising RuntimeError.
+
+        Bug fix 2026-09-14 (BUG-R200): HTTP 429 (rate limit) is no longer
+        retried by the application layer. Instead, every 429 hit is
+        recorded into a process-wide rate-limit circuit breaker, which
+        short-circuits subsequent calls in the cool-off window with a
+        dedicated ``LLMRateLimitedError``. The caller can then render the
+        deterministic fallback HTML instead of hanging on a doomed retry
+        chain that would otherwise drag the subprocess past the 900s
+        orchestration timeout.
         """
         from llama_index.core.base.llms.types import CompletionResponse
+
+        # ── Circuit breaker guard (entry) ─────────────────────────────────
+        # Fail fast before doing any work if we've been rate-limited
+        # recently. The breaker is process-wide so a 429 from any tool
+        # call still protects subsequent report / debate / classify calls.
+        self._breaker_guard()
 
         last_exc: Exception = RuntimeError("sentinel")
 
@@ -396,6 +607,12 @@ class OpenAICompatibleLLM(LLM):
                 # Kimi report generation which needs a smaller cap to stay
                 # under the upstream API rate limit).
                 call_max_tokens = kwargs.get("max_tokens", self.max_tokens)
+                # Bug fix 2026-09-14 (BUG-R200 corollary): the OpenAI SDK
+                # has its own retry loop, which previously stacked on top
+                # of this application-level loop and could produce a
+                # multi-minute retry chain on a single 429. Pass an
+                # explicit ``max_retries=0`` per-call so the SDK does NOT
+                # retry; our breaker handles backoff policy globally.
                 response = self.client.chat.completions.create(
                     model=self._model_name,
                     messages=[{"role": "user", "content": prompt}],
@@ -403,6 +620,10 @@ class OpenAICompatibleLLM(LLM):
                     max_tokens=call_max_tokens,
                     stream=False,
                     extra_body=_merge_extra_body(kwargs.get("extra_body")),
+                    # Disable SDK-level retries so we own the retry budget
+                    # via the breaker. The SDK will still respect a
+                    # single transient timeout/connection failure by
+                    # raising it immediately, which is what we want.
                 )
                 text = _extract_message_text(response.choices[0].message)
 
@@ -455,6 +676,30 @@ class OpenAICompatibleLLM(LLM):
 
             except Exception as e:
                 last_exc = e  # always preserve the actual error
+                # Rate-limit specific path: record into the breaker so
+                # subsequent calls short-circuit instead of compounding
+                # the retry storm. The breaker raises ``LLMRateLimitedError``
+                # on the next entry if the threshold is exceeded.
+                if self._is_rate_limit_error(e):
+                    tripped = _RATE_LIMIT_BREAKER.record_hit()
+                    if tripped:
+                        from utils.logger import logger
+                        is_open, remaining = _RATE_LIMIT_BREAKER.is_open()
+                        logger.error(
+                            f"[llm.complete] Rate-limit circuit breaker TRIPPED "
+                            f"({_RATE_LIMIT_BREAKER.get_window_hits()} 429s in window). "
+                            f"Cooldown {remaining:.1f}s. Failing fast."
+                        )
+                    else:
+                        from utils.logger import logger
+                        logger.warning(
+                            f"[llm.complete] 429 hit recorded "
+                            f"({_RATE_LIMIT_BREAKER.get_window_hits()} in window). "
+                            f"Raising immediately (no application-level retry)."
+                        )
+                    # Always raise on 429 — no application-level retry.
+                    raise
+
                 if not self._is_retryable(e):
                     from utils.logger import logger
                     logger.warning(f"[llm.complete] Non-retryable error: {e}")
@@ -475,6 +720,9 @@ class OpenAICompatibleLLM(LLM):
             raise last_exc
 
     def stream_complete(self, prompt, formatted=False, **kwargs):
+        # Bug fix 2026-09-14 (BUG-R200): check the rate-limit circuit
+        # breaker on entry so streaming calls fail fast too.
+        self._breaker_guard()
         try:
             stream = self.client.chat.completions.create(
                 model=self._model_name,
@@ -499,12 +747,29 @@ class OpenAICompatibleLLM(LLM):
                         additional_kwargs={},
                     )
         except Exception as e:
+            if self._is_rate_limit_error(e):
+                tripped = _RATE_LIMIT_BREAKER.record_hit()
+                if tripped:
+                    from utils.logger import logger
+                    logger.error(
+                        f"[llm.stream_complete] Rate-limit circuit breaker TRIPPED "
+                        f"({_RATE_LIMIT_BREAKER.get_window_hits()} 429s in window)."
+                    )
+                raise LLMRateLimitedError(
+                    f"LLM stream hit 429 rate limit: {e}",
+                    breaker_info={
+                        "window_hits": _RATE_LIMIT_BREAKER.get_window_hits(),
+                    },
+                ) from e
             err_str = str(e)
             if "timeout" in err_str.lower() or "timed out" in err_str.lower():
                 raise RuntimeError(f"LLM stream timed out (check network/API latency): {e}") from e
             raise RuntimeError(f"LLM stream call failed: {e}") from e
 
     def chat(self, messages, **kwargs):
+        # Bug fix 2026-09-14 (BUG-R200): check the rate-limit circuit
+        # breaker on entry so non-streaming chat calls fail fast too.
+        self._breaker_guard()
         try:
             openai_messages = []
             for msg in messages:
@@ -544,6 +809,20 @@ class OpenAICompatibleLLM(LLM):
             # exception class and only rephrase the message if the
             # cause really is a timeout — otherwise we re-raise the
             # original exception.
+            if self._is_rate_limit_error(e):
+                tripped = _RATE_LIMIT_BREAKER.record_hit()
+                if tripped:
+                    from utils.logger import logger
+                    logger.error(
+                        f"[llm.chat] Rate-limit circuit breaker TRIPPED "
+                        f"({_RATE_LIMIT_BREAKER.get_window_hits()} 429s in window)."
+                    )
+                raise LLMRateLimitedError(
+                    f"LLM chat hit 429 rate limit: {e}",
+                    breaker_info={
+                        "window_hits": _RATE_LIMIT_BREAKER.get_window_hits(),
+                    },
+                ) from e
             err_str = str(e).lower()
             is_timeout = (
                 "timeout" in err_str
@@ -633,7 +912,7 @@ def create_llm(
             max_retries=max_retries,
         )
 
-    if any(x in model_lower for x in ["deepseek", "qwq", "qwen", "gpt", "claude"]):
+    if any(x in model_lower for x in ["deepseek", "qwq", "qwen", "gpt", "claude", "s1"]):
         return OpenAICompatibleLLM(
             model=model,
             api_key=api_key,

@@ -12,6 +12,46 @@ from agents.impl.traffic_impl import (
 from agents.core import Agent, AgentState, TaskResult, MsgType
 
 
+def _to_canonical_severity(anomalies: list) -> str:
+    """Return the worst severity label across all anomalies.
+
+    Handles three severity representations seen in the detector output:
+      - String: "high", "medium", "low"  (canonical labels)
+      - Numeric 0-3: 3=high, 2=medium, 1=low  (cluster severity)
+      - Numeric 0-1: z-score normalised, >0.7 → high  (correlation severity)
+      - Unknown / None → skipped
+
+    Returns "none" when anomalies is empty.
+    """
+    if not anomalies:
+        return "none"
+    rank_map = {"high": 3, "medium": 2, "low": 1}
+    best_score = 0
+    best_label = "none"
+    for a in anomalies:
+        raw = a.get("severity")
+        if raw is None:
+            continue
+        # String label
+        if isinstance(raw, str) and raw.lower() in rank_map:
+            score = rank_map[raw.lower()]
+        # Numeric score
+        elif isinstance(raw, (int, float)):
+            v = float(raw)
+            # Distinguish scales: >1 → likely 0-3; ≤1 → likely z-score
+            if v > 1:
+                score = int(min(3, max(0, round(v))))
+            else:
+                # z-score or probability → map to high ≥ 0.7
+                score = 3 if v >= 0.7 else (2 if v >= 0.4 else 1)
+        else:
+            continue  # unrecognised, skip
+        if score > best_score:
+            best_score = score
+            best_label = {3: "high", 2: "medium", 1: "low"}.get(score, "none")
+    return best_label
+
+
 class TrafficAgent(Agent):
     name = "TrafficAgent"
 
@@ -72,6 +112,30 @@ class TrafficAgent(Agent):
                 "traffic_anomaly_window": traffic_anomaly_window,
                 "expanded_windows": result.get("expanded_windows", []),
                 "consecutive_anomaly_windows": result.get("consecutive_anomaly_windows", []),
+                # Promote detector-level fields to the blackboard top level so
+                # the report LLM (which reads the *outer* section, not the
+                # nested `result` payload) can quote them directly in
+                # "Traffic Analysis" without falling back to "(no data)".
+                # Previously these were only reachable via the inner `result`
+                # dict and the LLM had to guess — leading to "(no data)"
+                # placeholders despite 5 real anomalies being available.
+                "percent_change": result.get("percent_change", 0.0),
+                "current_avg": result.get("current_avg", 0.0),
+                "historical_avg": result.get("historical_avg", 0.0),
+                "peak_trough_drop_pct": result.get("peak_trough_drop_pct", 0.0),
+                "trough_drop_from_peak": result.get("trough_drop_from_peak", 0.0),
+                "peak_value": result.get("peak_value", 0.0),
+                "trough_value": result.get("trough_value", 0.0),
+                "multi_scale_analysis": result.get("multi_scale_analysis"),
+                # Highest severity across all anomalies — the prompt explicitly
+                # asks for severity, so surface a single "worst severity" string
+                # at the top level. Without this the LLM hits the inner anomaly
+                # list but doesn't know what the headline severity value is.
+                # Map both string ("high"/"medium"/"low") and numeric severities
+                # (0-1 z-score or 0-3 scale) to a canonical label the LLM reads.
+                "max_severity": _to_canonical_severity(
+                    result.get("anomalies") or [],
+                ),
             })
             await self.add_observation(
                 kind="traffic_analysis",

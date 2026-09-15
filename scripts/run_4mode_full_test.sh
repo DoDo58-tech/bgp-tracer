@@ -5,7 +5,10 @@
 set -u
 cd /data/bgp_tracer
 export BGP_TRACER_ENV_FILE=".env"
-export REPORT_REQUIRE_LLM=0
+# Bug fix 2026-09-15: user explicitly wants LLM-generated reports, not the
+# deterministic fallback template. Set REQUIRE_LLM=1 so HTML balance
+# failures surface as errors instead of being silently replaced.
+export REPORT_REQUIRE_LLM=1
 export PYTHONUNBUFFERED=1
 export JSON_OUTPUT_ENABLED=0
 

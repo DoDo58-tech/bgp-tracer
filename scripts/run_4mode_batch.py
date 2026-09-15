@@ -31,8 +31,15 @@ CSV_PATH = PROJECT_ROOT / "data_check/ground_truth_collection/human_review_repor
 RESULTS_HTML = PROJECT_ROOT / "results/html"
 LOGS_DIR = PROJECT_ROOT / "logs"
 
-# Per-mode wall-clock timeout (seconds). tight enough to keep the batch moving.
-MODE_TIMEOUT = 900
+# Per-mode wall-clock timeout (seconds).
+# S1-Base (671B) models need 8-15 minutes per mode end-to-end (REASONING +
+# REPORT alone take 7-12 minutes when the upstream is slow). The previous
+# 900s (15min) cap was tight enough that the report LLM call timed out
+# right as the model finished reasoning. Bumped to 1500s (25min) so the
+# full pipeline can finish in one shot instead of getting SIGKILL'd mid-
+# report. Override with --timeout to keep batch loops short for sanity
+# tests.
+MODE_TIMEOUT = 1500
 
 # 4 modes to run (mode_name, --mode flag value, --enhanced flag)
 MODES = [
@@ -120,7 +127,9 @@ def run_mode(event: dict, mode_name: str, mode_flag: str, enhanced: bool,
     env = os.environ.copy()
     env.update({
         "BGP_TRACER_ENV_FILE": ".env",
-        "REPORT_REQUIRE_LLM": "0",
+        # Bug fix 2026-09-15: user wants LLM-generated reports, not the
+        # deterministic fallback template. Default to REQUIRE_LLM=1.
+        "REPORT_REQUIRE_LLM": os.environ.get("REPORT_REQUIRE_LLM", "1"),
         "PYTHONUNBUFFERED": "1",
         "JSON_OUTPUT_ENABLED": "1",
     })
@@ -164,9 +173,58 @@ def run_mode(event: dict, mode_name: str, mode_flag: str, enhanced: bool,
     try:
         log_content = log_path.read_text()
         # JSON block usually appears at the end. Find the last balanced JSON
-        json_blocks = re.findall(r'\{[^{}]*"(?:success|chief_expert_analysis)[^{}]*\}', log_content)
-        if json_blocks:
-            parsed = json.loads(json_blocks[-1])
+        # object via a proper *string-aware* bracket-matching walk so nested
+        # objects (e.g. ``{..., "chief_expert_analysis": {...}}``) AND
+        # strings containing ``{`` / ``}`` (e.g. the ``answer`` field which
+        # embeds a full HTML report) are captured correctly.
+        #
+        # Bug fix 2026-09-15: the original regex
+        # ``\{[^{}]*(?:success|chief_expert_analysis)[^{}]*\}`` refused to
+        # match any object containing a nested ``{...}``, so the chief_agent
+        # JSON dump always failed to parse and every result row ended up
+        # with ``verdict=N/A conf=N/A quality=N/A tokens=N/A``.
+        #
+        # A later attempt used a naive bracket walk that ignored string
+        # boundaries — the embedded HTML ``</style>...</html>`` inside the
+        # ``answer`` field contains unbalanced ``}`` that broke the walk.
+        # This version tracks ``"..."`` string regions and skips braces
+        # inside them. Without this, react_enhanced reports (which embed a
+        # 30kB HTML answer string) never have their JSON parsed.
+        candidates = []
+        depth = 0
+        start = -1
+        in_string = False
+        escape = False
+        for i, ch in enumerate(log_content):
+            if in_string:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_string = False
+                continue
+            if ch == '"':
+                in_string = True
+                continue
+            if ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and start >= 0:
+                        candidates.append(log_content[start:i + 1])
+                        start = -1
+        # Prefer the most recent JSON object whose top-level key signals
+        # this is a chief_agent structured result (rather than some
+        # arbitrary nested fragment).
+        structured = [c for c in candidates if '"chief_expert_analysis"' in c or '"success"' in c]
+        if structured:
+            parsed = json.loads(structured[-1])
+        elif candidates:
+            parsed = json.loads(candidates[-1])
     except Exception:
         pass
 

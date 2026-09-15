@@ -70,6 +70,13 @@ class LLMEnhancedRoutingAgent:
         def _cap(lst, n=5):
             return lst[:n] if len(lst) > n else lst
 
+        # Bug fix 2026-09-15: AnomalyDetail is a dataclass; json.dumps can't
+        # serialise it by default. Wrap with default=str so dataclass.__str__
+        # is used (or use asdict when available).
+        def _safe_json(obj, **kwargs):
+            from dataclasses import asdict, is_dataclass
+            return json.dumps(obj, default=lambda o: asdict(o) if is_dataclass(o) else str(o), **kwargs)
+
         prompt = f"""You are a BGP routing security expert. Analyze detection results for AS{data['asn']}
 during the period {data['time_period']}.
 
@@ -86,17 +93,17 @@ IMPORTANT — Two distinct roles must always be distinguished:
 
 === VICTIM ALERTS (AS{data['asn']}'s prefixes were hijacked) ===
 Origin hijacked (top {min(5, s['victim_of_origin_hijack_count'])} examples):
-{json.dumps(_cap(victim['origin_hijacked']), indent=2, ensure_ascii=False)}
+{_safe_json(_cap(victim['origin_hijacked']), indent=2, ensure_ascii=False)}
 
 Forge hijacked / MITM (top {min(5, s['victim_of_forge_hijack_count'])} examples):
-{json.dumps(_cap(victim['forge_hijacked']), indent=2, ensure_ascii=False)}
+{_safe_json(_cap(victim['forge_hijacked']), indent=2, ensure_ascii=False)}
 
 === ATTACKER ALERTS (AS{data['asn']} hijacked others' prefixes) ===
 Origin hijacking (AS{data['asn']} announced prefixes it does not own):
-{json.dumps(_cap(attacker['origin_hijacking']), indent=2, ensure_ascii=False)}
+{_safe_json(_cap(attacker['origin_hijacking']), indent=2, ensure_ascii=False)}
 
 Forge hijacking / MITM (AS{data['asn']} performed path manipulation):
-{json.dumps(_cap(attacker['forge_hijacking']), indent=2, ensure_ascii=False)}
+{_safe_json(_cap(attacker['forge_hijacking']), indent=2, ensure_ascii=False)}
 
 Return JSON with these exact keys (use English only):
 - role_analysis: string describing AS{data['asn']}'s role (victim, attacker, both, or none)

@@ -364,7 +364,19 @@ def render_report_prompt(data_json: str) -> str:
 # framing. Chat-completion safety guards (GLM-5, etc.) sometimes treat role
 # prompts as prompt-injection vectors and refuse to author detailed output.
 # The new framing is a deterministic text-generation task.
-_UNIFIED_COT_PROMPT = """# Task
+_UNIFIED_COT_PROMPT = """# CRITICAL OUTPUT FORMAT
+Your response MUST be a single complete HTML document.
+The VERY FIRST character of your response MUST be `<` (i.e. start with
+`<!DOCTYPE html>` on the first line, no leading whitespace, no markdown
+fence, no preamble, no planning text, no notes to yourself).
+
+If anything appears before `<!DOCTYPE html>` — including words like
+"Sure", "I'll", "Let me", or comments like "<!-- ... -->" — the response
+will be discarded and the user will see nothing.
+
+Do NOT include any text before or after the HTML.
+
+# Task
 Generate a complete, self-contained HTML incident report from the raw
 analysis data below. This is a structured text-generation task — do not
 adopt a persona, do not role-play an analyst, do not respond to
@@ -2039,19 +2051,39 @@ def _repair_llm_html(html: str) -> str:
 
     # 2) Walk through the body and balance <table>/<tr>/<td>/<th> tags.
     #    We process one tag at a time so we don't lose the original text.
+    #    BUG-R129 (2026-09-16): the original tokeniser dropped all non-table
+    #    tags (e.g. <h2>, <p>, <div>) because it only had three capture groups
+    #    and silently consumed characters that didn't fit any group. Fix: use
+    #    an alternation that catches EVERY non-table tag as plain text too.
     out = []
     stack = []  # holds ('tag', position_in_out) for unclosed open tags
-    # Combined tokeniser: open tag, close tag, or plain text
+    # Combined tokeniser: open table-tag, close table-tag, any other tag,
+    # or plain text. Any other tag is preserved as-is so we never lose
+    # content the LLM produced.
     token_re = re.compile(
-        r"(<(?:table|tr|td|th)\b[^>]*>)|(</(?:table|tr|td|th)\s*>)|((?:(?!<).)+)",
+        r"(<(?:table|tr|td|th)\b[^>]*>)"            # open table tag (group 1)
+        r"|(</(?:table|tr|td|th)\s*>)"              # close table tag (group 2)
+        r"|(<(?:[a-zA-Z][a-zA-Z0-9-]*)\b[^>]*>)"   # any other open tag (group 3, preserved)
+        r"|(</(?:[a-zA-Z][a-zA-Z0-9-]*)\s*>)"      # any other close tag (group 4, preserved)
+        r"|([^<]+)"                                  # plain text (group 5)
+        r"|(<)",                                     # stray < char (group 6, preserved)
         re.DOTALL | re.IGNORECASE,
     )
     for tok in token_re.finditer(body):
         open_t = tok.group(1)
         close_t = tok.group(2)
-        text = tok.group(3)
+        other_open = tok.group(3)
+        other_close = tok.group(4)
+        text = tok.group(5)
+        stray_lt = tok.group(6)
         if text is not None:
             out.append(text)
+        elif stray_lt is not None:
+            out.append(stray_lt)
+        elif other_open is not None:
+            out.append(other_open)
+        elif other_close is not None:
+            out.append(other_close)
         elif open_t:
             tag_name = re.match(r"<(\w+)", open_t, re.IGNORECASE).group(1).lower()
             # Nesting guard: <th> inside <td> is invalid — auto-close <td>
@@ -3389,6 +3421,10 @@ def generate_report_html(
     for attempt in range(1, max_retries + 1):
         future = None
         pool = None
+        # Mutable flag so the nested function can set it without triggering
+        # Python's closure-local variable rules (UnboundLocalError guard).
+        # [0]: first non-whitespace token seen; [1]: needs-preamble-trim.
+        _validated = [False, False]
         try:
             pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
@@ -3420,8 +3456,35 @@ def generate_report_html(
                         continue
                     delta = chunk.choices[0].delta
                     added = _extract_delta_text(delta)
-                    if added:
-                        text_acc += added
+                    if added is None or not added.strip():
+                        # Skip None or whitespace-only deltas (common in early
+                        # stream chunks; not actual content, so don't trigger
+                        # the HTML-start validation).
+                        if added:
+                            text_acc += added  # preserve original whitespace
+                        continue
+                    text_acc += added
+                    # ── STREAMING HTML VALIDATION ─────────────────────────────────
+                    # We do NOT abort here even if the first token is not HTML;
+                    # many models emit a brief planning preamble before the HTML.
+                    # We mark that fact and trim the preamble at end-of-stream.
+                    if not _validated[0]:
+                        _validated[0] = True  # mark first-content seen
+                        first_line = text_acc.lstrip()
+                        if not (first_line.startswith("<!DOCTYPE") or
+                                first_line.startswith("<html") or
+                                first_line.startswith("<HTML") or
+                                first_line.startswith("<body")):
+                            _stream_logger.warning(
+                                "[stream_and_wait] first content is not HTML "
+                                "(starts with %r); will trim preamble at end",
+                                first_line[:60],
+                            )
+                            # Record that we need to trim a preamble.
+                            _validated[1] = True
+                        else:
+                            _validated[1] = False
+                    # ── end validation ──────────────────────────────────────────
                         # Log progress every ~5 KB to confirm streaming is alive
                         if len(text_acc) - last_logged_len > 5120:
                             _stream_logger.info(
@@ -3435,6 +3498,29 @@ def generate_report_html(
                 )
                 if not text_acc.strip():
                     raise RuntimeError("LLM returned an empty report response")
+                # ── PREAMBLE TRIM ────────────────────────────────────────────
+                # If the first token was not HTML, the LLM emitted a planning
+                # preamble (very common). Locate the start of the actual HTML
+                # document and discard everything before it.
+                if _validated[1]:
+                    import re
+                    m = re.search(r"<!DOCTYPE\s+html|<html\b", text_acc, re.IGNORECASE)
+                    if m:
+                        preamble_len = m.start()
+                        trimmed = text_acc[preamble_len:]
+                        _stream_logger.info(
+                            "[stream_and_wait] trimmed %d-char preamble; "
+                            "new HTML length %d",
+                            preamble_len, len(trimmed),
+                        )
+                        return trimmed
+                    else:
+                        # No HTML found at all — let downstream renderer handle it.
+                        _stream_logger.warning(
+                            "[stream_and_wait] preamble flagged but no <!DOCTYPE/ "
+                            "<html> found in response (%d chars); returning as-is",
+                            len(text_acc),
+                        )
                 return text_acc
 
             future = pool.submit(stream_and_wait)
@@ -3637,7 +3723,47 @@ def generate_report_html(
                     output_dir=output_dir,
                 )
 
+    # ── Detect "LLM emitted prose instead of HTML" ───────────────────────
+    # When the model returns chain-of-thought / instruction text rather than
+    # actual markup, the document starts with prose (no leading `<`) and
+    # wrapping it in <pre> shows the leak to the user. Detect this and route
+    # to the deterministic fallback instead.
+    # BUG-R126 fix: expanded to accept any valid HTML root tag (not just the
+    # four strict ones), so that LLM-generated HTML starting with <html>,
+    # <body>, <section>, etc. is also accepted.
+    if html:
+        stripped = html.lstrip()
+        # Accept any of these as the opener of a valid HTML document.
+        # Note: <!doctype> (without the 'html' keyword) is still valid.
+        _HTML_OPENERS = (
+            "<!doctype", "<html", "<head", "<body",
+            "<div", "<section", "<article", "<main",
+        )
+        starts_with_html_opener = stripped.lower().startswith(_HTML_OPENERS)
+        has_close = "</body>" in html.lower() or "</html>" in html.lower()
+        # Also accept if there's a closing tag anywhere — the LLM may have
+        # put the close tag but the opener is missing (treatable as
+        # incomplete-but-salvageable HTML that the auto-close pass can fix).
+        is_html_doc = starts_with_html_opener and (has_close or bool(_re.search(r"</\w+>", html.lower())))
+        if not is_html_doc:
+            logger.warning(
+                f"[generate_report_html] LLM response is not valid HTML "
+                f"(first 80 chars={stripped[:80]!r}); rendering deterministic "
+                f"fallback instead of wrapping prose in <pre>."
+            )
+            return render_fallback_html_for_standalone(
+                asn=str(asn),
+                start_time=str(start_time),
+                end_time=str(end_time),
+                traffic_result=traffic_result or {},
+                routing_result=routing_result or {},
+                reasoning_result=reasoning_result or {},
+                output_dir=output_dir,
+            )
+
     if not html.startswith("<"):
+        # Should be unreachable now thanks to the check above, but keep as
+        # a final safety net.
         html = f"<!DOCTYPE html><html><body><pre>{html}</pre></body></html>"
 
     if output_dir is None:

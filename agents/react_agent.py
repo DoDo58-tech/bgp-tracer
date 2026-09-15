@@ -951,34 +951,91 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             traffic = self._evidence.get("analyze_traffic", {})
             routing = self._evidence.get("analyze_routing", {})
 
-            def has_displayable_evidence(value: Any) -> bool:
+            def _traffic_has_evidence(value: Any) -> bool:
+                """Check analyze_traffic result.
+
+                Structure: {"success":True,"results":{"<asn>":{"anomalies":[...],"traffic_plot_path":"..."}}}
+                The results dict can be empty (all ASes failed). We need to check
+                inside each per-AS sub-dict for anomalies or a plot.
+                """
                 if not isinstance(value, dict) or value.get("success") is False:
                     return False
-                candidate = value.get("results") or value.get("result") or value
-                if not isinstance(candidate, dict) or not candidate:
+                results = value.get("results", {})
+                if not isinstance(results, dict) or not results:
                     return False
-                # Require non-empty events list OR a traffic plot.
-                # Without either, the LLM will produce a misleading "no anomaly"
-                # report even though the data source was unavailable or returned
-                # empty results (e.g. Cloudflare Radar for AS13335 returns HTTP 200
-                # but timestamps/values are []).
-                anomalies = candidate.get("anomalies") or []
-                plot_path = candidate.get("plot_path")
-                return bool(anomalies) or bool(plot_path)
+                # At least one per-AS entry has anomalies or a traffic plot.
+                for sub in results.values():
+                    if not isinstance(sub, dict):
+                        continue
+                    anomalies = sub.get("anomalies") or sub.get("anomaly_events") or []
+                    if bool(anomalies):
+                        return True
+                    plot = sub.get("traffic_plot_path") or sub.get("plot_path") or sub.get("image_path")
+                    if plot:
+                        return True
+                return False
 
-            traffic_ready = has_displayable_evidence(traffic)
-            routing_ready = has_displayable_evidence(routing)
-            if not (traffic_ready and routing_ready):
+            def _routing_has_evidence(value: Any) -> bool:
+                """Check analyze_routing result.
+
+                Structure: {"success":True,"result":{"origin_hijacked":[...],
+                              "route_leaks":[...],"outage_analysis":{...}}}
+                Any non-empty event list (hijack/leak/outage) counts as evidence.
+                """
+                if not isinstance(value, dict) or value.get("success") is False:
+                    return False
+                result = value.get("result", {})
+                if not isinstance(result, dict) or not result:
+                    return False
+                event_keys = (
+                    "origin_hijacked", "forge_hijacked",
+                    "origin_hijacking", "forge_hijacking",
+                    "route_leaks", "outages",
+                )
+                for key in event_keys:
+                    ev = result.get(key)
+                    if isinstance(ev, list) and ev:
+                        return True
+                    if isinstance(ev, dict) and ev:
+                        return True
+                # Also accept outage_analysis with a positive score as evidence.
+                outage = result.get("outage_analysis") or {}
+                if isinstance(outage, dict) and (
+                    outage.get("outage_score", 0) > 0
+                    or outage.get("is_outage_suspected") is True
+                ):
+                    return True
+                return False
+
+            traffic_ready = _traffic_has_evidence(traffic)
+            routing_ready = _routing_has_evidence(routing)
+            # Bug fix 2026-09-15: the previous gate required BOTH traffic and
+            # routing to have events (hijacks/leaks/anomalies) before allowing
+            # ``generate_report`` to run. For an AS / time window with no
+            # detected anomalies this gate kept rejecting every call, and the
+            # ReAct loop burned 10+ rounds calling ``generate_report`` over and
+            # over while the same observation came back. Operators saw no report
+            # produced. The correct behaviour is: once the tools have *run*
+            # (regardless of whether they found anything), ``generate_report``
+            # is allowed to emit a "no anomalies" report. Detect that case by
+            # checking whether the tools succeeded (success=True) — empty
+            # event lists mean "no anomalies", not "missing data".
+            traffic_completed = isinstance(traffic, dict) and traffic.get("success") is True
+            routing_completed = isinstance(routing, dict) and routing.get("success") is True
+            if not (traffic_completed or routing_completed):
                 missing = []
-                if not traffic_ready:
+                if not traffic_completed:
                     missing.append("traffic analysis")
-                if not routing_ready:
+                if not routing_completed:
                     missing.append("routing analysis")
                 return {
                     "success": False,
                     "error": "Report requires completed " + " and ".join(missing),
-                    "observation": "Report deferred until completed traffic and routing evidence is available.",
+                    "observation": "Report deferred until at least one of traffic/routing analysis is completed.",
                 }
+            # If at least one tool produced evidence (anomalies/hijacks), use
+            # that for the report. Otherwise fall through and let the report
+            # path render a "no anomalies" report from the empty evidence.
 
             # enhanced 模式：先触发 LLMDebateAgent 对抗辩论（如果还没有跑过），
             # 然后交给 MultiAgentReportAgent 多专家生成报告。
