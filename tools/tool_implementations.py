@@ -155,6 +155,68 @@ from agents.traffic_agent import run_traffic_agent
 from agents.routing_agent import run_routing_agent_async
 from agents.reasoning_agent import run_reasoning_agent
 from agents.report_agent import generate_report_html
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Module-level helpers (exported for tests and reuse across tools)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _unwrap_traffic_for_payload_standalone(t, target_asn=""):
+    """Flatten ``{ASN: {...detector fields...}}`` → detector-level ``{...}``.
+
+    The legacy ``analyze_traffic`` tool output is a wrapper:
+
+        {"success": True, "results": {"8048": {...}, "12345": {...}}, ...}
+
+    Downstream consumers (the LLM payload, ``_substitute_field_references``,
+    ``_inject_code_rendered_tables``) all read fields at the **top** level of
+    the traffic dict — e.g. ``traffic.anomaly_count`` or
+    ``traffic.peak_trough_drop_pct``. Without this unwrap, the prompt shows
+    the nested structure and the LLM/HTML report never finds the metrics,
+    leaving placeholders like ``(no data)`` and ``[traffic.anomaly_count]``
+    in the rendered report.
+
+    Selection rules:
+      1. If the dict already looks like a detector payload (top-level keys
+         like ``anomaly_count`` / ``percent_change``), return it unchanged.
+      2. If the dict is keyed by ASN values, prefer the entry whose key
+         matches ``target_asn`` if given.
+      3. Otherwise prefer the ASN with the highest ``anomaly_count``.
+
+    Returns the input unchanged when none of the above apply (preserves
+    the contract: tests can pass a raw payload through without alteration).
+    """
+    if not isinstance(t, dict) or not t:
+        return t
+    detector_keys = {
+        "success", "anomalies_detected", "anomaly_count",
+        "percent_change", "peak_trough_drop_pct", "max_severity",
+        "expanded_windows", "anomalies",
+    }
+    # Detect ASN-nested shape: every value is a dict AND at least one value
+    # has detector fields.
+    if all(isinstance(v, dict) for v in t.values()) and any(
+        detector_keys & set(v.keys()) if isinstance(v, dict) else False
+        for v in t.values()
+    ):
+        target = str(target_asn or "")
+        if target and target in t and isinstance(t[target], dict):
+            return t[target]
+        # Pick the most anomalous ASN
+        candidates = []
+        for k, v in t.items():
+            if not isinstance(v, dict):
+                continue
+            ac = v.get("anomaly_count") or 0
+            candidates.append((ac, k, v))
+        if candidates:
+            candidates.sort(key=lambda x: -x[0])
+            return candidates[0][2]
+        return next(iter(t.values()))
+    return t
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 from llm.llm_factory import (
     setup_llm_settings,
     DEFAULT_TEMP_REASONING,
@@ -857,6 +919,14 @@ async def _reason_and_classify(tool_input: dict, session) -> dict:
 
     # ── Resolve traffic (from session.evidence when tool_input is empty) ───────
     traffic = tool_input.get("traffic_result") or {}
+    # Guard: LLM sometimes passes a plain string (e.g. "No significant traffic
+    # anomalies found") instead of a dict. Treat it as empty rather than crashing
+    # with "'str' object is not subscriptable" in downstream code.
+    if isinstance(traffic, str):
+        try:
+            traffic = json.loads(traffic)
+        except Exception:
+            traffic = {}
     if not traffic:
         raw = ev.get("analyze_traffic", {})
         if isinstance(raw, dict):
@@ -1396,6 +1466,26 @@ async def _generate_report(tool_input: dict, session) -> dict:
         else:
             traffic = {}
 
+    # Unwrap traffic to a flat "traffic_result.shape = {anomaly_count, percent_change, ...}"
+    # The legacy analyze_traffic output nests detector fields under `results: {ASN: {...}}`.
+    # The payload builder + LLM read fields at the top level (e.g. `traffic.anomaly_count`,
+    # `traffic.max_severity`), but the LLM-replacement step (`_substitute_field_references`)
+    # also reads top-level keys. Without this unwrap both the prompt and the post-processing
+    # end up seeing `payload.traffic = {ASN: {...}}` and never find the metrics at the
+    # expected location, so the report shows literal "[traffic.anomaly_count]" / "(no data)".
+    traffic = _unwrap_traffic_for_payload_standalone(traffic, target_asn=str(asn) if asn else "")
+
+    # Surface `max_severity` at the top level so _substitute_field_references and
+    # the LLM prompt can both find it. analyze_traffic's detector output doesn't
+    # compute this field (only TrafficAgent.step → Blackboard does), so we add
+    # it here on the react path. The helper lives in traffic_agent.py.
+    if isinstance(traffic, dict) and "max_severity" not in traffic:
+        try:
+            from agents.traffic_agent import _to_canonical_severity
+            traffic["max_severity"] = _to_canonical_severity(traffic.get("anomalies") or [])
+        except Exception:
+            pass
+
     # Extract plot_path from traffic results (search multiple possible locations)
     traffic_plot_path = None
     traffic_plot_base64 = None
@@ -1560,16 +1650,31 @@ async def _generate_report(tool_input: dict, session) -> dict:
                 f"llm_report_{asn}_{start.replace(' ', '_').replace(':','')}_{end.replace(' ', '_').replace(':','')}.html",
             )
             os.makedirs(os.path.dirname(_path), exist_ok=True)
+            # Width-fix CSS for the minimal fallback so the report body is
+            # properly constrained (matching the main LLM report width fix).
+            _fallback_css = (
+                "<style>"
+                "html,body{margin:0;padding:0;background:#fafafa;}"
+                "body{padding:16px;}"
+                ".report-container{max-width:1180px;margin:0 auto;padding:24px 28px;"
+                "background:#ffffff;box-shadow:0 1px 4px rgba(0,0,0,0.06);"
+                "border-radius:8px;box-sizing:border-box;}"
+                "pre{white-space:pre-wrap;word-break:break-word;}"
+                "table{table-layout:fixed;width:100%;word-break:break-word;}"
+                "</style>"
+            )
             html_body = (
                 f"<!DOCTYPE html><html><head><meta charset='utf-8'>"
-                f"<title>BGP Report AS{asn}</title></head><body>"
+                f"<title>BGP Report AS{asn}</title>"
+                f"{_fallback_css}</head><body>"
+                f"<div class='report-container'>"
                 f"<h1>BGP / Traffic Report — AS{asn}</h1>"
                 f"<p><b>Window:</b> {start} → {end}</p>"
                 f"<p><b>Mode:</b> deterministic fallback (LLM disabled)</p>"
                 f"<h2>Traffic</h2><pre>{json.dumps(traffic, ensure_ascii=False, default=str)[:4000]}</pre>"
                 f"<h2>Routing</h2><pre>{json.dumps(routing, ensure_ascii=False, default=str)[:4000]}</pre>"
                 f"<h2>Classification</h2><pre>{json.dumps(classification, ensure_ascii=False, default=str)[:4000]}</pre>"
-                f"</body></html>"
+                f"</div></body></html>"
             )
             with open(_path, "w", encoding="utf-8") as f:
                 f.write(html_body)

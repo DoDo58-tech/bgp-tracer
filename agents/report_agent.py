@@ -878,6 +878,57 @@ def strip_path_based_traffic_images(html: str) -> str:
     return cleaned
 
 
+def _ensure_width_fix_css(html: str) -> str:
+    """Ensure the width-alignment CSS is injected and body is wrapped in .report-container.
+
+    This runs regardless of whether a traffic plot is available, so the
+    report body always has a consistent max-width even without a chart.
+    """
+    if not html or not isinstance(html, str):
+        return html
+    width_css_id = "bt-tracer-width-align"
+    if f'id="{width_css_id}"' in html:
+        return html  # already applied
+
+    width_css = (
+        f'<style id="{width_css_id}">'
+        'html,body{margin:0;padding:0;background:#fafafa;}'
+        'body{padding:16px;}'
+        '.report-container{max-width:1180px;margin:0 auto;'
+        'padding:24px 28px;background:#ffffff;'
+        'box-shadow:0 1px 4px rgba(0,0,0,0.06);'
+        'border-radius:8px;box-sizing:border-box;}'
+        'table{table-layout:fixed;width:100%;'
+        'word-break:break-word;border-collapse:collapse;margin:12px 0;}'
+        'th,td{border:1px solid #e2e8f0;padding:6px 12px;text-align:left;'
+        'vertical-align:top;}'
+        'th{background:#f7fafc;}'
+        'pre,code{white-space:pre-wrap;word-break:break-word;'
+        'max-width:100%;}'
+        'img.bt-chart-img,img{display:block;box-sizing:border-box;'
+        'width:100%;max-width:100%;height:auto;margin:0 auto;'
+        'border-radius:8px;border:1px solid #e2e8f0;}'
+        '.card{padding:16px 20px;margin:18px 0;'
+        'background:#ffffff;border:1px solid #e2e8f0;'
+        'border-radius:8px;box-sizing:border-box;}'
+        '.card h2{margin-top:0;}'
+        '</style>'
+    )
+    # Inject CSS into <head> or at document start
+    if "</head>" in html:
+        html = html.replace("</head>", width_css + "</head>", 1)
+    else:
+        html = width_css + html
+
+    # Wrap body content in .report-container
+    if "</body>" in html and '<div class="report-container">' not in html:
+        html = html.replace(
+            "<body>", '<body><div class="report-container">', 1
+        )
+        html = html.replace("</body>", "</div></body>", 1)
+    return html
+
+
 def inject_traffic_plot(html: str, traffic_plot_base64: Optional[str]) -> str:
     """Ensure final HTML always includes the traffic plot when available.
 
@@ -886,9 +937,12 @@ def inject_traffic_plot(html: str, traffic_plot_base64: Optional[str]) -> str:
          the LLM may have emitted (they're broken on other hosts).
       2. Inject exactly ONE working base64 copy of the chart just before
          `</body>` so the file is portable.
-      3. Constrain every wide block (chart, table, <pre>) to the report
-         container so the chart never overflows a narrow table cell — this
-         fixes the report / chart width-mismatch bug operators observed.
+      3. Wrap the entire document in a ``.report-container`` and constrain
+         all wide elements (chart, tables, ``<pre>``) to the same width
+         so the chart and report body always share one width cap.
+         This fixes the report / chart width-mismatch bug operators
+         observed on 2026-09-15 (image at viewport-width vs report
+         container at a different width).
     """
     if not html:
         return html
@@ -897,45 +951,65 @@ def inject_traffic_plot(html: str, traffic_plot_base64: Optional[str]) -> str:
     # base64 copy.  This avoids the "two imgs, one broken" pathology.
     html = strip_path_based_traffic_images(html)
 
-    # Inject a width-alignment CSS block the first time we add the chart.
-    # ``display:block; margin:0 auto`` centers the img inside its container
-    # so it never exceeds the table / report width.
+    # Inject a single width-alignment CSS block the first time we touch
+    # the document. The container caps EVERYTHING (chart + tables + body
+    # prose) at the same max-width so width consistency is enforced
+    # regardless of what the LLM emits. BUG-R135/R137 (2026-09-15).
     width_css_id = "bt-tracer-width-align"
     has_width_css = f'id="{width_css_id}"' in html
     if not has_width_css:
         width_css = (
             f'<style id="{width_css_id}">'
-            # BUG-R135 (2026-09-14): the previous CSS used
-            # ``max-width:100%`` on ``.bt-chart-img``. That works ONLY when
-            # the parent (typically ``.card``) has an explicit width. When
-            # the parent has the default ``width:auto``, ``max-width:100%``
-            # resolves against the *viewport* width, so a 5610px-wide chart
-            # ends up at 1400px (the viewport), overflowing the report's
-            # ``.container`` (1200px). Confirmed via headless render:
-            # ``card width = 1400, image rendered = 1402``.
-            #
-            # Fix: the ``.card`` div that wraps the chart is a sibling of
-            # ``.container``, not a child, so it needs its own max-width
-            # constraint. Use ``.card img`` (not ``.card``) to constrain only
-            # the image inside card — applying ``width:100%`` to ``.card`` itself
-            # causes it to fill the 1400px viewport, then max-width:1200px
-            # clamps it, but the image inside still renders at 1400 because
-            # ``width:100%`` on the image resolves against the now-1200px card.
-            # Verified fix: card=1200px, img=1200px, scroll=1400px.
-            '.card{max-width:1200px;margin:0 auto;box-sizing:border-box;}'
-            '.card img,.bt-chart-img{display:block;box-sizing:border-box;'
-            'width:100%;max-width:100%;height:auto;margin:0 auto;'
-            'border-radius:8px;border:1px solid #ddd;}'
+            # The wrapping .report-container is THE single source of truth
+            # for max width. The body must inherit it so charts and tables
+            # inside it all see the same width constraint. Without this,
+            # the chart (img) renders at viewport-width (1400px) while
+            # the report body inside .container renders at 1200px → the
+            # "chart is wider than the text" pathology observed by user.
+            'html,body{margin:0;padding:0;background:#fafafa;}'
+            'body{padding:16px;}'
+            '.report-container{max-width:1180px;margin:0 auto;'
+            'padding:24px 28px;background:#ffffff;'
+            'box-shadow:0 1px 4px rgba(0,0,0,0.06);'
+            'border-radius:8px;box-sizing:border-box;}'
             # Tables: force fixed layout and word-wrap so a single oversized
             # cell can't push the whole table wider than the container.
-            'table{table-layout:fixed;width:100%;word-break:break-word;}'
-            'pre,code{white-space:pre-wrap;word-break:break-word;}'
+            'table{table-layout:fixed;width:100%;'
+            'word-break:break-word;border-collapse:collapse;margin:12px 0;}'
+            'th,td{border:1px solid #e2e8f0;padding:6px 12px;text-align:left;'
+            'vertical-align:top;}'
+            'th{background:#f7fafc;}'
+            'pre,code{white-space:pre-wrap;word-break:break-word;'
+            'max-width:100%;}'
+            # Charts and inline images: pin to container width.
+            'img.bt-chart-img,img{display:block;box-sizing:border-box;'
+            'width:100%;max-width:100%;height:auto;margin:0 auto;'
+            'border-radius:8px;border:1px solid #e2e8f0;}'
+            # Section cards: visually distinct blocks.
+            '.card{padding:16px 20px;margin:18px 0;'
+            'background:#ffffff;border:1px solid #e2e8f0;'
+            'border-radius:8px;box-sizing:border-box;}'
+            '.card h2{margin-top:0;}'
             '</style>'
         )
         if "</head>" in html:
             html = html.replace("</head>", width_css + "</head>", 1)
         else:
             html = width_css + html
+
+        # Wrap body content inside .report-container so all children
+        # inherit the same width. Only do this if not already wrapped.
+        if "</body>" in html and '<div class="report-container">' not in html:
+            html = html.replace(
+                "<body>",
+                '<body><div class="report-container">',
+                1,
+            )
+            html = html.replace(
+                "</body>",
+                "</div></body>",
+                1,
+            )
 
     if not traffic_plot_base64:
         return html
@@ -951,6 +1025,8 @@ def inject_traffic_plot(html: str, traffic_plot_base64: Optional[str]) -> str:
         '</div>'
     )
 
+    if "</div></body>" in html:
+        return html.replace("</div></body>", section + "</div></body>", 1)
     if "</body>" in html:
         return html.replace("</body>", section + "</body>", 1)
     return html + section
@@ -1473,6 +1549,13 @@ class ReportAgent(Agent):
         # we strip the leftover noise here so operators never see "(no data)".
         html = _strip_nodata_artifacts(html)
 
+        # Post-process: substitute literal [field.path] citation markers that the
+        # LLM leaves in the HTML output. These are citations that the model wrote
+        # directly into the rendered text instead of resolving them to values.
+        # Without this step the report shows "[traffic.peak_trough_drop_pct]" and
+        # "[traffic.max_severity]" instead of "91.0" and "high".
+        html = _substitute_field_references(html, traffic_result or {}, routing_result or {}, reasoning_result or {}, traffic_anomaly_window)
+
         # Post-process: replace LLM-generated Origin Hijack / Route Leak / Traffic
         # Summary tables with code-rendered deterministic versions. See
         # `_inject_code_rendered_tables` for the rationale.
@@ -1827,6 +1910,80 @@ _HTML_TH_CLOSE = re.compile(r"</th\s*>", re.IGNORECASE)
 _HTML_UNQUOTED_ATTR = re.compile(r"(\s[a-zA-Z-]+)=([^\s\"']+?)(?=\s|/|>)")
 
 
+def _auto_close_blocks_in_html(html: str) -> str:
+    """Walk the document and append closing tags for any blocks that remain
+    unclosed at end-of-document.
+
+    BUG-R125 2026-09-15: replaces the old "go straight to fallback" path.
+    LLMs (especially DeepSeek / Qwen / S1 reasoning models) often emit
+    prose that ends mid-element — e.g. ``<section><h2>Section</h2>`` with
+    no ``</section></body>``. The HTML5 spec lets browsers recover, but
+    our balance validator wants a fully-closed tree.
+
+    This function:
+      1. Scans the document with the same tag regex as the validator.
+      2. Tracks open tags (skipping void and structural tags).
+      3. If the document does NOT end with ``</html>``, appends closing
+         tags in LIFO order, then ``</body></html>``.
+      4. If the document DOES end with ``</html>`` but has unclosed
+         non-structural tags, inserts closing tags before ``</body>``.
+    """
+    if not html:
+        return html
+
+    void_tags = {
+        "area", "base", "br", "col", "embed", "hr", "img", "input",
+        "link", "meta", "param", "source", "track", "wbr",
+    }
+    _STRUCTURAL = {"html", "body", "head"}
+
+    tag_re = re.compile(
+        r"<!--.*?-->|<!DOCTYPE[^>]*>|"
+        r"<\s*(?P<close>/)?\s*(?P<tag>[a-zA-Z][a-zA-Z0-9:-]*)(?:\s[^<>]*?)?\s*(?P<self>/)?\s*>",
+        re.DOTALL,
+    )
+    stack = []  # list of (tag, offset)
+    last_close_offset = -1
+    for m in tag_re.finditer(html):
+        g = m.group(0)
+        if g.startswith("<!"):
+            continue
+        tag = m.group("tag").lower() if m.group("tag") else ""
+        is_close = m.group("close") == "/"
+        is_self_close = m.group("self") == "/"
+        if not tag or tag in void_tags or tag in _STRUCTURAL:
+            continue
+        if is_close:
+            if stack and stack[-1][0] == tag:
+                stack.pop()
+                last_close_offset = m.end()
+            else:
+                # Find matching opener and pop intermediates
+                for i in range(len(stack) - 1, -1, -1):
+                    if stack[i][0] == tag:
+                        stack = stack[:i]
+                        last_close_offset = m.end()
+                        break
+        elif not is_self_close:
+            stack.append((tag, m.start()))
+
+    if not stack:
+        return html  # already balanced
+
+    # Build closing tags for the remaining open elements (LIFO).
+    closers = "".join(f"</{tag}>" for tag, _ in reversed(stack))
+
+    # Decide insertion point. Browsers tolerate extra closers anywhere,
+    # but the safest spot is just before </body>, or at end-of-doc if
+    # </body> is missing.
+    body_close = re.search(r"</body\s*>", html, re.IGNORECASE)
+    if body_close:
+        insert_at = body_close.start()
+        return html[:insert_at] + closers + html[insert_at:]
+    else:
+        return html.rstrip() + closers + "\n</body></html>"
+
+
 def _repair_llm_html(html: str) -> str:
     """Conservative HTML repair for LLM-generated markup.
 
@@ -2043,6 +2200,150 @@ def _strip_table_nodata_rows(table_html: str) -> str:
         out_chunks.append(new_tr)
     out_chunks.append(table_html[pos:])
     return "".join(out_chunks)
+
+
+def _substitute_field_references(html: str, traffic: dict, routing: dict, reasoning: dict, traffic_anomaly_window: Optional[dict] = None) -> str:
+    """Substitute literal [field.path] citation markers in LLM HTML output.
+
+    The LLM generates citation text like ``[traffic.peak_trough_drop_pct]`` and
+    ``[traffic.max_severity]`` directly inside the HTML body. These are citation
+    markers that should have been resolved to values before rendering.  Without
+    this post-processing step the report shows literal bracket notation instead
+    of the actual values.
+
+    Supported top-level fields (matches the JSON payload keys surfaced to the LLM):
+      traffic: anomaly_count, max_severity, peak_trough_drop_pct, percent_change,
+               current_avg, historical_avg, peak_value, trough_value,
+               expanded_windows, multi_scale_analysis, anomalies,
+               traffic_anomaly_window
+      traffic_anomaly_window: anomaly_count, start, end
+      routing: hijacks, leaks, origin_hijacking, forge_hijacking, confidence
+      correlation_analysis: correlation.signals.traffic_max_severity,
+                           correlation.signals.routing_event_count,
+                           correlation.signals.traffic_event_count,
+                           correlation.signals.hijack_events_count,
+                           correlation.signals.leak_events_count,
+                           summary.correlation_confidence,
+                           summary.correlation_level
+      reasoning: classification.incident_type, classification.confidence
+    """
+    if not html:
+        return html
+
+    # Build flat lookup: "section.key" → display value
+    subs: dict[str, str] = {}
+
+    # ── traffic ────────────────────────────────────────────────────────────────
+    t = traffic if isinstance(traffic, dict) else {}
+    for key in (
+        "anomaly_count", "max_severity", "peak_trough_drop_pct",
+        "percent_change", "current_avg", "historical_avg",
+        "peak_value", "trough_value",
+    ):
+        v = t.get(key)
+        if v is not None:
+            subs[f"traffic.{key}"] = str(v)
+
+    # expanded_windows: surface the first window's anomaly_count
+    wins = t.get("expanded_windows") or []
+    if isinstance(wins, list) and wins:
+        first_win = wins[0] if isinstance(wins[0], dict) else {}
+        ac = first_win.get("anomaly_count")
+        if ac is not None:
+            subs["traffic.expanded_windows[0].anomaly_count"] = str(ac)
+
+    # anomalies: surface the worst severity from the list
+    anomalies = t.get("anomalies") or []
+    if isinstance(anomalies, list) and anomalies:
+        raw_sev = anomalies[0].get("severity") if isinstance(anomalies[0], dict) else None
+        if raw_sev is not None:
+            subs["traffic.anomalies[0].severity"] = str(raw_sev)
+
+    # multi_scale_analysis: weighted_score
+    msa = t.get("multi_scale_analysis")
+    if isinstance(msa, dict):
+        ws = msa.get("weighted_score")
+        if ws is not None:
+            subs["traffic.multi_scale_analysis.weighted_score"] = str(ws)
+
+    # traffic_anomaly_window (plain string): use as-is
+    taw = t.get("traffic_anomaly_window") or t.get("anomaly_window")
+    if taw:
+        subs["traffic.traffic_anomaly_window"] = str(taw)
+
+    # ── traffic_anomaly_window dict ──────────────────────────────────────────
+    # Use the passed-in traffic_anomaly_window dict directly (populated by
+    # extract_traffic_anomaly_window in the caller). Also check inside the
+    # traffic dict for backward compatibility.
+    taw_d = traffic_anomaly_window or t.get("traffic_anomaly_window")
+    if isinstance(taw_d, dict):
+        for key in ("anomaly_count", "start", "end"):
+            v = taw_d.get(key)
+            if v is not None:
+                subs[f"traffic_anomaly_window.{key}"] = str(v)
+
+    # ── routing ───────────────────────────────────────────────────────────────
+    r = routing if isinstance(routing, dict) else {}
+    for key in ("hijacks", "leaks", "origin_hijacking", "forge_hijacking"):
+        v = r.get(key)
+        if isinstance(v, list):
+            subs[f"routing.{key}"] = str(len(v))
+    conf = r.get("confidence")
+    if conf is not None:
+        subs["routing.confidence"] = str(conf)
+
+    # ── reasoning / classification ───────────────────────────────────────────
+    rn = reasoning if isinstance(reasoning, dict) else {}
+    cls = rn.get("classification") or {}
+    if isinstance(cls, dict):
+        inc_type = cls.get("incident_type")
+        if inc_type is not None:
+            subs["classification.incident_type"] = str(inc_type)
+        conf2 = cls.get("confidence")
+        if conf2 is not None:
+            subs["classification.confidence"] = str(conf2)
+
+    # ── correlation_analysis (nested) ────────────────────────────────────────
+    corr = rn.get("correlation_analysis") or {}
+    if isinstance(corr, dict):
+        sig = corr.get("signals") or {}
+        if isinstance(sig, dict):
+            for key in (
+                "traffic_max_severity", "traffic_event_count",
+                "routing_event_count", "hijack_events_count", "leak_events_count",
+            ):
+                v = sig.get(key)
+                if v is not None:
+                    subs[f"correlation_analysis.correlation.signals.{key}"] = str(v)
+        summ = corr.get("summary") or {}
+        if isinstance(summ, dict):
+            conf3 = summ.get("correlation_confidence")
+            if conf3 is not None:
+                subs["correlation_analysis.summary.correlation_confidence"] = str(conf3)
+            lvl = summ.get("correlation_level")
+            if lvl is not None:
+                subs["correlation_analysis.summary.correlation_level"] = str(lvl)
+
+    # ── user_analysis_window / target_as (always available from payload root) ─
+    # These are not in sub-dicts, but we add them for completeness.
+    target_as = rn.get("target_as") or t.get("target_as") or r.get("target_as")
+    if target_as:
+        subs["target_as"] = str(target_as)
+    uaw = rn.get("user_analysis_window")
+    if uaw:
+        subs["user_analysis_window"] = str(uaw)
+
+    # ── Perform substitution ─────────────────────────────────────────────────
+    # Sort by length descending so longer/more-specific patterns fire first.
+    # e.g. "traffic.peak_trough_drop_pct" before "traffic.peak"
+    for path, value in sorted(subs.items(), key=lambda x: -len(x[0])):
+        # Match [path] or [path.anything] (e.g. [traffic.peak_trough_drop_pct] or
+        # [traffic.peak_trough_drop_pct]%)
+        # Use a plain f-string for the replacement pattern so {path} is interpolated.
+        escaped = re.escape(path)
+        html = re.sub(rf"\[{escaped}(?:\.[^\]]+)?\]", value, html)
+
+    return html
 
 
 def _strip_nodata_artifacts(html: str) -> str:
@@ -2276,16 +2577,50 @@ def validate_html_balance(html: str) -> tuple[bool, list[str]]:
         return False, ["empty html"]
     problems = []
     stack = []  # list of (tag_name, offset_in_html)
+    _STRUCTURAL = {"html", "body", "head"}
     void_tags = {
         "area", "base", "br", "col", "embed", "hr", "img", "input",
         "link", "meta", "param", "source", "track", "wbr",
+    }
+    # Tags that browsers tolerate being unclosed (HTML5 spec explicitly
+    # permits omitting the end tag for these). Treat them as effectively
+    # self-closing for the purpose of balance validation. BUG-R124
+    # 2026-09-15: this fixes the most common LLM failure mode where the
+    # model emits <p>...</section> without closing </p> first.
+    # Keep this set conservative — we still want to catch truly broken
+    # structures like an unclosed <html>. Browser actually does tolerate
+    # <p>, <li>, <tr>/<td>/<th>, <section>, <div>, and headings being
+    # left open because the next sibling implicitly closes them.
+    _HTML5_OPTIONAL_END = {
+        "p", "li", "tr", "td", "th", "dt", "dd",
+        "rb", "rp", "rt", "rtc", "option", "thead", "tbody", "tfoot",
+        "caption", "colgroup",
+    }
+    # Block-level elements browsers auto-close when a new block element
+    # opens. Including these would mask real bugs (e.g. an unclosed
+    # <section> wrapping the rest of the document), so we leave them
+    # OUT of _HTML5_OPTIONAL_END. Instead, the post-processing in
+    # generate_report_html will AUTO-CLOSE them by re-running the
+    # scanner and emitting closing tags.
+    _BROWSER_AUTO_CLOSE = {
+        "section", "div", "article", "aside", "header", "footer",
+        "nav", "main", "figure", "figcaption", "details", "summary",
+        "h1", "h2", "h3", "h4", "h5", "h6",
     }
     tag_re = re.compile(
         r"<!--.*?-->|<!DOCTYPE[^>]*>|"
         r"<\s*(?P<close>/)?\s*(?P<tag>[a-zA-Z][a-zA-Z0-9:-]*)(?:\s[^<>]*?)?\s*(?P<self>/)?\s*>",
         re.DOTALL,
     )
-    for match in tag_re.finditer(html):
+    # Strip base64 BEFORE scanning (BUG-R120 2026-09-15): inline base64
+    # data may contain </body></html> sequences that would otherwise
+    # be reported as mismatches.
+    _STRIP_BASE64_RE = re.compile(
+        r'<img\b[^>]*?src="data:image/[^"]*;base64,[^"]*"\s*/?>',
+        re.DOTALL,
+    )
+    html_for_scan = _STRIP_BASE64_RE.sub("[traffic chart placeholder]", html)
+    for match in tag_re.finditer(html_for_scan):
         # Skip comments / DOCTYPE — they don't enter the stack.
         if match.group(0).startswith("<!"):
             continue
@@ -2293,6 +2628,11 @@ def validate_html_balance(html: str) -> tuple[bool, list[str]]:
         is_self_close = match.group("self") == "/"
         tag = match.group("tag").lower()
         if tag in void_tags:
+            continue
+        # Structural tags are framework tags — never count them as
+        # mismatches (BUG-R120 2026-09-15). LLMs output them in
+        # arbitrary order and that doesn't indicate real malformation.
+        if tag in _STRUCTURAL:
             continue
         if is_close:
             # Find the matching opener; if missing, count as mismatch.
@@ -2311,13 +2651,20 @@ def validate_html_balance(html: str) -> tuple[bool, list[str]]:
                         )
                     break
             else:
+                # If the surplus close is for an HTML5-optional-end tag,
+                # silently drop it (browser would too).
+                if tag in _HTML5_OPTIONAL_END:
+                    continue
                 problems.append(
                     f"mismatched </{tag}> at offset {match.start()}"
                 )
         elif not is_self_close:
             stack.append((tag, match.start()))
-    # Anything left on the stack is an unclosed tag.
+    # Anything left on the stack is an unclosed tag — but ignore tags that
+    # HTML5 spec considers optional-end. BUG-R124 2026-09-15.
     for tag, offset in stack:
+        if tag in _HTML5_OPTIONAL_END:
+            continue
         problems.append(f"unclosed <{tag}> at offset {offset}")
     return (len(problems) == 0), problems
 
@@ -2588,6 +2935,13 @@ def render_fallback_html_for_agent(self, asn: str, start_time: str, end_time: st
 
     traffic_verdict = (traffic_summary.get("anomaly_count", 0) or 0) if isinstance(traffic_summary, dict) else 0
     traffic_pct = traffic_summary.get("percent_change", "n/a") if isinstance(traffic_summary, dict) else "n/a"
+    # max_severity was promoted to the blackboard top level by traffic_agent.py.
+    # Fall back to inspecting the anomalies list if not present.
+    traffic_max_severity = traffic_summary.get("max_severity") if isinstance(traffic_summary, dict) else None
+    if not traffic_max_severity:
+        from agents.traffic_agent import _to_canonical_severity
+        anomalies = traffic_summary.get("anomalies", []) if isinstance(traffic_summary, dict) else []
+        traffic_max_severity = _to_canonical_severity(anomalies) if anomalies else "n/a"
 
     # Build top hijacks table for the fallback so the report is actually
     # informative even when the LLM call times out.
@@ -2701,6 +3055,7 @@ rendered directly from the analysis payload.
 <div class="metric"><div class="v">{routing_confidence}</div><div class="l">Routing Confidence</div></div>
 <div class="metric"><div class="v">{traffic_verdict}</div><div class="l">Traffic Anomalies</div></div>
 <div class="metric"><div class="v">{traffic_pct}</div><div class="l">Traffic % Change</div></div>
+<div class="metric"><div class="v">{traffic_max_severity}</div><div class="l">Max Severity</div></div>
 
 <h2>3. Traffic Anomalies</h2>
 <table>
@@ -3224,6 +3579,23 @@ def generate_report_html(
         except Exception as _ie:
             logger.debug(f"traffic plot base64 derivation failed: {_ie}")
 
+    # Post-process: substitute literal [field.path] citation markers that the
+    # LLM leaves in the HTML output. The workflow path's `_generate_report_html`
+    # also runs this — the standalone entry point must do the same so callers
+    # like `tools/tool_implementations._generate_report` see resolved values
+    # rather than literal "[traffic.peak_trough_drop_pct]" / "[traffic.max_severity]"
+    # tokens. Without this the report shows bracket-encoded field paths verbatim.
+    try:
+        html = _substitute_field_references(
+            html,
+            traffic_result or {},
+            routing_result or {},
+            reasoning_result or {},
+            traffic_anomaly_window,
+        )
+    except Exception as _sf_err:
+        logger.debug(f"_substitute_field_references failed: {_sf_err}")
+
     # Auto-close truncated documents so downstream viewers always see a
     # complete file even when the LLM ran out of output tokens mid-`<html>`.
     if html and _re.search(r"<html\b", html, _re.IGNORECASE) and \
@@ -3234,26 +3606,36 @@ def generate_report_html(
         html = "<!DOCTYPE html>\n" + html.lstrip()
 
     # ── Final balance validation ───────────────────────────────────────────
-    # Mirror the workflow path: if the document is still unbalanced after
-    # all repairs, fall back to the deterministic HTML renderer instead of
-    # writing a corrupt report (BUG-R117 follow-up).
+    # If the document is unbalanced, attempt ONE auto-close pass to recover
+    # before giving up. The auto-close iterates through the same scanner
+    # and appends </body></html> if the doc ends mid-stream, AND it
+    # silently inserts missing closing tags for browser-auto-close blocks
+    # like <div>, <section>, <h1>. BUG-R125 2026-09-15.
     if html:
         ok, problems = validate_html_balance(html)
         if not ok:
-            logger.warning(
-                f"[generate_report_html] LLM-driven report failed balance "
-                f"validation after repair; rendering deterministic fallback. "
-                f"problems={problems[:3]}"
+            logger.info(
+                f"[generate_report_html] First balance check failed "
+                f"(problems={problems[:3]}); attempting auto-close recovery."
             )
-            return render_fallback_html_for_standalone(
-                asn=str(asn),
-                start_time=str(start_time),
-                end_time=str(end_time),
-                traffic_result=traffic_result or {},
-                routing_result=routing_result or {},
-                reasoning_result=reasoning_result or {},
-                output_dir=output_dir,
-            )
+            html = _auto_close_blocks_in_html(html)
+            ok, problems = validate_html_balance(html)
+            if not ok:
+                # Last resort: deterministic fallback.
+                logger.warning(
+                    f"[generate_report_html] LLM-driven report failed balance "
+                    f"validation after auto-close; rendering deterministic fallback. "
+                    f"remaining_problems={problems[:3]}"
+                )
+                return render_fallback_html_for_standalone(
+                    asn=str(asn),
+                    start_time=str(start_time),
+                    end_time=str(end_time),
+                    traffic_result=traffic_result or {},
+                    routing_result=routing_result or {},
+                    reasoning_result=reasoning_result or {},
+                    output_dir=output_dir,
+                )
 
     if not html.startswith("<"):
         html = f"<!DOCTYPE html><html><body><pre>{html}</pre></body></html>"
@@ -3306,6 +3688,13 @@ def render_fallback_html_for_standalone(
 
     anomaly_count = traffic_summary.get("anomaly_count", 0) if isinstance(traffic_summary, dict) else 0
     pct = traffic_summary.get("percent_change", "n/a") if isinstance(traffic_summary, dict) else "n/a"
+    # max_severity was promoted to the blackboard top level by traffic_agent.py.
+    # Fall back to inspecting the anomalies list if not present.
+    traffic_max_severity = traffic_summary.get("max_severity") if isinstance(traffic_summary, dict) else None
+    if not traffic_max_severity:
+        from agents.traffic_agent import _to_canonical_severity
+        anomalies = traffic_summary.get("anomalies", []) if isinstance(traffic_summary, dict) else []
+        traffic_max_severity = _to_canonical_severity(anomalies) if anomalies else "n/a"
 
     def count_events(*keys):
         for k in keys:
@@ -3409,6 +3798,7 @@ is preserved below.</div>
 <h2>Headline Metrics</h2>
 <div class="metric"><div class="k">Traffic anomalies</div><div class="v">{anomaly_count}</div></div>
 <div class="metric"><div class="k">Traffic %% change</div><div class="v">{pct}</div></div>
+<div class="metric"><div class="k">Max severity</div><div class="v">{traffic_max_severity}</div></div>
 <div class="metric"><div class="k">Hijacks observed</div><div class="v">{hijack_count}</div></div>
 <div class="metric"><div class="k">Route leaks</div><div class="v">{leak_count}</div></div>
 <div class="metric"><div class="k">Outage suspected</div><div class="v">{outage_suspected}</div></div>
