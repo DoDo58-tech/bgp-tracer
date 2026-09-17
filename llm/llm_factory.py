@@ -1101,6 +1101,15 @@ class OpenAICompatibleLLM(LLM):
             raise
 
     def stream_chat(self, messages, **kwargs):
+        # Budget tracker guard (entry) — check rolling-window budget
+        # before opening the stream so we don't waste a request slot.
+        # Same logic as complete() / chat(); see _BudgetTracker for details.
+        from llm.llm_factory import get_budget_tracker, BudgetExhausted
+        try:
+            get_budget_tracker().check_and_record()
+        except BudgetExhausted:
+            raise
+
         try:
             openai_messages = []
             for msg in messages:
