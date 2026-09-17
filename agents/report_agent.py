@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from agents.core import Agent, AgentState, TaskResult
 from agents.correlation_analyzer import analyze_temporal_correlation, parse_timestamp
-from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REPORT, _extract_message_text
+from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REPORT, _extract_message_text, BudgetExhausted
 from config import (
     MODEL, API_KEY, BASE_URL,
     REPORT_LLM_TIMEOUT_S as _CONFIG_REPORT_LLM_TIMEOUT_S,
@@ -1335,6 +1335,34 @@ class ReportAgent(Agent):
             await self.bb.write("report", "correlation_analysis", correlation_analysis)
             self.state = AgentState.DONE
             return TaskResult(success=True, data={"html": html}, agent=self.name)
+
+        except BudgetExhausted as e:
+            # Budget exhaustion means the rolling-window quota is depleted.
+            # Retrying is useless; render the deterministic fallback so the
+            # chief_agent still gets a result. Mark the reason so callers
+            # can distinguish this from other failures.
+            logger.warning(
+                f"[ReportAgent] LLM budget exhausted ({e}); "
+                "rendering deterministic fallback HTML so chief_agent gets a result."
+            )
+            if not self.should_use_fallback():
+                await self.bb.write("report", "used_fallback", False)
+                await self.bb.write("report", "fallback_reason", f"budget_exhausted: {e}")
+                return self.report_fallback_disabled(f"budget_exhausted: {e}")
+            fallback_html = self._render_fallback_html(
+                asn=str(asn),
+                start_time=str(start_time),
+                end_time=str(end_time),
+                traffic_result=traffic,
+                routing_result=routing,
+                reasoning_result=reasoning,
+            )
+            await self.bb.write("report", "html", fallback_html)
+            await self.bb.write("report", "success", True)
+            await self.bb.write("report", "used_fallback", True)
+            await self.bb.write("report", "fallback_reason", f"budget_exhausted: {e}")
+            self.state = AgentState.DONE
+            return TaskResult(success=True, data={"html": fallback_html}, agent=self.name)
 
         except Exception as e:
             logger.error(f"ReportAgent failed: {e}")
@@ -4609,12 +4637,17 @@ def generate_report_html(
             err_str = str(llm_err).lower()
             if pool is not None:
                 pool.shutdown(wait=False)
-            is_retryable = any(kw in err_str for kw in [
-                "429", "too many requests", "rate limit",
-                "422", "unprocessable", "service unavailable",
-                "500", "502", "503", "504", "gateway timeout",
-                "connection", "timeout"
-            ])
+            # BudgetExhausted means the rolling-window quota is exhausted;
+            # retrying within the same window is useless — skip to fallback.
+            if isinstance(llm_err, BudgetExhausted):
+                is_retryable = False
+            else:
+                is_retryable = any(kw in err_str for kw in [
+                    "429", "too many requests", "rate limit",
+                    "422", "unprocessable", "service unavailable",
+                    "500", "502", "503", "504", "gateway timeout",
+                    "connection", "timeout"
+                ])
             if is_retryable and attempt < max_retries:
                 wait_s = min(2 ** attempt + 1.0, 30.0)
                 logger.warning(

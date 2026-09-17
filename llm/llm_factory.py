@@ -1,6 +1,7 @@
 import json as _json
 import os
 import time
+from pathlib import Path
 import tiktoken
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core import Settings
@@ -175,14 +176,18 @@ def reset_global_token_counter() -> None:
 #      a threshold (default 3), the next call fails fast with a dedicated
 #      ``LLMRateLimitedError`` so the caller can render the deterministic
 #      fallback HTML instead of hanging on a doomed retry chain.
-#   2. A short cool-off after a 429 hit (default 5s) so we don't hammer
-#      a rate-limited provider. The cool-off decays exponentially on
-#      repeat hits inside the same window.
+#   3. A proactive budget tracker: GLM-5 (sfkey.cn) enforces
+#      ~1000 requests per 5-hour rolling window. We track all calls
+#      with a rolling window and block new calls before the limit is hit.
+#      If the limit IS reached, raise BudgetExhausted instead of wasting
+#      a request slot on a call that will just get a 429.
 #
 # Tunable via env vars:
 #   LLM_429_BREAKER_THRESHOLD (default 3)    consecutive 429s before tripping
 #   LLM_429_BREAKER_WINDOW_S  (default 60)   rolling window length, seconds
 #   LLM_429_COOLDOWN_S        (default 5.0)  base cool-off after a 429
+#   LLM_BUDGET_MAX_CALLS      (default 950)   max calls in budget window (keep 5% headroom)
+#   LLM_BUDGET_WINDOW_S       (default 18000)  rolling window = 5 hours = 18000s
 import threading
 import collections
 
@@ -288,6 +293,190 @@ class _RateLimitBreaker:
 # in this process so a 429 from one tool/call still trips the breaker for
 # every subsequent call until the cool-off elapses.
 _RATE_LIMIT_BREAKER = _RateLimitBreaker()
+
+
+class BudgetExhausted(Exception):
+    """Raised when the LLM request budget (e.g. GLM-5 1000/5h) is exhausted.
+
+    Unlike 429 (which means "back off and retry"), this means "you have
+    used your allocation — stop requesting and report the failure to the caller."
+    """
+    pass
+
+
+class _BudgetTracker:
+    """Rolling-window request budget tracker for API providers with hard
+    per-window quotas (e.g. GLM-5 on sfkey.cn: ~1000 requests / 5 hours).
+
+    Strategy:
+      1. Every LLM call (complete / chat) is recorded with its timestamp.
+      2. Before making a new call, we check:
+         - If window hits ≥ budget max → raise BudgetExhausted
+         - If window hits ≥ budget *warning_fraction → log a WARNING
+      3. Window is rolling (timestamps older than window are dropped).
+      4. If BudgetExhausted is raised, the caller gets a clean failure
+         instead of a useless 429 that wastes a request slot.
+
+    Usage in the calling code::
+
+        budget = get_budget_tracker()
+        budget.check_and_record()
+        # or
+        budget.record_call()  # record after a successful call
+        remaining, total = budget.remaining_budget()
+
+    Tunable via env vars:
+      LLM_BUDGET_MAX_CALLS  (default 950)   max calls in the window (5% headroom)
+      LLM_BUDGET_WINDOW_S   (default 18000) rolling window = 5 hours
+      LLM_BUDGET_WARN_AT    (default 0.80) warning threshold fraction
+      LLM_BUDGET_SHARED_FILE (default empty) — path to a shared file that
+                              persists call timestamps across subprocesses.
+                              When set, the tracker appends new call
+                              timestamps to the file and reads them back
+                              on construction. Used by the 4-mode batch
+                              driver so each chief_agent subprocess
+                              respects the running total.
+
+    Cross-process semantics with LLM_BUDGET_SHARED_FILE:
+      - Each subprocess reads the file at construction (loads all
+        timestamps into the deque).
+      - Each subprocess appends to the file on every call (with flock
+        so concurrent appends don't corrupt).
+      - The deque and file stay in sync within one process; the
+        budget check uses both, taking the larger used count as
+        the source of truth.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._calls: collections.deque[float] = collections.deque()
+        self._warned: bool = False  # only warn once per window
+        self._now_mono = __import__("time").monotonic
+        self._now_wall = __import__("time").time
+        self._shared_path: str = os.environ.get("LLM_BUDGET_SHARED_FILE", "").strip()
+        self._mono_to_wall_offset: float = self._now_wall() - self._now_mono()
+        if self._shared_path:
+            self._load_shared()
+
+    def _load_shared(self) -> None:
+        """Load historical call timestamps from the shared file.
+
+        File format: one timestamp per line (wall-clock seconds).
+        Convert to monotonic seconds so the deque comparison works
+        against the local monotonic clock.
+        """
+        try:
+            p = Path(self._shared_path)
+            if not p.exists():
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.touch()
+                return
+            now_mono = self._now_mono()
+            cutoff_wall = self._now_wall() - float(self._env("BUDGET_WINDOW_S", 18000, float))
+            with open(p, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ts_wall = float(line)
+                        if ts_wall < cutoff_wall:
+                            continue  # outside window
+                        # Convert wall-clock → monotonic for deque storage
+                        ts_mono = now_mono - (self._now_wall() - ts_wall)
+                        self._calls.append(ts_mono)
+                    except ValueError:
+                        pass
+        except Exception:
+            # Don't crash if file is unreadable; budget check will just
+            # be conservative (only count in-process calls).
+            self._calls.clear()
+
+    def _append_shared(self, ts_mono: float) -> None:
+        """Append a monotonic timestamp to the shared file as wall-clock."""
+        if not self._shared_path:
+            return
+        try:
+            ts_wall = self._now_wall() - (self._now_mono() - ts_mono)
+            with open(self._shared_path, "a") as f:
+                f.write(f"{ts_wall:.6f}\n")
+        except Exception:
+            # Don't fail the LLM call just because the budget file
+            # write failed — log silently. The in-process deque is
+            # still accurate.
+            pass
+
+    @staticmethod
+    def _env(key: str, default: float | int, dtype=float) -> float | int:
+        return dtype(os.environ.get(f"LLM_{key}", str(default)))
+
+    def _window_len(self) -> int:
+        now_mono = self._now_mono()
+        window_s = float(self._env("BUDGET_WINDOW_S", 18000, float))
+        cutoff = now_mono - window_s
+        while self._calls and self._calls[0] < cutoff:
+            self._calls.popleft()
+        return len(self._calls)
+
+    def remaining_budget(self) -> tuple[int, int]:
+        """Return (remaining_calls, max_calls)."""
+        used = self._window_len()
+        max_calls = int(self._env("BUDGET_MAX_CALLS", 950, int))
+        return max(0, max_calls - used), max_calls
+
+    def check_and_record(self) -> None:
+        """Check budget; if OK, record this call. Raises BudgetExhausted."""
+        used = self._window_len()
+        max_calls = int(self._env("BUDGET_MAX_CALLS", 950, int))
+        warn_at = float(self._env("BUDGET_WARN_AT", 0.80, float))
+        remaining = max(0, max_calls - used)
+
+        if used >= max_calls:
+            raise BudgetExhausted(
+                f"LLM budget exhausted: {used}/{max_calls} calls used in the "
+                f"{self._env('BUDGET_WINDOW_S', 18000, int)}s window. "
+                f"Increase LLM_BUDGET_MAX_CALLS or wait for the window to rotate."
+            )
+
+        if not self._warned and used >= int(max_calls * warn_at):
+            self._warned = True
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"LLM budget at {used}/{max_calls} calls "
+                f"({100 * used / max_calls:.0f}% used, {remaining} remaining). "
+                f"Current provider: GLM-5 / sfkey.cn (1000/5h). "
+                f"Remaining capacity for ~{remaining} more LLM calls before BudgetExhausted."
+            )
+
+        # Record this call
+        with self._lock:
+            ts_mono = self._now_mono()
+            self._calls.append(ts_mono)
+            self._append_shared(ts_mono)
+            self._warned = False  # reset warning flag when window rolls
+
+    def record_call(self) -> None:
+        """Record a call (for callers who want to call separately from check)."""
+        with self._lock:
+            ts_mono = self._now_mono()
+            self._calls.append(ts_mono)
+            self._append_shared(ts_mono)
+            self._warned = False
+
+    def reset(self) -> None:
+        """Clear all records (admin / test helper)."""
+        with self._lock:
+            self._calls.clear()
+            self._warned = False
+
+
+_BUDGET_TRACKER = _BudgetTracker()
+
+
+def get_budget_tracker() -> _BudgetTracker:
+    """Return the process-wide budget tracker singleton."""
+    return _BUDGET_TRACKER
 
 
 def get_rate_limit_breaker() -> _RateLimitBreaker:
@@ -583,6 +772,15 @@ class OpenAICompatibleLLM(LLM):
         orchestration timeout.
         """
         from llama_index.core.base.llms.types import CompletionResponse
+        # ── Budget tracker guard (entry) ───────────────────────────────
+        # Check the rolling-window budget BEFORE attempting the call.
+        # This prevents wasted request slots when the GLM-5 1000/5h limit is hit.
+        from llm.llm_factory import get_budget_tracker, BudgetExhausted
+        try:
+            get_budget_tracker().check_and_record()
+        except BudgetExhausted:
+            raise
+
 
         # ── Circuit breaker guard (entry) ─────────────────────────────────
         # Fail fast before doing any work if we've been rate-limited
@@ -727,6 +925,15 @@ class OpenAICompatibleLLM(LLM):
     def stream_complete(self, prompt, formatted=False, **kwargs):
         # Bug fix 2026-09-14 (BUG-R200): check the rate-limit circuit
         # breaker on entry so streaming calls fail fast too.
+        # ── Budget tracker guard (entry) ───────────────────────────────
+        # Check the rolling-window budget BEFORE attempting the call.
+        # This prevents wasted request slots when the GLM-5 1000/5h limit is hit.
+        from llm.llm_factory import get_budget_tracker, BudgetExhausted
+        try:
+            get_budget_tracker().check_and_record()
+        except BudgetExhausted:
+            raise
+
         self._breaker_guard()
         try:
             stream = self.client.chat.completions.create(
@@ -774,6 +981,15 @@ class OpenAICompatibleLLM(LLM):
     def chat(self, messages, **kwargs):
         # Bug fix 2026-09-14 (BUG-R200): check the rate-limit circuit
         # breaker on entry so non-streaming chat calls fail fast too.
+        # ── Budget tracker guard (entry) ───────────────────────────────
+        # Check the rolling-window budget BEFORE attempting the call.
+        # This prevents wasted request slots when the GLM-5 1000/5h limit is hit.
+        from llm.llm_factory import get_budget_tracker, BudgetExhausted
+        try:
+            get_budget_tracker().check_and_record()
+        except BudgetExhausted:
+            raise
+
         self._breaker_guard()
         try:
             openai_messages = []

@@ -126,6 +126,10 @@ def run_mode(event: dict, mode_name: str, mode_flag: str, enhanced: bool,
         cmd.append("--enhanced")
 
     env = os.environ.copy()
+    # Propagate the shared-file budget so subprocesses coordinate on the
+    # same rolling-window budget (default location: logs/budget.tsv).
+    if not os.environ.get("LLM_BUDGET_SHARED_FILE"):
+        env["LLM_BUDGET_SHARED_FILE"] = str(LOGS_DIR / "budget.tsv")
     env.update({
         "BGP_TRACER_ENV_FILE": ".env",
         # Honour whatever REPORT_REQUIRE_LLM the caller sets in the parent
@@ -298,6 +302,41 @@ def run_mode(event: dict, mode_name: str, mode_flag: str, enhanced: bool,
     return result
 
 
+def check_budget_or_exit():
+    """Check the LLM budget before each event. If exhausted, abort the batch.
+
+    Uses the shared-file budget tracker so the batch driver sees how
+    many calls prior subprocesses (chief_agent runs) have already made
+    in this rolling window. Without this, each subprocess starts at
+    budget=0 and the in-subprocess check is useless for batch coordination.
+
+    Set LLM_BUDGET_SHARED_FILE to a writable path to enable cross-process
+    budget coordination; otherwise the check is per-process only.
+
+    Exits with code 78 (EX_CONFIG) so callers can distinguish budget stop
+    from other errors.
+    """
+    shared = os.environ.get("LLM_BUDGET_SHARED_FILE", "").strip()
+    if not shared:
+        # No shared file configured: only the current process's budget is
+        # visible to this check. Still useful as a defensive gate.
+        from llm.llm_factory import get_budget_tracker
+        rem, total = get_budget_tracker().remaining_budget()
+    else:
+        from llm.llm_factory import get_budget_tracker
+        get_budget_tracker()  # initialise (will load shared file)
+        rem, total = get_budget_tracker().remaining_budget()
+    if rem <= 0:
+        print(f"\n[budget_guard] LLM budget exhausted (0/{total} remaining).")
+        print("[budget_guard] Aborting batch — remaining events would just fail.")
+        print("[budget_guard] Wait ~5 hours for the rolling window to rotate,")
+        print("[budget_guard] or raise LLM_BUDGET_MAX_CALLS to override.")
+        sys.exit(78)
+    if rem <= 5:
+        print(f"[budget_guard] WARNING: only {rem}/{total} LLM calls remaining.")
+        print(f"[budget_guard] Batch may abort before all events complete.")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--events", nargs="*", help="Specific event_ids to run (default: all)")
@@ -340,7 +379,11 @@ def main():
                 rec = json.loads(line)
                 if (rec.get("exit_code") in (124, -9, 137)
                         or rec.get("html_report_path") is None
-                        and rec.get("elapsed_seconds", 0) > MODE_TIMEOUT * 0.95):
+                        and rec.get("elapsed_seconds", 0) > MODE_TIMEOUT * 0.95
+                        # Skip events that exhausted the LLM budget so we don't
+                        # retry them in a fresh batch (the budget only refills
+                        # when the rolling window rotates).
+                        or "budget_exhausted" in str(rec.get("fallback_reason", "")).lower()):
                     skip_set.add((rec["event_id"], rec["mode"]))
         except Exception:
             continue
@@ -394,6 +437,13 @@ def main():
                     results_log.write(json.dumps(skip_rec, ensure_ascii=False) + "\n")
                 results_log.flush()
                 continue
+
+            # ── Budget guard ─────────────────────────────────────────────
+            # Check the LLM budget before kicking off another event.
+            # If we're out of budget, no point continuing — every event
+            # would just emit a fallback report.
+            check_budget_or_exit()
+
             print(f"\n[{ev_idx}/{len(events)}] {event['event_id']} "
                   f"({event['event_type']}) {event['start_time']} → {event['end_time']}")
             ev_log_dir = batch_log_dir / event["event_id"]
