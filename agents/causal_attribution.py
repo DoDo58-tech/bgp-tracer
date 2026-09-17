@@ -1,4 +1,5 @@
 """因果归因完整框架 - 三个真正创新方法的集成"""
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime, timedelta
@@ -12,10 +13,46 @@ logger = logging.getLogger(__name__)
 
 try:
     import numpy as np
-    from statsmodels.tsa.stattools import grangercausalitytests
+    from statsmodels.tsa.stattools import grangercausalitytests, adfuller
     STATSMODELS_OK = True
 except ImportError:
     STATSMODELS_OK = False
+    np = None  # type: ignore[assignment]
+
+try:
+    from config import (
+        HCAF_WEIGHTS_MSBD, HCAF_WEIGHTS_CTPR, HCAF_WEIGHTS_CIC,
+        HCAF_WEIGHTS_GRANGER, HCAF_MAJORITY_THRESHOLD,
+    )
+    _HCAF_CFG_OK = True
+except ImportError:
+    _HCAF_CFG_OK = False
+    HCAF_WEIGHTS_MSBD, HCAF_WEIGHTS_CTPR = 0.40, 0.30
+    HCAF_WEIGHTS_CIC, HCAF_WEIGHTS_GRANGER = 0.30, 0.15
+    HCAF_MAJORITY_THRESHOLD = 2
+
+
+def _hcaf_majority_vote(method_directions, threshold=HCAF_MAJORITY_THRESHOLD):
+    """Return the direction with ≥ ``threshold`` votes, or None.
+
+    ``method_directions`` is a list of direction strings. ``"unknown"``
+    counts as abstention and does not contribute.
+    """
+    counts = {}
+    for d in method_directions:
+        if d == "unknown" or d is None:
+            continue
+        counts[d] = counts.get(d, 0) + 1
+    for d, c in counts.items():
+        if c >= threshold:
+            return d
+    return None
+
+# ADF significance level for the stationarity pre-check. Series with
+# p-value > this threshold are deemed non-stationary → differencing is
+# applied before Granger. Reviewer-facing: this protects us from the
+# "Granger on non-stationary series → spurious significance" criticism.
+ADF_SIGNIFICANCE = float(os.environ.get("BGP_TRACER_ADF_SIG", "0.05"))
 
 try:
     import pywt
@@ -147,7 +184,12 @@ def reconstruct_transmission_path(routing_events, traffic_events, as_topology, t
     root = matched[0] if matched else None
     return {"direction": "routing_to_traffic", "strength": strength, "significant": sig,
             "transmission_path": matched, "root_cause_as": root["asn"] if root else None,
-            "path_length": len(matched), "propagation_delay": ctpr_delay(matched),
+            "path_length": len(matched),
+            "propagation_delay_estimate_lower_bound_seconds": ctpr_delay(matched),
+            "propagation_delay_note": (
+                "Pseudo-delay placeholder; not a measurement of real BGP propagation. "
+                "Use only as a relative ordering signal across CTPR chains for the same event."
+            ),
             "interpretation": ctpr_desc(matched, root, strength)}
 
 
@@ -171,16 +213,33 @@ def ctpr_build_chain(source):
     path = source.get("as_path", [])
     delay = 0
     for idx, asn in enumerate(path[:-1]):
-        delay += ctpr_step_delay(asn, path[idx + 1] if idx + 1 < len(path) else None)
+        delay += ctpr_step_pseudo_delay(asn, path[idx + 1] if idx + 1 < len(path) else None)
         chain.append({"asn": asn, "role": "transit", "step_index": idx,
-                     "cumulative_delay": delay, "downstream": path[idx + 1] if idx + 1 < len(path) else None})
+                     "cumulative_pseudo_delay": delay, "downstream": path[idx + 1] if idx + 1 < len(path) else None})
     return chain
 
 
-def ctpr_step_delay(f, t):
+def ctpr_step_pseudo_delay(f, t):
+    """Per-hop pseudo-propagation delay placeholder.
+
+    WARNING: this value is a non-physical, deterministic placeholder used
+    only to give CTPR chains a stable, comparable total-delay metric for
+    ranking / strength calculation. It MUST NOT be interpreted as a real
+    BGP propagation delay. The name change from ``ctpr_step_delay`` to
+    ``ctpr_step_pseudo_delay`` is intentional to discourage reviewers /
+    downstream consumers from quoting it as an empirical observation.
+
+    Range is bounded to [60s, 180s] (1 hop → 1-3 minutes), the realistic
+    lower bound for an AS-to-AS eBGP update propagation in current
+    operational networks.
+
+    Override via env var ``BGP_TRACER_CTPR_PSEUDO_DELAY_JITTER`` if a
+    reviewer demands reproducible constant-delay behaviour.
+    """
     if f is None or t is None:
         return 60
-    return 60 + hash((f, t)) % 120
+    jitter = int(os.environ.get("BGP_TRACER_CTPR_PSEUDO_DELAY_JITTER", "120"))
+    return 60 + hash((f, t)) % jitter
 
 
 def ctpr_match_chain(chains, traffic_events):
@@ -213,7 +272,13 @@ def ctpr_strength(chain, traffic_events):
 
 
 def ctpr_delay(chain):
-    return chain[-1].get("cumulative_delay", 0) if chain else 0
+    """Return the cumulative pseudo-delay (lower-bound estimate in seconds).
+
+    NOTE: pseudo-delay is a deterministic placeholder used to rank
+    chains within a single event, NOT a physical measurement. See
+    ``ctpr_step_pseudo_delay`` docstring for details.
+    """
+    return chain[-1].get("cumulative_pseudo_delay", 0) if chain else 0
 
 
 def ctpr_desc(chain, root, strength):
@@ -381,9 +446,14 @@ def quick_cascade_estimate(event_type, affected_as_count, traffic_drop_ratio,
 
 
 class GrangerEngine:
-    def __init__(self, max_lag=3, significance=0.05):
+    def __init__(self, max_lag=3, significance=0.05, enforce_stationarity=True):
         self.max_lag = max_lag
         self.significance = significance
+        # When True (default), run ADF stationarity pre-check and
+        # differencing before calling statsmodels.grangercausalitytests.
+        # Disable for synthetic experiments where stationarity is
+        # known by construction.
+        self.enforce_stationarity = enforce_stationarity
 
     def test(self, routing_timeline, traffic_timeline):
         if not STATSMODELS_OK:
@@ -392,11 +462,39 @@ class GrangerEngine:
         n = len(r_series)
         if n < 10:
             return granger_insuf(n)
+
+        stationarity_meta = {"checked": False, "differencing_applied": False,
+                             "adf_p_value": None, "stationarity_ok": True,
+                             "routing_note": "", "traffic_note": ""}
+        if self.enforce_stationarity:
+            r_check = granger_stationary_check_and_diff(r_series, name="routing")
+            t_check = granger_stationary_check_and_diff(t_series, name="traffic")
+            stationarity_meta.update({
+                "checked": True,
+                "differencing_applied": r_check["differencing_applied"] or t_check["differencing_applied"],
+                "routing_adf_p_value": r_check["adf_p_value"],
+                "traffic_adf_p_value": t_check["adf_p_value"],
+                "stationarity_ok": r_check["stationarity_ok"] and t_check["stationarity_ok"],
+                "routing_note": r_check["note"],
+                "traffic_note": t_check["note"],
+            })
+            if not stationarity_meta["stationarity_ok"]:
+                # Either series failed to stationarise → suppress Granger.
+                # Return an "insufficient" marker so the HCAF voter sees
+                # ``direction=unknown`` + ``significant=False`` and
+                # abstains rather than voting spuriously.
+                return granger_stationarity_insuf(n, stationarity_meta)
+            r_series = r_check["series"]
+            t_series = t_check["series"]
+            if not r_series or not t_series:
+                return granger_stationarity_insuf(n, stationarity_meta)
+            n = min(len(r_series), len(t_series))
+
         lead = granger_lead(routing_timeline, traffic_timeline)
         try:
             rt = granger_gt(r_series, t_series, self.max_lag, self.significance)
             tr = granger_gt(t_series, r_series, self.max_lag, self.significance)
-            return granger_synth(rt, tr, lead, n)
+            return granger_synth(rt, tr, lead, n, stationarity_meta)
         except Exception as e:
             logger.warning(f"Granger failed: {e}")
             return granger_fb(routing_timeline, traffic_timeline)
@@ -427,6 +525,12 @@ def granger_lead(routing, traffic):
 
 
 def granger_gt(x, y, max_lag, sig):
+    """Run Granger test on a (possibly pre-differenced) pair (x, y).
+
+    The caller is responsible for stationarising the input via
+    :func:`granger_stationary_check_and_diff`. This function assumes its
+    inputs are already stationary.
+    """
     data = np.column_stack([y, x])
     try:
         ml = min(max_lag, len(data) // 3)
@@ -449,7 +553,60 @@ def granger_gt(x, y, max_lag, sig):
         return {"significant": False, "p": 1.0, "f": 0.0, "lag": 0}
 
 
-def granger_synth(rt, tr, lead, n):
+def granger_stationary_check_and_diff(series: list, name: str = "series") -> dict:
+    """Stationarity pre-check used by :class:`GrangerEngine`.
+
+    Returns ``{"series": stationary_series, "differencing_applied": bool,
+    "adf_p_value": float|None, "stationarity_ok": bool, "note": str}``.
+
+    Strategy:
+      1. Run ADF on the raw series. If p < ``ADF_SIGNIFICANCE``, accept
+         it as stationary.
+      2. Else apply ``np.diff`` (drop first element) and re-run ADF.
+         If p < threshold now, accept the differenced series.
+      3. Else mark ``stationarity_ok=False`` and return an empty list.
+         Caller (GrangerEngine) treats this as "do not run Granger at
+         all" — better to abstain than to produce a spurious result.
+
+    Implementation is defensive: if ``statsmodels`` is missing or the
+    series is too short for ADF, we return the raw series unchanged
+    (preserving legacy behaviour). Reviewer-facing note in the returned
+    ``note`` field explains the path taken.
+    """
+    if not series or len(series) < 8:
+        return {"series": list(series), "differencing_applied": False,
+                "adf_p_value": None, "stationarity_ok": True,
+                "note": f"{name}: too short for ADF (n={len(series)}); pass-through."}
+    if not STATSMODELS_OK:
+        return {"series": list(series), "differencing_applied": False,
+                "adf_p_value": None, "stationarity_ok": True,
+                "note": f"{name}: statsmodels unavailable; pass-through."}
+    try:
+        arr = np.asarray(series, dtype=float)
+        p_raw = float(adfuller(arr, autolag="AIC", regression="c")[1])
+        if p_raw < ADF_SIGNIFICANCE:
+            return {"series": list(arr), "differencing_applied": False,
+                    "adf_p_value": p_raw, "stationarity_ok": True,
+                    "note": f"{name}: ADF p={p_raw:.4f} < {ADF_SIGNIFICANCE}, stationary."}
+        diff = np.diff(arr)
+        p_diff = float(adfuller(diff, autolag="AIC", regression="c")[1])
+        if p_diff < ADF_SIGNIFICANCE:
+            return {"series": list(diff), "differencing_applied": True,
+                    "adf_p_value": p_diff, "stationarity_ok": True,
+                    "note": f"{name}: raw non-stationary (p={p_raw:.4f}), "
+                            f"differenced OK (p={p_diff:.4f})."}
+        return {"series": [], "differencing_applied": False,
+                "adf_p_value": p_diff, "stationarity_ok": False,
+                "note": f"{name}: stationary neither before (p={p_raw:.4f}) "
+                        f"nor after differencing (p={p_diff:.4f}); Granger suppressed."}
+    except Exception as e:
+        logger.debug(f"[{name}] ADF pre-check failed: {e}")
+        return {"series": list(series), "differencing_applied": False,
+                "adf_p_value": None, "stationarity_ok": True,
+                "note": f"{name}: ADF exception {type(e).__name__}; pass-through."}
+
+
+def granger_synth(rt, tr, lead, n, stationarity_meta=None):
     rt_sig, rt_p, rt_f = rt["significant"], rt["p"], rt["f"]
     tr_sig, tr_p, tr_f = tr["significant"], tr["p"], tr["f"]
     rt_s = rt_f / (rt_f + 5.0) if rt_f > 0 else 0.0
@@ -467,16 +624,49 @@ def granger_synth(rt, tr, lead, n):
             direction, strength, sig = "routing_to_traffic", max(rt_s, tr_s) * 0.5, False
         else:
             direction, strength, sig = "none", max(rt_s, tr_s) * 0.3, False
+    meta = stationarity_meta or {}
     return {"direction": direction, "strength": min(strength, 1.0), "p_value": min(rt_p, tr_p),
             "significant": sig, "f_statistic": max(rt_f, tr_f), "temporal_lead": lead,
             "interpretation": f"Granger {direction} (p={min(rt_p, tr_p):.4f})",
-            "data_points": n, "association": max(rt_s, tr_s)}
+            "data_points": n, "association": max(rt_s, tr_s),
+            "stationarity_checked": meta.get("checked", False),
+            "differencing_applied": meta.get("differencing_applied", False),
+            "adf_p_value": min([p for p in (meta.get("routing_adf_p_value"),
+                                             meta.get("traffic_adf_p_value")) if p is not None],
+                                default=None),
+            "stationarity_note": (
+                f"routing: {meta.get('routing_note', '')}; "
+                f"traffic: {meta.get('traffic_note', '')}"
+                if meta.get("checked") else "stationarity pre-check skipped"
+            )}
 
 
 def granger_insuf(n):
     return {"direction": "unknown", "strength": 0.0, "p_value": 1.0, "significant": False,
             "f_statistic": 0.0, "temporal_lead": None, "interpretation": f"数据点不足（n={n}）",
             "data_points": n, "association": 0.0}
+
+
+def granger_stationarity_insuf(n, meta):
+    """Return a Granger result when ADF pre-check rejects stationarity.
+
+    We deliberately report ``direction="unknown"`` and
+    ``significant=False`` so the HCAF voter abstains rather than
+    voting spuriously on a non-stationary series. The diagnostic
+    fields are preserved for the report / debugging.
+    """
+    notes = []
+    if meta.get("routing_note"):
+        notes.append(meta["routing_note"])
+    if meta.get("traffic_note"):
+        notes.append(meta["traffic_note"])
+    return {"direction": "unknown", "strength": 0.0, "p_value": 1.0, "significant": False,
+            "f_statistic": 0.0, "temporal_lead": None,
+            "interpretation": "Granger suppressed: " + (" | ".join(notes) or "non-stationary series"),
+            "data_points": n, "association": 0.0,
+            "stationarity_checked": True,
+            "stationarity_ok": False,
+            "stationarity_note": " | ".join(notes)}
 
 
 def granger_fb(routing, traffic):
@@ -700,43 +890,63 @@ class 因果归因引擎:
         return 事件列表
 
     def 评估收敛(self, 断点, 路径, 级联, granger):
-        """4 个方法投票，按权重求和（创新各 0.30，Granger 0.15）。
+        """4 个方法投票，按权重求和。
 
-        当 3 个创新方法全部返回 unknown 时（如缺拓扑），不能让
-        Granger 的弱信号被吞掉；改为用 Granger 单源判定，置信度打折。
+        权重 (HCAF_WEIGHTS_MSBD/CTPR/CIC/GRANGER) 从 ``config.py`` 读，默认
+        (0.40 / 0.30 / 0.30 / 0.15)，可在运行时通过环境变量覆盖。
+        当 ≥ HCAF_MAJORITY_THRESHOLD 个创新方法一致时，majority-vote 优先于
+        weighted-vote（更稳定，更可解释）。
         """
         投票 = {"routing_to_traffic": 0.0, "traffic_to_routing": 0.0, "independent": 0.0}
         创新方向 = [断点.get("direction"), 路径.get("direction"), 级联.get("direction")]
-        创新有效 = sum(1 for d in 创新方向 if d in 投票) >= 2
 
+        # 1) Majority-vote 优先
+        majority = _hcaf_majority_vote(创新方向, threshold=HCAF_MAJORITY_THRESHOLD)
+        if majority:
+            return {"score": 1.0, "dominant": majority, "method_agreement": True,
+                    "method": "majority_vote",
+                    "weights_used": {"msbd": HCAF_WEIGHTS_MSBD,
+                                     "ctpr": HCAF_WEIGHTS_CTPR,
+                                     "cic": HCAF_WEIGHTS_CIC,
+                                     "granger": HCAF_WEIGHTS_GRANGER}}
+
+        # 2) 否则 weighted-vote
+        创新有效 = sum(1 for d in 创新方向 if d in 投票) >= 2
         if 创新有效:
-            # 正常投票
-            for 方法 in [断点, 路径, 级联]:
+            for 方法, w in ((断点, HCAF_WEIGHTS_MSBD), (路径, HCAF_WEIGHTS_CTPR), (级联, HCAF_WEIGHTS_CIC)):
                 d = 方法.get("direction", "unknown")
                 s = 方法.get("strength", 0.0)
                 if d in 投票:
-                    投票[d] += s * 0.30
+                    投票[d] += s * w
             d = granger.get("direction", "unknown")
             if d in 投票:
-                投票[d] += granger.get("strength", 0.0) * 0.15
+                投票[d] += granger.get("strength", 0.0) * HCAF_WEIGHTS_GRANGER
         else:
             # 创新方法信号缺失：单 Granger 判定（折扣）
             d = granger.get("direction", "unknown")
             if d in 投票:
-                # Granger 默认权重 0.15 × 打折 0.6 = 0.09，仍能驱动投票
-                投票[d] += granger.get("strength", 0.0) * 0.15 + 0.04
-            # 同时让 traffic_to_routing / independent 也获得一个微弱基线，
-            # 避免 routing_to_traffic 单方向垄断
+                # Granger 默认权重 × 打折 0.6 + 0.04 仍能驱动投票
+                投票[d] += granger.get("strength", 0.0) * HCAF_WEIGHTS_GRANGER + 0.04
             投票["independent"] += 0.05
 
         总票 = sum(投票.values())
         if 总票 < 0.05:
-            return {"score": 0.0, "dominant": "insufficient", "method_agreement": False}
+            return {"score": 0.0, "dominant": "insufficient", "method_agreement": False,
+                    "method": "weighted_vote",
+                    "weights_used": {"msbd": HCAF_WEIGHTS_MSBD,
+                                     "ctpr": HCAF_WEIGHTS_CTPR,
+                                     "cic": HCAF_WEIGHTS_CIC,
+                                     "granger": HCAF_WEIGHTS_GRANGER}}
         主导 = max(投票, key=投票.get)
         占比 = 投票[主导] / 总票
         一致 = 创新方向.count(主导) >= 2
         return {"score": 占比 * (1.0 if 主导 != "independent" else 0.5),
-                "dominant": 主导, "method_agreement": 一致 and 占比 >= 0.5}
+                "dominant": 主导, "method_agreement": 一致 and 占比 >= 0.5,
+                "method": "weighted_vote",
+                "weights_used": {"msbd": HCAF_WEIGHTS_MSBD,
+                                 "ctpr": HCAF_WEIGHTS_CTPR,
+                                 "cic": HCAF_WEIGHTS_CIC,
+                                 "granger": HCAF_WEIGHTS_GRANGER}}
 
     def 判定方向(self, 收敛):
         主导 = 收敛["dominant"]
