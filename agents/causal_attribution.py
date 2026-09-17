@@ -488,7 +488,17 @@ class GrangerEngine:
             t_series = t_check["series"]
             if not r_series or not t_series:
                 return granger_stationarity_insuf(n, stationarity_meta)
-            n = min(len(r_series), len(t_series))
+            # If differencing was applied to only one series, the two
+            # series can now have different lengths (np.diff drops the
+            # first element). Re-align to the shortest to keep
+            # granger_gt's column_stack happy. (This bug surfaced in
+            # production with leak detection CSVs where one timeline has
+            # more buckets than the other; see
+            # tests/test_hcaf_real_detection.py for the diagnostic.)
+            common_n = min(len(r_series), len(t_series))
+            r_series = r_series[-common_n:]
+            t_series = t_series[-common_n:]
+            n = common_n
 
         lead = granger_lead(routing_timeline, traffic_timeline)
         try:
