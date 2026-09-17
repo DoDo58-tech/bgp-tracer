@@ -668,6 +668,9 @@ def main():
     parser.add_argument("--no-prefer-existing", dest="prefer_existing",
                         action="store_false",
                         help="Force re-run even if existing report found")
+    parser.add_argument("--max-duration-hours", type=float, default=None,
+                        help="Skip events whose duration exceeds this many hours "
+                             "(default: 24 — most events are short BGP windows)")
     parser.set_defaults(prefer_existing=True)
     args = parser.parse_args()
 
@@ -737,6 +740,27 @@ def main():
     report_metrics: dict[str, list[tuple[EventGroundTruth, ReportMetrics]]] = {
         m: [] for m in modes_to_run
     }
+
+    # Apply duration filter
+    if args.max_duration_hours is not None:
+        from datetime import datetime as dt
+        before = len(events)
+        filtered = []
+        for e in events:
+            try:
+                start = dt.fromisoformat(e.start_time.replace("Z", "+00:00").split("+")[0])
+                end = dt.fromisoformat(e.end_time.replace("Z", "+00:00").split("+")[0])
+                dur_h = (end - start).total_seconds() / 3600
+                if dur_h <= args.max_duration_hours:
+                    filtered.append(e)
+                else:
+                    print(f"  [skip long] {e.event_id}: {dur_h:.1f}h > {args.max_duration_hours}h limit")
+            except Exception:
+                filtered.append(e)
+        events = filtered
+        print(f"\n[filter] {before} → {len(events)} events after "
+              f"max_duration={args.max_duration_hours}h")
+        total = len(events) * len(modes_to_run)
 
     # Process each event × mode
     total = len(events) * len(modes_to_run)
