@@ -124,6 +124,11 @@ python chief_agent.py --asn 12479 --start "2024-01-03 14:45" \
 
 Cost: ~2 LLM calls. Safe under 1000/5h. No setup needed.
 
+The budget tracker runs inside `chief_agent.py` and will:
+- Warn once when 80% of budget consumed (still allow the rest).
+- Raise `BudgetExhausted` at 950/1000 → fallback HTML + log message.
+- Never hit the GLM 1000 cap (5% headroom).
+
 ### Recipe 2: 4-mode batch (eval / debugging)
 
 ```bash
@@ -147,11 +152,53 @@ If you want to run the batch even when budget is exhausted
 LLM_BUDGET_MAX_CALLS=9999 python scripts/run_4mode_batch.py
 ```
 
+When the budget runs out mid-batch:
+- The current event completes with fallback HTML (so you get a
+  usable report even when budget is exhausted).
+- The next event aborts with code 78 (EX_CONFIG).
+- `(event, mode)` pairs that hit BudgetExhausted are added to the
+  skip set so re-running the batch in the same window skips them.
+
 ### Recipe 3: Multi-provider key rotation (for higher throughput)
 
 If a single GLM key is insufficient, configure `OPENAI_API_KEY` to a
 comma-separated list and update `setup_llm_settings` to rotate
 between them. (Not yet implemented — see Pending below.)
+
+### Recipe 4: Long-running batch (multiple days)
+
+For batch jobs that span multiple days, the rolling 5h window will
+rotate out old calls automatically. The shared file's rotation logic
+prunes entries older than the window every 50 calls, so the file
+stays bounded at a few KB even after a million LLM calls.
+
+### Recipe 5: Check budget without making an LLM call
+
+```bash
+python -c "
+import os
+os.environ.setdefault('LLM_BUDGET_SHARED_FILE', 'logs/budget.tsv')
+from llm.llm_factory import get_budget_tracker
+rem, total = get_budget_tracker().remaining_budget()
+print(f'Remaining: {rem}/{total} LLM calls in current 5h window')
+"
+```
+
+## Real-world answer to "is 1000/5h enough?"
+
+**Yes for typical use, no for unconditional 4-mode batch over 34 events.**
+
+- **Single event, single mode** (traffic_first): ~2 calls → fits
+  trivially. Run 500 events per 5h no problem.
+- **Single event, react_enhanced** (most expensive): ~12 calls →
+  ~80 events per 5h max.
+- **4-mode batch over 34 events**: ~952 calls → fits once, tight
+  headroom for any retries. A re-run within the same 5h window will
+  fail.
+
+For higher throughput, switch providers or rotate keys. The
+tracker is provider-agnostic — just set `LLM_BUDGET_MAX_CALLS` to
+your provider's per-window limit.
 
 ## Test coverage
 
