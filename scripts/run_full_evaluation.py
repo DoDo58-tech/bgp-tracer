@@ -703,10 +703,14 @@ def main():
             from llm.llm_factory import get_budget_tracker, BudgetExhausted
             budget_tracker = get_budget_tracker()
             remaining = budget_tracker.remaining_budget()
+            # remaining_budget returns (remaining_calls, max_calls)
+            max_calls = remaining[1] if isinstance(remaining, tuple) else 950
+            remaining_n = remaining[0] if isinstance(remaining, tuple) else max_calls
+            used = max_calls - remaining_n
             print(f"\n[BUDGET] Budget tracker active. "
-                  f"Remaining: {remaining}/{budget_tracker.max_calls}")
-            initial_calls_used = budget_tracker.max_calls - remaining
-            if remaining <= 0:
+                  f"Remaining: {remaining_n}/{max_calls} (used={used})")
+            initial_calls_used = used
+            if remaining_n <= 0:
                 print(f"[BUDGET] No budget remaining! Use --max-calls-this-run "
                       f"to override or reset budget via env var.")
                 if not args.max_calls_this_run:
@@ -754,8 +758,12 @@ def main():
             # Check budget before running
             if args.budget_aware and budget_tracker:
                 try:
-                    remaining = budget_tracker.remaining_budget()
-                    if remaining <= 0:
+                    rem = budget_tracker.remaining_budget()
+                    if isinstance(rem, tuple):
+                        rem_n = rem[0]
+                    else:
+                        rem_n = rem
+                    if rem_n <= 0:
                         skipped_budget += 1
                         dr = DetectionResult(
                             event_id=event.event_id, mode=mode_name,
@@ -808,6 +816,17 @@ def main():
             else:
                 dr = run_event(event, mode_name, mode_flag, enhanced, log_subdir,
                                prefer_existing=args.prefer_existing)
+                # Estimate calls used for this run (heuristic: report > 0 = success)
+                # Actual call count is logged in the chief_agent log; we use a
+                # conservative estimate so the run cap is respected.
+                if dr.elapsed_seconds > 0:
+                    if dr.report_is_llm:
+                        # Conservative estimate per mode
+                        call_est = {"traffic_first": 3,
+                                    "traffic_first_enhanced": 15,
+                                    "react": 7,
+                                    "react_enhanced": 21}.get(mode_name, 5)
+                        total_calls_this_run += call_est
             mode_results[mode_name] = dr
             done += 1
 
