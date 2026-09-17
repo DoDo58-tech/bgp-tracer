@@ -20,6 +20,24 @@ from utils.logger import logger
 from utils.helpers import extract_json_object as _extract_json_object
 
 
+def _safe_event_get(event, key, default=None):
+    """Read attribute from a dict OR AnomalyDetail/dataclass; never AttributeError."""
+    if event is None:
+        return default
+    if isinstance(event, dict):
+        return event.get(key, default)
+    if dataclasses.is_dataclass(event):
+        return getattr(event, key, default)
+    # Generic object — try .get, then attribute
+    getter = getattr(event, "get", None)
+    if callable(getter):
+        try:
+            return getter(key, default)
+        except Exception:
+            pass
+    return getattr(event, key, default)
+
+
 # LLM 事件分类器
 
 class LLMIncidentClassifier:
@@ -399,7 +417,7 @@ Assess the severity of this incident based on:
         # 统计唯一前缀
         prefixes = set()
         for event in origin_hijacked + forge_hijacked + leaks:
-            prefix = event.get("prefix")
+            prefix = _safe_event_get(event, "prefix")
             if prefix:
                 prefixes.add(prefix)
         
@@ -697,8 +715,8 @@ Consider timing, intensity, and possible alternative explanations.
             # 构建事件详情（限制数量）
             routing_details = []
             for event in (origin_hijacked + forge_hijacked + leaks)[:3]:
-                ts = event.get("timestamp") or event.get("first_seen", "unknown")
-                prefix = event.get("prefix", "unknown")
+                ts = _safe_event_get(event, "timestamp") or _safe_event_get(event, "first_seen", "unknown")
+                prefix = _safe_event_get(event, "prefix", "unknown")
                 routing_details.append(f"- {ts}: {prefix}")
             
             traffic_timestamps = []

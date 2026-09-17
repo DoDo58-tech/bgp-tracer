@@ -47,7 +47,7 @@ from utils.helpers import extract_json_object
 from utils.logger import logger
 
 # Maximum number of React rounds before forcing termination
-DEFAULT_MAX_ROUNDS = 15
+DEFAULT_MAX_ROUNDS = 8
 
 # Max retries per tool within a single round (when tool returns success=False)
 DEFAULT_MAX_RETRIES = 2
@@ -421,9 +421,66 @@ class ReactAgent:
             bucket["precomputed_routing"] = self.precomputed_routing
             logger.info(f"[ReactAgent] Injected precomputed_routing "
                         f"({len(str(self.precomputed_routing))//1024} KB, run_id={self.run_id[:8]})")
+            # Bug fix: generate_report gates on `analyze_routing` evidence
+            # (success=True plus hijack/leak/outage events). When the caller
+            # already has a precomputed routing result, mirror it under that
+            # key so the report tool's gating check passes without needing
+            # the user to first run the analyze_routing tool.
+            _mirrored_routing = {
+                "success": True,
+                "_from_precomputed": True,
+                "result": {
+                    k: self.precomputed_routing.get(k)
+                    for k in (
+                        "origin_hijacked", "forge_hijacked",
+                        "origin_hijacking", "forge_hijacking",
+                        "route_leaks", "outages",
+                        "mitm_alerts", "leak",
+                    )
+                    if self.precomputed_routing.get(k)
+                },
+            }
+            # If the routing payload nests events under ``hijack`` /
+            # ``leak`` (the workflow_engine shape), unwrap one level.
+            if not _mirrored_routing["result"].get("origin_hijacked"):
+                hij = self.precomputed_routing.get("hijack") or {}
+                leak = self.precomputed_routing.get("leak") or {}
+                for k in ("origin_hijacked", "forge_hijacked",
+                          "origin_hijacking", "forge_hijacking",
+                          "mitm_alerts"):
+                    if hij.get(k):
+                        _mirrored_routing["result"][k] = hij[k]
+                if leak.get("route_leaks"):
+                    _mirrored_routing["result"]["route_leaks"] = leak["route_leaks"]
+            self._evidence["analyze_routing"] = _mirrored_routing
+            bucket["analyze_routing"] = _mirrored_routing
         if self.precomputed_traffic:
             self._evidence["precomputed_traffic"] = self.precomputed_traffic
             bucket["precomputed_traffic"] = self.precomputed_traffic
+            # Mirror under analyze_traffic so generate_report's gating passes.
+            traffic_results = self.precomputed_traffic.get("results") or {}
+            if not traffic_results:
+                # quick_cache shape: top-level fields; wrap into per-asn results.
+                traffic_results = {
+                    str(self.precomputed_traffic.get("asn") or asn): {
+                        "anomalies": (
+                            self.precomputed_traffic.get("anomalies")
+                            or self.precomputed_traffic.get("anomaly_events")
+                            or []
+                        ),
+                        "traffic_plot_path": (
+                            self.precomputed_traffic.get("traffic_plot_path")
+                            or self.precomputed_traffic.get("plot_path")
+                        ),
+                    }
+                }
+            _mirrored_traffic = {
+                "success": True,
+                "_from_precomputed": True,
+                "results": traffic_results,
+            }
+            self._evidence["analyze_traffic"] = _mirrored_traffic
+            bucket["analyze_traffic"] = _mirrored_traffic
 
         # Track routing + traffic results for InvestigationSupervisor auto-trigger
         self._traffic_result: Optional[dict] = None
@@ -542,6 +599,31 @@ class ReactAgent:
                         self._traffic_result = result
                     elif action_name == "analyze_routing":
                         self._routing_result = result
+
+                    # ── Optimization: Early termination when both analyses are done ──
+                    # Bug fix 2026-09-17: previously the ReAct loop kept running
+                    # 5+ rounds calling check_correlation and finally
+                    # generate_report even when the agent already had all the
+                    # evidence it needed. Each round costs ~1 LLM call (3-15s
+                    # per round). For the common "no anomalies detected" path,
+                    # we can detect that traffic + routing are both done and
+                    # short-circuit straight to generate_report, saving 2-4
+                    # round-trips of latency and LLM cost. The agent still has
+                    # the option to continue iterating if it wants — we just
+                    # inject a strong hint into the context to stop.
+                    if (
+                        self._traffic_result is not None
+                        and self._routing_result is not None
+                        and "generate_report" not in self.tools_used
+                        and action_name in ("check_correlation", "analyze_traffic", "analyze_routing")
+                    ):
+                        # Append a hint to stop iterating once both signals are in
+                        context += (
+                            "\n\n[System hint] Both analyze_traffic and analyze_routing are "
+                            "complete. If correlation has already been computed and no further "
+                            "investigation is required, you may call generate_report now to "
+                            "finalize the analysis."
+                        )
 
                     # Auto-trigger InvestigationSupervisor once both traffic + routing are done
                     if (
@@ -695,8 +777,9 @@ class ReactAgent:
 
         # Max rounds reached — generate report from whatever evidence was collected
         logger.warning(f"[ReAct] Max rounds ({self.max_rounds}) reached, forcing report generation")
-        bucket = shared_evidence(self.run_id)
-        if "generate_report" not in self.tools_used and bucket:
+        # Use self._evidence directly (not _SHARED_EVIDENCE which may be empty
+        # when enhanced mode uses session.evidence instead of the global bucket).
+        if "generate_report" not in self.tools_used and self._evidence:
             try:
                 inp = {
                     "asn": _RUN_ASN or None,
@@ -1498,6 +1581,46 @@ Number of auxiliary tools executed: {tool_count}
         if self._blackboard is None:
             logger.debug("[ReactAgent] debate skipped: no blackboard")
             return
+        # Optimization 2026-09-17: skip the 2-round debate entirely when
+        # there are no claims to debate. Debate calls the LLM 2-4 times
+        # (prosecutor, defense, judge per round) — running it on empty data
+        # wastes ~10-30s and produces a "neutral / 0.5 confidence" verdict
+        # that adds nothing to the final report. Detect the empty case by
+        # checking whether any reasoning evidence exists.
+        try:
+            claim_count = 0
+            for sec in ("reasoning", "diagnosis", "evidence"):
+                payload = await self._blackboard.read_section(sec)
+                if not payload:
+                    continue
+                for k, v in payload.items():
+                    if isinstance(v, list):
+                        claim_count += len(v)
+                    elif isinstance(v, dict):
+                        # Nested claims list under .claims / .items
+                        for subk in ("claims", "items", "events"):
+                            sub = v.get(subk) if hasattr(v, "get") else None
+                            if isinstance(sub, list):
+                                claim_count += len(sub)
+            if claim_count == 0:
+                logger.info(
+                    "[ReactAgent] debate skipped: no claims in blackboard "
+                    "(traffic + routing produced no events to debate)"
+                )
+                # Inject a minimal "no findings" verdict so downstream code
+                # that reads debate_outcome still has a stable shape.
+                await self._blackboard.write(
+                    "evidence", "debate_outcome",
+                    {
+                        "winner": "neutral",
+                        "conclusion": "No anomalous claims to debate",
+                        "final_confidence": 0.5,
+                        "skipped_empty_evidence": True,
+                    },
+                )
+                return
+        except Exception as e:
+            logger.debug(f"[ReactAgent] debate skip-check failed: {e}")
         # Make sure config carries asn/start/end so debate agent can read them
         try:
             await self._blackboard.update_section(
@@ -1579,7 +1702,7 @@ Number of auxiliary tools executed: {tool_count}
         falls back to the default `_generate_report` tool.
         """
         try:
-            from agents.enhanced.multi_report import MultiAgentReportAgent
+            from agents.enhanced.multi_report import ReportCoordinator
             from agents.report_agent import analyze_temporal_correlation
 
             rc = getattr(session, "run_context", {}) or {}
@@ -1587,20 +1710,82 @@ Number of auxiliary tools executed: {tool_count}
             routing = self._evidence.get("analyze_routing", {})
             traffic_data = traffic.get("results") or traffic.get("result") or traffic
             routing_data = routing.get("results") or routing.get("result") or routing
+
+            # Optimization 2026-09-17: short-circuit the multi-agent coordinator
+            # when there is nothing to debate / calibrate. Multi-agent runs
+            # 5 specialist LLM calls (TrafficExpert → RoutingExpert →
+            # EvidenceLinker → ConfidenceCalibrator → ReportCoordinator) and
+            # then a synthesizer — totaling 6+ LLM calls just to produce a
+            # "no anomalies" report. When traffic + routing produced zero
+            # events, return None so the caller falls back to the standard
+            # single-call ReportAgent (which already produces an excellent
+            # "no anomaly" report in ~30s instead of ~3 minutes for the
+            # multi-agent pipeline).
+            def _has_events(payload):
+                if not isinstance(payload, dict):
+                    return False
+                # traffic has 'anomalies' / 'anomaly_events' / nested results
+                for k in ("anomalies", "anomaly_events"):
+                    v = payload.get(k)
+                    if isinstance(v, list) and v:
+                        return True
+                results = payload.get("results")
+                if isinstance(results, dict):
+                    for sub in results.values():
+                        if isinstance(sub, dict):
+                            for k in ("anomalies", "anomaly_events",
+                                      "traffic_plot_path", "plot_path"):
+                                v = sub.get(k)
+                                if isinstance(v, list) and v:
+                                    return True
+                                if isinstance(v, str) and v:
+                                    return True
+                # routing has list fields
+                for k in ("origin_hijacked", "forge_hijacked",
+                          "origin_hijacking", "forge_hijacking",
+                          "route_leaks", "outages"):
+                    v = payload.get(k)
+                    if isinstance(v, list) and v:
+                        return True
+                    if isinstance(v, dict) and v:
+                        return True
+                # outage_analysis positive score also counts
+                outage = payload.get("outage_analysis")
+                if isinstance(outage, dict) and (
+                    outage.get("outage_score", 0) > 0
+                    or outage.get("is_outage_suspected") is True
+                ):
+                    return True
+                return False
+
+            traffic_has = _has_events(traffic_data if isinstance(traffic_data, dict) else {})
+            routing_has = _has_events(routing_data if isinstance(routing_data, dict) else {})
+            if not traffic_has and not routing_has:
+                logger.info(
+                    "[ReactAgent] Multi-agent report skipped: no anomalies in "
+                    "traffic + routing (single-call ReportAgent will be used "
+                    "instead). Saves 5 LLM calls."
+                )
+                return None
+
             correlation = analyze_temporal_correlation(
                 traffic_raw=traffic_data,
                 routing_result=routing_data,
                 target_as=rc.get("asn", "unknown"),
             )
 
-            # Bug fix: MultiAgentReportAgent extends Agent whose __init__
-            # requires a `blackboard` argument. Passing self._blackboard
-            # (the run-scoped Blackboard instance set up in ReactAgent.run)
-            # makes the multi-agent pipeline actually execute instead of
-            # raising "missing 1 required positional argument: 'blackboard'"
-            # in the except branch — previously the entire enhanced-report
-            # path silently fell back to the plain generate_report tool.
-            multi = MultiAgentReportAgent(blackboard=self._blackboard)
+            # Bug fix 2026-09-16: MultiAgentReportAgent is an Agent wrapper that
+            # reads data from the Blackboard. Its ``step()`` method calls
+            # ``ReportCoordinator.generate()`` internally. We need the coordinator
+            # directly here (not the agent wrapper) so we can pass traffic/routing
+            # data explicitly. Directly instantiating ``ReportCoordinator`` bypasses
+            # the agent layer and avoids "no attribute 'generate'" AttributeError.
+            from agents.enhanced.multi_report import setup_llm_settings, MODEL, API_KEY, BASE_URL, DEFAULT_TEMP_REPORT
+            multi_llm, _ = setup_llm_settings(
+                model=MODEL, api_key=API_KEY, base_url=BASE_URL,
+                temperature=DEFAULT_TEMP_REPORT, timeout=600.0, max_retries=1,
+            )
+            coordinator = ReportCoordinator(llm=multi_llm, run_id=rc.get("run_id", ""))
             # 在 enhanced 模式下，把辩论结果也作为 reasoning_result 的
             # 优先输入传给多 Agent 报告生成器，让 ConflictResolver /
             # ConfidenceCalibrator 看到辩论结论而不是只有 LLM 单方面分类。
@@ -1616,16 +1801,7 @@ Number of auxiliary tools executed: {tool_count}
                     "debate_winner": debate_outcome.get("winner"),
                     "debate_confidence": debate_outcome.get("final_confidence"),
                 }
-            # Bug fix 2026-09-13 (BUG-R101): this method is now ``async``
-            # so we can directly ``await`` ``multi.generate``. The
-            # previous synchronous version wrapped the coroutine in
-            # ``asyncio.run`` from inside the React loop, which raised
-            # ``RuntimeError: asyncio.run() cannot be called from a
-            # running event loop``; the exception was swallowed by the
-            # surrounding ``except Exception`` and the enhanced-report
-            # path silently fell back to the plain ``generate_report``
-            # tool, defeating the whole point of ``--enhanced``.
-            result = await multi.generate(
+            result = await coordinator.generate(
                 traffic_data=traffic_data,
                 routing_data=routing_data,
                 correlation_analysis=correlation,
@@ -1634,11 +1810,46 @@ Number of auxiliary tools executed: {tool_count}
             )
             if result is None:
                 return None
-            return getattr(result, "report_path", None) or (
-                result.get("report_path") if isinstance(result, dict) else None
+            # Bug fix 2026-09-16: ReportGenerationResult does not carry a
+            # ``report_path`` field — it holds ``final_html`` (the synthesized
+            # HTML body) and ``metadata``. Persist the HTML to disk the same
+            # way generate_report_html does so react_enhanced actually
+            # produces a multi-agent report on disk rather than silently
+            # returning None and falling back to the plain generate_report.
+            final_html = getattr(result, "final_html", None) or (
+                result.get("final_html") if isinstance(result, dict) else None
             )
+            if not final_html:
+                return None
+            import os
+            from pathlib import Path
+            from datetime import datetime
+            from agents.report_agent import inject_traffic_plot
+            asn = rc.get("asn", "unknown")
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_dir = Path("results/html")
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = out_dir / f"multi_agent_report_{asn}_{ts}.html"
+            # Embed traffic plot if available in evidence.
+            plot_path = (
+                self._evidence.get("analyze_traffic", {})
+                .get("results", {})
+                .get(asn, {})
+                .get("traffic_plot_path")
+                if isinstance(self._evidence.get("analyze_traffic"), dict)
+                else None
+            )
+            try:
+                from agents.report_agent import embed_file_as_base64
+                plot_b64 = embed_file_as_base64(plot_path) if plot_path else None
+            except Exception:
+                plot_b64 = None
+            final_html = inject_traffic_plot(final_html, plot_b64) if plot_b64 else final_html
+            out_path.write_text(final_html, encoding="utf-8")
+            logger.info(f"[ReactAgent] Multi-agent enhanced report saved to {out_path}")
+            return str(out_path)
         except Exception as e:
-            logger.debug(f"[ReactAgent] MultiAgentReportAgent unavailable: {e}")
+            logger.warning(f"[ReactAgent] MultiAgentReportAgent unavailable: {e}")
             return None
 
 
@@ -1671,7 +1882,7 @@ def create_react_agent(
             api_key=api_key or API_KEY,
             base_url=base_url or BASE_URL,
             temperature=DEFAULT_TEMP_REASONING,
-            timeout=120.0,
+            timeout=600.0,
             max_retries=1,
         )
     except ImportError:

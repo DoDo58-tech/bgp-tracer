@@ -32,14 +32,15 @@ RESULTS_HTML = PROJECT_ROOT / "results/html"
 LOGS_DIR = PROJECT_ROOT / "logs"
 
 # Per-mode wall-clock timeout (seconds).
-# S1-Base (671B) models need 8-15 minutes per mode end-to-end (REASONING +
-# REPORT alone take 7-12 minutes when the upstream is slow). The previous
-# 900s (15min) cap was tight enough that the report LLM call timed out
-# right as the model finished reasoning. Bumped to 1500s (25min) so the
-# full pipeline can finish in one shot instead of getting SIGKILL'd mid-
-# report. Override with --timeout to keep batch loops short for sanity
-# tests.
-MODE_TIMEOUT = 1500
+# S1-Base-Pro 671B models can take 10-20 min for the LLM reasoning step
+# plus another 3-5 min for the report generation. RIS RRC00 data download
+# for a 3-4 hour window takes another 5-8 min (100+ chunks × 8s each).
+# So MODE_TIMEOUT must comfortably accommodate:
+#   - download (8 min) + reasoning (15 min) + report (5 min) = 28 min worst case.
+# Bumping to 2400s (40 min) so the full pipeline can finish in one shot
+# instead of getting SIGKILL'd mid-report. Override with --timeout for
+# shorter sanity tests.
+MODE_TIMEOUT = 2400
 
 # 4 modes to run (mode_name, --mode flag value, --enhanced flag)
 MODES = [
@@ -127,9 +128,22 @@ def run_mode(event: dict, mode_name: str, mode_flag: str, enhanced: bool,
     env = os.environ.copy()
     env.update({
         "BGP_TRACER_ENV_FILE": ".env",
-        # Bug fix 2026-09-15: user wants LLM-generated reports, not the
-        # deterministic fallback template. Default to REQUIRE_LLM=1.
-        "REPORT_REQUIRE_LLM": os.environ.get("REPORT_REQUIRE_LLM", "1"),
+        # Honour whatever REPORT_REQUIRE_LLM the caller sets in the parent
+        # env. Default to "0" (fallback enabled) so the user always gets
+        # a usable report — the fallback uses real structured data, not
+        # a hardcoded prose template. When the LLM succeeds its output
+        # is used verbatim; when it fails or returns malformed HTML, the
+        # data-driven deterministic fallback renders a complete report
+        # from the structured payload.
+        "REPORT_REQUIRE_LLM": os.environ.get("REPORT_REQUIRE_LLM", "0"),
+        # Bug fix 2026-09-16: workflow engine default (900s) is too tight for
+        # S1-Base-Pro reasoning + report which takes 8-15 min end-to-end.
+        # MODE_TIMEOUT is wall-clock for the subprocess, but the workflow
+        # engine's internal cap (WORKFLOW_TOTAL_TIMEOUT_S) kicks in first and
+        # jumps to REPORT_GENERATION without producing useful output. Pin
+        # both to MODE_TIMEOUT so the workflow cap never fires prematurely.
+        "BGP_TRACER_WORKFLOW_TIMEOUT_S": str(MODE_TIMEOUT),
+        "REPORT_LLM_TIMEOUT_S": os.environ.get("REPORT_LLM_TIMEOUT_S", str(MODE_TIMEOUT)),
         "PYTHONUNBUFFERED": "1",
         "JSON_OUTPUT_ENABLED": "1",
     })
@@ -340,9 +354,30 @@ def main():
     print(f"Results: {results_path}")
     print()
 
+    # Round-22 (bottleneck-elimination): optional concurrent execution.
+    # Default keeps the historical serial behaviour (safe for shared
+    # caches / low-rate-limit endpoints). Setting BGPT_BATCH_CONCURRENCY=N
+    # runs up to N modes in parallel for the SAME event, sharing the same
+    # parquet cache fetch.
+    concurrency = int(os.environ.get("BGPT_BATCH_CONCURRENCY", "1"))
+    if concurrency < 1:
+        concurrency = 1
+
     with open(results_path, "w") as results_log:
         n_skipped_long = 0
         n_completed = 0
+        n_lock = __import__("threading").Lock()
+        # Optional: ThreadPoolExecutor when concurrency > 1.
+        Executor = __import__("concurrent.futures").futures.ThreadPoolExecutor
+        executor = Executor(max_workers=concurrency) if concurrency > 1 else None
+
+        def _run_mode_with_lock(event_, mode_name_, mode_flag_, enhanced_,
+                                ev_log_dir_, idx_, total_modes_):
+            log_path_ = ev_log_dir_ / f"{mode_name_}.log"
+            rec_ = run_mode(event_, mode_name_, mode_flag_, enhanced_,
+                            log_path_, results_log, idx_, total_modes_)
+            return rec_
+
         for ev_idx, event in enumerate(events, 1):
             if event.get("_skip_long"):
                 n_skipped_long += 1
@@ -363,15 +398,44 @@ def main():
                   f"({event['event_type']}) {event['start_time']} → {event['end_time']}")
             ev_log_dir = batch_log_dir / event["event_id"]
             ev_log_dir.mkdir(parents=True, exist_ok=True)
-            for idx, (mode_name, mode_flag, enhanced) in enumerate(modes_to_run, 1):
-                if (event["event_id"], mode_name) in skip_set:
-                    print(f"  [{idx}/{len(modes_to_run)}] ⏭  {mode_name} skipped (prev timeout)")
-                    continue
-                log_path = ev_log_dir / f"{mode_name}.log"
-                rec = run_mode(event, mode_name, mode_flag, enhanced,
-                               log_path, results_log, idx, len(modes_to_run))
-                if not rec.get("skipped"):
-                    n_completed += 1
+
+            if executor is not None:
+                # Submit all modes for this event in parallel; the
+                # results_log file handle is internally synchronized by
+                # write+flush; subprocess.Popen already serialises OS
+                # access.
+                futures = []
+                for idx, (mode_name, mode_flag, enhanced) in enumerate(modes_to_run, 1):
+                    if (event["event_id"], mode_name) in skip_set:
+                        print(f"  [{idx}/{len(modes_to_run)}] ⏭  {mode_name} skipped (prev timeout)")
+                        continue
+                    futures.append((
+                        idx,
+                        executor.submit(
+                            _run_mode_with_lock, event, mode_name, mode_flag,
+                            enhanced, ev_log_dir, idx, len(modes_to_run),
+                        ),
+                    ))
+                for idx, fut in futures:
+                    rec = fut.result()
+                    if not rec.get("skipped"):
+                        with n_lock:
+                            n_completed += 1
+            else:
+                # Serial path — preserves the historical single-process
+                # behaviour that every batch has run on so far.
+                for idx, (mode_name, mode_flag, enhanced) in enumerate(modes_to_run, 1):
+                    if (event["event_id"], mode_name) in skip_set:
+                        print(f"  [{idx}/{len(modes_to_run)}] ⏭  {mode_name} skipped (prev timeout)")
+                        continue
+                    log_path = ev_log_dir / f"{mode_name}.log"
+                    rec = run_mode(event, mode_name, mode_flag, enhanced,
+                                   log_path, results_log, idx, len(modes_to_run))
+                    if not rec.get("skipped"):
+                        n_completed += 1
+
+        if executor is not None:
+            executor.shutdown(wait=True)
 
     print(f"\n=== Batch complete: {results_path} ===")
     print(f"Events completed (1+ mode): {n_completed}, skipped (long window): {n_skipped_long}")

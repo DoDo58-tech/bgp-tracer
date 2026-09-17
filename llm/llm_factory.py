@@ -306,7 +306,7 @@ class OpenAICompatibleLLM(LLM):
         api_key,
         base_url,
         temperature=DEFAULT_TEMP_REASONING,
-        timeout=300.0,
+        timeout=600.0,
         max_retries=3,
         max_tokens=8192,
         callback_manager=None,
@@ -360,7 +360,12 @@ class OpenAICompatibleLLM(LLM):
             if read_cap <= 0:
                 # No cap: use the larger of request_timeout and report timeout + 60s buffer.
                 # This ensures the HTTP layer never cuts off a report call prematurely.
-                effective_read = max(request_timeout, report_llm_timeout + 60.0)
+                # Cap at report_llm_timeout + 30 so HTTP timeout never exceeds the
+                # application-level watchdog by more than a small margin.
+                effective_read = min(
+                    max(request_timeout, report_llm_timeout + 60.0),
+                    report_llm_timeout + 30.0,
+                )
             else:
                 effective_read = max(min(request_timeout, read_cap), 30.0)
             timeout = httpx.Timeout(
@@ -912,7 +917,7 @@ def create_llm(
             max_retries=max_retries,
         )
 
-    if any(x in model_lower for x in ["deepseek", "qwq", "qwen", "gpt", "claude", "s1"]):
+    if any(x in model_lower for x in ["deepseek", "qwq", "qwen", "gpt", "claude", "s1", "glm"]):
         return OpenAICompatibleLLM(
             model=model,
             api_key=api_key,

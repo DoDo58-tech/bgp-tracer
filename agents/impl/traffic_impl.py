@@ -29,7 +29,7 @@ class LLMEnhancedTrafficAgent:
     async def setup_llm(self):
         self.llm, _ = setup_llm_settings(
             model=self.model, api_key=self.api_key, base_url=self.base_url,
-            temperature=DEFAULT_TEMP_REASONING, timeout=300.0, max_retries=2,
+            temperature=DEFAULT_TEMP_REASONING, timeout=600.0, max_retries=2,
         )
 
     async def analyze_traffic_with_llm(self, asn, start_time, end_time, routing_analysis=None,

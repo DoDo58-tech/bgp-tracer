@@ -365,7 +365,16 @@ async def _analyze_routing(tool_input: dict, session) -> dict:
     # for ASes with thousands of BGP announcements).
     try:
         from agents.react_agent import _SHARED_EVIDENCE
-        pre = _SHARED_EVIDENCE.get("precomputed_routing") or {}
+        # Bug fix 2026-09-16: ReactAgent writes the precomputed payload to
+        # ``_SHARED_EVIDENCE[run_id]["precomputed_routing"]``, not to the
+        # top-level ``"precomputed_routing"`` key. Scan every run_id bucket
+        # until we find one with a populated precomputed payload.
+        pre = {}
+        for _run_id, _bucket in (_SHARED_EVIDENCE or {}).items():
+            candidate = _bucket.get("precomputed_routing") if isinstance(_bucket, dict) else None
+            if candidate and (candidate.get("hijack") or candidate.get("leak") or candidate.get("outage")):
+                pre = candidate
+                break
         if pre and (pre.get("hijack") or pre.get("leak") or pre.get("outage")):
             logger.info(
                 f"[routing_tool] Using precomputed routing data "

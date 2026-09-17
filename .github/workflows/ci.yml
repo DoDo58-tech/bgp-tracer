@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fast-tests:
+    name: Fast unit tests (≤30 s)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install minimal test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Pull only what the fast tests need (most are stdlib-only).
+          pip install pytest==9.1.* pyyaml
+      - name: Run fast unit tests
+        run: |
+          bash scripts/run_tests.sh fast
+
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff==0.6.*
+      - name: Run ruff
+        run: ruff check . --exit-non-zero-on-fix
+
+  smoke-import:
+    name: Import smoke (all modules load)
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install core dependencies
+        run: |
+          pip install --quiet pandas polars numpy requests pydantic
+          pip install --quiet llama-index-core llama-index-llms-openai 2>/dev/null || true
+      - name: Import every public module
+        run: |
+          python -c "
+          import importlib, sys
+          sys.path.insert(0, '.')
+          failures = []
+          for mod in [
+              'utils.logger',
+              'utils.config_loader',
+              'llm.llm_factory',
+              'workflow_engine',
+              'chief_agent',
+              'agents.report_agent',
+              'agents.reasoning_agent',
+              'agents.react_agent',
+              'detectors.traffic.traffic_detector',
+              'detectors.hijack.hijack_detector',
+              'detectors.leak.leak_detector',
+              'detectors.outage.outage_detector',
+          ]:
+              try:
+                  importlib.import_module(mod)
+                  print(f'✓ {mod}')
+              except Exception as e:
+                  failures.append((mod, repr(e)))
+                  print(f'✗ {mod}: {e!r}')
+          if failures:
+              sys.exit(1)
+          "

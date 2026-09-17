@@ -157,10 +157,13 @@ def _parse_iso_utc(s):
 
 def _build_request_params(asn, start_dt, end_dt, location):
     """构造 Cloudflare Radar 请求参数。location 必须为 ISO alpha-2 或 None。"""
+    asn_str = str(asn).strip().upper()
+    if asn_str.startswith("AS"):
+        asn_str = asn_str[2:].strip()
     params = {
         "dateStart": start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "dateEnd": end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "asn": int(asn) if str(asn).isdigit() else asn,
+        "asn": int(asn_str) if asn_str.isdigit() else asn,
         "format": "json",
         "aggInterval": CLOUDFLARE_DEFAULT_AGG_INTERVAL,
     }

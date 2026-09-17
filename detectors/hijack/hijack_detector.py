@@ -435,23 +435,38 @@ def detect_hijacks_batch(
         mask2 = announcements['prefix'].is_in(covered_subnet_set)
 
         # 条件3: AS路径包含目标AS（polars list.contains，向量化）
+        # ── Optimization 2026-09-17: split as-path ONCE per chunk instead of
+        # once per target_as. The previous code re-ran ``str.split`` for every
+        # target AS — for AS12479 with 12 cleaned_as_set entries that meant
+        # 12 full DataFrame scans per chunk. Pre-splitting once cuts this to
+        # 1, and downstream per-AS filtering reuses the same ``as_path_list``
+        # column without splitting again.
+        _has_aspath = "as_path_list" in announcements.columns
+        if not _has_aspath:
+            announcements = announcements.with_columns(
+                pl.col("as-path").str.strip_chars()
+                  .str.split(by=" ")
+                  .alias("as_path_list")
+            )
         mask3 = None
         for target_as in cleaned_as_set:
-            as_mask = announcements['as-path'].str.split(by=" ").list.contains(target_as)
-            mask3 = mask3 | as_mask if mask3 is not None else as_mask
-        
+            as_mask = announcements["as_path_list"].list.contains(target_as)
+            mask3 = as_mask if mask3 is None else (mask3 | as_mask)
+
         # 三条件OR合并
         announcements = announcements.filter(mask1 | mask2 | mask3)
-        
+
         if announcements.is_empty():
             logger.info(f"Chunk {chunk_count}: no relevant announcements after filtering")
             continue
 
         # 串行处理每个AS（避免多AS时的 Polars 写时复制内存爆炸）
         # Chunk数据流式输入，无法跨AS并行（每个chunk是完整时间片）
+        # ── Optimization 2026-09-17: reuse ``as_path_list`` from the
+        # pre-split above instead of re-splitting for each target AS.
         for asn in cleaned_as_list:
             asn_str = str(asn)
-            as_mask = announcements['as-path'].str.split(by=" ").list.contains(asn_str)
+            as_mask = announcements["as_path_list"].list.contains(asn_str)
             df_asn = announcements.filter(as_mask)
             if df_asn.is_empty():
                 continue

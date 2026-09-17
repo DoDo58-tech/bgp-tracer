@@ -134,7 +134,7 @@ class HypothesisAgent(Agent):
         self.state = AgentState.IDLE
         self.llm, _ = setup_llm_settings(
             model=MODEL, api_key=API_KEY, base_url=BASE_URL,
-            temperature=DEFAULT_TEMP_REASONING, timeout=120.0,
+            temperature=DEFAULT_TEMP_REASONING, timeout=600.0,
             max_retries=2,
         )
 
@@ -167,7 +167,7 @@ class HypothesisAgent(Agent):
                 prompt,
                 json_mode=True,
                 max_retries=2,
-                timeout=120.0,
+                timeout=600.0,
             )
             text = response.text if hasattr(response, "text") else str(response)
         except Exception as exc:

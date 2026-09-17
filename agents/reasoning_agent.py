@@ -110,7 +110,7 @@ class ReasoningAgent:
             self.reasoning_trace.append(f"Starting multi-round analysis for ASN {self.asn}")
             self.reasoning_trace.append(f"Time range: {self.start_time} to {self.end_time}")
             
-            initial_data = self.phase1_data_collection()
+            initial_data = self.phase1_data_collection(workflow_claims=workflow_claims)
             
             if not initial_data.get("success", False):
                 return {
@@ -158,7 +158,7 @@ class ReasoningAgent:
                 "reasoning_trace": self.reasoning_trace
             }
     
-    def phase1_data_collection(self):
+    def phase1_data_collection(self, workflow_claims=None):
         self.reasoning_trace.append("Phase 1: Data Collection")
         
         try:
@@ -677,7 +677,7 @@ class ReasoningAgent:
             coordination_prompt = self.build_coordination_prompt()
 
             # Cap the prompt to the reasoning budget before sending
-            if estimate_bytes(coordination_prompt) > PayloadBudget.REASONING:
+            if len(coordination_prompt) > PayloadBudget.REASONING:
                 capped_prompt, cap_meta = cap_payload(
                     coordination_prompt,
                     max_bytes=PayloadBudget.REASONING,
@@ -908,6 +908,15 @@ class ReasoningAgent:
         """Resolve retrieval needs using historical routing-grounded cases."""
         results = []
         seen_queries = set()
+
+        # Guard: case_retriever is an optional component. If not initialized,
+        # return empty results so the reasoning pipeline continues without error.
+        if not getattr(self, "case_retriever", None):
+            self.reasoning_trace.append(
+                "[resolve_retrieval_needs] case_retriever not initialized; "
+                "skipping historical case retrieval."
+            )
+            return results
 
         for item in retrieval_needs:
             need = item.get("need") if isinstance(item, dict) else str(item)
@@ -1531,36 +1540,43 @@ Respond concisely in JSON:
             confidence_scores=json.dumps(self.confidence_scores, indent=2)
         ) + multi_role_section + enrichment_narrative
     
-    def summarize_routing_results(self):
-        """Summarize routing agent results"""
-        routing_data = self.evidence_pool.get("routing_data", {})
-        
-        if not routing_data.get("success", False):
-            return "Routing analysis failed"
-        
+    def _summarize_routing_results_slimmed(self, routing_slim):
+        """Summarize routing agent results from slimmed payload for P5 prompt."""
+        if not routing_slim or routing_slim.get("success") is False:
+            return "Routing analysis: no data or failed."
         summary_parts = [
-            f"Origin hijacked: {len(routing_data.get('origin_hijacked', []))} events",
-            f"Forge hijacked: {len(routing_data.get('forge_hijacked', []))} events",
-            f"LLM analysis: {'Available' if routing_data.get('llm_analysis') else 'Not available'}"
+            f"Origin hijacked: {len(routing_slim.get('origin_hijacked', routing_slim.get('origin_hijacked_events', [])))} events",
+            f"Route leaks: {len(routing_slim.get('route_leaks', routing_slim.get('route_leak_events', [])))} events",
+            f"Outage suspected: {routing_slim.get('outage_suspected', 'unknown')}",
+            f"Routing confidence: {routing_slim.get('routing_confidence', routing_slim.get('confidence', 'N/A'))}",
         ]
-        
-        return "; ".join(summary_parts)
-    
-    def summarize_traffic_results(self):
-        """Summarize traffic agent results"""
-        traffic_data = self.evidence_pool.get("traffic_data", {})
-        
-        if not traffic_data.get("success", False):
-            return "Traffic analysis failed"
-        
+        # Also include any top-N event snippets if available
+        for key in ("origin_hijacked", "route_leaks"):
+            evts = routing_slim.get(key, [])
+            if isinstance(evts, list) and evts:
+                sample = evts[0] if isinstance(evts[0], str) else str(evts[0])[:200]
+                summary_parts.append(f"First {key} event: {sample}")
+        return " | ".join(summary_parts)
+
+    def _summarize_traffic_results_slimmed(self, traffic_slim):
+        """Summarize traffic agent results from slimmed payload for P5 prompt."""
+        if not traffic_slim or traffic_slim.get("success") is False:
+            return "Traffic analysis: no data or failed."
         summary_parts = [
-            f"Anomalies detected: {traffic_data.get('anomalies_detected', False)}",
-            f"Anomaly count: {traffic_data.get('anomaly_count', 0)}",
-            f"LLM analysis: {'Available' if traffic_data.get('llm_analysis') else 'Not available'}"
+            f"Traffic anomalies: {traffic_slim.get('anomaly_count', 0)} detected",
+            f"Max severity: {traffic_slim.get('max_severity', 'N/A')}",
+            f"Traffic change %: {traffic_slim.get('traffic_pct_change', 'N/A')}",
+            f"Periodicity: {traffic_slim.get('periodicity', 'N/A')}",
         ]
-        
-        return "; ".join(summary_parts)
-    
+        anomalies = traffic_slim.get("anomalies", [])
+        if isinstance(anomalies, list) and anomalies:
+            summary_parts.append(
+                f"First anomaly: ts={anomalies[0].get('timestamp','?')} "
+                f"val={anomalies[0].get('current_value','?')} "
+                f"method={anomalies[0].get('method','?')}"
+            )
+        return " | ".join(summary_parts)
+
     def parse_coordination_response(self, response_text):
         """Parse LLM coordination response"""
         try:

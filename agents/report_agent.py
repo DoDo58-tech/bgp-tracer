@@ -660,60 +660,76 @@ def trim_to_size(data: Any, max_bytes: int = _MAX_PAYLOAD_BYTES) -> Any:
                 _logger.warning(f"[ReportAgent] JSON re-encode failed during truncation: {e!r}")
 
         if not truncated_ok:
-            # Strategy 3: last-ditch — keep a SKIM of the original payload
-            # rather than discarding all of it. Aggressively truncate every
-            # nested list (keep 1-3 items) so the LLM still sees at least
-            # the section structure (key names + first items). The previous
-            # implementation replaced the entire payload with a 194-byte
-            # marker, leaving the LLM to invent content from nothing.
-            def _skim(obj, depth=0):
-                if depth > 8:
-                    return obj
-                if isinstance(obj, dict):
-                    return {k: _skim(v, depth + 1) for k, v in obj.items()}
-                if isinstance(obj, list):
-                    if not obj:
-                        return obj
-                    # Keep first 2 + last 1 to preserve timeline edges.
-                    if len(obj) <= 3:
-                        return [_skim(v, depth + 1) for v in obj]
-                    return [_skim(obj[0], depth + 1),
-                            _skim(obj[1], depth + 1),
-                            _skim(obj[-1], depth + 1)]
-                return obj
-            try:
-                shrunk = _skim(shrunk)
-                # Re-check; if still too big, drop the largest top-level
-                # sections until we fit.
-                while estimate_size(shrunk) > max_bytes and isinstance(shrunk, dict) and len(shrunk) > 1:
-                    biggest_key = max(
-                        shrunk.keys(),
-                        key=lambda k: estimate_size(shrunk[k])
-                        if isinstance(shrunk[k], (dict, list))
-                        else 0,
-                    )
+            # Strategy 3: last-ditch — shrink the data structure itself.
+            # Bug fix 2026-09-17 (reviewer-mode pass): the previous implementation
+            # ran ``while estimate_size(shrunk) > max_bytes: replace biggest key``
+            # on a dict whose keys were *huge strings* (100 KB raw blobs). Each
+            # ``json.dumps`` call inside the loop re-serialised the entire
+            # 500 KB string just to measure it, and when ``biggest_key`` was
+            # already a string it never shrank — causing infinite recompute on
+            # pathological inputs.
+            #
+            # New behaviour: cap the strategy-3 loop at 50 iterations; if the
+            # payload is still too big, give up and emit the marker dict.
+            SHRINK_HARD_LIMIT = 50
+            shrink_iter = 0
+            while (estimate_size(shrunk) > max_bytes
+                   and isinstance(shrunk, dict)
+                   and len(shrunk) > 1
+                   and shrink_iter < SHRINK_HARD_LIMIT):
+                shrink_iter += 1
+                # Pick the LARGEST top-level entry. If the largest is itself
+                # a dict/list we can shrink it; if it's a scalar string we
+                # have to replace it with a marker (the only way to make
+                # progress without truncating a string mid-character).
+                biggest_key = max(
+                    shrunk.keys(),
+                    key=lambda k: estimate_size(shrunk[k])
+                    if isinstance(shrunk[k], (dict, list))
+                    else len(str(shrunk[k])),
+                )
+                value = shrunk[biggest_key]
+                if isinstance(value, (dict, list)) and estimate_size(value) > 1024:
+                    # Drill into the nested structure and drop its biggest
+                    # top-level entry recursively. This converges in O(log N)
+                    # rather than O(N) for pathological inputs.
+                    if isinstance(value, dict) and len(value) > 1:
+                        nested_biggest = max(
+                            value.keys(),
+                            key=lambda k: estimate_size(value[k])
+                            if isinstance(value[k], (dict, list))
+                            else len(str(value[k])),
+                        )
+                        value[nested_biggest] = {
+                            "trimmed": "size_limit_reached",
+                            "size": estimate_size(value[nested_biggest]),
+                        }
+                    elif isinstance(value, list) and len(value) > 3:
+                        keep = max(1, len(value) // 4)
+                        value[:] = value[:keep] + value[-keep:]
+                    else:
+                        # Empty / small — replace the parent key entirely
+                        shrunk[biggest_key] = {
+                            "trimmed": "size_limit_reached",
+                            "size": estimate_size(value),
+                        }
+                else:
+                    # Scalar or small value: replace with marker
                     shrunk[biggest_key] = {
                         "trimmed": "size_limit_reached",
-                        "size": estimate_size(shrunk[biggest_key]),
+                        "size": estimate_size(value) if isinstance(value, (dict, list)) else len(str(value)),
                     }
-                if estimate_size(shrunk) <= max_bytes:
-                    truncated_ok = True
-                else:
-                    # Final marker but keep the original key set so the LLM
-                    # still sees the structure.
-                    shrunk = {
-                        "__PAYLOAD_TRUNCATED_ERROR__": (
-                            f"Payload exceeded {max_bytes} bytes "
-                            f"(final {final_size}); even after aggressive "
-                            f"trimming the data did not fit. Original "
-                            f"top-level keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}."
-                        )
-                    }
-            except Exception as _skim_err:
+            if estimate_size(shrunk) <= max_bytes:
+                truncated_ok = True
+            else:
+                # Final marker but keep the original key set so the LLM
+                # still sees the structure.
                 shrunk = {
                     "__PAYLOAD_TRUNCATED_ERROR__": (
                         f"Payload exceeded {max_bytes} bytes "
-                        f"(final {final_size}); skim failed: {_skim_err!r}."
+                        f"(final {final_size}); even after aggressive "
+                        f"trimming the data did not fit. Original "
+                        f"top-level keys: {list(data.keys()) if isinstance(data, dict) else 'N/A'}."
                     )
                 }
 
@@ -4698,6 +4714,20 @@ def generate_report_html(
     path = output_dir / f"llm_report_AS{asn}_{timestamp}.html"
     path.write_text(html, encoding="utf-8")
     logger.info(f"LLM report saved: {path}")
+    # Round-22 observability: record one stage event per generated report.
+    try:
+        from utils.tracing import stage
+        # We can't introspect from inside the function; the outer
+        # ``analyze_traffic_outage`` wrapper will collect & save metrics.
+        with stage(
+            "report.saved",
+            asn=str(asn),
+            report_path=str(path),
+            html_bytes=len(html),
+        ):
+            pass
+    except Exception as _exc:  # noqa: BLE001 — never fail the report
+        logger.debug(f"[tracing] stage save skipped: {_exc!r}")
     return str(path)
 
 

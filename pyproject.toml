@@ -1,0 +1,34 @@
+target-line-length = 100
+extend-exclude = [
+    ".venv",
+    "build",
+    "dist",
+    "results",
+    "data",
+    "scripts/smoke",
+]
+
+[lint]
+# Allow the existing legacy patterns; flag obvious regressions.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "B",   # bugbear (likely bugs)
+    "UP",  # pyupgrade (modern syntax)
+]
+ignore = [
+    "E501",  # line-too-long — historical codebase, leave alone
+    "B008",  # calls to getattr/hasattr in argument defaults — common in configs
+    "E402",  # module-level import not at top — common after sys.path inserts
+    "B904",  # raise from without `from e` — legacy pattern
+    "UP006", # typing.List vs list — historical code uses typing
+    "UP007", # typing.X vs X — historical code uses typing
+    "F401",  # imported but unused — many intentional re-exports
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["B011"]  # assert False — pytest idiom
+"scripts/*" = ["E402", "E722"]  # shell scripts + lenient imports
+"results/**" = ["E402", "F401", "F841"]

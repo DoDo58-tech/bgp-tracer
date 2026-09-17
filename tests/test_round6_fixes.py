@@ -111,6 +111,9 @@ def test_rpki_validation_url_is_live():
     )
 
 
+test_rpki_validation_url_is_live = pytest.mark.slow(test_rpki_validation_url_is_live)
+
+
 # ---------------------------------------------------------------------------
 # R27 — BlackboardMessageBridge.stop() is loop-safe
 # ---------------------------------------------------------------------------
@@ -312,6 +315,11 @@ def test_generate_integrated_report_safe_eval_substitution():
         f"generate_integrated_report returned non-dict on malicious input: "
         f"{type(result).__name__}"
     )
+
+
+test_generate_integrated_report_safe_eval_substitution = pytest.mark.slow(
+    test_generate_integrated_report_safe_eval_substitution
+)
 
 
 # ---------------------------------------------------------------------------

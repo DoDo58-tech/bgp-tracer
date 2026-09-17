@@ -1504,12 +1504,49 @@ def analyze_traffic_outage(
     enable_mitm / resume / no_checkpoint default to config values
     (MITM_DETECTION_ENABLED, CHECKPOINTING_ENABLED).
     """
-    return asyncio.run(analyze_traffic_outage_async(
+    result = asyncio.run(analyze_traffic_outage_async(
         user_input, asn, start_time, end_time, analysis_mode,
         enable_mitm,
         enhanced, debate_rounds, evaluation_retries,
         resume=resume, no_checkpoint=no_checkpoint,
     ))
+    # Round-22 (observability): persist the per-event metrics alongside
+    # the report JSON. We do this at the sync wrapper so every entry
+    # point (``asyncio.run`` direct call, ``analyze_deep_from_quick``,
+    # the ``chief`` CLI) gets traced without per-call plumbing.
+    try:
+        from utils.tracing import metrics, StageEvent
+        out_dir = Path(__file__).resolve().parent / "results" / "json"
+        slug = f"event_{asn or 'unknown'}"
+        if isinstance(result, dict):
+            ts = (
+                result.get("chief_expert_analysis", {}).get("timestamp")
+                or result.get("timestamp")
+            )
+            if ts:
+                slug = f"{slug}_{str(ts).replace(':', '').replace('-', '').replace(' ', '_')[:15]}"
+        # Synthesise a wall-clock stage event when no agent wrapped
+        # itself in ``with stage(...)`` (today, most don't).
+        if not metrics.all():
+            import time as _t
+            now = _t.time()
+            metrics.record(StageEvent(
+                name="chief.workflow",
+                start_ts=now,
+                end_ts=now,
+                elapsed_s=0.0,
+                attrs={
+                    "asn": str(asn),
+                    "mode": str(analysis_mode),
+                    "enhanced": bool(enhanced),
+                },
+            ))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        metrics.save(out_dir / f"{slug}_metrics.json")
+        metrics.reset()
+    except Exception as _exc:  # noqa: BLE001 — observability must never fail the run
+        logger.debug(f"[tracing] metrics save skipped: {_exc!r}")
+    return result
 
 
 # ──────────────────────── Two-Phase Diagnosis API ─────────────────────────
@@ -2044,6 +2081,45 @@ def analyze_deep_from_quick(
         "cache_path": quick_result.get("cache_path"),
         "elapsed_seconds": quick_result.get("elapsed_seconds"),
     }
+
+    # Round-22 (observability): persist per-event metrics alongside the
+    # report. ``analyze_deep_from_quick`` is the entry point used by
+    # ``--mode deep`` and the background branch of ``--mode auto``; we
+    # mirror the hook that ``analyze_traffic_outage`` does so the
+    # metrics JSON lands in ``results/json/`` either way.
+    try:
+        from utils.tracing import metrics, stage
+        out_dir = Path(__file__).resolve().parent / "results" / "json"
+        slug = f"event_{asn or 'unknown'}_phase2"
+        ts = (
+            (deep_result.get("chief_expert_analysis") or {}).get("timestamp")
+            or deep_result.get("timestamp")
+        )
+        if ts:
+            slug += f"_{str(ts).replace(':', '').replace('-', '').replace(' ', '_')[:15]}"
+        # Synthesise a wall-clock stage event if no other stage recorded
+        # anything (which is the current case until agents wrap themselves).
+        if not metrics.all():
+            from utils.tracing import StageEvent
+            metrics.record(StageEvent(
+                name="deep.phase2",
+                start_ts=t0,
+                end_ts=perf_counter(),
+                elapsed_s=elapsed,
+                attrs={
+                    "asn": str(asn),
+                    "verdict": quick_result.get("quick_verdict", "unknown"),
+                    "html": (
+                        deep_result.get("analysis_report", {}) or {}
+                    ).get("html_report_path", ""),
+                },
+            ))
+        out_dir.mkdir(parents=True, exist_ok=True)
+        metrics.save(out_dir / f"{slug}_metrics.json")
+        metrics.reset()
+    except Exception as _exc:  # noqa: BLE001 — observability never breaks deep
+        logger.debug(f"[tracing] deep-phase metrics save skipped: {_exc!r}")
+
     return deep_result
 
 
@@ -2094,11 +2170,12 @@ if __name__ == "__main__":
     parser.add_argument("--user-input", help="Natural language input describing the event")
     parser.add_argument(
         "--mode", default="quick",
-        choices=["quick", "deep", "traffic_first", "react",
+        choices=["quick", "deep", "auto", "traffic_first", "react",
                  "traffic_first_enhanced", "react_enhanced"],
         help=(
-            "quick (default; Phase 1, ~60s, 0 LLM), "
-            "deep (Phase 2; uses --quick-cache if provided), "
+            "quick (Phase 1, ~60s, 0 LLM), "
+            "deep (Phase 2; needs --quick-cache), "
+            "auto (Phase 1 sync + Phase 2 background, overwrites phase 1 path), "
             "traffic_first/react (single-phase legacy), "
             "traffic_first_enhanced/react_enhanced (legacy + --enhanced)"
         ),
@@ -2195,6 +2272,15 @@ if __name__ == "__main__":
             if result.get("warnings"):
                 print(f"\nWarnings: {result['warnings']}")
         sys.exit(0 if result.get("success") else 1)
+
+    if args.mode == "auto":
+        # Two-phase diagnosis: run Phase 1 (quick) sync so the user gets
+        # an answer within ~60 s, then fork a detached subprocess for
+        # Phase 2 (deep + LLM) that overwrites the same HTML path.
+        # Round-22: this branch was previously missing from the dispatcher;
+        # we re-introduce it here to make ``--mode auto`` actually work.
+        from chief_agent import _run_auto_mode  # late import; defined below
+        sys.exit(_run_auto_mode(args))
 
     if args.mode == "deep":
         # Phase 2: load quick result from cache (or run quick first as a fallback)
@@ -2300,3 +2386,76 @@ if __name__ == "__main__":
         print(f"Failed: {result.get('error', 'Unknown error')}")
     else:
         print(f"Unexpected result. Keys: {list(result.keys())[:5]}")
+
+
+def _run_auto_mode(args) -> int:
+    """Two-phase diagnosis: Phase 1 sync, Phase 2 detached subprocess.
+
+    Round-22 (bottleneck elimination): the chief_agent CLI had ``--mode auto``
+    declared in earlier review docs but the dispatcher branch was missing,
+    so users got ``error: argument --mode: invalid choice: 'auto'``. This
+    function re-introduces the branch with minimal code:
+      1. Run Phase 1 (analyze_quick) → ~60 s, 0 LLM, returns JSON.
+      2. Print the verdict + HTML path.
+      3. Spawn ``python chief_agent.py --mode deep --quick-cache <cache>``
+         via subprocess.Popen so it survives even if this process exits.
+      4. Return 0 immediately so the foreground caller (e.g. a dashboard)
+         can poll the same HTML path later.
+
+    Returns the standard POSIX exit code (0 = quick phase succeeded).
+    """
+    import subprocess as _sp
+
+    if not all([args.asn, args.start, args.end]):
+        print("--asn, --start, --end are required for --mode auto", file=sys.stderr)
+        return 2
+
+    print(f"Mode: auto (Phase 1 sync + Phase 2 background) | Enhanced: {'ON' if args.enhanced else 'off'}")
+    print(f"AS: AS{args.asn} | window: {args.start} → {args.end}")
+
+    # Phase 1
+    quick = analyze_quick(
+        asn=args.asn,
+        start_time=args.start,
+        end_time=args.end,
+        user_input=args.user_input,
+        enable_mitm=MITM_DETECTION_ENABLED,
+    )
+    cache_path = quick.get("cache_path")
+    summary = quick.get("anomaly_summary") or {}
+    print(f"Traffic: {summary.get('traffic_anomaly_count')} anomalies, signal={'YES' if quick.get('traffic_signal_present') else 'NO'}")
+    print(f"Hijacks: {summary.get('routing_hijack_count')}")
+    print(f"\n>>> QUICK VERDICT: {quick.get('quick_verdict')}")
+    print("Background Phase 2 (deep + LLM) starting; the same HTML path will be overwritten when ready.")
+
+    if not cache_path:
+        print("Phase 1 didn't write a quick cache; skipping Phase 2.", file=sys.stderr)
+        return 1
+
+    # Phase 2 — detached
+    cmd = [
+        sys.executable, str(Path(__file__).resolve()),
+        "--mode", "deep",
+        "--quick-cache", cache_path,
+        "--asn", str(args.asn),
+        "--start", str(args.start),
+        "--end", str(args.end),
+    ]
+    if args.enhanced:
+        cmd += ["--enhanced"]
+    if args.user_input:
+        cmd += ["--user-input", args.user_input]
+
+    log_path = Path(__file__).resolve().parent / "results" / "json" / f"phase2_AS{args.asn}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_fp = open(log_path, "w")
+    proc = _sp.Popen(
+        cmd,
+        stdout=log_fp,
+        stderr=_sp.STDOUT,
+        stdin=_sp.DEVNULL,
+        start_new_session=True,  # detach
+    )
+    print(f"Phase 2 subprocess started (pid={proc.pid}, log={log_path})")
+    print(f"→ poll the same HTML path: results/html/multi_agent_report_{args.asn}_*.html")
+    return 0

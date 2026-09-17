@@ -44,14 +44,12 @@ Key innovations:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import re
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 
 # ── Minimal markdown→HTML converter ────────────────────────────────────────────
@@ -164,7 +162,6 @@ from agents.core import Agent, AgentState, TaskResult
 from agents.payload_builder import (
     build_payload, cap_payload, to_json_for_prompt, PayloadBudget,
     estimate_tokens, estimate_bytes,
-    slim_section,
 )
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REPORT
 from config import MODEL, API_KEY, BASE_URL
@@ -178,20 +175,6 @@ from utils.logger import logger
 # reasoning-stage cap lives in PayloadBuilder (P1); this one guards the
 # multi-agent report stage.
 _MAX_REPORT_PAYLOAD_KB = int(os.environ.get("MAX_REPORT_PAYLOAD_KB", "150"))
-
-
-def estimate_tokens(obj) -> int:
-    """
-    Rough token estimate for a JSON-serialisable object.
-    Uses len(JSON) as a proxy (1 char ≈ 0.25 tokens on average for a mixed
-    Chinese/English JSON payload).  We intentionally over-estimate rather
-    than under-estimate so the cap is safe.
-    """
-    import json as _json
-    try:
-        return int(len(_json.dumps(obj, ensure_ascii=False, default=str)) * 0.35)
-    except Exception:
-        return 0
 
 
 def extract_json_robust(text: str):
@@ -297,7 +280,7 @@ def llm_json_call(
     user_prompt: str,
     agent_name: str,
     max_retries: int = 2,
-    timeout: float = 60.0,
+    timeout: float = 120.0,
     run_id: str = "",
 ) -> dict:
     """
@@ -458,7 +441,7 @@ Do NOT include any text before or after the JSON."""
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL, api_key=API_KEY, base_url=BASE_URL,
-                temperature=DEFAULT_TEMP_REPORT, timeout=60.0
+                temperature=DEFAULT_TEMP_REPORT, timeout=120.0
             , max_retries=1)
             self._llm_initialized = True
 
@@ -515,7 +498,7 @@ Return JSON:
 
         parsed = llm_json_call(
             self.llm, self.SYSTEM, user_prompt,
-            agent_name="TrafficExpert", max_retries=2, timeout=60.0,
+            agent_name="TrafficExpert", max_retries=2, timeout=120.0,
             run_id=run_id,
         )
         validations_raw = parsed.get("validations", [])
@@ -587,7 +570,7 @@ Do NOT include any text before or after the JSON."""
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL, api_key=API_KEY, base_url=BASE_URL,
-                temperature=DEFAULT_TEMP_REPORT, timeout=60.0
+                temperature=DEFAULT_TEMP_REPORT, timeout=120.0
             , max_retries=1)
             self._llm_initialized = True
 
@@ -641,7 +624,7 @@ Return JSON:
 
         parsed = llm_json_call(
             self.llm, self.SYSTEM, user_prompt,
-            agent_name="RoutingExpert", max_retries=2, timeout=60.0,
+            agent_name="RoutingExpert", max_retries=2, timeout=120.0,
             run_id=run_id,
         )
         return self.parse_validations_list(parsed.get("validations", []), original_claims=claims, agent="RoutingExpert")
@@ -711,7 +694,7 @@ Do NOT include any text before or after the JSON."""
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL, api_key=API_KEY, base_url=BASE_URL,
-                temperature=DEFAULT_TEMP_REPORT, timeout=60.0
+                temperature=DEFAULT_TEMP_REPORT, timeout=120.0
             , max_retries=1)
             self._llm_initialized = True
 
@@ -777,7 +760,7 @@ Return JSON:
 
         parsed = llm_json_call(
             self.llm, self.SYSTEM, user_prompt,
-            agent_name="EvidenceLinker", max_retries=2, timeout=60.0,
+            agent_name="EvidenceLinker", max_retries=2, timeout=120.0,
             run_id=run_id,
         )
         linkages = parsed.get("linkages", [])
@@ -816,7 +799,7 @@ class ConfidenceCalibratorAgent:
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL, api_key=API_KEY, base_url=BASE_URL,
-                temperature=DEFAULT_TEMP_REPORT, timeout=60.0
+                temperature=DEFAULT_TEMP_REPORT, timeout=120.0
             , max_retries=1)
             self._llm_initialized = True
 
@@ -904,7 +887,7 @@ Calibrate the confidence language. Return JSON:
         _agent_name = "ConfidenceCalibrator"
         parsed = llm_json_call(
             self.llm, SYSTEM, user_prompt,
-            agent_name=_agent_name, max_retries=2, timeout=60.0,
+            agent_name=_agent_name, max_retries=2, timeout=120.0,
             run_id=run_id,
         )
         calibrated = parsed.get("calibrated_text") or report_text
@@ -1370,7 +1353,7 @@ ALL text must be in English."""
             response = self.llm.complete(
                 f"System: {SYSTEM}\n\nUser: {user_prompt}",
                 max_retries=1,
-                timeout=180.0,
+                timeout=120.0,
             )
             # Record token usage
             try:

@@ -241,3 +241,88 @@
 3. Stub 函数语义化（替换为标准 `asdict`）
 4. 静默失败增加 warning 日志（提升可调试性）
 
+---
+
+## 八、2026-09-16 本次会话修复记录
+
+> 本次会话解决了用户最核心的 P0 问题：**报告必须 LLM 生成、4 模式有区分、增强模式真正增强**。
+
+### P0-1: 报告骨架化（11KB skeleton bug）
+
+**症状**: LLM 生成报告仅 11KB，充斥着 `[field.path]` 字面量未替换（如 `[correlation_analysis.summary.target_as]`）。
+
+**根因**:
+1. Prompt 指令让 LLM 输出 `[field.path]` 引用格式
+2. `_substitute_field_references` 只支持 ~25 个固定路径，无法处理动态路径
+3. LLM 直接输出 `[field.path]` 字面文本，程序无法识别
+
+**修复**:
+- `report_agent.py::_UNIFIED_COT_PROMPT`: 禁止 LLM 输出 `[field.path]`，要求自然语言引用数值
+- `report_agent.py::_substitute_field_references`: 重写为通用 nested-path lookup（支持 `a.b[1].c` 语法）
+- `_strip_nodata_artifacts`: 未解析占位符统一替换为 "—" 或 "(no data)"
+
+**验证**: 54 份真实 LLM 报告全部 1.0-1.2MB，零占位符，零 fallback。
+
+---
+
+### P0-2: Enhanced 模式无视觉差异
+
+**症状**: `traffic_first_enhanced` 和 `traffic_first` 内容几乎相同；`react_enhanced` 不生成 MultiAgent 报告。
+
+**根因**:
+1. `debate_results` / `evaluation_metrics` / `reactive_decisions` 只存在内存 `WorkflowContext`，未写入 `Blackboard`
+2. `workflow_engine.py` 创建 `ReportAgent` 时未传 `enhanced` 参数
+3. `react_agent.py::try_enhanced_report` 调用 `MultiAgentReportAgent.generate()` 后读取不存在的 `result.report_path`，永远返回 `None`
+
+**修复**:
+- `workflow_engine.py` 1939/2104 行: 显式写入 `shared_blackboard`（`reasoning.debate_results` 等）
+- `workflow_engine.py` 2483 行: `ReportAgent(bb, enhanced=bool(getattr(context, "enhanced", False)))`
+- `report_agent.py::_generate_report_html`: `self._report_enhanced=True` 时注入 `enhanced_artefacts`
+- `report_agent.py::_UNIFIED_COT_PROMPT`: 增加 **ENHANCED MODE OUTPUT REQUIREMENT** 强制 `<h2>Enhanced Analysis</h2>`
+- `react_agent.py::try_enhanced_report`: 将 `result.final_html` 写入磁盘，返回真实路径
+
+**验证**: smoke 4/4 通过，enhanced 报告含 "Enhanced Analysis" section（含 debate verdict / reactive decision / evaluation score）。
+
+---
+
+### P0-3: 默认超时过短
+
+**症状**: LLM reasoning + report 需要 8-15 分钟，`WORKFLOW_TOTAL_TIMEOUT_S` 默认仅 900s，导致 workflow 在报告生成前就超时。
+
+**修复**:
+- `config.py`: `WORKFLOW_TOTAL_TIMEOUT_S` 默认 900s → 2400s
+- `config.py`: `REPORT_LLM_TIMEOUT_S` 默认 800s → 1500s
+- `run_4mode_batch.py`: 显式传递 timeout 到 subprocess 环境变量
+
+---
+
+### P1: Smoke 测试误导性
+
+**修复**: `e2e_4mode_smoke.py` 顶部和运行时打印大字体警告，明确说明只验证架构不验证 LLM 内容。指向 `run_4mode_batch.py` 作为 real LLM 验证方法。
+
+---
+
+### 架构确认
+
+| 检查项 | 状态 |
+|--------|------|
+| 4/4 模式 smoke 通过 | ✅ |
+| Base 模式报告 1.0+ MB，零占位符，零 fallback | ✅ |
+| Enhanced 模式有 "Enhanced Analysis" section | ✅ |
+| HCAF 因果归因引擎运行（数据不足时正确降级 INSUFFICIENT）| ✅ |
+| MultiRoleClassifier 被 reasoning_agent 调用 | ✅ |
+| 工作流超时默认值合理（2400s） | ✅ |
+| Batch 脚本正确传递 workflow timeout | ✅ |
+| React enhanced 路径现在实际写文件 | ✅ |
+
+---
+
+### 保留的死代码（ponytail 判断：不影响性能，保留以备未来扩展）
+
+| 模块 | 状态 |
+|------|------|
+| `causal_attribution.py`（44 dead symbols）| ✅ 保留，HCAF 工作流已集成 |
+| `multi_role_classifier.py`（被 reasoning_agent 调用）| ✅ 活跃 |
+| `hijack_cache_manager.py` v1 接口 | ✅ 保留 SQLite 缓存 |
+| Stub dataclass `.to_dict()` | ✅ 保留，不阻塞运行 |
+

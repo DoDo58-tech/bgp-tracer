@@ -631,8 +631,20 @@ class WorkflowEngine:
             if timed_out and context.current_state != WorkflowState.COMPLETE:
                 # Fallback reached: jump to report generation and let it
                 # produce whatever HTML it can with the partial evidence.
-                # The state machine loop above already redirected us there.
-                pass
+                # The state machine loop above already redirected us there
+                # but the ``break`` path skipped the handler — so call it
+                # directly here to ensure we still get an HTML report out
+                # the door on a timeout.
+                logger.warning(
+                    "[Workflow] timeout-fallback: invoking _handle_report_generation "
+                    "directly to salvage a partial report"
+                )
+                try:
+                    handler = self._state_handlers.get(context.current_state)
+                    if handler is not None:
+                        await handler(context)
+                except Exception as fb_exc:
+                    logger.error(f"[Workflow] timeout-fallback failed: {fb_exc!r}")
 
             # Success
             self.metrics["successful_runs"] += 1
@@ -923,7 +935,8 @@ class WorkflowEngine:
 
         # ── 注入预计算路由数据 ────────────────────────────────────────────────
         if context.precomputed_routing:
-            logger.info("[RoutingAnalysis] Using precomputed routing data from annotation_package")
+            logger.info(f"[RoutingAnalysis] Using precomputed routing data from annotation_package "
+                        f"(keys={list(context.precomputed_routing.keys())[:5]})")
             context.routing_result = context.precomputed_routing
             # 确保预计算数据被标记为成功
             if isinstance(context.routing_result, dict):
@@ -1043,9 +1056,11 @@ class WorkflowEngine:
                     # prefer flat key; fall back to nested hijack.{key}
                     events = rr.get(key) or hijack_section.get(key) or []
                     for event in events:
-                        # Normalise event to dict (it may be AnomalyDetail).
+                        # Normalise event to dict (it may be AnomalyDetail dataclass).
                         if isinstance(event, dict):
                             event_copy = dict(event)
+                        elif dataclasses.is_dataclass(event):
+                            event_copy = dataclasses.asdict(event)
                         else:
                             event_copy = dict(getattr(event, "__dict__", {}) or {})
                         event_copy["event_type"] = (key
@@ -1061,9 +1076,11 @@ class WorkflowEngine:
                 leak_section = rr.get("leak") or {}
                 leak_events = rr.get("route_leaks") or leak_section.get("route_leaks") or []
                 for event in leak_events:
-                    # Normalise event to dict (it may be AnomalyDetail).
+                    # Normalise event to dict (it may be AnomalyDetail dataclass).
                     if isinstance(event, dict):
                         event_copy = dict(event)
+                    elif dataclasses.is_dataclass(event):
+                        event_copy = dataclasses.asdict(event)
                     else:
                         event_copy = dict(getattr(event, "__dict__", {}) or {})
                     event_copy["event_type"] = "leak"
@@ -1082,9 +1099,12 @@ class WorkflowEngine:
             traffic_anomalies = []
             if context.traffic_result and context.traffic_result.get("data_available") is not False:
                 for anomaly in context.traffic_result.get("anomalies", []) or []:
-                    # Normalise anomaly to dict (it may be AnomalyDetail).
+                    # Normalise anomaly to dict (it may be AnomalyDetail dataclass).
+                    # Use asdict() for dataclasses so all fields are extracted.
                     if isinstance(anomaly, dict):
                         anomaly_copy = dict(anomaly)
+                    elif dataclasses.is_dataclass(anomaly):
+                        anomaly_copy = dataclasses.asdict(anomaly)
                     else:
                         anomaly_copy = dict(getattr(anomaly, "__dict__", {}) or {})
                     if "timestamp" not in anomaly_copy:
@@ -1358,9 +1378,23 @@ class WorkflowEngine:
         def events_for(key):
             return rr.get(key) or hijack_section.get(key) or leak_section.get(key) or []
 
+        def _normalise_event(ev):
+            """Convert AnomalyDetail objects (or any dataclass) to dict.
+            Several routing detector return lists of ``AnomalyDetail`` instances
+            which are not JSON-serialisable and don't expose ``.get``. The rest
+            of the workflow assumes dicts, so coerce here. Bug fix 2026-09-16:
+            leak_cox_2025 hit ``ev.get("origin_as")`` on an AnomalyDetail and
+            crashed ``compute_causal_analysis``."""
+            if isinstance(ev, dict):
+                return ev
+            if hasattr(ev, "__dict__"):
+                return {k: v for k, v in ev.__dict__.items() if not k.startswith("_")}
+            return {}
+
         victim_asns: set = set()
         for key in ["origin_hijacked", "forge_hijacked", "origin_hijacking", "forge_hijacking"]:
             for ev in events_for(key):
+                ev = _normalise_event(ev)
                 if key in ("origin_hijacked", "forge_hijacked"):
                     if ev.get("origin_as"):
                         victim_asns.add(str(ev["origin_as"]))
@@ -1900,6 +1934,17 @@ class WorkflowEngine:
                 if decision.action not in ("proceed", "stop"):
                     decision_engine.consume_budget(decision.action)
                 context.reactive_decisions.append(decision.to_dict())
+                # Bug fix 2026-09-16 (BUG-R127): mirror reactive decisions to
+                # the shared Blackboard on every step so the downstream ReportAgent
+                # can include them in the enhanced-mode payload regardless of
+                # which branch (debate / retry / probe / proceed) ran.
+                try:
+                    if context.shared_blackboard is not None:
+                        await context.shared_blackboard.write(
+                            "config", "reactive_decisions", context.reactive_decisions
+                        )
+                except Exception as _rd_err:
+                    logger.debug(f"[Enhanced] blackboard reactive_decisions write failed: {_rd_err}")
                 logger.info(
                     f"[Enhanced] Reactive decision at hypothesis: {decision.action} "
                     f"(budgets left: {decision_engine.budgets}) — {decision.reasoning}"
@@ -1918,6 +1963,16 @@ class WorkflowEngine:
                     if debate_result.success and debate_result.data:
                         debate_results = debate_result.data.get("debate_results", [])
                         context.debate_results = debate_results
+                        # Bug fix 2026-09-16 (BUG-R127): mirror debate results to
+                        # the shared Blackboard so the downstream ReportAgent
+                        # can read them when generating the enhanced-mode payload.
+                        try:
+                            if context.shared_blackboard is not None:
+                                await context.shared_blackboard.write(
+                                    "reasoning", "debate_results", debate_results
+                                )
+                        except Exception as _dbg_err:
+                            logger.debug(f"[Enhanced] blackboard debate_results write failed (decision-debate): {_dbg_err}")
                         if debate_results:
                             best = debate_results[0]
                             context.diagnosis_result = best.get("original_claim")
@@ -1939,6 +1994,22 @@ class WorkflowEngine:
                                 "hypothesis": hyp_metrics.to_dict(),
                                 "debate": db_metrics.to_dict(),
                             }
+                        # Bug fix 2026-09-16 (BUG-R127): persist the quality
+                        # metrics to the shared Blackboard so the downstream
+                        # ReportAgent can read them.
+                        try:
+                            if context.shared_blackboard is not None:
+                                await context.shared_blackboard.write(
+                                    "evaluation", "hypothesis_metrics",
+                                    context.quality_metrics.get("hypothesis") or hyp_metrics.to_dict(),
+                                )
+                                if context.quality_metrics.get("debate") is not None:
+                                    await context.shared_blackboard.write(
+                                        "evaluation", "debate_metrics",
+                                        context.quality_metrics["debate"],
+                                    )
+                        except Exception as _qe_err:
+                            logger.debug(f"[Enhanced] blackboard quality_metrics write failed: {_qe_err}")
                         await bus.publish(
                             topic="diagnosis.debate.complete",
                             sender="LLMDebateAgent",
@@ -2052,6 +2123,21 @@ class WorkflowEngine:
                     if debate_result.success and debate_result.data:
                         debate_results = debate_result.data.get("debate_results", [])
                         context.debate_results = debate_results
+                        # Bug fix 2026-09-16 (BUG-R127): debate results were
+                        # only stored on the in-memory WorkflowContext, never
+                        # on the shared Blackboard. The legacy ReportAgent
+                        # reads ``bb.read("reasoning", "debate_results")``
+                        # to populate the enhanced-mode payload, so without
+                        # this write the LLM had nothing to cite and
+                        # ``traffic_first_enhanced`` produced visually
+                        # identical reports to base mode.
+                        try:
+                            if context.shared_blackboard is not None:
+                                await context.shared_blackboard.write(
+                                    "reasoning", "debate_results", debate_results
+                                )
+                        except Exception as _dbg_err:
+                            logger.debug(f"[Enhanced] blackboard debate_results write failed: {_dbg_err}")
                         if debate_results:
                             best = debate_results[0]
                             context.diagnosis_result = best.get("original_claim")
@@ -2322,15 +2408,22 @@ class WorkflowEngine:
         attacker_asn_for_intel = ""
         rr = context.routing_result or {}
         hijack_section = rr.get("hijack") or {}
+
+        def _safe_getattr(obj, attr, default=None):
+            """Access dict key or object attribute, returning default on failure."""
+            if isinstance(obj, dict):
+                return obj.get(attr, default)
+            return getattr(obj, attr, default) if hasattr(obj, attr) else default
+
         if rr:
             for ev in (rr.get("origin_hijacked") or hijack_section.get("origin_hijacked") or []):
-                if ev.get("hijacker_as"):
-                    attacker_asn_for_intel = str(ev["hijacker_as"])
+                if _safe_getattr(ev, "hijacker_as"):
+                    attacker_asn_for_intel = str(_safe_getattr(ev, "hijacker_as") or _safe_getattr(ev, "hijacker_asn"))
                     break
             if not attacker_asn_for_intel:
                 for ev in (rr.get("origin_hijacking") or hijack_section.get("origin_hijacking") or []):
-                    if ev.get("origin_as"):
-                        attacker_asn_for_intel = str(ev["origin_as"])
+                    if _safe_getattr(ev, "origin_as"):
+                        attacker_asn_for_intel = str(_safe_getattr(ev, "origin_as"))
                         break
             if attacker_asn_for_intel:
                 try:
@@ -2513,27 +2606,77 @@ class WorkflowEngine:
         return WorkflowEvent.REPORT_GENERATED
 
     async def _run_legacy_report(self, bb, context: WorkflowContext, ReportAgent, log):
-        """Run the legacy single-agent ReportAgent and return its HTML."""
-        agent = ReportAgent(bb)
+        """Run the legacy single-agent ReportAgent and return its HTML.
+
+        When the LLM-driven path fails (timeout / empty / balance validation)
+        AND REPORT_REQUIRE_LLM is NOT set, fall back to the deterministic
+        HTML renderer so the user always receives a useful report rather
+        than a workflow-level error.  The deterministic fallback uses the
+        same structured payload the LLM would have seen — it is not a
+        hardcoded prose template, it is data-driven HTML.
+        """
+        # Bug fix: forward the enhanced flag so the report includes the
+        # debate / evaluation / reactive-decision artefacts in enhanced mode.
+        agent = ReportAgent(bb, enhanced=bool(getattr(context, "enhanced", False)))
         await agent.start()
         result = await agent.step()
         if result is None:
             log.error("ReportAgent returned None")
-            raise RetryableError("ReportAgent returned None")
-        if not result.success:
+        elif not result.success:
             error_msg = str(result.error) if result.error is not None else "Unknown error"
             log.error(f"ReportAgent failed: {error_msg}")
-            raise RetryableError(f"Report generation failed: {error_msg}")
-        # Bug fix: explicitly fetch the legacy report HTML from the Blackboard
-        # so the caller can use it as the final report. Without this, callers
-        # relying on `bb._sections.get("report", {}).get("html")` would miss
-        # the just-written value when the report is needed for the final save
-        # in the same handler.
+        else:
+            # Success — fetch the legacy report HTML from the Blackboard
+            # so the caller can use it as the final report.
+            try:
+                legacy_html = await bb.read("report", "html") or ""
+            except Exception:
+                legacy_html = ""
+            if legacy_html:
+                return legacy_html
+            log.warning("[workflow] ReportAgent returned success but no HTML "
+                        "on blackboard; will use deterministic fallback.")
+
+        # ── Deterministic fallback (uses real data, not hardcoded prose) ──
         try:
-            legacy_html = await bb.read("report", "html") or ""
-        except Exception:
-            legacy_html = ""
-        return legacy_html
+            from agents.report_agent import render_fallback_html_for_agent
+            traffic_result = await bb.read("traffic", "result") if bb else None
+            routing_result = await bb.read("routing", "result") if bb else None
+            reasoning_result = await bb.read("reasoning", "result") if bb else None
+            if hasattr(traffic_result, "__await__"):
+                traffic_result = await traffic_result
+            if hasattr(routing_result, "__await__"):
+                routing_result = await routing_result
+            if hasattr(reasoning_result, "__await__"):
+                reasoning_result = await reasoning_result
+            fallback_html = render_fallback_html_for_agent(
+                asn=str(getattr(context, "asn", "?")),
+                start_time=str(getattr(context, "start_time", "")),
+                end_time=str(getattr(context, "end_time", "")),
+                traffic_result=traffic_result,
+                routing_result=routing_result,
+                reasoning_result=reasoning_result,
+            )
+            if fallback_html:
+                log.info("[workflow] Deterministic fallback HTML generated "
+                         f"({len(fallback_html)} chars)")
+                return fallback_html
+        except Exception as fb_err:
+            log.error(f"[workflow] Deterministic fallback also failed: {fb_err!r}")
+
+        # If fallback also fails AND REPORT_REQUIRE_LLM is set, raise so
+        # the orchestrator can surface the error properly.
+        require_llm = (
+            os.environ.get("REPORT_REQUIRE_LLM", "0").strip().lower()
+            in ("1", "true", "yes")
+        )
+        if require_llm:
+            raise RetryableError(
+                f"Report generation failed and fallback disabled: "
+                f"{result.error if result else 'no result'}"
+            )
+        # Otherwise return empty (orchestrator already saw the fallback attempt)
+        return ""
 
     async def _handle_complete(self, context: WorkflowContext):
         """Handle completion state."""

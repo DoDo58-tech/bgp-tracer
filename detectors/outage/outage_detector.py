@@ -586,7 +586,10 @@ class RouteOutageDetector:
             }, asn=asn).to_dict()
 
         try:
-            timeseries = extract_timeseries_for_as(plot_files, {int(asn)})
+            asn_int = int(asn) if isinstance(asn, str) else int(asn)
+            if str(asn).strip().upper().startswith("AS"):
+                asn_int = int(asn[2:]) if len(asn) > 2 else int(asn)
+            timeseries = extract_timeseries_for_as(plot_files, {asn_int})
         except FileNotFoundError as exc:
             logger.warning("Outage detector file error: %s", exc)
             return self._no_data_result(asn, start_time, end_time, baseline_start, error=str(exc))
