@@ -116,3 +116,4 @@ htmlcov/
 .dmypy.json
 dmypy.json
 
+data_check/evaluation/run_*/
