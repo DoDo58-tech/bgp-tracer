@@ -241,9 +241,31 @@ def main():
     parser.add_argument("metrics_files", nargs="+", help="metrics.json files to merge")
     parser.add_argument("-o", "--output", default=None,
                         help="Output markdown path (default: stdout)")
+    parser.add_argument("--prefer-most-events", action="store_true",
+                        help="For each mode, only use the metrics file with the most events")
     args = parser.parse_args()
 
     files = [Path(f) for f in args.metrics_files]
+
+    if args.prefer_most_events:
+        # Group by mode and keep only the largest run per mode
+        from collections import defaultdict
+        mode_files = defaultdict(list)
+        for f in files:
+            with open(f) as fh:
+                m = json.load(fh)
+            for mode in m.get("meta", {}).get("modes", []):
+                mode_files[mode].append((m["meta"]["n_events"], f))
+        # Pick largest per mode
+        kept = set()
+        for mode, lst in mode_files.items():
+            lst.sort(reverse=True)  # by n_events descending
+            kept.add(lst[0][1])
+        files = sorted(kept)
+        print(f"[merge] Using only largest run per mode:", file=sys.stderr)
+        for f in files:
+            print(f"  {f}", file=sys.stderr)
+
     merged = merge_metrics(files)
     md = render_markdown(merged)
 
