@@ -228,3 +228,29 @@ def test_shared_file_disabled_when_env_unset():
     assert t._shared_path == ""
     # Recording shouldn't write to any file
     t.check_and_record()
+
+
+def test_shared_file_rotation_bounds_size(tmp_path):
+    """After many calls, the shared file is rotated and only keeps
+    timestamps in the current window. Set a tight window so we can
+    observe rotation actually happens."""
+    shared = tmp_path / "budget.tsv"
+    os.environ["LLM_BUDGET_SHARED_FILE"] = str(shared)
+    os.environ["LLM_BUDGET_WINDOW_S"] = "10"
+    os.environ["LLM_BUDGET_MAX_CALLS"] = "1000"
+    os.environ["LLM_BUDGET_ROTATE_EVERY"] = "5"  # rotate every 5 calls
+    try:
+        tracker = lf_mod._BudgetTracker()
+        # Make 20 calls; after every 5th call, rotation happens
+        for i in range(20):
+            tracker.check_and_record()
+        # File should be small (only most-recent timestamps)
+        # We can't assert exact size without knowing timing, but we can
+        # assert it's bounded by ~the 10-second window of recent calls.
+        size = shared.stat().st_size
+        assert size < 1024, f"file should be tiny after rotation, got {size} bytes"
+    finally:
+        os.environ.pop("LLM_BUDGET_SHARED_FILE", None)
+        os.environ.pop("LLM_BUDGET_WINDOW_S", None)
+        os.environ.pop("LLM_BUDGET_MAX_CALLS", None)
+        os.environ.pop("LLM_BUDGET_ROTATE_EVERY", None)

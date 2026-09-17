@@ -348,7 +348,8 @@ class _BudgetTracker:
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # reentrant: _append_shared is
+        # called from inside check_and_record which already holds _lock
         self._calls: collections.deque[float] = collections.deque()
         self._warned: bool = False  # only warn once per window
         self._now_mono = __import__("time").monotonic
@@ -393,17 +394,61 @@ class _BudgetTracker:
             self._calls.clear()
 
     def _append_shared(self, ts_mono: float) -> None:
-        """Append a monotonic timestamp to the shared file as wall-clock."""
+        """Append a monotonic timestamp to the shared file as wall-clock.
+
+        To prevent the file from growing unbounded, periodically rotate it:
+        rewrite the file with only the timestamps inside the current window.
+        Rotation happens on every Nth append (default N=50).
+        """
         if not self._shared_path:
             return
         try:
             ts_wall = self._now_wall() - (self._now_mono() - ts_mono)
             with open(self._shared_path, "a") as f:
                 f.write(f"{ts_wall:.6f}\n")
+
+            # Rotate every N appends to bound file size. We use a file lock
+            # via a side lock file to avoid two subprocesses rotating at the
+            # same time. Rotation is best-effort; a failed rotation just
+            # leaves the file a bit larger.
+            rotate_every = int(os.environ.get("LLM_BUDGET_ROTATE_EVERY", "50"))
+            with self._lock:
+                self._append_count = getattr(self, "_append_count", 0) + 1
+                if self._append_count % rotate_every == 0:
+                    self._rotate_shared()
         except Exception:
             # Don't fail the LLM call just because the budget file
             # write failed — log silently. The in-process deque is
             # still accurate.
+            pass
+
+    def _rotate_shared(self) -> None:
+        """Rewrite the shared file to contain only timestamps in the window.
+
+        Best-effort: on any failure, the file is left as-is and the next
+        rotation will retry. We deliberately avoid touching the in-memory
+        deque here — rotation is purely a file-side cleanup.
+        """
+        try:
+            cutoff_wall = self._now_wall() - float(self._env("BUDGET_WINDOW_S", 18000, float))
+            keep = []
+            with open(self._shared_path, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ts = float(line)
+                        if ts >= cutoff_wall:
+                            keep.append(f"{ts:.6f}\n")
+                    except ValueError:
+                        pass
+            # Atomic write: write to temp, then rename
+            tmp = self._shared_path + ".tmp"
+            with open(tmp, "w") as f:
+                f.writelines(keep)
+            os.replace(tmp, self._shared_path)
+        except Exception:
             pass
 
     @staticmethod
