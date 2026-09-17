@@ -749,13 +749,26 @@ def slim_payload(data: Any, limit: int = 10, _depth: int = 0) -> Any:
     Drops any field whose name is in `_PAYLOAD_DENY_FIELDS` — those fields
     consume tokens without informing the report (raw timestamps, periodic
     history, full AS paths, raw tool output, etc.).
+
+    Round-23 BUG-#4 fix: the dict-level cap used to be hard-coded to
+    ``50`` and silently dropped fields beyond that index even when the
+    caller asked for ``limit=80`` (which we do for large payloads like
+    traffic results). Thread the per-level cap through and let callers
+    override.
     """
     if _depth > 50:
         return None
     if isinstance(data, dict):
+        # Round-23: callers pass the desired limit; for dicts we use a
+        # hard cap of max(limit, 50) so shallow structure isn't truncated
+        # when the caller is asking for fewer list items but more dict
+        # keys. The previous ``[:50]`` would silently drop keys beyond
+        # position 50 in sections like ``traffic`` that legitimately have
+        # 60+ ASN-keyed entries.
+        dict_cap = max(limit * 4, 50)
         return {
             k: slim_payload(v, limit, _depth + 1)
-            for k, v in list(data.items())[:50]
+            for k, v in list(data.items())[:dict_cap]
             if k not in _PAYLOAD_DENY_FIELDS
         }
     if isinstance(data, list):
@@ -1674,6 +1687,21 @@ class ReportAgent(Agent):
             extra=payload if isinstance(payload, dict) else None,
         )
 
+        # Round-23 BUG-#12 fix: ``_scrub_json_key_placeholders`` was defined
+        # and tested but never called from the production pipeline. The
+        # LLM frequently emits ``[target_as]`` / ``[user_analysis_window]``
+        # / ``[start_time]`` etc. as visible text. Resolve them here so
+        # operators never see raw JSON field names.
+        try:
+            html = _scrub_json_key_placeholders(
+                html,
+                asn=str(asn) if asn is not None else "",
+                start_time=str(start_time) if start_time else "",
+                end_time=str(end_time) if end_time else "",
+            )
+        except Exception as _scrub_err:
+            logger.debug(f"_scrub_json_key_placeholders failed: {_scrub_err}")
+
         # Post-process: replace LLM-generated Origin Hijack / Route Leak / Traffic
         # Summary tables with code-rendered deterministic versions. See
         # `_inject_code_rendered_tables` for the rationale.
@@ -1829,23 +1857,44 @@ def _collect_origin_hijack_rows(routing_result):
         for ev in seq or []:
             if not isinstance(ev, dict):
                 continue
-            hijacker = (
-                ev.get("origin_as")
-                or ev.get("hijacker_as")
-                or ev.get("attacker_as")
+            # Round-23 BUG-#11 fix: ``or`` chain collapses ``0`` / ``""``
+            # to the next candidate. AS 0 is a real reserved number (RFC
+            # 7607) and an empty string is a real API response. Use
+            # explicit ``is None`` + ``== ""`` checks so we don't silently
+            # misattribute hijacks / leaks.
+            def _first_present(*candidates):
+                for c in candidates:
+                    if c is None:
+                        continue
+                    if isinstance(c, str) and c.strip() == "":
+                        continue
+                    return c
+                return None
+
+            hijacker = _first_present(
+                ev.get("origin_as"),
+                ev.get("hijacker_as"),
+                ev.get("attacker_as"),
             )
-            if not hijacker and isinstance(ev.get("origin"), dict):
+            if hijacker is None and isinstance(ev.get("origin"), dict):
                 hijacker = ev["origin"].get("asn")
-            victim = (
-                ev.get("victim_as")
-                or ev.get("expected_origin")
-                or ev.get("expected_origin_as")
+            victim = _first_present(
+                ev.get("victim_as"),
+                ev.get("expected_origin"),
+                ev.get("expected_origin_as"),
             )
             rows.append([
-                _safe_str(ev.get("timestamp") or ev.get("time") or ev.get("detected_at")),
+                _safe_str(_first_present(
+                    ev.get("timestamp"),
+                    ev.get("time"),
+                    ev.get("detected_at"),
+                )),
                 _safe_str(ev.get("prefix")),
                 _safe_str(hijacker),
-                _safe_str(ev.get("as-path") or ev.get("as_path")),
+                _safe_str(_first_present(
+                    ev.get("as-path"),
+                    ev.get("as_path"),
+                )),
                 _safe_str(victim),
             ])
 
@@ -1969,8 +2018,17 @@ def _collect_traffic_anomaly_rows(traffic_result, routing_result=None):
 # Each regex matches a complete ``<h\d>...</h\d>`` heading so we can insert
 # the Python-rendered table IMMEDIATELY after the closing tag.  When the
 # heading is missing entirely, the table is appended just before ``</body>``.
+#
+# Round-23 BUG-23-1 fix: the TRAFFIC regex used to be ``traffic\s+analysis``
+# only, which meant ``Traffic Summary`` and ``Traffic Anomaly Events`` had
+# no anchor and the table fell back to ``</body>``. Worse, two tables
+# sharing the same anchor (e.g. anomaly + summary) collided in
+# ``_render_section_anchor_inserts`` and the second insert split the
+# closing ``</h\d>`` tag in two. The new regex matches all three headings
+# and the inserter processes entries in document order so collisions
+# don't truncate headings.
 _SECTION_TITLE_TRAFFIC = re.compile(
-    r"<h\d[^>]*>[^<]*?traffic\s+analysis[^<]*?</h\d\s*>",
+    r"<h\d[^>]*>[^<]*?(?:traffic\s+analysis|traffic\s+summary|traffic\s+anomal(?:y|ies)\s+events?|traffic\s+events?)[^<]*?</h\d\s*>",
     re.IGNORECASE,
 )
 _SECTION_TITLE_ROUTING = re.compile(
@@ -2191,23 +2249,50 @@ def _collect_traffic_summary_rows(traffic_result, routing_result=None) -> list:
 
 def _render_section_anchor_inserts(html: str, sections: list) -> str:
     r"""For each (anchor_regex, table_html) tuple, insert ``table_html``
-    immediately AFTER the matched ``<h\d>...</h\d>`` heading.  Inserts
-    are applied in REVERSE document order so earlier offsets don't
-    shift while we're string-mutating.
+    immediately AFTER the matched ``<h\d>...</h\d>`` heading.
+
+    Round-23 BUG-23-1 fix: the historical implementation used
+    ``indexed.sort(reverse=True)`` and ``out[:pos] + table + out[pos:]``
+    for every entry, but two entries at the SAME position
+    (e.g. ``_SECTION_TITLE_TRAFFIC`` matches both "Traffic Anomaly
+    Events" and "Traffic Summary" because the regex is intentionally
+    permissive) produced this bug::
+
+        Before:  <h2>Traffic Anomaly Events</h2>
+        After:   <h2>Traffic Anomaly EventsTABLE2TABLE1</h2>
+
+    The closing ``</h2>`` got pushed past the inserted tables, leaving an
+    orphan closing tag and tables rendered inside what should be a heading.
+
+    Fix: each insert searches the CURRENT output, but we also track the
+    last position past which we should not re-search (so the same
+    heading isn't matched twice). The first call uses the full document;
+    subsequent calls skip past ``last_insert_end`` by anchoring the
+    search pattern with ``(?<=...)`` after the previous insert point.
     """
     if not html or not sections:
         return html
-    indexed: list = []
+
+    out = html
+    # We process in order; each insert's end becomes the new search start.
+    last_insert_end = 0
     for entry in sections:
         anchor_re, table_html = entry[0], entry[1]
-        m = anchor_re.search(html)
-        if m is None:
-            continue
-        indexed.append((m.end(), table_html))
-    indexed.sort(key=lambda x: x[0], reverse=True)
-    out = html
-    for pos, table_html in indexed:
-        out = out[:pos] + table_html + out[pos:]
+        # If we've already inserted past a position, restrict the search
+        # to AFTER that position so we don't re-match the same heading.
+        if last_insert_end > 0:
+            tail = out[last_insert_end:]
+            m = anchor_re.search(tail)
+            if m is None:
+                continue
+            insert_at = last_insert_end + m.end()
+        else:
+            m = anchor_re.search(out)
+            if m is None:
+                continue
+            insert_at = m.end()
+        out = out[:insert_at] + table_html + out[insert_at:]
+        last_insert_end = insert_at + len(table_html)
     return out
 
 
@@ -3024,7 +3109,12 @@ def _substitute_field_references(html: str, traffic: dict, routing: dict, reason
         cur = _walk(payload_root, tokens)
         if cur is not None:
             if isinstance(cur, (dict, list)):
-                return None
+                # Round-23 BUG-#5 fix: instead of returning ``None``
+                # (which renders as ``(no data)``), surface a compact
+                # summary so the LLM still gets useful information
+                # about the structure even though it cannot render the
+                # full value inline.
+                return _summarise_collection(cur)
             return _format_scalar(cur)
 
         # 2. Alias for known nested keys that aren't surfaced as sections
@@ -3071,7 +3161,7 @@ def _substitute_field_references(html: str, traffic: dict, routing: dict, reason
             cur = _walk(aliases[tokens[0]], tokens[1:])
             if cur is not None:
                 if isinstance(cur, (dict, list)):
-                    return None
+                    return _summarise_collection(cur)
                 return _format_scalar(cur)
 
         # 3. Last resort: try inside every section, return first hit
@@ -3088,7 +3178,48 @@ def _substitute_field_references(html: str, traffic: dict, routing: dict, reason
                 cur = _walk(sec, tokens)
                 if cur is not None and not isinstance(cur, (dict, list)):
                     return _format_scalar(cur)
+                if cur is not None and isinstance(cur, (dict, list)):
+                    return _summarise_collection(cur)
         return None
+
+    def _summarise_collection(value, max_items: int = 3, max_len: int = 60) -> str:
+        """Render a list / dict as a compact human-readable summary.
+
+        Round-23 BUG-#5 fix: previously, when the LLM referenced a path
+        that resolved to a list or dict (e.g. ``[traffic.routing_events]``),
+        the resolver returned ``None`` and the rendered report said
+        ``(no data)`` even though the value was present and could have been
+        summarised as ``"3 items"`` or ``"a, b, c (3 total)"``.
+
+        The function is intentionally short — long lists/dicts shouldn't
+        be rendered inline; the LLM should be told to describe them in
+        prose instead.
+        """
+        if isinstance(value, list):
+            n = len(value)
+            if n == 0:
+                return "0 items"
+            # Show the first few scalar items; fall back to "N items" if
+            # the list contains complex items.
+            scalars = [str(x) for x in value[:max_items] if not isinstance(x, (dict, list))]
+            if scalars:
+                preview = ", ".join(scalars[:max_items])
+                if n > max_items:
+                    return f"{preview}, … ({n} total)"
+                if len(preview) > max_len:
+                    return f"{n} item{'s' if n != 1 else ''}"
+                return f"{preview} ({n} total)" if n > max_items else preview
+            return f"{n} item{'s' if n != 1 else ''}"
+        if isinstance(value, dict):
+            n = len(value)
+            if n == 0:
+                return "0 keys"
+            keys = list(value.keys())[:max_items]
+            preview = ", ".join(str(k) for k in keys)
+            if n > max_items:
+                return f"{{{preview}, …}} ({n} keys)"
+            return f"{{{preview}}} ({n} keys)"
+        return str(value)
 
     # ── Pass 1: try to resolve every [...] in the HTML ───────────────────────
     bracket_re = re.compile(r"\[([A-Za-z_][\w.\[\]0-9]{1,200})\]")
@@ -3479,6 +3610,26 @@ def validate_html_balance(html: str) -> tuple[bool, list[str]]:
         re.DOTALL,
     )
     html_for_scan = _STRIP_BASE64_RE.sub("[traffic chart placeholder]", html)
+    # Round-23 BUG-23-4: also strip ``<style>`` and ``<script>`` content
+    # (which can contain stray ``<`` characters in CSS selectors / JS
+    # regex literals). Browsers don't care about balanced text inside
+    # these elements for rendering purposes, but our regex parser would
+    # see them as tags. This previously caused false-positive
+    # "unclosed <span>" / "unclosed <h2>" warnings on reports whose
+    # style block referenced ``<`` as part of CSS comparisons.
+    _STRIP_RAW_TEXT_RE = re.compile(
+        r"<(style|script)\b[^>]*>.*?</\1\s*>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    html_for_scan = _STRIP_RAW_TEXT_RE.sub("[raw-text-block]", html_for_scan)
+    # Round-23: also strip ``<title>`` content for the same reason —
+    # text nodes inside <title> can contain anything. Title tags are
+    # always single, properly closed, so we just hide their content.
+    _STRIP_TITLE_RE = re.compile(
+        r"<title\b[^>]*>.*?</title\s*>",
+        re.DOTALL | re.IGNORECASE,
+    )
+    html_for_scan = _STRIP_TITLE_RE.sub("<title></title>", html_for_scan)
     for match in tag_re.finditer(html_for_scan):
         # Skip comments / DOCTYPE — they don't enter the stack.
         if match.group(0).startswith("<!"):
@@ -4617,6 +4768,15 @@ def generate_report_html(
             reasoning_result or {},
             traffic_anomaly_window,
             extra=_standalone_extra,
+        )
+        # Round-23 BUG-#12 fix: also scrub JSON-key placeholders here so
+        # the standalone (``generate_report_html``) entry point — which
+        # bypasses the workflow pipeline — gets the same fix-up.
+        html = _scrub_json_key_placeholders(
+            html,
+            asn=str(asn) if asn is not None else "",
+            start_time=str(start_time) if start_time else "",
+            end_time=str(end_time) if end_time else "",
         )
     except Exception as _sf_err:
         logger.debug(f"_substitute_field_references failed: {_sf_err}")
