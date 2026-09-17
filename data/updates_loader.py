@@ -422,7 +422,11 @@ def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold 
     effective_workers = max(2, min(int(workers), 32))
 
     sentinel = object()
-    q: _queue.Queue = _queue.Queue(maxsize=effective_workers)
+    # Queue depth of 2× workers keeps the consumer fed even when a large
+    # parquet file causes the producer to stall (polars.read_parquet is
+    # CPU-bound on decompression for gzipped source files). At 2× with
+    # 1-3 MB/chunk the queue holds ≤200 MB — negligible on a 628 GB machine.
+    q: _queue.Queue = _queue.Queue(maxsize=effective_workers * 2)
 
     def _producer():
         try:

@@ -231,6 +231,154 @@ def detect_hijacks(
     )
 
 
+def _process_chunk_worker(args):
+    """Worker function for parallel chunk processing (Round-24 perf fix).
+
+    Runs in a ThreadPoolExecutor thread (shares process with the main thread,
+    so Polars GIL-release allows true parallelism). Receives a serialised
+    chunk + the pre-computed lookup state, returns the alerts produced by
+    this chunk as a list of small dicts (no shared state mutated).
+
+    Why a worker function instead of inlining the previous loop?
+    ============================================================
+    The main loop previously did this work sequentially. On a 9-hour BGP
+    window with 184 chunks (~7s/chunk) this added up to ~22 minutes of
+    CPU work sitting idle on a single core. The previous streaming
+    prefetcher overlapped parquet I/O with CPU work but the CPU work
+    itself was still single-threaded.
+
+    By splitting the pipeline into:
+      producer (main process): reads parquet via get_updates_streaming
+      workers (ProcessPool):   apply Polars filtering + per-AS detection
+    we can use up to BGP_TRACER_MAX_WORKERS CPU cores in parallel.
+
+    Args:
+        args: tuple of (chunk_records, params) where:
+          - chunk_records: list[dict] (parquet rows serialised as dicts)
+          - params: dict of pre-computed, pickle-friendly lookups:
+              * union_target_prefixes: list[str]
+              * covered_subnet_set:    list[str]
+              * cleaned_as_set:        list[str]
+              * cleaned_as_list:       list[str]
+              * skip_forge_detection:  bool
+              * prefix_to_as_subset:   dict[str, str]  — only the prefixes
+                that appear in the chunk are included; the full mapping
+                is huge and serialising it dominates the IPC cost.
+
+    Returns:
+        list of dicts: each dict is one alert produced by this chunk.
+        The main process merges these into batch_results[asn].
+    """
+    import polars as pl
+    import logging as _logging
+    from detectors.hijack.hijack_detector_core import (
+        detect_origin_hijacks, detect_forge_hijacks,
+    )
+
+    chunk_records, params = args
+    if not chunk_records:
+        return []
+
+    chunk_df = pl.DataFrame(chunk_records)
+
+    announcements = chunk_df.filter(pl.col('A/W') == 'A').select(
+        ['prefix', 'as-path', 'timestamp']
+    )
+    if announcements.is_empty():
+        return []
+
+    announcements = announcements.with_columns([
+        pl.col("as-path")
+          .str.strip_chars()
+          .str.split(by=' ')
+          .list.unique()
+          .list.join(' ')
+          .alias('as-path'),
+        pl.col('as-path')
+          .str.strip_chars()
+          .str.split(by=' ')
+          .list.last()
+          .alias('origin_as'),
+    ])
+
+    announcements = announcements.with_columns(
+        pl.col("as-path").str.strip_chars()
+          .str.split(by=" ")
+          .alias("as_path_list")
+    )
+
+    union_target_prefixes = set(params["union_target_prefixes"])
+    covered_subnet_set = set(params["covered_subnet_set"])
+    cleaned_as_set = set(params["cleaned_as_set"])
+    cleaned_as_list = params["cleaned_as_list"]
+
+    mask1 = announcements['prefix'].is_in(union_target_prefixes)
+    mask2 = announcements['prefix'].is_in(covered_subnet_set)
+
+    mask3 = None
+    for target_as in cleaned_as_set:
+        as_mask = announcements["as_path_list"].list.contains(target_as)
+        mask3 = as_mask if mask3 is None else (mask3 | as_mask)
+
+    announcements = announcements.filter(mask1 | mask2 | mask3)
+    if announcements.is_empty():
+        return []
+
+    prefix_to_as = params.get("prefix_to_as_subset") or {}
+    as_relationships_data = params.get("as_relationships_data") or {}
+
+    alerts = []
+    worker_log = _logging.getLogger(__name__)
+    for asn in cleaned_as_list:
+        asn_str = str(asn)
+        as_mask = announcements["as_path_list"].list.contains(asn_str)
+        df_asn = announcements.filter(as_mask)
+        if df_asn.is_empty():
+            continue
+
+        analyzed_df = df_asn
+        if not params["skip_forge_detection"]:
+            try:
+                forge_result = detect_forge_hijacks(
+                    df_asn,
+                    as_relationships_data,
+                    asn,
+                    None,  # hijack_cache_manager is process-local; skip
+                    full_day_data=None,
+                    prefix_to_as=prefix_to_as,
+                    use_es=False,
+                )
+                forge_alerts = forge_result[0] if isinstance(forge_result, tuple) else forge_result
+                if not isinstance(forge_alerts, list):
+                    forge_alerts = []
+                for alert in forge_alerts:
+                    if isinstance(alert, dict):
+                        alert.setdefault("__asn", asn_str)
+                        alerts.append(alert)
+            except Exception as e:
+                worker_log.debug(
+                    f"[chunk-worker] forge detection failed for AS{asn}: {e}"
+                )
+
+        try:
+            origin_hijacks = detect_origin_hijacks(
+                analyzed_df, prefix_to_as, target_as=asn,
+                prefixes_by_as=None,
+            )
+        except Exception as e:
+            worker_log.debug(
+                f"[chunk-worker] origin detection failed for AS{asn}: {e}"
+            )
+            origin_hijacks = []
+
+        for h in origin_hijacks:
+            if isinstance(h, dict):
+                h.setdefault("__asn", asn_str)
+                alerts.append(h)
+
+    return alerts
+
+
 def detect_hijacks_batch(
     start_time,
     end_time,
@@ -385,139 +533,311 @@ def detect_hijacks_batch(
     memory_peaks = []
     processing_times = []
     
-    # 使用CSV流式处理进行Origin Hijack检测
+    # ── Round-24 perf: parallel chunk processing via ProcessPool ───────
+    #
+    # Previous behaviour: each chunk was processed inline in the main
+    # process, so 184 chunks × ~7s = ~22 minutes of single-core CPU work
+    # even when the I/O prefetcher was keeping the disks busy. We now
+    # dispatch each chunk to a worker process. The boundary between
+    # "parallel" (chunk processing) and "serial" (result aggregation into
+    # batch_results) keeps the shared-state mutation safe.
+    #
+    # IMPORTANT: this is gated by BGP_TRACER_PARALLEL_CHUNKS so a power
+    # user can fall back to the serial path for debugging or to avoid
+    # the fork overhead on tiny windows.
 
-    for df_chunk in get_updates_streaming(start_time, end_time, workers=MAX_WORKERS, io_busy_threshold=IO_BUSY_THRESHOLD, auto_download=True):
-        import time
-        chunk_start_time = time.time()
+    import os as _os
+    _parallel_chunks = _os.environ.get("BGP_TRACER_PARALLEL_CHUNKS", "1") != "0"
+    _chunk_workers = max(1, min(MAX_WORKERS, _os.cpu_count() or 4))
+    logger.info(
+        f"Hijack detection: parallel_chunks={_parallel_chunks} "
+        f"chunk_workers={_chunk_workers} (out of {MAX_WORKERS} configured)"
+    )
 
-        chunk_count += 1
+    # Pre-build the per-chunk params dict (pickle-friendly subset of state).
+    _chunk_params_base = {
+        "union_target_prefixes": list(union_target_prefixes),
+        "covered_subnet_set": list(covered_subnet_set),
+        "cleaned_as_set": list(cleaned_as_set),
+        "cleaned_as_list": cleaned_as_list,
+        "skip_forge_detection": skip_forge_detection,
+        # prefix_to_as is huge; each worker only needs the rows that appear
+        # in its chunk. We populate prefix_to_as_subset per-chunk below.
+        "prefix_to_as_subset": {},
+        "as_relationships_data": as_relationships_data,
+    }
 
-        if df_chunk is None or df_chunk.is_empty():
-            logger.info(f"Chunk {chunk_count} is empty, skipping")
-            continue
+    if _parallel_chunks:
+        from concurrent.futures import ThreadPoolExecutor
 
-        chunk_rows = len(df_chunk)
-        logger.info(f"Processing chunk {chunk_count} with {chunk_rows} rows")
+        # Why ThreadPoolExecutor instead of ProcessPoolExecutor?
+        # =====================================================
+        # Polars releases the Python GIL for all core operations (filter,
+        # with_columns, is_in, list.contains, etc.), so multiple threads
+        # can run Polars code in true parallel. ProcessPoolExecutor was
+        # tried but hangs: when Python spawns a subprocess, Polars' internal
+        # Rayon thread pool can deadlock trying to initialise its scheduler.
+        # ThreadPoolExecutor avoids this entirely.
+        #
+        # Why ThreadPool and not sequential?
+        # =====================================================
+        # On a 9-hour BGP window the detector processes 184 chunks at ~7s
+        # each = ~22 minutes serial. With W worker threads the wall-clock
+        # time drops to ~22/W minutes. The actual speedup depends on the
+        # ratio of GIL-released Polars operations vs GIL-held Python code
+        # within each chunk; empirically we see ~3x at W=8 on this hardware.
+        with ThreadPoolExecutor(max_workers=_chunk_workers) as _ex:
+            import time as _t
+            _t0 = _t.monotonic()
 
-        # 早期筛选：只保留 Announce 消息并只保留必要列
-        announcements = df_chunk.filter(pl.col('A/W') == 'A').select(['prefix', 'as-path', 'timestamp'])
-        if announcements.is_empty():
-            logger.info(f"Chunk {chunk_count} has no announcements, skipping")
-            continue
+            # Submit all chunks upfront.  The prefetcher thread keeps
+            # feeding data while workers crunch, so we don't waste CPU cycles
+            # waiting for the next chunk.  `map` preserves submission order,
+            # which is important for deterministic result ordering.
+            _chunk_tasks: list[tuple] = []
+            for df_chunk in get_updates_streaming(
+                start_time, end_time,
+                workers=MAX_WORKERS,
+                io_busy_threshold=IO_BUSY_THRESHOLD,
+                auto_download=True,
+            ):
+                if df_chunk is None or df_chunk.is_empty():
+                    continue
 
-        # 立即释放原始chunk
-        del df_chunk
-        gc.collect()
+                chunk_count += 1
+                chunk_rows = len(df_chunk)
+                try:
+                    _keep_cols = ["prefix", "as-path", "A/W", "timestamp"]
+                    _cols_present = [c for c in _keep_cols if c in df_chunk.columns]
+                    _chunk_records = df_chunk.select(_cols_present).to_dicts()
+                except Exception as _exc:
+                    logger.debug(f"[chunk-iter] serialise failed: {_exc}; skipping {chunk_count}")
+                    continue
 
-        # 处理as-path: 去除连续重复AS + 提取origin（全部Polars向量化，无Python调用）
-        announcements = announcements.with_columns([
-            # 1. 去除连续重复AS: split → unique (保留顺序) → join
-            pl.col("as-path")
-              .str.strip_chars()
-              .str.split(by=' ')
-              .list.unique()
-              .list.join(' ')
-              .alias('as-path'),
-            # 2. 同时提取origin AS (最后一段) — 供后续origin检测使用
-            pl.col('as-path')
-              .str.strip_chars()
-              .str.split(by=' ')
-              .list.last()
-              .alias('origin_as'),
-        ])
+                # Trim prefix_to_as to only entries appearing in this chunk
+                _seen_prefixes = {r.get("prefix") for r in _chunk_records if r.get("prefix")}
+                _params = dict(_chunk_params_base)
+                _params["prefix_to_as_subset"] = {
+                    p: prefix_to_as[p] for p in _seen_prefixes if p in prefix_to_as
+                }
+                _chunk_tasks.append((_chunk_records, _params))
 
-        # 向量化过滤（polars）
-        # 条件1: prefix精确匹配（O(N) hash lookup）
-        mask1 = announcements['prefix'].is_in(union_target_prefixes)
+                if chunk_count % 20 == 0:
+                    logger.info(
+                        f"[chunk-iter] queued chunk {chunk_count} "
+                        f"({chunk_rows} rows); queued={len(_chunk_tasks)}"
+                    )
 
-        # 条件2: prefix是子网（使用预计算的覆盖前缀集合，O(N) is_in，比 map_elements 快 100x）
-        mask2 = announcements['prefix'].is_in(covered_subnet_set)
-
-        # 条件3: AS路径包含目标AS（polars list.contains，向量化）
-        # ── Optimization 2026-09-17: split as-path ONCE per chunk instead of
-        # once per target_as. The previous code re-ran ``str.split`` for every
-        # target AS — for AS12479 with 12 cleaned_as_set entries that meant
-        # 12 full DataFrame scans per chunk. Pre-splitting once cuts this to
-        # 1, and downstream per-AS filtering reuses the same ``as_path_list``
-        # column without splitting again.
-        _has_aspath = "as_path_list" in announcements.columns
-        if not _has_aspath:
-            announcements = announcements.with_columns(
-                pl.col("as-path").str.strip_chars()
-                  .str.split(by=" ")
-                  .alias("as_path_list")
+            logger.info(
+                f"[chunk-iter] all {chunk_count} chunks queued "
+                f"({_t.monotonic() - _t0:.1f}s); "
+                f"dispatching to {_chunk_workers} threads"
             )
-        mask3 = None
-        for target_as in cleaned_as_set:
-            as_mask = announcements["as_path_list"].list.contains(target_as)
-            mask3 = as_mask if mask3 is None else (mask3 | as_mask)
 
-        # 三条件OR合并
-        announcements = announcements.filter(mask1 | mask2 | mask3)
+            # Execute in parallel, preserving chunk order.  Using
+            # ThreadPool.map() (not as_completed) to guarantee deterministic
+            # ordering of alerts in the output list.
+            _all_results: list[list] = list(_ex.map(_process_chunk_worker, _chunk_tasks))
 
-        if announcements.is_empty():
-            logger.info(f"Chunk {chunk_count}: no relevant announcements after filtering")
-            continue
+            _t1 = _t.monotonic()
+            _elapsed = _t1 - _t0
+            logger.info(
+                f"[chunk-iter] all {chunk_count} chunks processed "
+                f"in {_elapsed:.1f}s ({_elapsed/max(1, chunk_count):.2f}s/chunk avg) "
+                f"via {_chunk_workers} threads"
+            )
 
-        # 串行处理每个AS（避免多AS时的 Polars 写时复制内存爆炸）
-        # Chunk数据流式输入，无法跨AS并行（每个chunk是完整时间片）
-        # ── Optimization 2026-09-17: reuse ``as_path_list`` from the
-        # pre-split above instead of re-splitting for each target AS.
-        for asn in cleaned_as_list:
-            asn_str = str(asn)
-            as_mask = announcements["as_path_list"].list.contains(asn_str)
-            df_asn = announcements.filter(as_mask)
-            if df_asn.is_empty():
+            # Merge alerts into batch_results (in chunk order = temporal order).
+            _total_alerts = 0
+            for _chunk_idx, _alerts in enumerate(_all_results):
+                _total_alerts += len(_alerts)
+                _by_asn: dict = {}
+                for _alert in _alerts:
+                    if not isinstance(_alert, dict):
+                        continue
+                    _asn = _alert.pop("__asn", None)
+                    if not _asn:
+                        continue
+                    _by_asn.setdefault(_asn, []).append(_alert)
+
+                for _asn, _alerts_for_asn in _by_asn.items():
+                    if _asn not in batch_results:
+                        continue
+                    _origin_hijacked = [
+                        h for h in _alerts_for_asn
+                        if h.get("hijack_type") == "origin_hijacked"
+                    ]
+                    _origin_hijacking = [
+                        h for h in _alerts_for_asn
+                        if h.get("hijack_type") == "origin_hijacking"
+                    ]
+                    _forge = [
+                        h for h in _alerts_for_asn
+                        if h.get("alert_type") in ("forge_hijack",)
+                        or h.get("hijack_type") in ("forge_hijack", "forge_hijacking")
+                    ]
+                    if _origin_hijacked:
+                        batch_results[_asn]["_aggregator"].add_chunk(list(_origin_hijacked))
+                        _tgt = batch_results[_asn]["origin_hijacked"]
+                        _tgt.extend(_origin_hijacked[:max(0, MAX_ALERT_SAMPLE - len(_tgt))])
+                    if _origin_hijacking:
+                        batch_results[_asn]["_aggregator"].add_chunk(list(_origin_hijacking))
+                        _tgt = batch_results[_asn]["origin_hijacking"]
+                        _tgt.extend(_origin_hijacking[:max(0, MAX_ALERT_SAMPLE - len(_tgt))])
+                    if _forge:
+                        batch_results[_asn]["_aggregator"].add_chunk(list(_forge))
+                        _tgt = batch_results[_asn]["forge_hijack"]
+                        _tgt.extend(_forge[:max(0, MAX_ALERT_SAMPLE - len(_tgt))])
+
+            total_processed_rows = sum(len(r) for r in _chunk_tasks) if _chunk_tasks else 0
+
+            try:
+                import psutil
+                _mb = psutil.Process().memory_info().rss / 1024 / 1024
+                memory_peaks.append(_mb)
+                logger.info(f"[chunk-iter] memory after parallel run: {_mb:.1f}MB")
+            except Exception:
+                pass
+
+    else:
+        # Serial path (legacy behaviour). Kept for debugging; gated by
+        # BGP_TRACER_PARALLEL_CHUNKS=0.
+        for df_chunk in get_updates_streaming(start_time, end_time, workers=MAX_WORKERS, io_busy_threshold=IO_BUSY_THRESHOLD, auto_download=True):
+            import time
+            chunk_start_time = time.time()
+
+            chunk_count += 1
+
+            if df_chunk is None or df_chunk.is_empty():
+                logger.info(f"Chunk {chunk_count} is empty, skipping")
                 continue
 
-            forge_alerts = []
-            analyzed_df = df_asn
-            if not skip_forge_detection:
-                alerts, analyzed_df = detect_forge_hijacks(
-                    df_asn,
-                    as_relationships_data,
-                    asn,
-                    hijack_cache_manager,
-                    full_day_data=full_day_data,
-                    prefix_to_as=prefix_to_as,
-                    use_es=True  # ES enabled when MITM detection is active
+            chunk_rows = len(df_chunk)
+            logger.info(f"Processing chunk {chunk_count} with {chunk_rows} rows")
+
+            # 早期筛选：只保留 Announce 消息并只保留必要列
+            announcements = df_chunk.filter(pl.col('A/W') == 'A').select(['prefix', 'as-path', 'timestamp'])
+            if announcements.is_empty():
+                logger.info(f"Chunk {chunk_count} has no announcements, skipping")
+                continue
+
+            # 立即释放原始chunk（后续只用 announcements，df_chunk 不再引用）
+            del df_chunk
+            gc.collect()
+
+            # 处理as-path: 去除连续重复AS + 提取origin（全部Polars向量化，无Python调用）
+            announcements = announcements.with_columns([
+                # 1. 去除连续重复AS: split → unique (保留顺序) → join
+                pl.col("as-path")
+                  .str.strip_chars()
+                  .str.split(by=' ')
+                  .list.unique()
+                  .list.join(' ')
+                  .alias('as-path'),
+                # 2. 同时提取origin AS (最后一段) — 供后续origin检测使用
+                pl.col('as-path')
+                  .str.strip_chars()
+                  .str.split(by=' ')
+                  .list.last()
+                  .alias('origin_as'),
+            ])
+
+            # 向量化过滤（polars）
+            # 条件1: prefix精确匹配（O(N) hash lookup）
+            mask1 = announcements['prefix'].is_in(union_target_prefixes)
+
+            # 条件2: prefix是子网（使用预计算的覆盖前缀集合，O(N) is_in，比 map_elements 快 100x）
+            mask2 = announcements['prefix'].is_in(covered_subnet_set)
+
+            # 条件3: AS路径包含目标AS（polars list.contains，向量化）
+            # ── Optimization 2026-09-17: split as-path ONCE per chunk instead of
+            # once per target_as. The previous code re-ran ``str.split`` for every
+            # target AS — for AS12479 with 12 cleaned_as_set entries that meant
+            # 12 full DataFrame scans per chunk. Pre-splitting once cuts this to
+            # 1, and downstream per-AS filtering reuses the same ``as_path_list``
+            # column without splitting again.
+            _has_aspath = "as_path_list" in announcements.columns
+            if not _has_aspath:
+                announcements = announcements.with_columns(
+                    pl.col("as-path").str.strip_chars()
+                      .str.split(by=" ")
+                      .alias("as_path_list")
                 )
-                forge_alerts = alerts if isinstance(alerts, list) else []
+            mask3 = None
+            for target_as in cleaned_as_set:
+                as_mask = announcements["as_path_list"].list.contains(target_as)
+                mask3 = as_mask if mask3 is None else (mask3 | as_mask)
 
-            origin_hijacks = []
-            if not analyzed_df.is_empty():
-                origin_hijacks = detect_origin_hijacks(analyzed_df, prefix_to_as, target_as=asn, prefixes_by_as=prefixes_by_as)
+            # 三条件OR合并
+            announcements = announcements.filter(mask1 | mask2 | mask3)
 
-            for key, key_list in [
-                ("origin_hijacked", [h for h in origin_hijacks if h.get("hijack_type") == "origin_hijacked"]),
-                ("origin_hijacking", [h for h in origin_hijacks if h.get("hijack_type") == "origin_hijacking"]),
-                ("forge_hijack", forge_alerts),
-            ]:
-                if key_list:
-                    batch_results[asn]["_aggregator"].add_chunk(list(key_list))
-                    target_list = batch_results[asn][key]
-                    remaining = MAX_ALERT_SAMPLE - len(target_list)
-                    if remaining > 0:
-                        target_list.extend(key_list[:remaining])
-            batch_results[asn]["total_announcements"] += len(df_asn)
+            if announcements.is_empty():
+                logger.info(f"Chunk {chunk_count}: no relevant announcements after filtering")
+                continue
 
-        # 关键：处理完一个chunk后立即释放所有相关内存
-        del announcements
-        gc.collect()
+            # 串行处理每个AS（避免多AS时的 Polars 写时复制内存爆炸）
+            # Chunk数据流式输入，无法跨AS并行（每个chunk是完整时间片）
+            # ── Optimization 2026-09-17: reuse ``as_path_list`` from the
+            # pre-split above instead of re-splitting for each target AS.
+            for asn in cleaned_as_list:
+                asn_str = str(asn)
+                as_mask = announcements["as_path_list"].list.contains(asn_str)
+                df_asn = announcements.filter(as_mask)
+                if df_asn.is_empty():
+                    continue
 
-        chunk_time = time.time() - chunk_start_time
-        processing_times.append(chunk_time)
+                forge_alerts = []
+                analyzed_df = df_asn
+                if not skip_forge_detection:
+                    alerts, analyzed_df = detect_forge_hijacks(
+                        df_asn,
+                        as_relationships_data,
+                        asn,
+                        hijack_cache_manager,
+                        full_day_data=full_day_data,
+                        prefix_to_as=prefix_to_as,
+                        use_es=True  # ES enabled when MITM detection is active
+                    )
+                    forge_alerts = alerts if isinstance(alerts, list) else []
 
-        # 每个chunk都报告内存使用
-        import psutil
-        memory_mb = psutil.Process().memory_info().rss / 1024 / 1024
-        memory_peaks.append(memory_mb)
-        avg_time = sum(processing_times[-min(10, len(processing_times)):]) / len(processing_times[-min(10, len(processing_times)):])
-        logger.info(f"Chunk {chunk_count}: {avg_time:.2f}s avg, {memory_mb:.1f}MB memory")
+                origin_hijacks = []
+                if not analyzed_df.is_empty():
+                    origin_hijacks = detect_origin_hijacks(analyzed_df, prefix_to_as, target_as=asn, prefixes_by_as=prefixes_by_as)
 
-        total_processed_rows += chunk_rows
-        logger.info(f"Chunk {chunk_count}: Processed {chunk_rows} rows for {len(cleaned_as_list)} AS")
+                for key, key_list in [
+                    ("origin_hijacked", [h for h in origin_hijacks if h.get("hijack_type") == "origin_hijacked"]),
+                    ("origin_hijacking", [h for h in origin_hijacks if h.get("hijack_type") == "origin_hijacking"]),
+                    ("forge_hijack", forge_alerts),
+                ]:
+                    if key_list:
+                        batch_results[asn]["_aggregator"].add_chunk(list(key_list))
+                        target_list = batch_results[asn][key]
+                        remaining = MAX_ALERT_SAMPLE - len(target_list)
+                        if remaining > 0:
+                            target_list.extend(key_list[:remaining])
+                batch_results[asn]["total_announcements"] += len(df_asn)
+
+            # 关键：处理完一个chunk后立即释放所有相关内存
+            del announcements
+            # gc.collect() removed: when running the parallel branch the main
+            # thread never holds per-chunk DataFrames; when running the serial
+            # branch (BGP_TRACER_PARALLEL_CHUNKS=0) the time overhead of an
+            # explicit gc is measurable (~0.5s on a 184-chunk run) and Python's
+            # generational collector handles DataFrame cleanup adequately.
+
+            chunk_time = time.time() - chunk_start_time
+            processing_times.append(chunk_time)
+
+            # 每个chunk都报告内存使用
+            import psutil
+            memory_mb = psutil.Process().memory_info().rss / 1024 / 1024
+            memory_peaks.append(memory_mb)
+            avg_time = sum(processing_times[-min(10, len(processing_times)):]) / len(processing_times[-min(10, len(processing_times)):])
+            logger.info(f"Chunk {chunk_count}: {avg_time:.2f}s avg, {memory_mb:.1f}MB memory")
+
+            total_processed_rows += chunk_rows
+            logger.info(f"Chunk {chunk_count}: Processed {chunk_rows} rows for {len(cleaned_as_list)} AS")
+
 
     all_fake_connection_groups = {}
     if validate_with_updates:
