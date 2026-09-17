@@ -376,6 +376,7 @@ def run_event(event: EventGroundTruth, mode_name: str, mode_flag: str,
     token_count = None
     if log_path.exists():
         log_text = log_path.read_text(errors="ignore")
+        log_lower = log_text.lower()
         m = re.search(r'"total_tokens"\s*:\s*(\d+)', log_text)
         if m:
             token_count = int(m.group(1))
@@ -385,6 +386,15 @@ def run_event(event: EventGroundTruth, mode_name: str, mode_flag: str,
         m = re.search(r'"route_score"\s*:\s*([\d.]+)', log_text)
         if m:
             routing_score = float(m.group(1))
+        # Detection flags from alert logs
+        if "hijack_detected" in log_lower or "hijack alert" in log_lower or "origin hijack" in log_lower:
+            hijack = True
+        elif event.event_type != "no_incident" and ("no anomaly" in log_lower or "no threat" in log_lower):
+            hijack = False
+        if "leak detected" in log_lower or "path leak" in log_lower or "as-path leak" in log_lower:
+            leak = True
+        if "outage" in log_lower or "disconnec" in log_lower:
+            outage = True
 
     return DetectionResult(
         event_id=event.event_id, mode=mode_name,
