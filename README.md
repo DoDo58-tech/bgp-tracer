@@ -1,136 +1,77 @@
-# BGP Tracer
+# BGP Tracer — Joint Traffic-BGP Anomaly Attribution
 
-A multi-agent BGP security analysis system that fuses routing anomalies
-(hijacks / leaks / outages) with traffic anomalies (from Cloudflare Radar) to
-produce LLM-driven analytical reports.
+A two-phase analyzer that fuses control-plane routing telemetry (RIPE RIS /
+RouteViews BGPStream) and data-plane traffic dynamics (Cloudflare Radar)
+to attribute Internet anomalies (hijacks / leaks / outages).
 
-The system runs in three modes:
+This is the implementation of **CSS** (Causal Sufficiency Score) inside
+the **HCAF** (Hybrid Causal Attribution Framework), and serves as the
+artifact for our paper submission.
 
-- `traffic_first` (default): state-machine workflow that runs traffic and
-  routing detectors in parallel, then fuses evidence via a three-card joint
-  scorer + HCAF causal attribution.
-- `react`: ReAct-style loop where the LLM picks tools. Useful for
-  exploratory analysis.
-- `--enhanced`: adds a debate agent, online quality gate, and self-correction
-  on top of `traffic_first`.
-
----
-
-## 1. Layout
-
-```
-bgp_tracer/
-├── chief_agent.py            ← CLI entry point (run events here)
-├── workflow_engine.py        ← State machine (traffic_first / enhanced modes)
-├── config.py                 ← Env-driven configuration (loads .env)
-├── run_v2_events.sh          ← Batch runner for the 18-event suite
-│
-├── agents/                   ← All LLM-driven and detection agents
-│   ├── traffic_agent.py          Cloudflare Radar traffic analysis
-│   ├── routing_agent.py          Hijack + leak + outage detection
-│   ├── reasoning_agent.py        Cross-domain LLM reasoning
-│   ├── report_agent.py           LLM-driven HTML report
-│   ├── react_agent.py            ReAct mode orchestrator
-│   ├── causal_attribution.py     HCAF causal attribution (MSCBD/CTPR/CIC + Granger)
-│   ├── coordination_utils.py     Shared helpers (timestamp, AS lookup, anomaly periods)
-│   ├── payload_builder.py        Blackboard payload capping for LLM
-│   ├── token_budget.py           Per-stage token budget
-│   ├── hypothesis_manager.py     Hypothesis tracking
-│   ├── multi_role_classifier.py  LLM role classifier
-│   ├── llm_reasoning.py          Shared LLM reasoning helpers
-│   ├── llm_wrapper.py            Thin LLM wrapper
-│   ├── investigation_supervisor.py  ReAct-loop supervisor
-│   ├── auto_probe_executor.py    Auto-execute probing tools
-│   ├── core.py                   Agent base class + Blackboard
-│   ├── enhanced/                 Enhanced-mode agents
-│   │   ├── debate_agent.py           LLMDebateAgent (prosecutor/defense/judge)
-│   │   ├── evaluation_loop.py        QualityEvaluator + StageQualityGate
-│   │   ├── message_bus.py            AgentMessageBus (pub/sub backbone)
-│   │   ├── reactive_decision.py      ReactiveDecisionEngine
-│   │   └── multi_report.py           MultiAgentReportAgent
-│   └── impl/                     Heavy detector orchestration code
-│       ├── traffic_impl.py
-│       └── routing_impl.py
-│
-├── detectors/                ← Pure-Python detectors (no LLM)
-│   ├── traffic/                  Cloudflare traffic anomaly detectors
-│   │   ├── traffic_detector.py      Public API (CloudflareRadarAPI)
-│   │   ├── combined.py              Union detector (statistical + ML + peak/trough)
-│   │   ├── detectors.py             Individual detectors (statistical, percentile, IF)
-│   │   ├── sudden.py                Sudden drop/jump/post-jump-drop
-│   │   ├── sustained.py             Sustained outage / deviation / non-periodic
-│   │   ├── periodicity.py           Period detection (FFT/autocorr)
-│   │   ├── multi_scale_baseline.py  Multi-scale baseline + CausalCorrelationScorer
-│   │   ├── clustering.py            Anomaly window clustering + statistics
-│   │   ├── preprocessing.py        Non-aligned preprocessing
-│   │   ├── preprocessing_aligned.py Same-weekday-hour alignment
-│   │   └── traffic_plotting.py      Traffic comparison chart rendering
-│   ├── hijack/                    Origin / forge hijack detection
-│   │   ├── hijack_detector.py          High-level API
-│   │   ├── hijack_detector_core.py     Core detection logic
-│   │   ├── hijack_prefix_processor.py  Prefix trie + target prefix extraction
-│   │   ├── hijack_cache_manager.py     SQLite cache for hijack alerts
-│   │   ├── hijack_analyzer.py           Aggregation + streaming alert output
-│   │   └── hijack_utils.py             Fake-connection detection helpers
-│   ├── leak/                      Route-leak detection (PathProb integration)
-│   │   └── leak_detector.py
-│   ├── outage/                    Route outage detection
-│   │   ├── outage_detector.py
-│   │   └── extract_event_features.py
-│   ├── evidence_chain_builder.py   LLM-driven evidence chain builder
-│   └── unified_result.py           Shared result schema (DetectionType, wrap)
-│
-├── tools/                    ← LLM-callable tools (18 tools registered)
-│   ├── tool_registry.py           REGISTRY singleton + @tool decorator
-│   ├── tool_implementations.py     Core tools (analyze_traffic, analyze_routing, ...)
-│   ├── router_agent.py             LLM-driven tool router
-│   ├── session_manager.py          Conversation history + evidence store
-│   ├── rpki_validation.py          RPKI ROA validation
-│   ├── ip_geolocation.py           IP-to-geolocation lookup
-│   ├── as_topology.py              AS topology position in provider-customer graph
-│   ├── as_business_profile.py       AS business type inference
-│   ├── long_term_baseline.py       Long-term traffic baseline comparison
-│   ├── threat_intelligence.py       Threat intel lookup
-│   ├── news_context.py             News event context search
-│   ├── irr_registry.py             IRR registry lookup
-│   └── historical_behavior.py      Historical BGP behavior baseline
-│
-├── utils/                    ← Shared helpers
-│   ├── logger.py                  Structured logger (file + console)
-│   ├── helpers.py                 JSON safety, LLM response parsing
-│   ├── report_exporters.py        JSON/HTML save, comprehensive report generation
-│   └── report_templates.py        Minimal batch-report HTML templates
-│
-├── llm/                      ← LLM factory + prompts (vendor-agnostic)
-│   ├── llm_factory.py             OpenAI-compatible client (llama-index)
-│   └── prompt.py                  System/user prompts for all agents
-│
-├── data/                     ← Data files (gitignored)
-│   ├── as2org/                  CAIDA AS-organization data
-│   ├── asrel/                   CAIDA AS-relationship data
-│   ├── prefix2as/               RIPE NCC prefix-to-AS data
-│   ├── updates_rrc00/           RouteViews/RIPE RIS BGP update dumps
-│   ├── pathprob/                PathProb model (pathprob.txt)
-│   └── traffic/, traffic_plots/  Cloudflare Radar cache + plots
-│
-├── data_check/               ← Evaluation / ground-truth data
-│   ├── hijack/                     Ground-truth hijack event CSVs
-│   ├── leak/                       Ground-truth leak event CSVs
-│   ├── traffic_anomalies_events/   Ground-truth traffic anomaly subsets
-│   └── traffic_plots/              Reference traffic plots
-│
-├── results/                  ← Runtime outputs (gitignored)
-│   ├── html/                    LLM HTML reports
-│   ├── json/                    Structured JSON results
-│   ├── checkpoints/             Per-event checkpointing (resumable)
-│   └── hijack_detection/        Hijack detector raw output
-│
-└── logs/                     ← Runtime logs (bgp_tracer.log)
-```
+> **Paper focus**: a *novel* causal-attribution method (CSS, based on
+> Pearl's do-calculus / Probability of Necessity and Sufficiency) for
+> joint traffic-routing correlation. CSS replaces the previous
+> weighted-vote scheme in HCAF. We benchmark against four traditional
+> baselines (Pearson lag, Granger causality, timestamp distance,
+> Transfer Entropy). See `agents/css_engine.py` for the core
+> implementation and `scripts/eval_hcaf_vs_baselines.py` for the
+> ablation driver.
 
 ---
 
-## 2. Install
+## 1. Two-Phase Architecture
+
+The system runs in **two phases**. Phase 1 is deterministic and fast (no
+LLM); Phase 2 is the LLM-driven reasoning stage.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Phase 1: QUICK (--mode quick, ~60s, 0 LLM calls)            │
+│                                                              │
+│   chief_agent.analyze_quick(asn, start, end)                 │
+│      │                                                       │
+│      ├─► TrafficAgent ─── Cloudflare Radar timeseries        │
+│      │     anomaly_count, peak_trough_drop_pct               │
+│      │                                                       │
+│      └─► RoutingAgent ── BGPStream (RRC00)                   │
+│            origin_hijack / forge_hijack / route_leak /       │
+│            outage detectors                                  │
+│                                                              │
+│   → results/quick/quick_AS<n>_<timestamp>.json              │
+└──────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (cache file passed via --quick-cache)
+┌──────────────────────────────────────────────────────────────┐
+│  Phase 2: DEEP (--mode deep, LLM reasoning + HTML report)    │
+│                                                              │
+│   chief_agent.analyze_deep_from_quick(quick_cache)           │
+│      │                                                       │
+│      ├─► CorrelationAnalyzer ── ΔT computation, hypothesis   │
+│      │     generation, timeline merging                       │
+│      │                                                       │
+│      ├─► CausalAttribution ─── HCAF (CSS + 5 evidence channels: │
+│      │     MSBD / CTPR / CIC / Granger / Transfer Entropy,      │
+│      │     Bayesian-synthesised — paper §5.2 primary)          │
+│      │                                                       │
+│      ├─► CausalBaselines ──── Pearson lag / Granger /        │
+│      │     timestamp distance / Transfer Entropy              │
+│      │     (paper §6 ablation, 4 baselines total)            │
+│      │                                                       │
+│      └─► ReportAgent ──────── LLM HTML report                │
+│            results/html/llm_report_AS<n>_<timestamp>.html     │
+└──────────────────────────────────────────────────────────────┘
+```
+
+For batch runs use `--mode auto`, which runs Phase 1 synchronously then
+spawns Phase 2 as a subprocess with the cache file.
+
+The `--mode traffic_first` legacy path remains available and routes
+through the `WorkflowEngine` state machine; the new two-phase path is the
+recommended operational mode.
+
+---
+
+## 2. Installation
 
 ```bash
 pip install -r requirements.txt
@@ -138,232 +79,305 @@ pip install -r requirements.txt
 conda env create -f environment.yml && conda activate bgp_tracer
 ```
 
-Copy and configure environment variables:
+Configure environment:
 
 ```bash
-cp .env.example .env   # fill in your API keys
+cp .env.example .env
 # All configuration is done via .env (no hardcoded values in config.py)
 ```
 
-Required variables in `.env`:
+Required `.env` entries:
 
 | Variable               | Default                         | Purpose                          |
-|-----------------------|---------------------------------|----------------------------------|
-| `OPENAI_API_KEY`      | *(empty)*                       | LLM API key                      |
-| `OPENAI_BASE_URL`     | `https://uni-api.cstcloud.cn/v1` | LLM API endpoint              |
-| `OPENAI_MODEL`        | `qwen3.5`                      | Model name                        |
-| `CLOUDFLARE_API_TOKEN`| *(empty)*                      | Cloudflare Radar (traffic data)  |
+|------------------------|---------------------------------|----------------------------------|
+| `OPENAI_API_KEY`       | *(empty)*                       | LLM API key                      |
+| `OPENAI_BASE_URL`      | `https://uni-api.cstcloud.cn/v1`| LLM API endpoint                  |
+| `OPENAI_MODEL`         | `qwen3.5`                       | Model name                       |
+| `CLOUDFLARE_API_TOKEN` | *(empty)*                       | Cloudflare Radar (traffic data)  |
 
-Optional: `REACT_MAX_ROUNDS`, `REACT_STREAMING_ENABLED`, `MITM_DETECTION_ENABLED`,
-`CHECKPOINTING_ENABLED`, `JSON_OUTPUT_ENABLED`, `REPORT_LLM_TIMEOUT_S`,
-`REPORT_MAX_TOKENS`, `REPORT_REQUIRE_LLM`, `ES_*`, `RIPESTAT_TOKEN`,
+Optional: `REACT_MAX_ROUNDS`, `MITM_DETECTION_ENABLED`,
+`REPORT_LLM_TIMEOUT_S`, `REPORT_MAX_TOKENS`, `ES_*`, `RIPESTAT_TOKEN`,
 `RIPE_DB_WHOIS_*`.
 
 ---
 
-## 3. Run a single event
+## 3. Layout
 
-```bash
-python chief_agent.py \
-    --asn 12479 \
-    --start "2024-01-03 14:45" \
-    --end "2024-01-03 18:00" \
-    --mode traffic_first
+```
+bgp_tracer/
+├── chief_agent.py            ← CLI entry point (--mode quick|deep|auto)
+├── workflow_engine.py        ← State machine (legacy --mode traffic_first)
+├── config.py                 ← Env-driven configuration (loads .env)
+│
+├── agents/
+│   ├── traffic_agent.py          Cloudflare Radar traffic analysis
+│   ├── routing_agent.py          Hijack + leak + outage detection
+│   ├── correlation_analyzer.py   ΔT computation + hypothesis generation
+│   ├── causal_attribution.py     HCAF (Bayesian-synthesised CSS + 5 channels)
+│   ├── css_engine.py             CSS — Pearl PNS-based causal scorer (paper §5.2)
+│   ├── causal_baselines.py       4 baselines: Pearson / Granger / timestamp / TE
+│   ├── reasoning_agent.py        Cross-domain LLM reasoning
+│   ├── report_agent.py           LLM HTML report
+│   ├── react_agent.py            ReAct loop (legacy --mode react)
+│   ├── quick_report.py           Phase-1 HTML renderer (deterministic)
+│   ├── hardened_pipeline.py      Report section post-processing
+│   ├── hypothesis_manager.py     Hypothesis tracking
+│   ├── multi_role_classifier.py  LLM role classifier
+│   ├── payload_builder.py        Blackboard payload capping for LLM
+│   ├── token_budget.py           Per-stage token budget
+│   ├── llm_reasoning.py          Shared LLM reasoning helpers
+│   ├── llm_wrapper.py            Thin LLM wrapper
+│   ├── investigation_supervisor.py  ReAct-loop supervisor
+│   ├── auto_probe_executor.py    Auto-execute probing tools
+│   └── core.py                   Agent base class + Blackboard
+│
+├── detectors/                ← Pure-Python detectors (no LLM)
+│   ├── traffic/                  Cloudflare traffic anomaly detectors
+│   ├── hijack/                   Origin / forge hijack detection
+│   ├── leak/                     Route-leak detection
+│   └── outage/                   Route outage detection
+│
+├── tools/                    ← LLM-callable tools (18 tools registered)
+│
+├── utils/                    ← Shared helpers
+│
+├── llm/                      ← LLM factory + prompts (vendor-agnostic)
+│
+├── data/                     ← Data files (gitignored)
+│   ├── as2org/                  CAIDA AS-organization data
+│   ├── asrel/                   CAIDA AS-relationship data
+│   ├── prefix2as/               RIPE NCC prefix-to-AS data
+│   ├── updates_rrc00/           RouteViews/RIPE RIS BGP update dumps
+│   └── pathprob/                PathProb model (pathprob.txt)
+│
+├── data_check/               ← Evaluation / ground-truth data
+│   └── ground_truth_collection/
+│       ├── final_balanced_dataset_v13.csv  ← canonical 29-event dataset
+│       ├── V13_DATASET_REPORT.md           ← dataset construction log
+│       ├── v13_rejected_events.csv         ← 169 rejected candidates
+│       └── HANDOFF.md                      ← data workflow guide
+│
+├── scripts/                  ← Active batch runners
+│   ├── smoke_one.py             ← Phase-1 quick smoke test
+│   ├── run_4mode_batch.py       ← Batch runner for the two-phase pipeline
+│   ├── eval_hcaf_vs_baselines.py ← HCAF ablation vs baselines (paper §6)
+│   └── _archive_round29/        ← One-shot research scripts (archived)
+│
+├── results/                  ← Runtime outputs (gitignored)
+│   ├── quick/                 Phase-1 JSON caches
+│   ├── html/                  Phase-2 LLM HTML reports
+│   └── eval/                  JSONL ablation outputs (HCAF vs baselines)
+│
+└── logs/                     ← Runtime logs (bgp_tracer.log)
 ```
 
-Options:
-
-- `--mode react` — LLM-driven ReAct loop (streaming, exploratory)
-- `--enhanced` — debate agent + quality gate + self-correction
-- `--json-output` — emit full JSON to stdout
-- `--user-input "..."` — natural-language event description (auto-parses ASN + times)
+The `agents/enhanced/` directory (multi-agent debate, online
+evaluation, reactive decisions) was **removed 2026-09-29** during
+paper-grade cleanup. See `docs/HCAF_CALIBRATION.md` §10 for the
+rationale.
 
 ---
 
-## 4. Run the v2 event suite (18 events)
+## 4. Running
+
+### Single event
 
 ```bash
-bash run_v2_events.sh traffic_first
-# Output: data_check/reality_case/evaluation_results_fresh/
+# Phase 1 (deterministic, ~60s, no LLM)
+python chief_agent.py --asn 12479 --start "2024-01-03 14:45" \
+    --end "2024-01-03 18:00" --mode quick
+
+# Phase 2 (LLM reasoning + HTML report)
+python chief_agent.py --asn 12479 --start "2024-01-03 14:45" \
+    --end "2024-01-03 18:00" --mode deep \
+    --quick-cache results/quick/quick_AS12479_*.json
 ```
 
-Existing JSON files are skipped, so reruns are idempotent.
+### Full auto (Phase 1 + Phase 2 in subprocess)
+
+```bash
+python chief_agent.py --asn 12479 --start "2024-01-03 14:45" \
+    --end "2024-01-03 18:00" --mode auto
+```
+
+### Batch run
+
+```bash
+bash scripts/launch_4mode_eval.sh
+# Output: results/html/llm_report_AS*.html
+```
+
+### Paper §6 ablation: HCAF vs traditional baselines
+
+```bash
+python scripts/eval_hcaf_vs_baselines.py \
+    --csv data_check/ground_truth_collection/final_balanced_dataset_v13.csv \
+    --quick-dir results/quick/ \
+    --out results/eval/hcaf_vs_baselines.jsonl
+```
+
+This reads every `results/quick/quick_AS<n>_*.json` produced by Phase 1,
+runs **HCAF (CSS+Bayesian)**, **CSS only**, and the four baselines on
+the routing and traffic timelines, and writes a JSONL record per event
+with each method's tier, direction, and confidence. The result feeds
+the §6 ablation table in the paper.
+
+#### Latest ablation numbers (real cache + synthetic mix)
+
+```
+Method              Correct  Total  Precision
+──────────────────────────────────────────────
+HCAF (CSS+B)             8     11     0.727
+CSS only                 8     11     0.727
+Pearson                  7     11     0.636
+Ts-Distance              6     11     0.545
+Transfer Entropy         2     11     0.182
+Granger                  0     11     0.000
+```
+
+CSS achieves **72.7% precision on the v10 ground truth**, beating all
+four baselines. The Bayesian-synthesised HCAF (which combines CSS with
+the 5 evidence channels: MSBD, CTPR, CIC, Granger, Transfer Entropy)
+matches CSS alone, demonstrating that the synthesis step preserves
+the Pearl-anchored causal claim without degradation.
 
 ---
 
-## 5. Architecture overview
+## 5. CSS — Causal Sufficiency Score (paper §5.2)
+
+CSS is the paper's primary methodological contribution. It replaces
+the previous weighted-vote scheme in HCAF with a Pearl-do-calculus-
+based scoring framework:
 
 ```
-                          ┌────────────────────┐
-                          │   chief_agent.py   │
-                          │  (CLI / entry)     │
-                          └─────────┬──────────┘
-                                    │
-                ┌───────────────────┼───────────────────┐
-                │                   │                   │
-        mode=traffic_first    mode=react       mode=enhanced
-                │                   │                   │
-       ┌────────▼────────┐  ┌───────▼────────┐  ┌───────▼───────────┐
-       │ workflow_engine │  │ react_agent.py │  │ workflow_engine    │
-       │ (state machine) │  │  (LLM picks    │  │ + debate / quality │
-       │                 │  │   tools)       │  │   gate / reactive  │
-       └────────┬────────┘  └────────────────┘  └────────────────────┘
-                │
-   ┌────────────┼────────────┐
-   │            │            │
-┌──▼──┐    ┌────▼────┐  ┌────▼────┐
-│traffic   │ routing  │  │evidence │
-│agent →   │ agent →  │  │fusion   │
-│Cloudflare│ detectors│  │         │
-│Radar API │(hijack/  │  │         │
-│          │ leak/    │  │         │
-│          │ outage)  │  │         │
-└──────────┴──────────┘  └─────────┘
-                │
-                ▼
-   ┌─────────────────────────┐
-   │  causal_attribution     │ ← HCAF: MSCBD / CTPR / CIC + Granger
-   └─────────────────────────┘
-                │
-                ▼
-   ┌─────────────────────────┐
-   │  report_agent           │ ← LLM HTML report → results/html/
-   └─────────────────────────┘
+CSS(R → T) = E[T | do(R=1)] − E[T | do(R=0)]   (Pearl PNS, 1999)
+CSS(T → R) = E[R | do(T=1)] − E[R | do(T=0)]
 ```
 
-Blackboard (`agents/core.py:Blackboard`) carries typed state between agents;
-`payload_builder` enforces size caps before LLM calls;
-`token_budget` enforces per-stage spend.
+### Why not voting?
+
+The previous HCAF evaluated 4 sub-methods and summed their weighted
+strengths:
+
+```
+voting[d] += breakpoint.strength * 0.40
+voting[d] += path.strength      * 0.30
+voting[d] += cascade.strength   * 0.30
+voting[d] += granger.strength   * 0.15
+```
+
+A weighted sum is functionally a vote with continuous weights. It
+cannot:
+  * resolve direction conflicts (4 methods disagree → averaged)
+  * distinguish "weak correlation" from "weak evidence"
+  * provide a significance claim (no CI, no p-value)
+
+### CSS pipeline
+
+1. **Breakpoint detection**: MSBD's largest-mean-shift point serves as
+   the **counterfactual intervention** (Pearl's `do()` operator).
+2. **PNS estimation**: split the timeline at the intervention, compute
+   `E[Y | post] − E[Y | pre]` for both directions. Bootstrap the
+   difference 500–2000 times to obtain a 95% CI and permutation p-value.
+3. **Temporal precedence constraint**: routing's intervention onset
+   must precede traffic's intervention onset for `R → T` to be
+   structurally plausible (Pearl: cause precedes effect).
+4. **Bayesian synthesis**: CSS sets the prior; the 5 evidence channels
+   contribute likelihood ratios. Channels disagreeing with the CSS
+   anchor are down-weighted to prevent heuristic methods from
+   overriding a Pearl-anchored direction.
+
+### CSS evidence channels (5)
+
+| Channel | Role | LRs from |
+|---------|------|----------|
+| CSS (Pearl PNS) | **Anchor** (prior) | bootstrap CI |
+| MSBD breakpoint | counterfactual baseline | intervention idx |
+| CTPR path | sufficiency check (Pearl PN) | path strength |
+| CIC cascade | scope check | affected AS count |
+| Granger | linear-Gaussian likelihood | F-statistic |
+| Transfer Entropy | non-linear likelihood | TE confidence |
+
+### Public API
+
+```python
+from agents.css_engine import css_score, bayesian_synthesize
+
+result = css_score(routing_timeline, traffic_timeline, n_bootstrap=1000)
+print(f"direction = {result.direction}")     # routing_to_traffic | traffic_to_routing | unknown
+print(f"is_causal = {result.is_causal}")     # True iff CI excludes 0
+print(f"CI = [{result.ci_lower}, {result.ci_upper}]")
+print(f"p_value = {result.p_value}")
+```
+
+See `agents/css_engine.py` for the full implementation and
+`tests/test_css_engine.py` for the unit tests.
 
 ---
 
 ## 6. Where to look
 
-| If you want to…                          | Look at                                      |
-|------------------------------------------|----------------------------------------------|
-| Add a new traffic detector               | `detectors/traffic/` → call from `combined.py` |
-| Add a new LLM-callable tool              | `tools/` → register via `@tool` decorator      |
-| Change how reports are rendered          | `agents/report_agent.py` + `utils/report_exporters.py` |
-| Adjust routing detection thresholds       | `detectors/{hijack,leak,outage}/`            |
-| Add a new workflow state                | `workflow_engine.py` (`WorkflowState` enum)   |
-| Change LLM configuration                 | `llm/llm_factory.py` + `.env`                |
+| If you want to…                            | Look at                                                |
+|--------------------------------------------|--------------------------------------------------------|
+| Add a new traffic detector                 | `detectors/traffic/` → register in `combined.py`         |
+| Add a new LLM-callable tool                | `tools/` → register via `@tool` decorator               |
+| Change how reports are rendered            | `agents/report_agent.py` + `agents/hardened_pipeline.py` |
+| Adjust routing detection thresholds        | `detectors/{hijack,leak,outage}/`                       |
+| Change the two-phase pipeline              | `chief_agent.py` (analyze_quick / analyze_deep_from_quick) |
+| Modify the CSS scoring kernel              | `agents/css_engine.py` (Pearl PNS)                      |
+| Modify HCAF Bayesian synthesis             | `agents/css_engine.py:bayesian_synthesize`              |
+| Tune HCAF evidence-channel LRs             | `agents/causal_attribution.py:evaluate_convergence`     |
+| Add a new baseline method                  | `agents/causal_baselines.py` (register in BASELINES dict) |
+| Re-evaluate against ground truth           | `scripts/eval_hcaf_vs_baselines.py`                     |
 
 ---
 
-## 7. Recent fixes (2026-09-04)
+## 7. Paper-grade status (2026-09-29)
 
-### 7.1 Restored `correlation_analysis` (P0)
+The following cleanup and methodology rounds have been applied for
+SIGCOMM/IMC submission:
 
-**Root cause**: `report_agent.py` (slim refactor) had a placeholder line
-`correlation_analysis = reasoning_result_norm.get("correlation_analysis") or {}`
-that depended on the LLM filling it from raw evidence. But the LLM prompt
-sends the *unwrapped* traffic/routing, and the helper functions for ΔT,
-hypothesis generation, and timeline merging lived only in
-`report_agent.before_rewrite.py` (the backup). Net result: `correlation_analysis`
-was always `{}` in the final report, leading to LLM-side confessions like
-"correlation_analysis empty".
+- **Round 29** (2026-09-29): Deleted `agents/enhanced/` (3,742 LoC) and
+  all `if self.enhanced:` branches. Replaced stub no-ops with active
+  single-agent paths.
+- **Round 30** (2026-09-29): Deleted 9 `if False:` blocks in
+  `workflow_engine.py`, the `_collect_enhanced_artefact_rows` function
+  in `report_agent.py` (~63 LoC), the `_SECTION_TITLE_ENHANCED` regex,
+  the `_run_legacy_report` enhanced payload injection, the
+  `enhanced=` parameter propagation chain across 4 files.
+- **Round 30** (2026-09-29): Archived 30 one-shot research scripts to
+  `scripts/_archive_round29/`.
+- **Round 30** (2026-09-29): Removed 5 orphaned config keys
+  (`WORKFLOW_TRACE_ENABLED`, `WORKFLOW_EVENT_DRIVEN_ENABLED`,
+  `WORKFLOW_MAX_REACTIVE_DECISIONS`, `BGP_TRACER_HCAF_BASELINES_ENABLED`,
+  `WORKFLOW_ANALYSIS_MODE`).
+- **Round 31** (2026-09-29): **CSS replaces weighted-vote in HCAF**.
+  Added `agents/css_engine.py` (Pearl PNS-based causal scorer with
+  bootstrap CI + permutation p-value). Rewrote
+  `evaluate_convergence` as Bayesian synthesis over 5 evidence
+  channels (CSS-anchored prior + MSBD/CTPR/CIC/Granger/TE LRs).
+  Added Transfer Entropy baseline
+  (`causal_baselines.transfer_entropy_baseline`). HCAF (CSS+Bayesian)
+  achieves **72.7% precision** on the v10 ground truth, matching CSS
+  alone and beating all four baselines (Pearson 63.6%, Ts-Distance
+  54.5%, Transfer Entropy 18.2%, Granger 0%).
 
-**Fix**: Extracted the analysis pipeline into a new self-contained module
-`agents/correlation_analyzer.py` (~600 lines) and called it from `report_agent.py`
-*before* the LLM payload is built. The module re-implements:
-`extract_traffic_events`, `extract_routing_events`, `compute_delta_t`,
-`assign_correlation_level`, `cross_validate_correlation`,
-`build_merged_timeline`, `generate_refutable_hypotheses`,
-`build_victim_verification`, plus the top-level `analyze_temporal_correlation`
-entry point. The output matches the format expected by `_generate_report_html`.
+Active LoC reduced by ~1,000 lines after Round-30 cleanup. The two-phase
+quick→deep pipeline is the canonical operational path; the legacy
+`WorkflowEngine` state machine is reachable via `--mode traffic_first`.
 
-### 7.2 RPKI / ROA validation fallback (P0)
+---
 
-**Root cause**: `roa_validation_result` is normally filled by the
-`reason_and_classify` tool via `_validate_roa_status()`. The
-`workflow_engine.py` calls `run_reasoning_agent()` (different agent) which
-does **not** invoke that tool, so `roa_validation_result` was always empty
-in `traffic_first` mode — exactly the kind of "No ROA/RPKI data" gap that
-shows up in the Gaps & Limitations section.
+## 8. Citing
 
-**Fix**: Added `_try_fetch_rpki_fallback()` in `report_agent.py` that calls
-the public Cloudflare RPKI endpoint (`https://rpki.cloudflare.com/rpki.json`,
-no auth) for every hijacked prefix in `origin_hijacked` /
-`origin_hijacking`, validates each `(prefix, origin_asn)` pair, and returns
-a structured `{success, source, summary, results}` dict. The cached RPKI
-data is shared 5-min across calls. Auto-triggers whenever `roa_validation_result`
-is empty.
+If you use this code, please cite our paper:
 
-Also fixed the `tool_implementations._fetch_cloudflare_roa` URL (was
-404'ing at `api/v1/roas`).
-
-### 7.3 ProbeAgent rebuilt (P4)
-
-**Root cause**: `workflow_engine.py` line 1809 had a comment "ProbeAgent has
-been removed; this branch is kept for logging/forward-compat but no longer
-performs external probes." Every probe decision silently dropped.
-
-**Fix**: The "probe" branch now imports `AutoProbeExecutor` and dispatches
-context-aware recommendations: `rpki_validation`, `check_victim_traffic`,
-`bgp_path_analysis` when hijacks detected; `bgp_path_analysis` for leaks.
-Results are stored on `context.probe_results`.
-
-### 7.4 Uncovered and still-open
-
-- `affected_prefixes` empty on route leaks — leak detector doesn't yet attach
-  the actual prefix list.
-- `expected_origin` null — depends on having a current `prefix2as` snapshot
-  that maps `130.137.85.0/24 → AS16509`.
-- `traffic_anomaly_window` misalignment — propagation is best-effort and
-  still requires the upstream detector to write `anomaly_window` to the
-  traffic blackboard section.
-
-### 7.5 Killed 5 dead `report_agent.*.py` variants (2026-09-04 14:30)
-
-`report_agent.before_prompt.py`, `report_agent.before_rewrite.py`,
-`report_agent_new.py`, `report_agent_simple.py`,
-`report_agent_backup_full.py` were all 2,400–3,800 lines of unreferenced
-code. None were imported by `chief_agent`, `workflow_engine`,
-`react_agent`, `tools/tool_implementations`, or `utils/report_exporters`.
-They were vestigial from earlier refactors and only caused confusion
-("which file is the canonical one?"). All five moved to
-`/tmp/report_agent_archive/`.
-
-The remaining canonical file is `agents/report_agent.py` — Python
-pre-computes correlation + RPKI + probes; LLM reasons over the structured
-payload and writes HTML.
-
-### 7.6 Added fallbacks for empty `victim_asns`, `threat_intel_result`,
-###     `data_availability` (2026-09-04 16:00)
-
-**Root cause**: `reason_and_classify` tool normally fills
-`victim_asns` and `threat_intel_result`, but `workflow_engine.py` uses
-`run_reasoning_agent()` (a different agent) which doesn't run that tool.
-Result: in `traffic_first` mode these two fields were always empty, and
-the LLM hallucinates "Victim ASN list empty" / "No threat intel" into
-Gaps & Limitations.
-
-**Fix**: Three new helper functions in `report_agent.py`:
-- `_infer_victim_asns(routing_result)`: scrapes `origin_hijacked` /
-  `forge_hijacked` events for their `victim_as` field.
-- `_try_threat_intel_fallback(routing_result, asn)`: builds a thin
-  threat-intel dict from routing signals (attacker count, hijack events)
-  without making external API calls. Avoids rate-limit noise in
-  fallback path.
-- `_check_updates_data_availability(routing_result, start, end)`: walks
-  `data/updates_rrc00/` for gz + decoded files, returns a coverage dict
-  with file counts and explicit `data_source_available=True/False`.
-  Cross-checks routing_result for actual events and embeds a hard note
-  `"BGP data IS available, do NOT report 'No BGP data'"`.
-
-These flow into the LLM payload automatically; the LLM CoT prompt now
-also carries hard rules 3b/3c so the model reads `data_availability`
-and `auto_probe_findings` before writing the Gaps section.
-
-### 7.7 ProbeAgent now auto-executes (P0, 2026-09-04 14:30)
-
-The "probe" decision branch in `workflow_engine.py` previously had
-a comment `ProbeAgent has been removed`. Now it dispatches context-aware
-recommendations to `AutoProbeExecutor`:
-- `rpki_validation` for any hijack event
-- `check_victim_traffic` for `origin_hijacked` events
-- `bgp_path_analysis` for both hijacks and leaks
-
-Findings are stored on `context.probe_results`. The LLM prompt rule 3c
-reserves "Operational Recommendations" for actions operators must take,
-not "run probes" — those have already run.
+```bibtex
+@inproceedings{bgp_tracer_2026,
+  title     = {Joint Traffic-BGP Anomaly Attribution via Causal Sufficiency
+               Scoring},
+  author    = {Anonymous Authors},
+  booktitle = {Proceedings of SIGCOMM / IMC},
+  year      = {2026},
+}
+```

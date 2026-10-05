@@ -137,8 +137,6 @@ async def _whois_query(server: str, query: str, timeout: int = 10) -> str:
         return f"[Error {server}: {e}]"
     finally:
         # Close the socket in a ``finally`` so any exception during
-        # ``drain``/``read`` still releases the file descriptor —
-        # otherwise an IRR server hiccup would leak TCP sockets.
         if writer is not None:
             try:
                 writer.close()
@@ -367,6 +365,50 @@ async def _irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
         "prefix_authorization_reason": authorization_reason,
         "summary": summary,
         "observation": observation,
+    }
+
+
+async def lookup_prefix_origin_async(prefix: str) -> dict[str, Any]:
+    """Convenience wrapper for probe_executor: query IRR for a prefix.
+
+    Returns a dict with at least:
+        - prefix (str): input prefix
+        - origins (list[str]): origin ASNs that IRR lists as authorized to
+          announce this prefix (across all queried servers).
+        - found (bool): whether any server had a route object for the prefix.
+        - data_source (str): which IRR server(s) replied successfully.
+
+    This is intentionally narrower than ``_irr_registry_lookup`` — the
+    probe only needs the origin AS, not the full routing policy. The
+    narrower scope keeps probe latency low (sub-second per prefix) so
+    the auto-probe section never blocks the report.
+    """
+    prefixes_to_check = [prefix] if prefix else []
+    if not prefixes_to_check:
+        return {"prefix": prefix, "origins": [], "found": False, "data_source": "none"}
+
+    origins: list[str] = []
+    found = False
+    sources: list[str] = []
+
+    for server in DEFAULT_SERVERS:
+        try:
+            result = await _query_irr_server(server, "", prefix)
+            for ro in result.get("route_objects") or []:
+                origin = ro.get("origin") or ro.get("origin_as")
+                if origin and str(origin) not in origins:
+                    origins.append(str(origin))
+            if result.get("route_objects"):
+                found = True
+                sources.append(server)
+        except Exception:
+            continue
+
+    return {
+        "prefix": prefix,
+        "origins": origins,
+        "found": found,
+        "data_source": ",".join(sources) if sources else "none",
     }
 
 

@@ -1,0 +1,453 @@
+{#
+  ============================================================================
+  BGP Tracer — Report Template v2 (structure-locked)
+  ----------------------------------------------------------------------------
+  DESIGN CONTRACT
+  ---------------
+  The LLM NEVER emits HTML or CSS. It returns a JSON object of prose fields
+  (see agents/report_template.py :: request_llm_narrative). This template owns
+  100% of the markup, so document structure, section order, table columns and
+  the single width constraint are identical on every run, for every event type,
+  for every LLM output.
+
+  Invariants enforced here:
+    1. Exactly one width constraint (`.report` max-width). No competing
+       `body{max-width}` rules can exist because the LLM writes no CSS.
+    2. Table columns are pre-filtered in Python — a column is emitted only if
+       at least one row actually has a value. Empty columns cannot appear.
+    3. Sections are emitted only when their event class has data, keeping the
+       structure deterministic without emitting "No events detected" filler.
+    4. Long per-event tables are wrapped in <details> (collapsed); aggregate
+       top-N views are open by default.
+  ============================================================================
+#}
+{% import "_macros.j2" as macros %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BGP Incident Report — AS{{ target_as }}</title>
+<style>
+  /* ── Reset + the single width constraint ─────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; }
+  html { background: #eef1f5; }
+  body {
+    margin: 0; padding: 28px 20px; background: #eef1f5;
+    color: #1c2330;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 Helvetica, Arial, sans-serif;
+    font-size: 15px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* THE one and only width rule. Every block below inherits it. */
+  .report {
+    max-width: 1180px; margin: 0 auto; background: #fff;
+    border: 1px solid #dfe3e8; border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(16,24,40,.06);
+    padding: 32px 36px 40px;
+  }
+  .report > * { max-width: 100%; }
+
+  /* ── Typography ──────────────────────────────────────────────────────── */
+  h1 { font-size: 1.65rem; margin: 0 0 6px; letter-spacing: -.01em; }
+  h2 {
+    font-size: 1.18rem; margin: 34px 0 12px; padding-bottom: 7px;
+    border-bottom: 1px solid #e4e7eb; color: #102a43;
+  }
+  h3 { font-size: 1rem; margin: 20px 0 8px; color: #243b53; }
+  p  { margin: 8px 0; }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  code {
+    background: #f0f3f7; padding: 1px 5px; border-radius: 3px;
+    font-size: .88em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  em { color: #52606d; }
+
+  /* ── Header ──────────────────────────────────────────────────────────── */
+  .doc-head { border-bottom: 2px solid #102a43; padding-bottom: 16px; }
+  .doc-sub  { color: #616e7c; font-size: .95rem; margin: 0 0 14px; }
+  .meta-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 10px 20px; margin-top: 12px; font-size: .9rem;
+  }
+  .meta-grid > div { color: #52606d; }
+  .meta-grid b { color: #102a43; font-weight: 600; }
+
+  /* ── Cards ───────────────────────────────────────────────────────────── */
+  .card {
+    border: 1px solid #e4e7eb; border-left-width: 5px;
+    border-radius: 7px; padding: 16px 20px; margin: 16px 0;
+    background: #fff;
+  }
+  .card > h2 { margin-top: 0; border-bottom: none; padding-bottom: 0; }
+  .card > h2:first-child { margin-bottom: 8px; }
+  .card-verdict  { border-left-color: #0d6efd; background: #f7faff; }
+  .card-metrics  { border-left-color: #12b886; background: #f4fbf8; }
+  .card-traffic  { border-left-color: #7048e8; background: #faf8ff; }
+  .card-routing  { border-left-color: #f76707; background: #fffaf5; }
+  .card-evidence { border-left-color: #1c7ed6; background: #f6faff; }
+  .card-hypo     { border-left-color: #e8590c; background: #fff9f5; }
+  .card-counter  { border-left-color: #748ffc; background: #f8f9ff; }
+  .card-gap      { border-left-color: #adb5bd; background: #f8f9fa; }
+  .card-probe    { border-left-color: #495057; background: #f8f9fa; }
+
+  /* ── Badges ──────────────────────────────────────────────────────────── */
+  .badge {
+    display: inline-block; padding: 3px 11px; border-radius: 20px;
+    font-size: .8rem; font-weight: 650; color: #fff; white-space: nowrap;
+  }
+  .badge-L1 { background: #b91c1c; }
+  .badge-L2 { background: #ea580c; }
+  .badge-L3 { background: #ca8a04; }
+  .badge-L4 { background: #16a34a; }
+  .badge-L5 { background: #64748b; }
+  .certainty {
+    display: inline-block; padding: 3px 11px; border-radius: 5px;
+    font-size: .8rem; font-weight: 650; color: #fff;
+  }
+
+  /* ── Tables ──────────────────────────────────────────────────────────── */
+  .tbl-scroll { width: 100%; overflow-x: auto; margin: 12px 0; }
+  table.data {
+    width: 100%; border-collapse: collapse; table-layout: auto;
+    font-size: .875rem;
+  }
+  table.data th, table.data td {
+    border: 1px solid #e4e7eb; padding: 7px 11px;
+    text-align: left; vertical-align: top;
+  }
+  table.data th { background: #f5f7fa; font-weight: 650; color: #243b53; }
+  table.data tbody tr:nth-child(even) { background: #fafbfc; }
+  table.data td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .empty-row td {
+    text-align: center; color: #829ab1; font-style: italic; padding: 14px;
+  }
+  .omitted td { text-align: center; color: #616e7c; font-style: italic; }
+
+  /* ── Collapsible detail blocks ───────────────────────────────────────── */
+  details.fold {
+    border: 1px solid #e4e7eb; border-radius: 7px;
+    margin: 12px 0; background: #fff; overflow: hidden;
+  }
+  details.fold > summary {
+    cursor: pointer; padding: 11px 15px; background: #f5f7fa;
+    font-weight: 620; font-size: .92rem; color: #243b53;
+    list-style: none; user-select: none;
+  }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary::before {
+    content: "▸"; display: inline-block; margin-right: 9px;
+    color: #748ffc; transition: transform .12s;
+  }
+  details.fold[open] > summary::before { transform: rotate(90deg); }
+  details.fold > summary:hover { background: #eef1f5; }
+  .fold-body { padding: 4px 15px 14px; }
+
+  /* ── Chart ───────────────────────────────────────────────────────────── */
+  figure.chart { margin: 14px 0; }
+  figure.chart img {
+    display: block; width: 100%; max-width: 100%; height: auto;
+    border: 1px solid #e4e7eb; border-radius: 7px; background: #fff;
+  }
+  figure.chart figcaption {
+    margin-top: 8px; font-size: .84rem; color: #616e7c; text-align: center;
+  }
+  .gauge-wrap { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+  .gauge-wrap svg { flex: 0 0 auto; }
+
+  /* ── Evidence chain ──────────────────────────────────────────────────── */
+  .chain { list-style: none; margin: 0; padding: 0; counter-reset: chain; }
+  .chain > li {
+    position: relative; padding: 0 0 14px 42px; margin: 0;
+    border-left: 2px solid #e4e7eb; margin-left: 13px;
+  }
+  .chain > li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  .chain > li::before {
+    counter-increment: chain; content: counter(chain);
+    position: absolute; left: -14px; top: 0;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: #1c7ed6; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .78rem; font-weight: 700;
+  }
+  .chain .step { font-weight: 700; color: #102a43; display: block; }
+  .chain .src {
+    color: #748ffc; font-size: .82rem; font-family: ui-monospace, monospace;
+  }
+
+  /* ── Hypothesis cards ────────────────────────────────────────────────── */
+  .hypo {
+    border: 1px solid #e4e7eb; border-left-width: 5px; border-radius: 7px;
+    padding: 13px 16px; margin: 11px 0; background: #fff;
+  }
+  .hypo h4 { margin: 0 0 7px; font-size: .97rem; }
+  .hypo .conf {
+    font-size: .82rem; color: #616e7c; font-weight: 500; margin-left: 7px;
+  }
+  .hypo .refute {
+    margin: 7px 0 0; font-size: .9rem; color: #52606d;
+    padding-top: 7px; border-top: 1px dashed #e4e7eb;
+  }
+
+  .cite { color: #748ffc; font-size: .8rem; font-style: italic; }
+  .note { font-size: .85rem; color: #616e7c; }
+  .no-data {
+    padding: 11px 15px; background: #f8f9fa; border: 1px dashed #ced4da;
+    border-radius: 6px; color: #616e7c; font-size: .9rem;
+  }
+  .doc-foot {
+    margin-top: 34px; padding-top: 14px; border-top: 1px solid #e4e7eb;
+    font-size: .8rem; color: #829ab1;
+  }
+
+  @media (max-width: 720px) {
+    .report { padding: 20px 16px 26px; }
+    body { padding: 12px 8px; }
+  }
+</style>
+</head>
+<body>
+<div class="report">
+
+  {# ══════════════════════════ HEADER ══════════════════════════ #}
+  <div class="doc-head">
+    <h1>BGP Incident Report — AS{{ target_as }}</h1>
+    <p class="doc-sub">{{ org_name or "Autonomous System " ~ target_as }}
+       &nbsp;·&nbsp; analysis window
+       <code>{{ start_time }}</code> → <code>{{ end_time }}</code></p>
+    <div class="meta-grid">
+      <div><b>Target AS:</b> {{ target_as }}</div>
+      <div><b>Correlation:</b>
+        <span class="badge badge-{{ corr_level_code }}">{{ corr_level }}</span></div>
+      <div><b>Certainty:</b>
+        <span class="certainty" style="background:{{ certainty_color }}">
+          {{ certainty_glyph }} {{ certainty_label }}</span></div>
+      <div><b>Generated:</b> {{ generated_at }}</div>
+    </div>
+  </div>
+
+  {# ══════════════════════ EXECUTIVE SUMMARY ═════════════════════ #}
+  <div class="card card-verdict">
+    <h2>Executive Summary</h2>
+    <p><strong>Most likely cause:</strong>
+      <span class="badge" style="background:{{ cause_color }}">{{ cause_label }}</span>
+      <span class="cite">(confidence {{ '%.0f'|format(cause_confidence * 100) }}%)</span>
+    </p>
+    {% if narrative.executive_note %}
+      <p>{{ narrative.executive_note }}</p>
+    {% else %}
+      <p>{{ cause_explanation }}</p>
+    {% endif %}
+    <ul>
+      {% for b in summary_bullets %}<li>{{ b }}</li>{% endfor %}
+    </ul>
+    {% if narrative.mechanism %}
+      <p><strong>Mechanism (LLM):</strong> {{ narrative.mechanism }}</p>
+    {% endif %}
+  </div>
+
+  {# ════════════════════════ KEY METRICS ═══════════════════════ #}
+  <div class="card card-metrics">
+    <h2>Key Metrics</h2>
+    <div class="tbl-scroll">
+      <table class="data">
+        <thead><tr>{% for h in metrics_headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+        <tbody>
+          {% for k, v in metrics_rows %}
+            <tr><td>{{ k }}</td><td class="num">{{ v }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ═══════════════════════ TRAFFIC ANALYSIS ═════════════════════ #}
+  <div class="card card-traffic">
+    <h2>Traffic Analysis</h2>
+    {% if narrative.traffic_analysis %}
+      <p>{{ narrative.traffic_analysis }}</p>
+    {% else %}
+      <p>{{ traffic_summary_prose }}</p>
+    {% endif %}
+
+    {% if traffic_plot_b64 %}
+      <figure class="chart">
+        <img src="data:image/png;base64,{{ traffic_plot_b64 }}"
+             alt="Traffic anomaly detection chart for AS{{ target_as }}">
+        <figcaption>Traffic anomaly detection output
+          {%- if traffic_plot_source %} · source: <code>{{ traffic_plot_source }}</code>{% endif %}
+        </figcaption>
+      </figure>
+    {% else %}
+      <div class="no-data">
+        No traffic plot artifact was produced for this window.
+        {%- if traffic_plot_attempted %}
+          (source <code>{{ traffic_plot_attempted }}</code> was expected but not found)
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if traffic_table %}
+      {% call macros.fold_block(summary="Traffic anomaly events",
+                         count=traffic_table.omitted + traffic_table.shown,
+                         open=false) %}
+        {{ traffic_table.html }}
+      {% endcall %}
+    {% endif %}
+  </div>
+
+  {# ══════════════════════ ROUTING SECURITY ════════════════════ #}
+  <div class="card card-routing">
+    <h2>Routing Security</h2>
+    {% if narrative.routing_analysis %}
+      <p>{{ narrative.routing_analysis }}</p>
+    {% else %}
+      <p>{{ routing_summary_prose }}</p>
+    {% endif %}
+
+    <div class="tbl-scroll">
+      <table class="data">
+        <thead><tr><th>Event class</th><th>Count</th><th>Note</th></tr></thead>
+        <tbody>
+          {% for cls, cnt, note in routing_counts %}
+            <tr><td>{{ cls }}</td><td class="num">{{ cnt }}</td><td>{{ note }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# Only sections whose event class actually has data are emitted. #}
+    {% if hijack_aggregate_table or hijack_event_table %}
+      {% if hijack_aggregate_table %}
+        {% call macros.fold_block(summary="Origin hijacking — aggregated by prefix",
+                           count=hijack_aggregate_total, open=true) %}
+          {{ hijack_aggregate_table }}
+        {% endcall %}
+      {% endif %}
+      {% if hijack_event_table %}
+        {% call macros.fold_block(summary="Origin hijacking — per-event records",
+                           count=hijack_event_total, open=false) %}
+          {{ hijack_event_table }}
+        {% endcall %}
+      {% endif %}
+    {% endif %}
+
+    {% if leak_table %}
+      {% call macros.fold_block(summary="Route leak events",
+                         count=leak_table.omitted + leak_table.shown, open=true) %}
+        <p class="note">{{ leak_table.note }}</p>
+        {{ leak_table.html }}
+      {% endcall %}
+    {% endif %}
+
+    {% if outage_card %}
+      {% call macros.fold_block(summary="Outage analysis", count=1, open=true) %}
+        {{ outage_card }}
+      {% endcall %}
+    {% endif %}
+  </div>
+
+  {# ══════════════════════ CORRELATION ASSESSMENT ══════════════ #}
+  <div class="card card-evidence">
+    <h2>Correlation Assessment</h2>
+    <div class="gauge-wrap">
+      {{ correlation_gauge }}
+      <div>
+        <p style="margin:0 0 6px;">
+          <strong>Strength:</strong> {{ '%.2f'|format(corr_strength) }}
+          &nbsp;·&nbsp; <strong>Temporal proximity:</strong> {{ temporal_proximity }}</p>
+        <p style="margin:0;" class="note">
+          {%- if correlation_gap_note %}{{ correlation_gap_note }}{% else %}
+            Routing and traffic events were compared on absolute time separation.
+          {% endif -%}
+        </p>
+      </div>
+    </div>
+    {% if delta_t_table %}
+      {% call macros.fold_block(summary="ΔT entries (routing ↔ traffic)",
+                         count=delta_t_table.shown, open=false) %}
+        {{ delta_t_table.html }}
+      {% endcall %}
+    {% endif %}
+  </div>
+
+  {# ═══════════════════════ EVIDENCE CHAIN ══════════════════════ #}
+  <div class="card card-evidence">
+    <h2>Evidence Chain</h2>
+    <p class="note">{{ chain_provenance }}</p>
+    <ol class="chain">
+      {% for step in evidence_chain %}
+        <li>
+          <span class="step">{{ step.label }}</span>
+          {% for line in step.lines %}<div>{{ line }}</div>{% endfor %}
+          {% if step.sources %}<div class="src">{{ step.sources }}</div>{% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+  </div>
+
+  {# ═══════════════════ REFUTABLE HYPOTHESES ════════════════════ #}
+  {% if hypotheses %}
+  <div class="card card-hypo">
+    <h2>Refutable Hypotheses</h2>
+    {% for h in hypotheses %}
+      <div class="hypo" style="border-left-color:{{ h.color }}">
+        <h4>{{ h.title }}<span class="conf">confidence {{ '%.0f'|format(h.confidence * 100) }}%</span></h4>
+        <p style="margin:0"><strong>Why:</strong> {{ h.why }}</p>
+        {% if h.refute %}<p class="refute"><strong>How to refute:</strong> {{ h.refute }}</p>{% endif %}
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ════════════════════ COUNTERFACTUAL ANALYSIS ════════════════ #}
+  {% if counterfactuals %}
+  <div class="card card-counter">
+    <h2>Counterfactual Analysis</h2>
+    {% for c in counterfactuals %}
+      <div class="hypo" style="border-left-color:#748ffc">
+        <h4>{{ c.title }}</h4>
+        <p style="margin:0">{{ c.body }}</p>
+      </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# ══════════════════════ AUTO-PROBE FINDINGS ═════════════════ #}
+  <div class="card card-probe">
+    <h2>Auto-Probe Findings</h2>
+    {% if probe_rows %}
+      <p class="note">{{ probe_summary }}</p>
+      <div class="tbl-scroll">
+        <table class="data">
+          <thead><tr>{% for h in probe_headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+          <tbody>{% for r in probe_rows %}<tr>{% for c in r %}<td>{{ c }}</td>{% endfor %}</tr>{% endfor %}</tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="note">{{ probe_summary or "No verification probes were executed for this incident." }}</p>
+    {% endif %}
+  </div>
+
+  {# ══════════════════════ GAPS & LIMITATIONS ═══════════════════ #}
+  <div class="card card-gap">
+    <h2>Gaps &amp; Limitations</h2>
+    {% if gaps %}
+      <ul>{% for g in gaps %}<li>{{ g }}</li>{% endfor %}</ul>
+    {% else %}
+      <p class="note">{{ gaps_note }}</p>
+    {% endif %}
+  </div>
+
+  <div class="doc-foot">
+    Rendered by <code>report_template.py</code> · template
+    <code>report_v2</code> (schema {{ schema_version }}) ·
+    narrative source: <code>{{ narrative_source }}</code> ·
+    width constraint: single <code>.report</code> max-width
+  </div>
+
+</div>
+</body>
+</html>

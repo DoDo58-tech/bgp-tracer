@@ -1,27 +1,29 @@
 """
-多尺度流量基线检测器
+
 ===================
 
-核心思想：单一基线容易误报，多尺度集成更鲁棒。
+：，。
 
-权重设计依据（参考领域实践）：
-- weekly (35%): Internet 流量具有强周期性，Sundararajan et al. SIGCOMM 2004
-  的研究表明 7 天周期是最强信号，因此最高权重。
-- daily (25%): 每日周期性强但易受工作日/周末效应影响，权重次之。
-- hourly (15%): 小时级信号快但噪声大，用于捕捉短期突发。
-- biweekly (15%): 排除周效应中的偶发因素。
-- monthly (10%): 捕获月度趋势和月初/月末效应，但周期信号弱。
+（）：
+- weekly (35%): Internet ，Sundararajan et al. SIGCOMM 2004
+   7 ，。
+- daily (25%): /，。
+- hourly (15%): ，。
+- biweekly (15%): 。
+- monthly (10%): /，。
 
-置信区间宽度（ci_width）随时间尺度增大而增大，反映长周期基线的不确定性增加。
+（ci_width），。
 
-检测逻辑：
-1. 从多个历史时间窗口获取基线（1小时、1天、1周、2周、1月前）
-2. 每个尺度使用置信区间而非点估计
-3. 多尺度加权集成，给出最终判决
-4. 权重可通过 set_weights() 动态调整（支持实验调优）
+：
+1. （1、1、1、2、1）
+2. 
+3. ，
+4.  set_weights() （）
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 from datetime import datetime, timedelta
@@ -32,7 +34,7 @@ from utils.logger import logger
 
 @dataclass
 class ScaleResult:
-    """单个尺度的检测结果"""
+    """"""
     scale: str
     available: bool
     z_score: float
@@ -44,60 +46,66 @@ class ScaleResult:
     ci_upper: float
     deviation_pct: float
     direction: str
-    weight: float  # 论文可引用为: 权重来自 Sundararajan et al. 2004 的流量周期性分析
+    weight: float  # :  Sundararajan et al. 2004
+    reason: str = ""
 
 
 @dataclass
 class MultiScaleDecision:
-    """多尺度集成决策结果"""
+    """"""
     is_anomaly: bool
     confidence: float
     weighted_score: float
     scales: list[ScaleResult]
     consensus_count: int
     reasoning: str
+    # Number of votes required for a positive verdict. Derived from the scales
+    # that were actually available, so a verdict can never be demanded from
+    # scales that produced no evidence (see BUG-R152).
+    consensus_required: int = 0
+    available_scales: int = 0
 
 
 class MultiScaleBaseline:
     """
-    多尺度流量基线检测器
     
-    从多个时间尺度的历史数据构建基线，集成决策。
+    
+    ，。
 
-    权重可动态调整（见 set_weights()），支持：
-    1. 基于 Ground Truth 数据自动调优（见 auto_tune_weights()）
-    2. 根据场景自适应（e.g., 急性事件给 hourly 更高权重）
+    （ set_weights()），：
+    1.  Ground Truth （ auto_tune_weights()）
+    2. （e.g.,  hourly ）
     """
 
-    # 时间尺度配置（权重依据见文件顶部 docstring）
+    # （ docstring）
     SCALES = {
         'hourly': {
             'offset': timedelta(hours=1),
-            'name': '1小时前',
+            'name': '1',
             'weight': 0.15,
             'ci_width': 1.0,
         },
         'daily': {
             'offset': timedelta(days=1),
-            'name': '1天前',
+            'name': '1',
             'weight': 0.25,
             'ci_width': 1.5,
         },
         'weekly': {
             'offset': timedelta(weeks=1),
-            'name': '1周前',
+            'name': '1',
             'weight': 0.35,
             'ci_width': 2.0,
         },
         'biweekly': {
             'offset': timedelta(weeks=2),
-            'name': '2周前',
+            'name': '2',
             'weight': 0.15,
             'ci_width': 2.0,
         },
         'monthly': {
             'offset': timedelta(days=30),
-            'name': '1月前',
+            'name': '1',
             'weight': 0.10,
             'ci_width': 2.5,
         },
@@ -108,14 +116,14 @@ class MultiScaleBaseline:
 
     def set_weights(self, weights: dict):
         """
-        动态调整各尺度权重（支持实验调优）。
+        （）。
 
         Args:
             weights: {'hourly': 0.1, 'daily': 0.3, 'weekly': 0.4, 'biweekly': 0.1, 'monthly': 0.1}
-                     值必须非负，总和为 1.0（不强制校验，由调用方保证）。
+                     ， 1.0（，）。
 
         Example:
-            # 对急性事件，给小时级别更高权重
+            # ，
             detector.set_weights({'hourly': 0.35, 'daily': 0.25, 'weekly': 0.20,
                                    'biweekly': 0.10, 'monthly': 0.10})
         """
@@ -125,8 +133,36 @@ class MultiScaleBaseline:
                 logger.info(f"[MultiScale] weight[{key}] = {value}")
 
     def get_weights(self) -> dict:
-        """返回当前权重配置，用于调试和记录。"""
+        """，。"""
         return {k: v['weight'] for k, v in self.SCALES.items()}
+
+    def _shared_scale_windows(self, asn, current_start, current_end):
+        """Pre-fetch every scale offset on one shared normalization scale.
+
+        Returns ``{(offset, start, end): (timestamps, values)}`` for the scales
+        that could be fetched, or ``None`` when the shared helper is
+        unavailable (in which case each scale falls back to its own fetch).
+        """
+        getter = getattr(self.get_traffic, "__self__", None)
+        shared_fn = getattr(getter, "get_traffic_windows_shared_scale", None)
+        if shared_fn is None:
+            return None
+        try:
+            windows = [
+                (current_start - cfg["offset"], current_end - cfg["offset"])
+                for cfg in self.SCALES.values()
+            ]
+            fetched = shared_fn(str(asn).replace("AS", ""), windows)
+        except Exception as exc:  # noqa: BLE001 - degrade to per-scale fetch
+            logger.warning("[MultiScale] Shared-scale prefetch failed: %s", exc)
+            return None
+        out = {}
+        for cfg in self.SCALES.values():
+            offset = cfg["offset"]
+            key = (current_start - offset, current_end - offset)
+            if key in fetched:
+                out[offset] = fetched[key]
+        return out or None
 
     def auto_tune_weights(
         self,
@@ -134,19 +170,19 @@ class MultiScaleBaseline:
         metric: str = "f1",
     ) -> dict:
         """
-        基于 Ground Truth 数据自动调优权重。
+         Ground Truth 。
 
         Args:
             ground_truth: List of (current_values, is_anomaly) tuples where:
                 - current_values: traffic data points during the event window
                 - is_anomaly: True if this is a true anomaly, False otherwise
-            metric: 优化目标 ('f1', 'precision', 'recall')
+            metric:  ('f1', 'precision', 'recall')
 
-        实现：网格搜索（5^5 = 3125 组合，5 个尺度各 5 档: 0.05/0.10/0.20/0.30/0.35）
-        返回最优权重配置。
+        ：（5^5 = 3125 ，5  5 : 0.05/0.10/0.20/0.30/0.35）
+        。
 
-        注意：为了进行有效的调优，需要提供足够多的标注样本（建议至少50个）。
-        当前实现使用简化的评分机制：计算加权偏差分数与阈值比较。
+        ：，（50）。
+        ：。
         """
         if len(ground_truth) < 10:
             logger.warning(f"[MultiScale] Not enough samples for tuning ({len(ground_truth)}), using default weights")
@@ -155,7 +191,7 @@ class MultiScaleBaseline:
         best_weights = None
         best_score = -1
 
-        # 5 档离散权重候选
+        # 5 
         candidates = [0.05, 0.10, 0.20, 0.30, 0.35]
         scales = list(self.SCALES.keys())
 
@@ -188,7 +224,7 @@ class MultiScaleBaseline:
             total = sum(w.values())
             if total == 0:
                 continue
-            # 归一化
+            # 
             w = {k: v / total for k, v in w.items()}
 
             # Compute weighted anomaly score for each sample
@@ -253,23 +289,30 @@ class MultiScaleBaseline:
         current_end: datetime,
     ) -> MultiScaleDecision:
         """
-        多尺度异常检测
+        
         
         Args:
-            asn: AS编号
-            current_values: 当前流量数据
-            current_timestamps: 当前时间戳
-            current_start: 当前窗口开始时间
-            current_end: 当前窗口结束时间
+            asn: AS
+            current_values: 
+            current_timestamps: 
+            current_start: 
+            current_end: 
         
         Returns:
-            MultiScaleDecision: 集成决策结果
+            MultiScaleDecision: 
         """
         scale_results = []
         weighted_sum = 0.0
         total_weight = 0.0
         anomaly_count = 0
         direction = None
+
+        # Pre-fetch every scale's historical window on ONE shared scale.
+        # Fetching each scale separately lets the cache resolve its unit bucket
+        # per window, so the hourly scale could land on normalized MIN0_MAX
+        # floats while the daily scale landed on raw request counts -- making
+        # the two scales incomparable and the fused vote meaningless.
+        shared = self._shared_scale_windows(asn, current_start, current_end)
 
         for scale_name, config in self.SCALES.items():
             result = self._analyze_single_scale(
@@ -280,16 +323,17 @@ class MultiScaleBaseline:
                 current_timestamps=current_timestamps,
                 current_start=current_start,
                 current_end=current_end,
+                shared=shared,
             )
             scale_results.append(result)
 
             if result.available:
-                # 使用绝对值来统一计算，因为下降和上升都是异常
+                # ，
                 weighted_sum += abs(result.z_score) * result.weight
                 total_weight += result.weight
                 if result.is_anomaly:
                     anomaly_count += 1
-                # 记录主要异常方向
+                # 
                 if result.is_anomaly and direction is None:
                     direction = result.direction
 
@@ -300,22 +344,36 @@ class MultiScaleBaseline:
                 weighted_score=0.0,
                 scales=scale_results,
                 consensus_count=0,
-                reasoning="所有时间尺度的历史数据均不可用",
+                reasoning="",
+                consensus_required=0,
+                available_scales=0,
             )
 
-        weighted_score = weighted_sum / total_weight
+        return self._decide(
+            scale_results=scale_results,
+            weighted_score=weighted_sum / total_weight,
+            anomaly_count=anomaly_count,
+            direction=direction,
+        )
 
-        # 决策逻辑：多数投票 + 加权分数
-        # 注意：z_score 是标准化分数（均值=0, 标准差=1），0.4 表示偏离0.4个标准差
-        # 对于流量异常检测，我们更关注方向和相对变化，所以降低阈值
-        threshold_vote = len(self.SCALES) / 2  # = 2.5，需要 anomaly_count >= 3
-        threshold_score = 1.5  # 降低阈值：从2.0降到1.5，更敏感地检测异常
+    def _decide(self, scale_results, weighted_score, anomaly_count, direction=None):
+        """Fuse per-scale verdicts into one decision.
+
+        The consensus threshold is derived from the scales that actually
+        returned a verdict. Using the configured scale count instead made the
+        required vote count exceed the number of scales that could ever vote,
+        so detection became impossible whenever history was sparse -- e.g.
+        AS12479 had only hourly+daily available but the rule demanded 3 of 5.
+        """
+        available_count = sum(1 for r in scale_results if r.available)
+        threshold_vote = math.ceil(available_count / 2) if available_count else 1
+        threshold_score = 1.5  # z-score gate: 2.0 lenient, 1.5 stricter
 
         is_anomaly = anomaly_count >= threshold_vote and weighted_score >= threshold_score
         confidence = self._compute_confidence(
             anomaly_count=anomaly_count,
             weighted_score=weighted_score,
-            total_scales=len(self.SCALES),
+            total_scales=available_count,
         )
 
         reasoning = self._build_reasoning(scale_results, anomaly_count, weighted_score, direction)
@@ -327,6 +385,8 @@ class MultiScaleBaseline:
             scales=scale_results,
             consensus_count=anomaly_count,
             reasoning=reasoning,
+            consensus_required=threshold_vote,
+            available_scales=available_count,
         )
 
     def _analyze_single_scale(
@@ -338,14 +398,21 @@ class MultiScaleBaseline:
         current_timestamps: list,
         current_start: datetime,
         current_end: datetime,
+        shared: dict | None = None,
     ) -> ScaleResult:
-        """分析单个时间尺度"""
+        """"""
         offset = config['offset']
         past_start = current_start - offset
         past_end = current_end - offset
 
         try:
-            past_timestamps, past_values = self.get_traffic(asn, past_start, past_end)
+            # Prefer the pre-fetched shared-scale series so every scale is
+            # measured against a baseline on the same scale as the others.
+            pre = (shared or {}).get(offset)
+            if pre and len(pre[1]) > 1:
+                past_timestamps, past_values = pre
+            else:
+                past_timestamps, past_values = self.get_traffic(asn, past_start, past_end)
         except Exception:
             return ScaleResult(
                 scale=scale_name,
@@ -488,8 +555,10 @@ class MultiScaleBaseline:
         weighted_score: float,
         total_scales: int,
     ) -> float:
-        """计算决策置信度"""
-        vote_ratio = anomaly_count / total_scales
+        """"""
+        # Guard the zero-scale case: with no available scale there is no vote
+        # ratio to form, and dividing by zero would abort detection entirely.
+        vote_ratio = (anomaly_count / total_scales) if total_scales else 0.0
         score_factor = min(1.0, abs(weighted_score) / 3.0)
         confidence = (vote_ratio * 0.6 + score_factor * 0.4)
         return max(0.0, confidence)
@@ -501,10 +570,10 @@ class MultiScaleBaseline:
         weighted_score: float,
         direction: str = None,
     ) -> str:
-        """构建决策理由"""
+        """"""
         available_results = [r for r in scale_results if r.available]
         if not available_results:
-            return "无历史数据可用，无法进行多尺度分析"
+            return "，"
 
         anomalous_scales = [r for r in available_results if r.is_anomaly]
         normal_scales = [r for r in available_results if not r.is_anomaly]
@@ -513,23 +582,23 @@ class MultiScaleBaseline:
 
         if anomalous_scales:
             scale_names = ', '.join([f"{r.scale}(z={r.z_score:.2f})" for r in anomalous_scales])
-            dir_desc = '下降' if direction == 'below' else ('上升' if direction == 'above' else '异常')
-            parts.append(f"检测到异常：{scale_names}，流量{dir_desc}")
+            dir_desc = '' if direction == 'below' else ('' if direction == 'above' else '')
+            parts.append(f"：{scale_names}，{dir_desc}")
 
         if normal_scales:
             scale_names = ', '.join([r.scale for r in normal_scales])
-            parts.append(f"正常参考：{scale_names}")
+            parts.append(f"：{scale_names}")
 
-        parts.append(f"加权分数：{weighted_score:.2f}，投票：{anomaly_count}/{len(available_results)}")
+        parts.append(f"：{weighted_score:.2f}，：{anomaly_count}/{len(available_results)}")
 
         return '; '.join(parts)
 
 
 class CausalCorrelationScorer:
     """
-    因果关联评分器
     
-    在多尺度检测的基础上，进一步评估路由异常与流量异常的关联强度。
+    
+    ，。
     """
 
     def score(
@@ -591,16 +660,6 @@ class CausalCorrelationScorer:
             + (1 - confounder_penalty) * 0.1
         )
         # Bug fix 2026-09-13 (BUG-R88): the previous implementation
-        # required ``all(pair["role"] != "attacker" for pair in matched_pairs)``
-        # — that is, *every* matched pair must be a victim. But this
-        # is too restrictive: an AS can be both victim (its
-        # legitimate prefix was hijacked) and attacker (it
-        # simultaneously originated a route leak or hijack) in the
-        # same window, and the temporal/semantic association of
-        # *either* role to the traffic anomaly is still strong
-        # evidence that something is wrong on that AS. The
-        # ``matched_victim_pairs`` list a few lines below is the
-        # correct filter: require at least one victim match.
         matched_victim_pairs_for_gate = [
             pair for pair in matched_pairs if pair.get("role") != "attacker"
         ]
@@ -746,12 +805,12 @@ class CausalCorrelationScorer:
 
     def _status_reason(self, routing_status, traffic_status):
         if routing_status == "no_data" or traffic_status == "no_data":
-            return "路由或流量数据不可用，联合关系无法判断"
+            return "，"
         if routing_status == "normal" and traffic_status == "normal":
-            return "路由与流量均未发现异常"
+            return ""
         if routing_status == "anomaly":
-            return "检测到路由异常，但缺少流量异常观测"
-        return "检测到流量异常，但缺少路由异常观测"
+            return "，"
+        return "，"
 
     def _evidence_quality(self, temporal_score, semantic_score, coverage, penalty):
         score = temporal_score * 0.4 + semantic_score * 0.35 + min(coverage, 1.0) * 0.25
@@ -765,19 +824,19 @@ class CausalCorrelationScorer:
     def _recommended_actions(self, routing_status, traffic_status, match_status, quality, penalty):
         actions = []
         if routing_status == "no_data":
-            actions.append("补充多个观测点的BGP路由数据")
+            actions.append("BGP")
         if traffic_status == "no_data":
-            actions.append("补充目标AS或受影响前缀的流量时间序列")
+            actions.append("AS")
         if traffic_status == "anomaly" and routing_status == "normal":
-            actions.extend(["检查应用、容量和攻击指标", "扩大路由数据源与时间窗口"])
+            actions.extend(["、", ""])
         if match_status in {"no_temporal_match", "matched_attacker_only"}:
-            actions.append("按受影响前缀和地区进行时序与可达性探测")
+            actions.append("")
         if penalty > 0:
-            actions.append("核对维护、CDN切换和备用路由等替代解释")
+            actions.append("、CDN")
         if not actions and quality in {"low", "medium"}:
-            actions.append("收集独立探测和运营商侧遥测后再升级告警")
+            actions.append("")
         if not actions:
-            actions.append("持续观察恢复时间与受影响前缀范围")
+            actions.append("")
         return actions
 
     def _impact_scope(self, routing_events, traffic_anomalies, target_asn):
@@ -832,8 +891,6 @@ class CausalCorrelationScorer:
             tied = [item for item in preceding if item[1] == latest_ts]
             if len(tied) > 1:
                 # Tie on timestamp: pick victim-side event first so the
-                # optional phase metadata on the victim is honoured; fall
-                # back to attacker if no victim event shares the timestamp.
                 victims = [item for item in tied if item[0].get("role") == "victim"]
                 chosen = victims[0] if victims else tied[0]
             else:
@@ -956,7 +1013,7 @@ class CausalCorrelationScorer:
         routing_events: list,
         traffic_anomalies: list,
     ) -> float:
-        """计算强度关联分数"""
+        """"""
         routing_intensity = len(routing_events)
 
         traffic_drops = []
@@ -971,7 +1028,7 @@ class CausalCorrelationScorer:
         return min(1.0, ratio)
 
     def _compute_confounder_penalty(self, confounders: dict) -> float:
-        """计算混淆变量惩罚"""
+        """"""
         penalties = []
 
         if confounders.get('cdn_switch'):
@@ -1027,20 +1084,20 @@ class CausalCorrelationScorer:
         """Describe evidence strength without converting correlation into causality."""
         parts = []
         if temporal_score >= 0.7:
-            parts.append("时间关联强：流量异常在路由事件后 60 分钟内出现")
+            parts.append("： 60 ")
         elif temporal_score > 0:
-            parts.append("时间关联有限：仅部分事件在三小时窗口内匹配")
+            parts.append("：")
         else:
-            parts.append("没有可用的时间戳匹配")
+            parts.append("")
         if semantic_score >= 0.7:
-            parts.append("语义一致：事件角色与受影响 AS 的流量观测相符")
+            parts.append("： AS ")
         else:
-            parts.append("语义一致性不足：攻击方或角色不明确的事件不能用于解释目标 AS 的流量")
+            parts.append("： AS ")
         if intensity_score >= 0.7:
-            parts.append("流量变化幅度显著")
+            parts.append("")
         if confounder_penalty >= 0.3:
-            parts.append("存在已知混杂因素")
-        parts.append(f"关联分数：{association_score:.2f}；该分数不单独证明因果关系")
+            parts.append("")
+        parts.append(f"：{association_score:.2f}；")
         return "; ".join(parts)
 
 

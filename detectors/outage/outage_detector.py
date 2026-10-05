@@ -448,23 +448,6 @@ class RouteOutageDetector:
     baseline_hours = 24
     min_required_buckets = 6
     # Bounded cache of iso-string -> datetime to avoid an
-    # unbounded-growth leak when many distinct timestamps flow through.
-    # Bounded LRU via OrderedDict keeps the most-recently used entries
-    # while capping memory at ``_MAX_PARSED_CACHE_SIZE``.
-    #
-    # Bug fix 2026-09-13 (BUG-R127): the docstring of this class
-    # advertised ``OrderedDict``-based LRU but the implementation used
-    # ``dict`` + ``list`` and refreshed recency position via
-    # ``self._parsed_cache_order.remove(iso_ts)`` (an O(n) scan over the
-    # full cache on every cache *hit*). When the cache is saturated
-    # (>= 8192 entries), every parse_cached becomes O(n) — for a
-    # 3-hour window with 60-second buckets that's 180 timestamps, but
-    # for an outage detector scanning 24h of MRT updates it can hit
-    # tens of thousands of calls, turning what should be O(1) into O(n)
-    # and noticeably stalling detector run-times.
-    #
-    # We now use ``OrderedDict`` (O(1) for both ``get`` and
-    # ``move_to_end``), which is also documented intent.
     _MAX_PARSED_CACHE_SIZE = 8192
     parsed_cache: "OrderedDict[str, datetime]" = field(
         default_factory=OrderedDict, init=False
@@ -542,12 +525,6 @@ class RouteOutageDetector:
                 "attempting to use routing_result for fallback outage estimation."
             )
             # Return a more informative result that can be used for fallback
-            # Bug fix 2026-09-13 (BUG-R42): previously this branch returned a
-            # raw dict, while sibling return-points went through ``wrap(...).to_dict()``.
-            # Downstream consumers that expect ``UnifiedDetectionResult``-shaped
-            # keys (e.g. ``detection_type``, ``confidence``, ``metadata``) saw
-            # inconsistent shapes depending on which path executed. Route this
-            # branch through ``wrap`` so all return points produce the same dict.
             return wrap(DetectionType.OUTAGE, {
                 "success": False,
                 "asn": asn,
@@ -599,8 +576,6 @@ class RouteOutageDetector:
 
         if not timeseries:
             # Bug fix 2026-09-13 (BUG-R42): route this branch through the
-            # shared ``wrap(...).to_dict()`` helper so all return points
-            # produce the same UnifiedDetectionResult-shaped dict.
             return wrap(DetectionType.OUTAGE, {
                 "success": False,
                 "asn": asn,
@@ -917,9 +892,6 @@ class RouteOutageDetector:
 
     def parse_cached(self, iso_ts):
         # Bug fix 2026-09-13 (BUG-R127): previously this method used a
-        # ``dict`` + ``list`` cache and refreshed recency position via
-        # ``list.remove(iso_ts)``, which is O(n). ``parsed_cache`` is
-        # now an ``OrderedDict`` (O(1) ``get`` + ``move_to_end``).
         cached = self.parsed_cache.get(iso_ts)
         if cached is not None:
             # Refresh recency position (LRU semantics)
@@ -928,8 +900,6 @@ class RouteOutageDetector:
         parsed = datetime.fromisoformat(iso_ts)
         self.parsed_cache[iso_ts] = parsed
         # Evict oldest entries once the cache exceeds the cap so the
-        # detector doesn't grow without bound across many AS / window
-        # invocations. ``popitem(last=False)`` is O(1) on OrderedDict.
         while len(self.parsed_cache) > self._MAX_PARSED_CACHE_SIZE:
             self.parsed_cache.popitem(last=False)
         return parsed
@@ -959,8 +929,6 @@ class RouteOutageDetector:
         }
         result_dict = {
             # Detector ran but found no data; success=False so callers know to
-            # skip this result, data_available=False so the evaluator excludes
-            # it from F1 instead of penalising as a false negative.
             "success": False,
             "asn": asn,
             "analysis_period": f"{start_time} to {end_time}",
@@ -975,8 +943,6 @@ class RouteOutageDetector:
             "error": error,
             "note": "Outage score not computed (no or insufficient data).",
             # Unified schema: explicitly mark data unavailable so the
-            # evaluator excludes this from F1 (would otherwise be a false
-            # negative).
             "data_available": False,
             "no_data_reason": "outage_features_empty",
             "anomalies_detected": False,

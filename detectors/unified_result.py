@@ -1,11 +1,11 @@
 """
-标准化的检测结果数据类
+
 Unified Detection Result Schema
 
-目标：
-1. 统一所有检测器（hijack/leak/outage/traffic）的返回格式
-2. 规范化错误处理
-3. 确保评估框架与检测结果格式兼容
+：
+1. （hijack/leak/outage/traffic）
+2. 
+3. 
 
 Author: BGP Tracer Team
 """
@@ -19,7 +19,7 @@ import json
 
 
 class DetectionType(Enum):
-    """检测类型"""
+    """"""
     HIJACK = "hijack"
     LEAK = "leak"
     OUTAGE = "outage"
@@ -28,7 +28,7 @@ class DetectionType(Enum):
 
 
 class AnomalySeverity(Enum):
-    """异常严重程度"""
+    """"""
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -38,33 +38,31 @@ class AnomalySeverity(Enum):
 
 @dataclass
 class AnomalyDetail:
-    """单个异常详情"""
-    # 基本信息
-    type: str                          # 异常类型
-    subtype: Optional[str] = None       # 子类型
+    """"""
+    # 
+    type: str                          # 
+    subtype: Optional[str] = None       # 
     
-    # 时间信息
-    timestamp: Optional[str] = None     # ISO 格式时间戳
+    # 
+    timestamp: Optional[str] = None     # ISO 
     duration_seconds: Optional[int] = None
     
-    # 规模信息
+    # 
     affected_prefixes: List[str] = field(default_factory=list)
     affected_asns: List[str] = field(default_factory=list)
     event_count: int = 0
 
-    # 归属信息（用于 origin_hijacking / forge_hijacking 事件）
-    # claimed_as: 攻击者冒充的起源 AS（如 AS12479 宣布了不属于它的前缀）
-    # victim_as: 被影响的前缀的合法起源 AS
+    # （ origin_hijacking / forge_hijacking ）
     claimed_as: Optional[str] = None
     victim_as: Optional[str] = None
 
-    # 证据信息
+    # 
     evidence: Dict[str, Any] = field(default_factory=dict)
 
-    # 置信度
+    # 
     confidence: float = 0.5
     
-    # 严重程度
+    # 
     severity: Optional[str] = None
     
     def to_dict(self) -> dict:
@@ -103,24 +101,24 @@ class AnomalyDetail:
 
 @dataclass
 class DetectionMetadata:
-    """检测元数据"""
-    # 分析信息
-    analysis_start: str = ""           # ISO 格式
+    """"""
+    # 
+    analysis_start: str = ""           # ISO 
     analysis_end: str = ""
     analysis_duration_ms: float = 0.0
     
-    # 数据源
+    # 
     data_sources: List[str] = field(default_factory=list)
     
-    # 数据质量
+    # 
     data_quality_score: float = 1.0   # 0-1
-    coverage_percent: float = 100.0    # 数据覆盖率
+    coverage_percent: float = 100.0    # 
     
-    # API 调用
+    # API 
     api_calls_made: int = 0
     api_calls_failed: int = 0
     
-    # 配置信息
+    # 
     detection_threshold: float = 0.5
     sensitivity: str = "normal"
     
@@ -141,29 +139,29 @@ class DetectionMetadata:
 
 @dataclass
 class ConfidenceAssessment:
-    """置信度评估"""
-    # 原始值
+    """"""
+    # 
     raw_confidence: float = 0.5
     
-    # 校准值
+    # 
     calibrated_confidence: float = 0.5
     
-    # 校准级别
+    # 
     calibration_level: str = "unknown"
     
-    # 证据质量
+    # 
     evidence_sufficiency: float = 0.0
     evidence_consistency: float = 0.0
     evidence_diversity: float = 0.0
     
-    # 不确定性区间
+    # 
     uncertainty_lower: float = 0.0
     uncertainty_upper: float = 1.0
     
-    # 推理链
+    # 
     reasoning_chain: List[str] = field(default_factory=list)
     
-    # 替代假设
+    # 
     alternative_hypotheses: List[Dict[str, Any]] = field(default_factory=list)
     
     def to_dict(self) -> dict:
@@ -185,71 +183,67 @@ class ConfidenceAssessment:
 @dataclass
 class UnifiedDetectionResult:
     """
-    统一检测结果格式
+    
 
-    所有检测器（hijack/leak/outage/traffic）应返回此格式
+    （hijack/leak/outage/traffic）
     """
-    # 成功标志
+    # 
     success: bool = True
     error: Optional[str] = None
     error_code: Optional[str] = None
 
-    # 数据可用性（关键：与 anomalies_detected 区分）
-    # data_available=False 意味着 detector 跑过但没拉到数据（如 API 失败、
-    # 时间窗口超出数据源覆盖范围、ASN 太小无采样），不应与
-    # "data_available=True 且 anomalies_detected=False" 混淆。
-    # 评估器据此把"无数据"与"无异常"区分开，避免 F1=0。
+    # （： anomalies_detected ）
     data_available: bool = True
     no_data_reason: str = ""            # "" / "api_error" / "out_of_range" / "asn_unsupported" / "rate_limited"
 
-    # 基础信息
+    # 
     asn: str = ""
-    target_asn: str = ""  # 别名，与 asn 相同
+    target_asn: str = ""  # ， asn 
     detection_type: str = DetectionType.UNKNOWN.value
 
-    # 分析时间范围
+    # 
     analysis_start: str = ""
     analysis_end: str = ""
 
-    # 异常检测结果
+    # 
     anomalies_detected: bool = False
     anomaly_count: int = 0
     anomalies: List[AnomalyDetail] = field(default_factory=list)
     
-    # 简化的别名（兼容性）
+    # （）
     @property
     def detected_anomalies(self) -> List[AnomalyDetail]:
-        """detected_anomalies 的别名"""
+        """detected_anomalies """
         return self.anomalies
     
     @property
     def origin_hijacked(self) -> List[AnomalyDetail]:
-        """origin_hijacked 的别名（用于兼容旧代码）"""
+        """origin_hijacked （）"""
         return [a for a in self.anomalies
                 if (a.subtype and 'origin_hijacked' in a.subtype) or a.type == 'origin_hijack']
 
     @property
     def forge_hijacked(self) -> List[AnomalyDetail]:
-        """forge_hijacked 的别名（用于兼容旧代码）"""
+        """forge_hijacked （）"""
         return [a for a in self.anomalies
                 if (a.subtype and 'forge_hijacked' in a.subtype) or a.type == 'forge_hijack']
 
     @property
     def route_leaks(self) -> List[AnomalyDetail]:
-        """route_leaks 的别名（用于兼容旧代码）"""
+        """route_leaks （）"""
         return [a for a in self.anomalies if a.type == 'leak']
     
-    # 置信度评估
+    # 
     confidence: ConfidenceAssessment = field(default_factory=ConfidenceAssessment)
     
-    # 元数据
+    # 
     metadata: DetectionMetadata = field(default_factory=DetectionMetadata)
     
-    # 原始数据（用于调试）
+    # （）
     raw_data: Dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> dict:
-        """转换为字典"""
+        """"""
         # Build base dict from standard fields
         result = {
             'success': self.success,
@@ -267,14 +261,12 @@ class UnifiedDetectionResult:
             'anomalies': [a.to_dict() for a in self.anomalies],
             'confidence': self.confidence.to_dict(),
             'metadata': self.metadata.to_dict(),
-            # 兼容性别名
+            # 
             'origin_hijacked': self.origin_hijacked,
             'forge_hijacked': self.forge_hijacked,
             'route_leaks': self.route_leaks,
         }
         # Preserve any extra fields the caller passed to wrap() (e.g. leak_count,
-        # total_detected, route_leaks_raw, threshold, etc.) so downstream
-        # consumers don't lose information that detectors already computed.
         if self.raw_data:
             for _k, _v in self.raw_data.items():
                 if _k not in result:
@@ -283,9 +275,9 @@ class UnifiedDetectionResult:
     
     def to_legacy_dict(self) -> dict:
         """
-        转换为旧格式（兼容性）
+        （）
 
-        用于兼容现有代码中的字段名
+        
         """
         result = {
             'success': self.success,
@@ -295,7 +287,7 @@ class UnifiedDetectionResult:
             'no_data_reason': self.no_data_reason,
         }
 
-        # 复制异常数据
+        # 
         for anomaly in self.anomalies:
             item = anomaly.to_dict() if not isinstance(anomaly, dict) else anomaly
             ev_type = item.get('type', 'unknown')
@@ -310,7 +302,7 @@ class UnifiedDetectionResult:
             elif ev_type in ('leak', 'route_leak'):
                 result.setdefault('route_leaks', []).append(item)
 
-        # 添加其他字段
+        # 
         result.update({
             'anomaly_count': self.anomaly_count,
             'confidence': self.confidence.calibrated_confidence,
@@ -321,8 +313,8 @@ class UnifiedDetectionResult:
 
     @classmethod
     def from_dict(cls, data: dict) -> UnifiedDetectionResult:
-        """从字典创建"""
-        # 解析异常
+        """"""
+        # 
         # Parse anomalies
         anomalies = []
         for key in ['origin_hijacked', 'forge_hijacked', 'route_leaks', 'anomalies']:
@@ -330,10 +322,6 @@ class UnifiedDetectionResult:
                 items = data[key]
                 if isinstance(items, list):
                     # Determine the correct type for items that don't carry one.
-                    # Without this, leak events end up with type='unknown' and
-                    # the `route_leaks` property (which filters by type) drops
-                    # them, so the caller sees `route_leaks=[]` even when the
-                    # leak detector returned 5,000 leaks.
                     if key == 'origin_hijacked':
                         default_type = 'origin_hijack'
                     elif key == 'forge_hijacked':
@@ -343,8 +331,6 @@ class UnifiedDetectionResult:
                     else:
                         default_type = 'unknown'
                     # Normalise legacy / alias type names so the property
-                    # filters (``a.type == 'leak'`` etc.) keep matching
-                    # older datasets that used 'route_leak' (singular).
                     _TYPE_ALIASES = {
                         "route_leak": "leak",
                         "leak": "leak",
@@ -362,13 +348,11 @@ class UnifiedDetectionResult:
                                 item = {**item, 'type': default_type}
                             elif type_value in _TYPE_ALIASES:
                                 # Rewrite legacy aliases so downstream
-                                # ``type == 'leak'`` filters continue to
-                                # match.
                                 if type_value != _TYPE_ALIASES[type_value]:
                                     item = {**item, 'type': _TYPE_ALIASES[type_value]}
                             anomalies.append(AnomalyDetail.from_dict(item))
 
-        # 解析置信度
+        # 
         conf_data = data.get('confidence', {})
         if isinstance(conf_data, dict):
             confidence = ConfidenceAssessment(
@@ -382,7 +366,7 @@ class UnifiedDetectionResult:
                 calibrated_confidence=float(conf_data) if conf_data else 0.5,
             )
 
-        # 解析元数据
+        # 
         meta_data = data.get('metadata', {})
         metadata = DetectionMetadata(
             analysis_start=meta_data.get('analysis_start', ''),
@@ -404,17 +388,17 @@ class UnifiedDetectionResult:
             confidence=confidence,
             metadata=metadata,
             raw_data=data,
-            # data_available 兼容旧数据：缺省视为 True（旧检测器不会写这一字段）
+            # data_available ： True（）
             data_available=data.get('data_available', True),
             no_data_reason=data.get('no_data_reason', ''),
         )
 
     def to_json(self) -> str:
-        """转换为 JSON 字符串"""
+        """ JSON """
         return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
 
     def summary(self) -> str:
-        """生成摘要字符串"""
+        """"""
         if not self.success:
             return f"[ERROR] {self.error or 'Unknown error'}"
 
@@ -427,7 +411,7 @@ class UnifiedDetectionResult:
 
         summary_parts = [f"[ALERT] ASN {self.asn}:"]
 
-        for anomaly in self.anomalies[:3]:  # 只显示前3个
+        for anomaly in self.anomalies[:3]:  # 3
             summary_parts.append(
                 f"  - {anomaly.type}: {anomaly.event_count} events, "
                 f"confidence={anomaly.confidence:.2f}"
@@ -441,17 +425,17 @@ class UnifiedDetectionResult:
 
 class DetectionResultConverter:
     """
-    检测结果格式转换器
     
-    在旧格式和新格式之间转换
+    
+    
     """
     
     @staticmethod
     def hijack_to_unified(hijack_result: dict) -> UnifiedDetectionResult:
-        """将 hijack 检测结果转换为统一格式"""
+        """ hijack """
         anomalies = []
         
-        # Origin hijacked (本 AS 是受害者)
+        # Origin hijacked ( AS )
         for item in hijack_result.get('origin_hijacked', []):
             anomalies.append(AnomalyDetail(
                 type='origin_hijack',
@@ -466,7 +450,7 @@ class DetectionResultConverter:
                 confidence=item.get('confidence', 0.5),
             ))
 
-        # Origin hijacking (本 AS 是攻击者)
+        # Origin hijacking ( AS )
         for item in hijack_result.get('origin_hijacking', []):
             anomalies.append(AnomalyDetail(
                 type='origin_hijack',
@@ -481,7 +465,7 @@ class DetectionResultConverter:
                 confidence=item.get('confidence', 0.5),
             ))
 
-        # Forge hijacked (MITM 受害者)
+        # Forge hijacked (MITM )
         for item in hijack_result.get('forge_hijacked', []):
             anomalies.append(AnomalyDetail(
                 type='forge_hijack',
@@ -496,7 +480,7 @@ class DetectionResultConverter:
                 confidence=item.get('confidence', 0.5),
             ))
 
-        # Forge hijacking (MITM 攻击者)
+        # Forge hijacking (MITM )
         for item in hijack_result.get('forge_hijacking', []):
             anomalies.append(AnomalyDetail(
                 type='forge_hijack',
@@ -521,15 +505,15 @@ class DetectionResultConverter:
             anomalies_detected=len(anomalies) > 0,
             anomaly_count=len(anomalies),
             anomalies=anomalies,
-            # BGP 路由数据来自 RIPE RIS 离线文件，缺失意味着探测器跑过但
-            # 找不到时间窗口的 updates；不算成功检测也不当作无异常。
+            # BGP  RIPE RIS ，
+            #  updates；。
             data_available=hijack_result.get('data_available', True),
             no_data_reason=hijack_result.get('no_data_reason', ''),
         )
 
     @staticmethod
     def leak_to_unified(leak_result: dict) -> UnifiedDetectionResult:
-        """将 leak 检测结果转换为统一格式"""
+        """ leak """
         anomalies = []
 
         for item in leak_result.get('route_leaks', []):
@@ -560,7 +544,7 @@ class DetectionResultConverter:
 
     @staticmethod
     def outage_to_unified(outage_result: dict) -> UnifiedDetectionResult:
-        """将 outage 检测结果转换为统一格式"""
+        """ outage """
         anomalies = []
 
         if outage_result.get('is_outage_suspected'):
@@ -588,7 +572,7 @@ class DetectionResultConverter:
 
     @staticmethod
     def traffic_to_unified(traffic_result: dict) -> UnifiedDetectionResult:
-        """将 traffic 检测结果转换为统一格式"""
+        """ traffic """
         anomalies = []
 
         for item in traffic_result.get('anomalies', []):
@@ -601,8 +585,8 @@ class DetectionResultConverter:
                 confidence=item.get('confidence', 0.5),
             ))
 
-        # Traffic detector 是真正会失败的层（Cloudflare Radar API token 缺失、
-        # ASN 数据覆盖不足都会让 data_points=0）。显式继承 data_available。
+        # Traffic detector （Cloudflare Radar API token 、
+        # ASN  data_points=0）。 data_available。
         return UnifiedDetectionResult(
             success=traffic_result.get('success', True),
             error=traffic_result.get('error'),
@@ -615,8 +599,8 @@ class DetectionResultConverter:
             anomalies=anomalies,
             data_available=traffic_result.get(
                 'data_available',
-                # 向后兼容：旧 detector 没写 data_available；当 success=True
-                # 且有 data_points>0 时视为有数据，否则无数据。
+                # ： detector  data_available； success=True
+                #  data_points>0 ，。
                 bool(traffic_result.get('data_points', 0)) and traffic_result.get('success', True),
             ),
             no_data_reason=traffic_result.get('no_data_reason', ''),
@@ -625,23 +609,23 @@ class DetectionResultConverter:
 
 def merge_detection_results(results: List[UnifiedDetectionResult]) -> UnifiedDetectionResult:
     """
-    合并多个检测结果
     
-    用于组合 hijack + leak + outage + traffic 的结果
+    
+     hijack + leak + outage + traffic 
     """
     if not results:
         return UnifiedDetectionResult()
     
-    # 合并所有异常
+    # 
     all_anomalies = []
     for result in results:
         all_anomalies.extend(result.anomalies)
     
-    # 计算时间范围
+    # 
     start_times = [r.analysis_start for r in results if r.analysis_start]
     end_times = [r.analysis_end for r in results if r.analysis_end]
     
-    # 合并置信度（取平均值）
+    # （）
     confidences = [r.confidence.calibrated_confidence for r in results if r.confidence]
     avg_confidence = sum(confidences) / len(confidences) if confidences else 0.5
     
@@ -659,9 +643,6 @@ def merge_detection_results(results: List[UnifiedDetectionResult]) -> UnifiedDet
 
 
 # =============================================================================
-# Convenience helper for detector authors
-# =============================================================================
-
 def wrap(
     detection_type: "DetectionType",
     raw: dict,
@@ -712,13 +693,13 @@ def wrap(
     })
 
 
-# 示例用法
+# 
 if __name__ == "__main__":
     print("=" * 60)
-    print("统一检测结果格式测试")
+    print("")
     print("=" * 60)
     
-    # 创建示例 hijack 结果
+    #  hijack 
     hijack_data = {
         'success': True,
         'asn': '12479',
@@ -736,15 +717,15 @@ if __name__ == "__main__":
         'forge_hijacked': [],
     }
     
-    # 转换为统一格式
+    # 
     unified = DetectionResultConverter.hijack_to_unified(hijack_data)
-    print(f"\n原始格式: {hijack_data}")
-    print(f"\n统一格式:")
+    print(f"\n: {hijack_data}")
+    print(f"\n:")
     print(json.dumps(unified.to_dict(), indent=2, ensure_ascii=False)[:500])
     
-    print(f"\n摘要: {unified.summary()}")
+    print(f"\n: {unified.summary()}")
     
-    # 转换为旧格式（兼容性）
+    # （）
     legacy = unified.to_legacy_dict()
-    print(f"\n旧格式（兼容性）:")
+    print(f"\n（）:")
     print(legacy)

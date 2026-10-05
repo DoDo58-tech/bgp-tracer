@@ -147,7 +147,7 @@ def detect_route_leaks_in_announcements_slow(
     threshold
 ):
     """
-    原始逐行leak检测（用于回退）
+    leak（）
     """
     leaks = []
 
@@ -218,16 +218,16 @@ def detect_route_leaks_vectorized(
     max_leaks: int = 0
 ):
     """
-    向量化leak检测 - 使用polars加速处理
+    leak - polars
 
     Args:
-        announcements_df: 宣告DataFrame (polars)
-        asrelprob: AS关系概率字典
-        threshold: leak阈值
-        max_leaks: 最大返回leak数量，0表示不限制
+        announcements_df: DataFrame (polars)
+        asrelprob: AS
+        threshold: leak
+        max_leaks: leak，0
 
     Returns:
-        leak事件列表
+        leak
     """
     leaks = []
     leak_count = 0
@@ -251,30 +251,30 @@ def detect_route_leaks_vectorized(
         return leaks
     
     try:
-        # 1. 解析AS路径（向量化）
-        # 注意：polars 0.19+ 的 list.eval API 可能不稳定，使用更兼容的方式
+        # 1. AS（）
+        # ：polars 0.19+  list.eval API ，
         try:
-            # 使用更简洁的字符串处理
-            # polars 使用 str.strip_chars() 而不是 str.strip()
+            # 
+            # polars  str.strip_chars()  str.strip()
             df = df.with_columns([
                 pl.col('as-path').str.split(by=" ").list.eval(pl.element().str.strip_chars()).alias('_path_list')
             ])
         except AttributeError:
-            # 回退到更兼容的方式：先分割，再逐个strip_chars
+            # ：，strip_chars
             df = df.with_columns([
                 pl.col('as-path').str.split(by=" ").alias('_path_list')
             ])
-            # 手动处理strip_chars（兼容旧版polars）
+            # strip_chars（polars）
             try:
                 df = df.with_columns([
                     pl.col('_path_list').list.eval(pl.element().str.strip_chars()).alias('_path_list')
                 ])
             except AttributeError:
-                # 最保守的回退：假设已经是干净的路径
+                # ：
                 logger.warning("Polars version too old for string operations, skipping path cleanup")
                 pass
         
-        # 2. 计算路径长度并过滤
+        # 2. 
         df = df.with_columns([
             pl.col('_path_list').list.len().alias('_path_len')
         ])
@@ -283,30 +283,13 @@ def detect_route_leaks_vectorized(
         if df.is_empty():
             return leaks
         
-        # 3. 预构建link缓存（避免重复字典查找）
+        # 3. link（）
         link_cache = {}
         for link, probs in asrelprob.items():
             link_cache[link] = probs
             link_cache[link[::-1]] = [probs[2], probs[1], probs[0]]
 
         # ── Optimization 2026-09-17: replace per-row map_elements with
-        # an exploded-edge join.  The original ``map_elements`` ran a
-        # Python function once per AS-path — for 5.5M announcements that's
-        # 5.5M Python function calls, each touching the global ``link_cache``
-        # dict.  This took ~60 s per 5.5M-row window on the test machine.
-        #
-        # The new approach:
-        #   1. ``explode`` _path_list into one row per consecutive edge
-        #      (so a path [A, B, C, D] becomes 3 rows: A→B, B→C, C→D).
-        #   2. Build a ``(min, max)`` edge key column vectorially.
-        #   3. ``join`` against the link_cache (converted to a polars DataFrame
-        #      once) so every edge gets its (p2c, _, c2p) tuple in a single
-        #      hash join — no Python loops.
-        #   4. Group by the original path index and compute the rolling
-        #      leak probability via cum-prod/aggregation.
-        #
-        # This is 50-100x faster than the per-row Python loop, especially on
-        # wide AS paths where the inner loop dominated runtime.
         df = df.with_row_index(name="_path_id")
         # 1. Edge-explode: one row per (path_id, edge_idx) pair.
         edges = (
@@ -356,9 +339,6 @@ def detect_route_leaks_vectorized(
         # 3. Hash-join to fetch per-edge (p2c, c2p) tuples.
         joined = edges.join(link_df, on=["_a", "_b"], how="left")
         # 4. Compute leak probability per path:
-        #   prob = min over consecutive edges of (p2c + c2p_prev − p2c*c2p_prev)
-        #   where c2p_prev starts at 1.0 and is updated to current edge's c2p.
-        # Sort by path then by edge_idx (preserved from explode order).
         joined = joined.with_columns([
             (pl.col("_p2c") + pl.col("_c2p").shift(1).fill_null(1.0) -
              pl.col("_p2c") * pl.col("_c2p").shift(1).fill_null(1.0))
@@ -375,7 +355,7 @@ def detect_route_leaks_vectorized(
             pl.col("_leak_prob").fill_null(1.0)
         )
 
-        # 5. 筛选leak（先排除null再比较，避免Polars警告）
+        # 5. leak（null，Polars）
         leak_df = df.filter(
             pl.col('_leak_prob').is_not_null() & (pl.col('_leak_prob') < threshold)
         )
@@ -383,9 +363,9 @@ def detect_route_leaks_vectorized(
         if leak_df.is_empty():
             return leaks
 
-        # 6. 构建输出
+        # 6. 
         for row in leak_df.iter_rows(named=True):
-            # 如果设置了max_leaks且已达到上限，提前退出
+            # max_leaks，
             if max_leaks > 0 and leak_count >= max_leaks:
                 logger.warning(f"Reached max_leaks limit ({max_leaks}), truncating results")
                 break
@@ -403,7 +383,7 @@ def detect_route_leaks_vectorized(
                 "detection_method": "PathProb"
             }
 
-            # 添加可选字段
+            # 
             for field in ['collector', 'peer-as', 'peer_as', 'type']:
                 if field in row and row[field] is not None:
                     leak_event[field] = row[field]
@@ -415,7 +395,7 @@ def detect_route_leaks_vectorized(
         
     except Exception as e:
         logger.error(f"Error in vectorized leak detection: {e}")
-        # 回退到原始逐行方法
+        # 
         logger.info("Falling back to row-by-row detection")
         return detect_route_leaks_in_announcements_slow(announcements_df, asrelprob, threshold)
     
@@ -428,7 +408,7 @@ def detect_route_leaks_in_announcements(
     threshold
 ):
     """
-    Leak检测入口函数 - 优先使用向量化版本
+    Leak - 
     """
     return detect_route_leaks_vectorized(announcements_df, asrelprob, threshold)
 
@@ -526,17 +506,14 @@ def analyze_leak_surface(
             "anomaly_count": 0,
         }, asn=asn_clean).to_dict()
     
-    # 预初始化（用于ES分支）
+    # （ES）
     all_leaks = []
     
-    # ========== 禁用ES，强制使用CSV流式处理 ==========
-    # from utils.es_query_helper import get_leak_candidates_es, convert_es_records_to_dataframe, is_es_available
-    
-    # if is_es_available():  # 禁用ES
+    # ========== ES，CSV ==========
     if False:
         logger.info("[ES] Attempting ES query for leak detection (fast path)")
         
-        # 对每个目标AS查询ES
+        # ASES
         es_all_records = []
         for target_asn in target_asns:
             records = get_leak_candidates_es(target_asn, start_dt, end_dt)
@@ -545,7 +522,7 @@ def analyze_leak_surface(
                 logger.info(f"[ES] Retrieved {len(records)} records for AS{target_asn}")
         
         if es_all_records:
-            # 去重（同一宣告可能被多个AS查询返回）
+            # （AS）
             seen = set()
             unique_records = []
             for rec in es_all_records:
@@ -556,18 +533,28 @@ def analyze_leak_surface(
             
             logger.info(f"[ES] Total unique records: {len(unique_records)}")
             
-            # 转换为DataFrame
+            # DataFrame
             df_es = convert_es_records_to_dataframe(unique_records)
             total_announcements = len(df_es)
             filtered_announcements = total_announcements
             
             if not df_es.is_empty():
-                # 使用向量化检测
+                # 
                 chunk_leaks = detect_route_leaks_vectorized(df_es, asrelprob, threshold, max_leaks=max_leaks)
                 all_leaks.extend(chunk_leaks)
 
                 logger.info(f"[ES] Leak detection complete: {len(chunk_leaks)} leaks from {total_announcements} records")
-                
+
+                # Same truncation honesty as the CSV path: `leak_count` is the
+                # cap, not a measurement. Publish the flag so downstream does
+                # not present a truncated count as a real one.
+                es_truncated = bool(max_leaks > 0 and len(chunk_leaks) >= max_leaks)
+                if es_truncated:
+                    logger.warning(
+                        f"[ES] leak results TRUNCATED at max_leaks={max_leaks}; "
+                        "the true count is higher and is not reported here."
+                    )
+
                 return wrap(DetectionType.LEAK, {
                     "success": True,
                     "asn": asn_clean,
@@ -578,6 +565,9 @@ def analyze_leak_surface(
                     "asrel_count": len(asrelprob),
                     "route_leaks": all_leaks,
                     "leak_count": len(all_leaks),
+                    "total_detected": len(all_leaks),
+                    "truncated": es_truncated,
+                    "truncation_limit": max_leaks if es_truncated else None,
                     "total_announcements": total_announcements,
                     "filtered_announcements": filtered_announcements,
                     "data_source": "elasticsearch",
@@ -591,17 +581,17 @@ def analyze_leak_surface(
         
         logger.warning("[ES] ES query returned no results, falling back to CSV streaming")
     
-        # ========== CSV流式处理（降级路径）==========
+        # ========== CSV（）==========
     logger.info(f"Using CSV streaming for leak detection (max_leaks={max_leaks})")
 
-    # 预构建target AS集合用于精确匹配
+    # target AS
     target_asns_set = set(target_asns)
 
     all_leaks = []
     total_announcements = 0
     filtered_announcements = 0
     chunk_count = 0
-    total_leak_count = 0  # 跟踪实际检测到的总数
+    total_leak_count = 0  # 
 
     for df_chunk in get_updates_streaming(start_dt, end_dt, workers=MAX_WORKERS, io_busy_threshold=IO_BUSY_THRESHOLD, auto_download=True):
         chunk_count += 1
@@ -609,9 +599,9 @@ def analyze_leak_surface(
         if df_chunk is None or df_chunk.is_empty():
             continue
 
-        # 早期筛选，只保留必要列
+        # ，
         announcements = df_chunk.filter(pl.col('A/W') == 'A').select(['as-path', 'prefix', 'timestamp', 'origin'])
-        del df_chunk  # 立即释放原始chunk
+        del df_chunk  # chunk
         gc.collect()
 
         if announcements.is_empty():
@@ -619,15 +609,7 @@ def analyze_leak_surface(
 
         total_announcements += len(announcements)
 
-        # ========== 修复Bug: 精确ASN匹配（避免子串误匹配）==========
-        # ── Optimization 2026-09-17: replaced per-row Python ``map_elements``
-        # (called for EVERY announcement in EVERY chunk) with a single
-        # vectorized Polars ``list.contains`` over a pre-split as-path.  The
-        # previous approach was ~100-200x slower on 350k-row chunks — it ran
-        # a Python lambda per announcement, defeating the whole point of
-        # using Polars.  Behaviour is preserved: the as-path is split on
-        # whitespace once, then OR'd across the target ASN set so substring
-        # false-positives ("125" matching "1256") cannot occur.
+        # ========== Bug: ASN（）==========
         filtered_ann = announcements
         if target_asns:
             # Pre-split as-path into a list column so .list.contains() can
@@ -650,19 +632,17 @@ def analyze_leak_surface(
             continue
 
         # Detect leaks in this filtered chunk
-        # 注意：detect_route_leaks_vectorized 内部会通过 max_leaks=0 不过滤，
-        # 因为我们需要统计总数
         chunk_leaks = detect_route_leaks_vectorized(filtered_ann, asrelprob, threshold, max_leaks=0)
         total_leak_count += len(chunk_leaks)
 
-        # 如果已达到max_leaks限制，不再添加更多leaks
+        # max_leaks，leaks
         if max_leaks > 0 and len(all_leaks) >= max_leaks:
             del announcements, filtered_ann, chunk_leaks
             gc.collect()
             logger.warning(f"Reached max_leaks limit ({max_leaks}), stopping early")
             break
 
-        # 添加leaks，必要时截断
+        # leaks，
         remaining_slots = max_leaks - len(all_leaks) if max_leaks > 0 else len(chunk_leaks)
         if remaining_slots > 0:
             all_leaks.extend(chunk_leaks[:remaining_slots])
@@ -670,11 +650,28 @@ def analyze_leak_surface(
         if chunk_leaks:
             logger.info(f"Chunk {chunk_count}: detected {len(chunk_leaks)} route leaks (total: {total_leak_count})")
 
-        # 及时释放内存
+        # 
         del announcements, filtered_ann, chunk_leaks
         gc.collect()
 
     logger.info(f"Route leak analysis completed (CSV): {total_leak_count} leaks detected from {filtered_announcements} filtered announcements (out of {total_announcements} total)")
+
+    # BUG (2026-10-05): `route_leaks` / `leak_count` are capped by max_leaks,
+    # while `total_detected` holds the real count. Downstream consumers
+    # (routing_impl -> report payload, report_agent's leak table, llm_reasoning)
+    # read `leak_count` or `len(route_leaks)`, i.e. the CAP, so a run that found
+    # 20849 leaks was reported as "5000 route leaks" with no indication that the
+    # number was a truncation limit rather than a measurement. That reads as
+    # overwhelming evidence when it is actually an artefact of the limit.
+    #
+    # Publish the truncation state explicitly so a consumer can say
+    # ">=5000 (truncated)" instead of asserting 5000.
+    truncated = bool(max_leaks > 0 and total_leak_count > len(all_leaks))
+    if truncated:
+        logger.warning(
+            f"leak results TRUNCATED: reporting {len(all_leaks)} of "
+            f"{total_leak_count} detected (max_leaks={max_leaks})"
+        )
 
     return wrap(DetectionType.LEAK, {
         "success": True,
@@ -686,7 +683,9 @@ def analyze_leak_surface(
         "asrel_count": len(asrelprob),
         "route_leaks": all_leaks,
         "leak_count": len(all_leaks),
-        "total_detected": total_leak_count,  # 实际检测到的总数（可能大于返回数）
+        "total_detected": total_leak_count,  # true count, uncapped
+        "truncated": truncated,
+        "truncation_limit": max_leaks if truncated else None,
         "total_announcements": total_announcements,
         "filtered_announcements": filtered_announcements,
         "data_source": "csv_streaming",
@@ -849,9 +848,9 @@ def extract_as_paths_from_bgp_data(start_time, end_time, output_dir, min_path_le
         if df_chunk is None or df_chunk.is_empty():
             continue
 
-        # 只保留必要列，减少内存占用
+        # ，
         announcements = df_chunk.filter(pl.col('A/W') == 'A').select(['as-path'])
-        del df_chunk  # 立即释放原始chunk
+        del df_chunk  # chunk
         gc.collect()
 
         if announcements.is_empty():
@@ -875,7 +874,7 @@ def extract_as_paths_from_bgp_data(start_time, end_time, output_dir, min_path_le
             path_str = '|'.join(path)
             path_counter[path_str] += 1
 
-        # 每处理完一个chunk立即释放
+        # chunk
         del announcements
         gc.collect()
 

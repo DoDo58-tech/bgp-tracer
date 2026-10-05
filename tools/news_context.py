@@ -241,7 +241,7 @@ def _extract_incident_context(news_results: list[dict]) -> dict[str, Any]:
         "ddos": ["ddos", "denial of service", "flood"],
         "ransomware": ["ransomware", "ransom"],
         "rpki": ["rpki", "validation", "invalid roa"],
-        "account_compromised": ["compromised", "account被盗", "stolen"],
+        "account_compromised": ["compromised", "account", "stolen"],
     }
     for cause, keywords in cause_keywords.items():
         if any(kw in all_text for kw in keywords):

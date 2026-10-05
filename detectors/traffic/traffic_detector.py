@@ -43,9 +43,16 @@ from detectors.unified_result import wrap, DetectionType
 
 _as_country_cache: dict = {}
 
+# Shared detection parameters. Both public entry points (`detect_anomalies` and
+# `detect_anomalies_for_event`) must agree on these, otherwise the same event
+# scores differently depending on which path the caller happened to use.
+TRAFFIC_Z_THRESHOLD = 2.5           # lenient z gate (low periodicity confidence)
+TRAFFIC_Z_THRESHOLD_STRICT = 3.0    # strict z gate (confident periodicity)
+TRAFFIC_CONTEXT_THRESHOLD = 0.35     # neighbourhood agreement for a real drop
+
 
 def _extract_series_from_result(result, asn):
-    """Cloudflare Radar 可能返回多种 result 结构，提取 (timestamps, values)。"""
+    """Cloudflare Radar  result ， (timestamps, values)。"""
     if result is None:
         return None, None
     if isinstance(result, dict) and "timestamps" in result and "values" in result:
@@ -69,7 +76,7 @@ def _extract_series_from_result(result, asn):
 
 
 def _get_as_country(asn, target_time=None):
-    """根据 AS 编号查询其所属国家（ISO alpha-2），结果缓存到模块字典。"""
+    """ AS （ISO alpha-2），。"""
     asn_str = str(asn)
     if asn_str in _as_country_cache:
         return _as_country_cache[asn_str]
@@ -156,7 +163,7 @@ def _parse_iso_utc(s):
 
 
 def _build_request_params(asn, start_dt, end_dt, location):
-    """构造 Cloudflare Radar 请求参数。location 必须为 ISO alpha-2 或 None。"""
+    """ Cloudflare Radar 。location  ISO alpha-2  None。"""
     asn_str = str(asn).strip().upper()
     if asn_str.startswith("AS"):
         asn_str = asn_str[2:].strip()
@@ -175,7 +182,7 @@ def _build_request_params(asn, start_dt, end_dt, location):
 
 
 def _normalize_location(value):
-    """过滤无效的 location 值，仅返回 ISO alpha-2 字符串。"""
+    """ location ， ISO alpha-2 。"""
     if not isinstance(value, str):
         return None
     cleaned = value.strip().upper()
@@ -187,7 +194,7 @@ def _normalize_location(value):
 
 
 def _resolve_location(asn):
-    """依次：环境变量 > 运行时解析的国家 > 无 location。"""
+    """： >  >  location。"""
     loc = CLOUDFLARE_RADAR_LOCATION or _as_country_cache.get(str(asn))
     return _normalize_location(loc)
 
@@ -218,8 +225,84 @@ def _response_error(resp):
         return {"raw": resp.text[:500]}
 
 
+class _RadarSpanFetcher:
+    """Fetch several sub-windows that must share one normalization scale.
+
+    Cloudflare's ``MIN0_MAX`` normalization rescales **every response
+    independently** to its own ``[0, 1]`` range. Issuing one request per
+    baseline week therefore returns series on mutually incompatible scales, so
+    comparing an event window against those weeks measures their internal
+    shapes rather than their relative traffic. That artefact is the source of
+    the phantom anomaly counts recorded in saved payloads (e.g. 192
+    "anomalies" over 97 points, every ``z_score`` 0.0).
+
+    Fetching the whole span in a single request and slicing afterwards keeps one
+    shared scale across the event and all baseline weeks.
+    """
+
+    def __init__(self, api, asn, location=None):
+        self.api = api
+        self.asn = asn
+        self.location = location
+        self._cache: dict[tuple, tuple[list[str], list[float]]] = {}
+
+    def fetch(self, spans: list[tuple[datetime, datetime]]):
+        """Return one ``(timestamps, values)`` pair covering all spans."""
+        if not spans:
+            return [], []
+
+        lo = min(s for s, _ in spans)
+        hi = max(e for _, e in spans)
+        key = (lo, hi)
+        if key in self._cache:
+            return self._cache[key]
+
+        params = {
+            "dateStart": lo.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "dateEnd": hi.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "asn": int(self.asn),
+            "format": "json",
+            "aggInterval": CLOUDFLARE_DEFAULT_AGG_INTERVAL,
+        }
+        if self.location:
+            params["location"] = self.location
+        if CLOUDFLARE_RADAR_NORMALIZATION:
+            params["normalization"] = CLOUDFLARE_RADAR_NORMALIZATION
+
+        last_error = ""
+        for attempt in range(3):
+            try:
+                resp = self.api.session.get(
+                    self.api.base_url, params=params, timeout=CLOUDFLARE_TIMEOUT
+                )
+            except Exception as exc:  # noqa: BLE001 — transient TLS/reset
+                last_error = f"{type(exc).__name__}: {exc}"
+                time.sleep(2 ** attempt)
+                continue
+            if resp.status_code == 200:
+                ts, vals = _extract_ts_values(resp.json(), self.asn)
+                self._cache[key] = (ts, vals)
+                return ts, vals
+            last_error = f"HTTP {resp.status_code}"
+            if resp.status_code in (401, 403):
+                break
+            time.sleep(2 ** attempt)
+
+        raise Exception(f"AS{self.asn}: shared-span fetch failed ({last_error})")
+
+    def slice(self, spans, start, end):
+        """Return only the samples of a shared-span fetch inside one window."""
+        ts_all, vals_all = self.fetch(spans)
+        lo = start.strftime("%Y-%m-%dT%H:%M:%SZ")
+        hi = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+        picked = [
+            (t, v) for t, v in zip(ts_all, vals_all) if lo <= t <= hi
+        ]
+        return [t for t, _ in picked], [v for _, v in picked]
+
+
 def _request_with_location(api, params, asn):
-    """向 Cloudflare Radar 发起请求，必要时去掉 location 回退一次。
+    """ Cloudflare Radar ， location 。
 
     Fallback strategy when HTTP 400 is returned:
     1. Try coarser aggInterval + no location (handles "interval too granular")
@@ -255,9 +338,6 @@ def _request_with_location(api, params, asn):
                 raise PermissionError(f"Cloudflare Radar auth failed for AS{asn}: HTTP 400")
 
             # NEW: Multi-step fallback for HTTP 400.
-            # Cloudflare's Radar API limits how many data points it returns.
-            # If aggInterval is too granular for the time range, return 400.
-            # Try progressively coarser intervals + drop location.
             current_interval = params.get("aggInterval", "15m")
             coarser_map = {"1m": "15m", "5m": "1h", "15m": "1h", "30m": "1h", "1h": "1d"}
             coarser = coarser_map.get(current_interval)
@@ -323,7 +403,7 @@ def _consecutive_windows(anomalies, timestamps, min_consecutive=4):
 
 
 def _resolve_country_for_event(asn, event_time):
-    """事件级国家解析：环境变量优先，否则查 AS-Org。"""
+    """：， AS-Org。"""
     if CLOUDFLARE_RADAR_LOCATION:
         return CLOUDFLARE_RADAR_LOCATION
     country = _get_as_country(asn, target_time=event_time)
@@ -333,7 +413,7 @@ def _resolve_country_for_event(asn, event_time):
 
 
 def _select_use_periodicity(detected, daily_conf, weekly_conf, historical_count):
-    """选择基线周期：仅当 daily 显著优于 weekly 时切换。"""
+    """： daily  weekly 。"""
     if detected == "daily" and daily_conf > 3 * weekly_conf:
         logger.info(f"🔄 Daily ({daily_conf:.2%}) > 3x weekly ({weekly_conf:.2%}), using daily.")
         return "daily"
@@ -347,6 +427,9 @@ def _select_use_periodicity(detected, daily_conf, weekly_conf, historical_count)
 
 def _safe_multi_scale(api, asn, current_values, timestamps, query_start, query_end):
     try:
+        # NOTE: the bound method is passed on purpose -- MultiScaleBaseline
+        # reaches back through it to the API instance in order to pre-fetch all
+        # scale offsets on a single shared normalization scale.
         result = MultiScaleBaseline(api.get_traffic_data).detect(
             asn=str(asn), current_values=current_values,
             current_timestamps=timestamps,
@@ -386,7 +469,7 @@ class CloudflareRadarAPI:
         self.traffic_cache_dir = Path(__file__).resolve().parents[2] / "data" / "traffic"
 
     def quick_screening(self, asn, start_time, end_time):
-        """5-10 秒内完成预检，决定是否触发完整检测。"""
+        """5-10 ，。"""
         user_start_dt, user_end_dt = _parse_iso(start_time), _parse_iso(end_time)
         timestamps, current_values = self.get_traffic_data(asn, user_start_dt, user_end_dt)
         if not current_values or len(current_values) < 5:
@@ -458,7 +541,20 @@ class CloudflareRadarAPI:
         query_start = user_start_dt - timedelta(days=1)
         query_end = user_end_dt + timedelta(hours=6)
 
-        periodicity_info = self.analyze_periodicity(asn, query_start, query_end)
+        # Fetch the query window and all four baseline weeks on ONE shared
+        # normalization scale. Cloudflare's MIN0_MAX rescales every response
+        # independently, so fetching the weeks separately would stretch each
+        # one until its own peak equals 1.0 and make the event window
+        # incomparable with its own baseline.
+        baseline_windows = [
+            (query_start - timedelta(days=7 * i), query_end - timedelta(days=7 * i))
+            for i in range(1, 5)
+        ]
+        shared = self.get_traffic_windows_shared_scale(
+            asn, [(query_start, query_end)] + baseline_windows)
+
+        periodicity_info = self.analyze_periodicity(
+            asn, query_start, query_end, windows=shared or None)
         detected = periodicity_info.get("detected_periodicity", "none")
         periodicity_confidence = periodicity_info.get("periodicity_confidence", 0.0)
         detection_method = periodicity_info.get("detection_method", "unknown")
@@ -476,7 +572,9 @@ class CloudflareRadarAPI:
         if best_effort:
             logger.info("🔄 Using period as best-effort reference.")
 
-        timestamps, current_values = self.get_traffic_data(asn, query_start, query_end)
+        timestamps, current_values = (shared or {}).get((query_start, query_end), ([], []))
+        if not current_values:
+            timestamps, current_values = self.get_traffic_data(asn, query_start, query_end)
 
         if not current_values or len(current_values) < 10:
             try:
@@ -501,24 +599,31 @@ class CloudflareRadarAPI:
                 for p in periodicity_info.get("historical_periods", [])
                 if p.get("values")
             ]
+            n_before = len(current_values)
             current_values, historical_means, historical_stds, historical_values_list = preprocess_traffic_data(
                 current_values, historical_data)
-            timestamps = timestamps[:len(current_values)]
+            # preprocess_traffic_data keeps the most recent samples of the
+            # current window, so the timestamp slice must keep the same tail or
+            # values and timestamps silently drift apart (which would misplace
+            # every anomaly index and the peak/trough search).
+            n_after = len(current_values)
+            if n_after == n_before:
+                timestamps = timestamps[:n_after]
+            else:
+                timestamps = timestamps[len(timestamps) - n_after:]
 
-            adj_threshold = 2.5 if periodicity_confidence < 0.1 else 3.0
+            adj_threshold = (TRAFFIC_Z_THRESHOLD
+                            if periodicity_confidence < 0.1 else TRAFFIC_Z_THRESHOLD_STRICT)
             filtered_anomalies, all_anomalies = detect_anomalies_combined(
                 current_values=current_values, historical_means=historical_means,
                 historical_stds=historical_stds, historical_values=historical_values_list,
                 timestamps=timestamps, threshold=adj_threshold,
-                detect_direction="both", context_window=1, context_threshold=0.35,
+                detect_direction="both", context_window=1,
+                context_threshold=TRAFFIC_CONTEXT_THRESHOLD,
                 event_start_time=event_start_time, event_end_time=event_end_time,)
             anomalies = filtered_anomalies
 
             # Fallback: if no anomalies detected but peak-trough shows EXTREME drop
-            # AND the trough is significantly below historical baseline (not just
-            # normal periodic day/night variation), force-run peak_trough.
-            # P0 fix (2026-09-04): Pure periodic data has natural peak-trough that
-            # exceeds 30% — must require historical deviation too.
             if not anomalies:
                 stats = calculate_traffic_statistics(current_values, historical_means)
                 peak_drop = stats.get("peak_trough_drop_pct", 0.0)
@@ -534,7 +639,7 @@ class CloudflareRadarAPI:
                     from detectors.traffic.combined import _detect_peak_trough_drops
                     pt_anomalies = _detect_peak_trough_drops(
                         current_values, historical_means, timestamps,
-                        min_drop_ratio=0.40,  # 严格：40%以上才算
+                        min_drop_ratio=0.40,  # ：40%
                         min_sustained_points=3,
                         min_historical_deviation_ratio=0.30,
                     )
@@ -620,6 +725,12 @@ class CloudflareRadarAPI:
             "consecutive_anomaly_windows": consecutive_windows,
             "use_periodicity": use_periodicity,
             "periodicity_confidence": periodicity_confidence,
+            # Which scale the query window and its baselines were built on.
+            # "shared" means one normalization scope covered all of them, so
+            # cross-window comparison is valid; "separate" means each window
+            # was MIN0_MAX'd against itself and the baseline is indicative only.
+            "baseline_scale_source": "shared" if shared else "separate",
+            "baseline_weeks_available": periodicity_info.get("historical_periods_analyzed", 0),
             "baseline_method": (
                 f"periodic_{use_periodicity}"
                 if use_periodicity in ("daily", "weekly") and periodicity_confidence > 0.1
@@ -630,13 +741,24 @@ class CloudflareRadarAPI:
             "multi_scale_analysis": _multi_scale_dict(multi_scale),
         }
 
-    def analyze_periodicity(self, asn, query_start, query_end):
+    def analyze_periodicity(self, asn, query_start, query_end, windows=None):
+        """Build the historical baseline for a query window.
+
+        ``windows`` optionally supplies the baseline weeks pre-fetched on a
+        shared normalization scale (see ``get_traffic_windows_shared_scale``).
+        Supplying it is what keeps every baseline week on the same scale as the
+        event window; fetching each week separately lets ``MIN0_MAX`` rescale
+        each response against itself, which makes the weeks incomparable.
+        """
         historical_periods = []
         for week_offset in range(1, 5):
+            period_start = query_start - timedelta(days=7 * week_offset)
+            period_end = query_end - timedelta(days=7 * week_offset)
             try:
-                period_start = query_start - timedelta(days=7 * week_offset)
-                period_end = query_end - timedelta(days=7 * week_offset)
-                timestamps, values = self.get_traffic_data(asn, period_start, period_end)
+                if windows is not None:
+                    timestamps, values = windows.get((period_start, period_end), ([], []))
+                else:
+                    timestamps, values = self.get_traffic_data(asn, period_start, period_end)
                 if len(values) > 10:
                     historical_periods.append({"week_offset": week_offset, "weekly_ago": week_offset,
                                                "period_kind": "week", "start": period_start, "end": period_end,
@@ -676,35 +798,132 @@ class CloudflareRadarAPI:
             "historical_periods": historical_periods,
         }
 
+    # Cloudflare's MIN0_MAX normalization rescales each *response* into
+    # [0, 1], while an un-normalized fetch yields raw request counts. The
+    # on-disk cache holds BOTH kinds of file for the same ASN (measured: 45
+    # raw vs 204 normalized across 249 files, 11 ASNs holding both), so
+    # merging them by timestamp produces a series that is half request counts
+    # and half 0-1 floats. Any baseline/threshold computed from such a series
+    # is meaningless -- verified at runtime for AS134840 and AS23470, where a
+    # single returned series contained 1441 normalized and 1021 raw points.
+    #
+    # Mixing units is not the same as changing the schema: the value column
+    # keeps its meaning, the detector consumes floats either way, and the
+    # report template never sees raw samples. So we classify each file and
+    # refuse to merge across systems, rather than rewriting the cache.
+    UNIT_SPLIT_THRESHOLD = 100.0
+
+    def _classify_traffic_unit(self, values):
+        """Return "raw" for request counts, "normalized" for MIN0_MAX floats.
+
+        MIN0_MAX output is bounded by 1.0, so anything above the split
+        threshold is unambiguously a raw count. The threshold sits far from
+        both ranges so it cannot misclassify realistic data.
+        """
+        peak = 0.0
+        for v in values:
+            av = abs(v)
+            if av > peak:
+                peak = av
+        return "raw" if peak > self.UNIT_SPLIT_THRESHOLD else "normalized"
+
     def _load_cached_traffic_data(self, asn, start_dt, end_dt):
+        """Single-window convenience wrapper.
+
+        Returns ``None`` when the cache holds nothing for this window, so the
+        caller falls through to a live fetch. ``_load_cached_windows`` returns
+        ``None`` for a cache miss (it is also the "no such ASN" signal), so the
+        result must be checked before indexing.
+        """
+        loaded = self._load_cached_windows(asn, [(start_dt, end_dt)])
+        if loaded is None:
+            return None
+        return loaded.get((start_dt, end_dt))
+
+    def _load_cached_windows(self, asn, windows):
+        """Load every requested window from cache on ONE shared unit scale.
+
+        Returns ``{(start, end): (timestamps, values)}`` for windows the cache
+        covers, and ``None`` when the cache holds nothing for the ASN at all.
+
+        The unit bucket is chosen once for the whole set of windows rather than
+        per window. Choosing per window is what produced mutually incomparable
+        baselines: an event window could resolve to the ``normalized`` bucket
+        while its baseline week resolved to ``raw``, or two baseline weeks could
+        come from different cache files that were each ``MIN0_MAX``-scaled
+        independently. Both make the resulting z-scores meaningless.
+        """
+        if not windows:
+            return {}
         if not self.traffic_cache_dir.is_dir():
             return None
+
         try:
-            requested_start = start_dt.replace(tzinfo=None)
-            requested_end = end_dt.replace(tzinfo=None)
+            # Keep the caller's original keys so lookups by the requested
+            # window succeed, but compare against tz-naive bounds because that
+            # is how cache timestamps are parsed.
+            spans = [(w[0], w[1]) for w in windows]
+            naive = [(s.replace(tzinfo=None), e.replace(tzinfo=None)) for s, e in spans]
         except AttributeError:
             return None
+        if any(s > e for s, e in naive):
+            return None
+        lo = min(s for s, _ in naive)
+        hi = max(e for _, e in naive)
 
-        samples = {}
+        # bucket unit -> {timestamp: value}
+        by_unit: dict = {}
         for cache_file in self.traffic_cache_dir.glob(f"AS{asn}_traffic_*_to_*.csv"):
             try:
+                rows = []
                 with cache_file.open(newline="", encoding="utf-8") as handle:
                     for row in csv.DictReader(handle):
                         ts = _parse_iso_utc(row.get("timestamp") or "")
-                        if ts is None or not (requested_start <= ts <= requested_end):
+                        if ts is None or not (lo <= ts <= hi):
                             continue
-                        samples[ts] = float(row["value"])
+                        rows.append((ts, float(row["value"])))
+                if not rows:
+                    continue
+                unit = self._classify_traffic_unit([v for _, v in rows])
+                by_unit.setdefault(unit, {}).update(rows)
             except (OSError, KeyError, TypeError, ValueError) as exc:
                 logger.warning("Ignoring invalid cache file %s: %s", cache_file, exc)
 
-        if not samples:
+        if not by_unit:
             return None
-        ordered = sorted(samples.items())
-        timestamps = [t.strftime("%Y-%m-%dT%H:%M:%SZ") for t, _ in ordered]
-        values = [v for _, v in ordered]
-        logger.info("Loaded %d cached traffic samples for AS%s (%s → %s)",
-                    len(values), asn, ordered[0][0].isoformat(), ordered[-1][0].isoformat())
-        return timestamps, values
+
+        if len(by_unit) > 1:
+            # Refuse to build a series that spans two unit systems. Pick the
+            # unit with the most samples across the whole requested span and
+            # drop the other, and say so loudly -- silently preferring one would
+            # hide that a caller asked for a window covered by mixed data.
+            # Choosing once for all windows is what keeps the event window and
+            # its baseline weeks on a single scale.
+            counts = {u: len(s) for u, s in by_unit.items()}
+            chosen = max(counts, key=counts.get)
+            dropped = {u: c for u, c in counts.items() if u != chosen}
+            logger.warning(
+                "AS%s %s→%s spans mixed traffic units %s; using %r (%d pts) and "
+                "discarding %s. Mixing raw counts with MIN0_MAX floats makes "
+                "baseline and threshold statistics meaningless.",
+                asn, lo, hi, counts, chosen, counts[chosen], dropped,
+            )
+            by_unit = {chosen: by_unit[chosen]}
+
+        unit = next(iter(by_unit))
+        ordered = sorted(by_unit[unit].items())
+
+        out: dict = {}
+        for (orig_start, orig_end), (start, end) in zip(spans, naive):
+            picked = [(t, v) for t, v in ordered if start <= t <= end]
+            out[(orig_start, orig_end)] = (
+                [t.strftime("%Y-%m-%dT%H:%M:%SZ") for t, _ in picked],
+                [v for _, v in picked],
+            )
+        logger.info("Loaded %d cached traffic samples for AS%s (%s → %s, unit=%s)",
+                    len(ordered), asn, ordered[0][0].isoformat(), ordered[-1][0].isoformat(),
+                    unit)
+        return out
 
     def get_traffic_data(self, asn, start_dt, end_dt):
         cached = self._load_cached_traffic_data(asn, start_dt, end_dt)
@@ -719,16 +938,88 @@ class CloudflareRadarAPI:
                     f"aggInterval={CLOUDFLARE_DEFAULT_AGG_INTERVAL}, location={location or 'worldwide'})")
         return _request_with_location(self, params, asn)
 
+    def get_traffic_windows_shared_scale(self, asn, windows):
+        """Return ``{(start, end): (timestamps, values)}`` on ONE shared scale.
+
+        Every window that will be compared against another must come from a
+        single normalization scope. ``MIN0_MAX`` rescales each HTTP *response*
+        into its own ``[0, 1]`` range, so fetching the event window and its
+        four baseline weeks independently produces five mutually incomparable
+        series: each week is stretched so its own peak becomes exactly 1.0.
+        Comparing an event week against such a baseline measures the shape of
+        two unrelated rescalings instead of the change in traffic.
+
+        This is the live equivalent of the on-disk invariant enforced by
+        ``_load_cached_traffic_data``: cached files are classified into unit
+        buckets and never merged across systems. Here the same rule is applied
+        to requests, so a cached series and a live series are always built the
+        same way.
+
+        Falls back to per-window fetching when no credentials are available, so
+        cache-only runs keep working; the caller can detect that case through
+        the ``scale_shared`` flag.
+        """
+        windows = [w for w in windows if w and w[0] and w[1]]
+        if not windows:
+            return {}
+
+        # Cache first, and resolve the unit bucket once for the whole set so a
+        # cached event window and cached baseline weeks share one scale. This
+        # mirrors the single-request live path below.
+        cached = self._load_cached_windows(asn, windows)
+        if cached is not None:
+            return cached
+
+        if not self.hasCredentials:
+            out = {}
+            for start_dt, end_dt in windows:
+                try:
+                    out[(start_dt, end_dt)] = self.get_traffic_data(asn, start_dt, end_dt)
+                except Exception as exc:  # noqa: BLE001 - degrade to no baseline
+                    logger.warning("AS%s window %s→%s unavailable: %s",
+                                   asn, start_dt, end_dt, exc)
+                    out[(start_dt, end_dt)] = ([], [])
+            return out
+
+        asn_clean = str(asn).replace("AS", "").strip()
+        location = _resolve_location(asn)
+        fetcher = _RadarSpanFetcher(self, asn_clean, location)
+        out: dict = {}
+        for start_dt, end_dt in windows:
+            try:
+                out[(start_dt, end_dt)] = fetcher.slice(windows, start_dt, end_dt)
+            except Exception as exc:  # noqa: BLE001 - degrade to no baseline
+                logger.warning("AS%s window %s→%s unavailable: %s",
+                               asn, start_dt, end_dt, exc)
+                out[(start_dt, end_dt)] = ([], [])
+        return out
+
     def detect_anomalies_for_event(self, asn, start_time, end_time,
                                     event_type="hijack", as_role="victim",
                                     plot_result=True, use_aligned_baseline=True):
-        """基于事件类型的异常检测，统一 schema 返回。"""
+        """Event-typed wrapper around the shared-scale detection path.
+
+        Both entry points now obtain their windows through
+        ``get_traffic_windows_shared_scale``, so the query window and its four
+        baseline weeks are always built on one normalization scale and the two
+        functions can no longer drift apart in how they source traffic.
+        """
         user_start_dt, user_end_dt = _parse_iso(start_time), _parse_iso(end_time)
 
         try:
             query_start = user_start_dt - timedelta(days=1)
             query_end = user_end_dt + timedelta(hours=6)
-            timestamps, current_values = self.get_traffic_data(asn, query_start, query_end)
+            # Use the same baseline geometry as detect_anomalies(): each week is
+            # the query window shifted back by whole weeks, so both entry points
+            # compare the event against identical spans.
+            windows = [(query_start, query_end)]
+            for i in range(1, 5):
+                windows.append((
+                    query_start - timedelta(days=7 * i),
+                    query_end - timedelta(days=7 * i),
+                ))
+            shared = self.get_traffic_windows_shared_scale(asn, windows)
+            timestamps, current_values = shared.get((query_start, query_end), ([], []))
         except Exception as e:
             error_text = str(e).lower()
             no_data_reason = ("cloudflare_authentication_failed"
@@ -751,14 +1042,10 @@ class CloudflareRadarAPI:
 
         historical_data = []
         for i in range(1, 5):
-            try:
-                ts_hist, vals_hist = self.get_traffic_data(
-                    asn, user_start_dt - timedelta(days=7 * i + 1),
-                    user_start_dt - timedelta(days=7 * i - 1))
-                if ts_hist and vals_hist:
-                    historical_data.append({"weekly_ago": i, "timestamps": ts_hist, "values": vals_hist})
-            except Exception as e:
-                logger.warning(f"Historical week {i} failed: {e}")
+            win = (query_start - timedelta(days=7 * i), query_end - timedelta(days=7 * i))
+            ts_hist, vals_hist = shared.get(win, ([], []))
+            if ts_hist and vals_hist:
+                historical_data.append({"weekly_ago": i, "timestamps": ts_hist, "values": vals_hist})
 
         if use_aligned_baseline and historical_data:
             current_arr, historical_means, historical_stds, historical_list = preprocess_traffic_data_aligned(
@@ -772,15 +1059,31 @@ class CloudflareRadarAPI:
             current_arr, historical_means, historical_stds, timestamps,
             event_type=event_type, as_role=as_role)
 
-        if not anomalies:
+        # Both the event-typed and the combined detector index historical_means
+        # and historical_stds sample-by-sample, so they require a baseline. When
+        # no historical week could be loaded (short cache, missing history, no
+        # API token) those arrays are empty and the detectors raise IndexError.
+        # Fall back to the intra-window detector exactly as detect_anomalies
+        # does, so an AS with no baseline degrades instead of crashing.
+        has_baseline = len(historical_means) > 0 and len(historical_stds) == len(historical_means)
+        if has_baseline and not anomalies:
             logger.info("No event-type anomalies, fallback to combined method")
             filtered, _ = detect_anomalies_combined(
                 current_values=current_arr, historical_means=historical_means,
                 historical_stds=historical_stds, historical_values=historical_list,
-                timestamps=timestamps, threshold=2.5, detect_direction="both",
-                context_window=1, context_threshold=0.2,
+                timestamps=timestamps, threshold=TRAFFIC_Z_THRESHOLD,
+                detect_direction="both", context_window=1,
+                context_threshold=TRAFFIC_CONTEXT_THRESHOLD,
                 event_start_time=start_time, event_end_time=end_time,)
             anomalies = filtered
+        elif not has_baseline:
+            logger.info("AS%s has no usable baseline weeks; using intra-window detection", asn)
+            raw = detect_anomalies_non_periodic(np.array(current_arr), threshold=TRAFFIC_Z_THRESHOLD)
+            anomalies = [
+                {**a, "timestamp": timestamps[a["index"]] if a["index"] < len(timestamps) else timestamps[-1],
+                 "is_anomaly": True}
+                for a in raw
+            ]
 
         stats = calculate_traffic_statistics(current_arr, historical_means)
         plot_path = None
@@ -810,7 +1113,7 @@ class CloudflareRadarAPI:
 
 
 def detect_anomalies_for_event_batch(events, output_dir=None):
-    """批量检测事件异常。"""
+    """。"""
     api = CloudflareRadarAPI()
     results = []
     for event in events:

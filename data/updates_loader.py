@@ -38,12 +38,12 @@ def is_valid_gz_file(file_path: Path, min_size = GZ_MIN_SIZE):
 
 
 def _convert_timestamp(line):
-    """bgpdump 原始输出为 MM/DD/YY HH:MM:SS，已与现有 decoded txt 格式一致，无需转换。"""
+    """bgpdump  MM/DD/YY HH:MM:SS， decoded txt ，。"""
     return line
 
 
 def decode_gz_to_txt(gz_path: Path, txt_path: Path):
-    """使用 bgpdump 将 MRT gz 文件解码并写入 decoded 目录，返回是否成功。"""
+    """ bgpdump  MRT gz  decoded ，。"""
     proc = None
     try:
         proc = subprocess.Popen(
@@ -76,8 +76,6 @@ def decode_gz_to_txt(gz_path: Path, txt_path: Path):
     except Exception as e:
         logger.error(f"Failed to decode {gz_path.name}: {e}")
         # If the process is still running, terminate it before returning
-        # so we don't leak a bgpdump zombie when downstream code is
-        # unwinding.
         if proc is not None and proc.poll() is None:
             try:
                 proc.kill()
@@ -145,14 +143,6 @@ def download_data(url, max_retries=3, retry_delay=5):
 
     if outpath.exists():
         # Bug fix 2026-09-13 (BUG-R72): ``is_valid_gz_file`` only checks the
-        # gzip magic bytes and the first decompressed byte. A truncated
-        # partial download (e.g. an interrupted ``wget -c`` run that wrote
-        # 99% of a gz and then crashed) passes this check, so the function
-        # returned the half-written file to callers, who would then feed
-        # it to ``bgpdump`` and either crash or produce garbled output.
-        # We now do a more thorough integrity probe: ``zcat | wc -c``
-        # and confirm the tail of the file is non-truncated. If the gz
-        # can be parsed end-to-end without error, we trust it.
         try:
             import gzip as _gzip
             with _gzip.open(outpath, "rb") as _gzf:
@@ -223,7 +213,7 @@ def _disk_busy(threshold = 80, sample_seconds = 0.2):
         return False
 
 
-# 大文件阈值 (500MB)，超过这个大小使用分块读取
+#  (500MB)，
 LARGE_FILE_THRESHOLD = 500 * 1024 * 1024  # 500MB
 
 def read_updates_file(file_path, columns):
@@ -239,7 +229,7 @@ def read_updates_file(file_path, columns):
     try:
         separator = '|'
         
-        # 检查文件大小，超过阈值使用分块读取
+        # ，
         file_size = file_path.stat().st_size if isinstance(file_path, Path) else Path(file_path).stat().st_size
         if file_size > LARGE_FILE_THRESHOLD:
             logger.debug(f"Large file detected ({file_size/1024/1024:.0f}MB), using chunked reading: {file_path.name}")
@@ -275,8 +265,8 @@ def read_updates_file(file_path, columns):
 
 def _read_updates_chunked(file_path, columns, separator='|', chunk_size=50000):
     """
-    分块读取大文件，按chunk_size行分批处理，最后合并。
-    如果合并后仍过大，则逐块yield出去。
+    ，chunk_size，。
+    ，yield。
     """
     try:
         opener = gzip.open if (isinstance(file_path, Path) and file_path.suffix == '.gz') or (isinstance(file_path, str) and file_path.endswith('.gz')) else open
@@ -294,7 +284,7 @@ def _read_updates_chunked(file_path, columns, separator='|', chunk_size=50000):
                     line_count += 1
                     
                     if len(data) >= chunk_size:
-                        # 累积到chunk_size后先yield出去，防止内存爆炸
+                        # chunk_sizeyield，
                         chunk_df = pl.DataFrame(data, schema=columns, strict=False)
                         yield chunk_df
                         data = []
@@ -311,7 +301,7 @@ def _read_updates_chunked(file_path, columns, separator='|', chunk_size=50000):
 
 
 def _read_updates_line_by_line(file_path, columns):
-    """逐行解析作为最终fallback"""
+    """fallback"""
     data = []
     try:
         opener = gzip.open if (isinstance(file_path, Path) and file_path.suffix == '.gz') or (isinstance(file_path, str) and file_path.endswith('.gz')) else open
@@ -371,8 +361,6 @@ def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold 
     end_time = _to_utc_naive(end_time)
     if start_time is None and end_time is None:
         # Both bounds missing — caller is in an error state. Bail out
-        # quietly rather than raising on the ``None < None`` comparison
-        # below (Bug fix 2026-09-13 BUG-R61 corollary).
         return
     if end_time is not None and start_time is not None and end_time < start_time:
         return
@@ -390,24 +378,6 @@ def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold 
         _download_and_decode_buckets(missing_buckets)
 
     # 3) stream through the cache; on_missing='skip' returns nothing for
-    #    still-missing buckets without raising (e.g. RIPE outage window).
-    #    Downstream detectors (hijack/leak) historically read the
-    #    `A/W` column from txt dumps; parquet_cache stores it as `announce`.
-    #    Re-alias on the way out so we don't have to touch every caller.
-    #
-    # ── Optimization 2026-09-17: parallel parquet pre-fetch ────────────────
-    # The previous implementation called ``iter_window_chunks`` synchronously,
-    # which returned one chunk at a time. On a 6-hour BGP window the caller
-    # typically received 72 chunks and stalled on the Python-level iteration
-    # between each.  By spawning a background ``ThreadPoolExecutor`` to do the
-    # parquet read + re-alias work, the consumer thread keeps the CPU busy on
-    # detection logic while I/O is overlapped on up to ``workers`` threads.
-    #
-    # Order of chunks is preserved. Memory is bounded by the worker count —
-    # at workers=16 with average 1-3 MB per chunk the queue sits at ~30 MB
-    # which is negligible on a 628 GB machine.  Falls back to the legacy
-    # single-threaded iterator when ``workers <= 1`` or ``auto_download``
-    # is False (caller explicitly opted out).
     if workers <= 1 or not auto_download:
         for chunk in iter_window_chunks(start_time, end_time, on_missing="skip"):
             if "announce" in chunk.columns and "A/W" not in chunk.columns:
@@ -423,9 +393,6 @@ def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold 
 
     sentinel = object()
     # Queue depth of 2× workers keeps the consumer fed even when a large
-    # parquet file causes the producer to stall (polars.read_parquet is
-    # CPU-bound on decompression for gzipped source files). At 2× with
-    # 1-3 MB/chunk the queue holds ≤200 MB — negligible on a 628 GB machine.
     q: _queue.Queue = _queue.Queue(maxsize=effective_workers * 2)
 
     def _producer():
@@ -484,10 +451,10 @@ def _bucket_start_from_path(path) -> datetime:
 
 
 def _download_and_decode_buckets(buckets):
-    """下载并解码所有缺失的 bucket。
+    """ bucket。
 
-    设计：下载并行 (16 线程), 解码并行 (4 workers, 受 bgpdump CPU 限制)。
-    decode 用独立线程池，避免 bgpdump 多进程带来的 fork 负担。
+    ： (16 ),  (4 workers,  bgpdump CPU )。
+    decode ， bgpdump  fork 。
     Each bucket is independent so failures don't cascade.
     """
     decoded_dir = UPDATES_DIR / "decoded"
@@ -557,7 +524,7 @@ def _read_files_sequential(files_to_process, columns):
             if result is None:
                 continue
             
-            # 处理分块读取返回的generator
+            # generator
             if hasattr(result, '__iter__') and not isinstance(result, pl.DataFrame):
                 for chunk_df in result:
                     if chunk_df is not None and not chunk_df.is_empty():

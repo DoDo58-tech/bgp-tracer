@@ -6,8 +6,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import LOG_LEVEL, LOG_FILE
 
 # Track which file paths already have an attached handler so repeated
-# calls to ``setup_logger`` (or accidental re-imports) don't open the
-# same log file multiple times and leak file descriptors.
 _HANDLER_PATHS: set[str] = set()
 
 
@@ -17,8 +15,6 @@ def _build_handlers():
 
     if LOG_FILE in _HANDLER_PATHS:
         # Subsequent loggers share the parent ``bgp_tracer`` file
-        # handler via propagation; attach a NullHandler for the
-        # file side and a fresh StreamHandler for stdout.
         null_handler = logging.NullHandler()
         null_handler.setFormatter(formatter)
         stream_handler = logging.StreamHandler()

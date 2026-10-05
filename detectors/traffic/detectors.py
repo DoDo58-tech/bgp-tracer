@@ -7,8 +7,8 @@ from utils.logger import logger
 def _effective_std(mean_arr, std_arr):
     """Floor for std deviation to avoid div-by-zero and noisy z-scores.
 
-    P0 Fix 2026-09-07: floor 从 5% → 10% 的均值，避免微弱自然波动被判为 z>3。
-    之前 Starlink/Turkey 案例：历史 std 极小时，单点微小偏差被算成 z=3+。
+    P0 Fix 2026-09-07: floor  5% → 10% ， z>3。
+     Starlink/Turkey ： std ， z=3+。
     """
     std_arr = np.asarray(std_arr, dtype=float)
     floor = np.maximum(0.10 * np.maximum(np.abs(mean_arr), 1.0), 0.05)

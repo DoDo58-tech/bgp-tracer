@@ -1,0 +1,11 @@
+{# Reusable macros for the structure-locked report template. #}
+
+{% macro fold_block(summary, count, open=false) %}
+  <details class="fold"{% if open %} open{% endif %}>
+    <summary>
+      {{ summary }}
+      <span class="badge badge-L5" style="margin-left:8px">{{ count }}</span>
+    </summary>
+    <div class="fold-body">{{ caller() }}</div>
+  </details>
+{% endmacro %}

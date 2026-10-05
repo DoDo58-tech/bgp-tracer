@@ -1,13 +1,13 @@
 """
-证据链构建器（LLM 驱动版本）
+（LLM ）
 ========================
 
-将多源检测结果构建为可解释的证据链。
+。
 
-核心改进：
-- LLM 根据证据内容动态生成假设和限制条件
-- LLM 根据上下文信息生成更准确的假设识别
-- 保留证据链结构，但用 LLM 提供领域知识
+：
+- LLM 
+- LLM 
+- ， LLM 
 """
 
 from __future__ import annotations
@@ -22,12 +22,9 @@ from utils.helpers import extract_json_object
 
 
 # ============================================================
-# 数据结构
-# ============================================================
-
 @dataclass
 class Evidence:
-    """单个证据"""
+    """"""
     id: str
     source: str
     type: str
@@ -42,7 +39,7 @@ class Evidence:
 
 @dataclass
 class EvidenceChain:
-    """证据链"""
+    """"""
     verdict: str
     confidence: float
     hypothesis: str
@@ -52,18 +49,15 @@ class EvidenceChain:
     limitations: list
     evidence_gaps: list
     generated_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    llm_analysis: Optional[Dict] = None  # LLM 生成的额外分析
+    llm_analysis: Optional[Dict] = None  # LLM 
 
 
 # ============================================================
-# LLM 假设识别器
-# ============================================================
-
 class LLMHypothesisIdentifier:
     """
-    LLM 驱动的假设识别器
+    LLM 
     
-    根据证据内容动态识别相关的假设和限制条件。
+    。
     """
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in evidence analysis and hypothesis generation.
@@ -141,7 +135,7 @@ Based on the evidence collected, identify:
         self._llm_initialized = False
 
     def _ensure_llm(self):
-        """延迟初始化 LLM"""
+        """ LLM"""
         if not self._llm_initialized:
             try:
                 from config import API_KEY, BASE_URL, MODEL
@@ -167,7 +161,7 @@ Based on the evidence collected, identify:
         time_range: str = "unknown",
     ) -> Dict[str, Any]:
         """
-        识别假设、限制条件和证据缺口
+        、
         
         Returns:
             {
@@ -184,7 +178,7 @@ Based on the evidence collected, identify:
             return self._get_default_identification(traffic_result, routing_result)
 
         try:
-            # 构建证据文本
+            # 
             traffic_evidence = self._format_traffic_evidence(traffic_result)
             routing_evidence = self._format_routing_evidence(routing_result)
             multi_scale_evidence = self._format_multi_scale_evidence(multi_scale_analysis)
@@ -214,7 +208,7 @@ Based on the evidence collected, identify:
             return self._get_default_identification(traffic_result, routing_result)
 
     def _format_traffic_evidence(self, traffic_result: dict) -> str:
-        """格式化流量证据"""
+        """"""
         if not traffic_result:
             return "No traffic data available"
         
@@ -228,7 +222,7 @@ Based on the evidence collected, identify:
             return "No traffic anomalies detected"
 
     def _format_routing_evidence(self, routing_result: dict) -> str:
-        """格式化路由证据"""
+        """"""
         if not routing_result:
             return "No routing data available"
         
@@ -250,7 +244,7 @@ Based on the evidence collected, identify:
         return ", ".join(parts) if parts else "No routing anomalies detected"
 
     def _format_multi_scale_evidence(self, multi_scale: Optional[dict]) -> str:
-        """格式化多尺度证据"""
+        """"""
         if not multi_scale:
             return "Multi-scale analysis not available"
         
@@ -263,21 +257,11 @@ Based on the evidence collected, identify:
         return f"Multi-scale anomaly: {is_anomaly}. {reasoning}" if reasoning else f"Multi-scale anomaly: {is_anomaly}"
 
     def _format_causal_evidence(self, causal: Optional[dict]) -> str:
-        """格式化因果证据"""
+        """"""
         if not causal:
             return "Causal analysis not available"
 
         # Bug fix 2026-09-13 (BUG-R80): the previous implementation
-        # looked up ``has_causal_link`` and ``causal_score``. The
-        # ``multi_scale_baseline`` scorer (the source of this dict)
-        # explicitly sets ``has_causal_link=False`` and emits the real
-        # association signal under ``has_association`` /
-        # ``association_score`` (see ``multi_scale_baseline.py`` line
-        # 619-628). The old key read therefore *always* reported "No
-        # causal link detected" even when the data showed a strong
-        # association, biasing the LLM-driven hypothesis identification
-        # toward "no causality" and suppressing the contextual insights
-        # that would otherwise be produced.
         has_link = causal.get("has_association", False) or causal.get("has_causal_link", False)
         score = causal.get("association_score")
         if score is None:
@@ -289,12 +273,9 @@ Based on the evidence collected, identify:
             return "No causal link detected"
 
     def _parse_llm_response(self, response: str) -> Dict[str, Any]:
-        """解析 LLM 响应"""
+        """ LLM """
         try:
             # Use brace-balanced extraction to avoid the previous
-            # ``find("{") + rfind("}")`` trap where nested braces in
-            # string values (e.g. ``"note": "{foo}"``) would cause the
-            # parser to truncate the JSON early.
             snippet = extract_json_object(response or "")
             if snippet is not None:
                 data = json.loads(snippet)
@@ -316,55 +297,55 @@ Based on the evidence collected, identify:
         traffic_result: dict, 
         routing_result: dict
     ) -> Dict[str, Any]:
-        """获取默认识别结果"""
+        """"""
         assumptions = [
             {
-                "assumption": "BGP 数据采集延迟在可接受范围内",
+                "assumption": "BGP ",
                 "relevance": "high",
-                "reasoning": "BGP 数据通常有 15-30 分钟采集延迟"
+                "reasoning": "BGP  15-30 "
             },
             {
-                "assumption": "Cloudflare 流量数据能反映真实流量变化",
+                "assumption": "Cloudflare ",
                 "relevance": "medium",
-                "reasoning": "流量数据来自第三方 API"
+                "reasoning": " API"
             },
             {
-                "assumption": "路由异常会导致流量下降",
+                "assumption": "",
                 "relevance": "high",
-                "reasoning": "这是核心假设"
+                "reasoning": ""
             },
         ]
 
         limitations = [
             {
-                "limitation": "BGP 数据可能存在 15-30 分钟采集延迟",
+                "limitation": "BGP  15-30 ",
                 "impact": "medium",
-                "reasoning": "可能导致时间对齐不准确"
+                "reasoning": ""
             },
             {
-                "limitation": "流量数据来自第三方 API，可能存在采样偏差",
+                "limitation": " API，",
                 "impact": "low",
-                "reasoning": "API 采样可能不完全代表所有流量"
+                "reasoning": "API "
             },
             {
-                "limitation": "无法完全排除所有混淆变量",
+                "limitation": "",
                 "impact": "medium",
-                "reasoning": "CDN 切换、备用路由等因素"
+                "reasoning": "CDN 、"
             },
         ]
 
         evidence_gaps = []
         if not traffic_result:
             evidence_gaps.append({
-                "gap": "缺少流量监测数据",
+                "gap": "",
                 "priority": "high",
-                "how_to_address": "检查 API 连接或使用备用数据源"
+                "how_to_address": " API "
             })
         if not routing_result:
             evidence_gaps.append({
-                "gap": "缺少 BGP 路由数据",
+                "gap": " BGP ",
                 "priority": "high",
-                "how_to_address": "检查 MRT 文件或 BGP 数据源"
+                "how_to_address": " MRT  BGP "
             })
 
         return {
@@ -377,15 +358,12 @@ Based on the evidence collected, identify:
 
 
 # ============================================================
-# 证据链构建器（LLM 驱动）
-# ============================================================
-
 class EvidenceChainBuilder:
     """
-    证据链构建器（LLM 驱动版本）
+    （LLM ）
     
-    将检测结果转换为结构化的证据链。
-    支持 LLM 动态生成假设、限制条件和证据缺口。
+    。
+     LLM 、。
     """
 
     SOURCE_PRIORITY = {
@@ -400,7 +378,7 @@ class EvidenceChainBuilder:
     def __init__(self, use_llm: bool = False):
         """
         Args:
-            use_llm: 是否使用 LLM 生成假设和限制条件
+            use_llm:  LLM 
         """
         self.use_llm = use_llm
         self.hypothesis_identifier = LLMHypothesisIdentifier() if use_llm else None
@@ -411,45 +389,45 @@ class EvidenceChainBuilder:
         routing_result: dict,
         causal_analysis: Optional[dict] = None,
         bayesian_result: Optional[dict] = None,
-        # LLM 参数
+        # LLM 
         asn: str = "unknown",
         time_range: str = "unknown",
     ) -> EvidenceChain:
         """
-        构建证据链
+        
         
         Args:
-            traffic_result: 流量检测结果
-            routing_result: 路由检测结果
-            causal_analysis: 因果分析结果
-            bayesian_result: 贝叶斯分析结果
-            asn: AS 号码
-            time_range: 分析时间范围
+            traffic_result: 
+            routing_result: 
+            causal_analysis: 
+            bayesian_result: 
+            asn: AS 
+            time_range: 
         
         Returns:
-            EvidenceChain: 证据链对象
+            EvidenceChain: 
         """
         evidence_chain = []
         reasoning_steps = []
         llm_analysis = None
 
-        # 收集路由证据
+        # 
         routing_evidence = self._extract_routing_evidence(routing_result)
         evidence_chain.extend(routing_evidence)
 
-        # 收集流量证据
+        # 
         traffic_evidence = self._extract_traffic_evidence(traffic_result)
         evidence_chain.extend(traffic_evidence)
 
-        # 收集多尺度基线证据
+        # 
         multi_scale_evidence = self._extract_multi_scale_evidence(traffic_result)
         evidence_chain.extend(multi_scale_evidence)
 
-        # 收集因果关联证据
+        # 
         causal_evidence = self._extract_causal_evidence(causal_analysis)
         evidence_chain.extend(causal_evidence)
 
-        # LLM 动态生成假设、限制条件和证据缺口
+        # LLM 、
         if self.use_llm and self.hypothesis_identifier:
             llm_analysis = self.hypothesis_identifier.identify_hypotheses(
                 traffic_result=traffic_result,
@@ -467,20 +445,18 @@ class EvidenceChainBuilder:
             assumptions = self._identify_assumptions(traffic_result, routing_result, evidence_chain)
             limitations = self._identify_limitations(evidence_chain, traffic_result, routing_result)
             # Bug fix 2026-09-13 (BUG-R45): pass causal_analysis through
-            # so the gap detector can correctly decide whether the
-            # causal-association evidence is genuinely missing.
             evidence_gaps = self._identify_evidence_gaps(
                 traffic_result, routing_result, causal_analysis,
             )
             contextual_insights = []
             llm_analysis = {"source": "default"}
 
-        # 构建推理步骤
+        # 
         reasoning_steps = self._build_reasoning_steps(
             traffic_result, routing_result, causal_analysis, bayesian_result
         )
 
-        # 确定判决
+        # 
         verdict = self._determine_verdict(
             traffic_result, routing_result, causal_analysis, bayesian_result
         )
@@ -504,7 +480,7 @@ class EvidenceChainBuilder:
         )
 
     def _extract_routing_evidence(self, routing_result: dict) -> list:
-        """提取路由证据"""
+        """"""
         evidence = []
         if not routing_result or not routing_result.get("data_available", routing_result.get("success", False)):
             reason = (routing_result or {}).get("no_data_reason") or (routing_result or {}).get("error")
@@ -512,7 +488,7 @@ class EvidenceChainBuilder:
                 id="routing_no_data",
                 source="system",
                 type="absence",
-                content=f"无可用路由数据{f'：{reason}' if reason else ''}",
+                content=f"{f'：{reason}' if reason else ''}",
                 strength=0.0,
                 reliability=0.5,
             ))
@@ -529,7 +505,7 @@ class EvidenceChainBuilder:
                 id="routing_hijack_detected",
                 source="bgp",
                 type="anomaly",
-                content=f"检测到 {len(hijacks)} 个 BGP 劫持事件",
+                content=f" {len(hijacks)}  BGP ",
                 strength=0.9,
                 reliability=self.SOURCE_PRIORITY["bgp"],
                 raw_data={"count": len(hijacks), "events": hijacks[:3]},
@@ -539,7 +515,7 @@ class EvidenceChainBuilder:
                 id="routing_no_hijack",
                 source="bgp",
                 type="normal",
-                content="未检测到 BGP 劫持事件",
+                content=" BGP ",
                 strength=0.6,
                 reliability=self.SOURCE_PRIORITY["bgp"],
             ))
@@ -552,7 +528,7 @@ class EvidenceChainBuilder:
                 id="routing_leak_detected",
                 source="bgp",
                 type="anomaly",
-                content=f"检测到 {len(leaks)} 个路由泄漏事件",
+                content=f" {len(leaks)} ",
                 strength=0.8,
                 reliability=self.SOURCE_PRIORITY["bgp"],
                 raw_data={"count": len(leaks), "events": leaks[:3]},
@@ -562,8 +538,11 @@ class EvidenceChainBuilder:
                 id="routing_outage_detected",
                 source="bgp",
                 type="anomaly",
-                content="检测到疑似路由中断",
-                strength=min(1.0, float(outage.get("outage_score", 0.6))),
+                content="",
+                # A skipped outage detector reports outage_score=None; float(None)
+                # would raise. Default to 0.0 rather than the old 0.6 so a missing
+                # score is never inflated into apparent evidence strength.
+                strength=min(1.0, float(outage.get("outage_score") or 0.0)),
                 reliability=self.SOURCE_PRIORITY["bgp"],
                 raw_data=outage,
             ))
@@ -571,14 +550,14 @@ class EvidenceChainBuilder:
         return evidence
 
     def _extract_traffic_evidence(self, traffic_result: dict) -> list:
-        """提取流量证据"""
+        """"""
         evidence = []
         if not traffic_result or not traffic_result.get("data_available", True):
             evidence.append(Evidence(
                 id="traffic_no_data",
                 source="system",
                 type="absence",
-                content="没有可用于判断影响的流量数据",
+                content="",
                 strength=0.0,
                 reliability=0.5,
             ))
@@ -588,12 +567,12 @@ class EvidenceChainBuilder:
         percent_change = traffic_result.get("percent_change", 0) or 0
 
         if anomaly_count > 0:
-            direction = "下降" if percent_change < 0 else "上升"
+            direction = "" if percent_change < 0 else ""
             evidence.append(Evidence(
                 id="traffic_anomaly_detected",
                 source="cloudflare",
                 type="anomaly",
-                content=f"检测到 {anomaly_count} 个流量异常，流量 {direction} {abs(percent_change):.1f}%",
+                content=f" {anomaly_count} ， {direction} {abs(percent_change):.1f}%",
                 strength=min(1.0, anomaly_count / 5),
                 reliability=self.SOURCE_PRIORITY["cloudflare"],
                 raw_data={
@@ -606,7 +585,7 @@ class EvidenceChainBuilder:
                 id="traffic_no_anomaly",
                 source="cloudflare",
                 type="normal",
-                content="未检测到流量异常",
+                content="",
                 strength=0.6,
                 reliability=self.SOURCE_PRIORITY["cloudflare"],
             ))
@@ -614,7 +593,7 @@ class EvidenceChainBuilder:
         return evidence
 
     def _extract_multi_scale_evidence(self, traffic_result: dict) -> list:
-        """提取多尺度基线证据"""
+        """"""
         evidence = []
         multi_scale = traffic_result.get("multi_scale_analysis")
         if not multi_scale:
@@ -622,7 +601,7 @@ class EvidenceChainBuilder:
                 id="multi_scale_not_available",
                 source="system",
                 type="absence",
-                content="多尺度基线分析不可用",
+                content="",
                 strength=0.0,
                 reliability=0.5,
             ))
@@ -638,7 +617,7 @@ class EvidenceChainBuilder:
                 id="multi_scale_analysis",
                 source="multi_scale",
                 type="anomaly" if is_anomaly else "normal",
-                content=f"多尺度基线检测结果：{reasoning}",
+                content=f"：{reasoning}",
                 strength=0.8 if is_anomaly else 0.5,
                 reliability=self.SOURCE_PRIORITY["multi_scale"],
                 raw_data=multi_scale,
@@ -647,14 +626,14 @@ class EvidenceChainBuilder:
         return evidence
 
     def _extract_causal_evidence(self, causal_analysis: dict) -> list:
-        """提取因果关联证据"""
+        """"""
         evidence = []
         if not causal_analysis:
             evidence.append(Evidence(
                 id="causal_not_available",
                 source="system",
                 type="absence",
-                content="因果关联分析不可用",
+                content="",
                 strength=0.0,
                 reliability=0.5,
             ))
@@ -670,7 +649,7 @@ class EvidenceChainBuilder:
                 id="routing_traffic_association",
                 source="causal_analysis",
                 type="correlation",
-                content=f"路由事件与流量异常存在时间和语义关联（分数：{association_score:.2f}），但观测数据不足以单独证明因果关系",
+                content=f"（：{association_score:.2f}），",
                 strength=association_score,
                 reliability=self.SOURCE_PRIORITY["causal_analysis"],
                 raw_data=causal_analysis,
@@ -680,7 +659,7 @@ class EvidenceChainBuilder:
                     id="association_temporal_strong",
                     source="causal_analysis",
                     type="support",
-                    content="时间关联强：匹配的流量异常发生在路由事件后的 60 分钟内",
+                    content="： 60 ",
                     strength=temporal,
                     reliability=self.SOURCE_PRIORITY["causal_analysis"],
                 ))
@@ -689,7 +668,7 @@ class EvidenceChainBuilder:
                     id="association_semantic_strong",
                     source="causal_analysis",
                     type="support",
-                    content="语义一致：路由事件角色与目标 AS 的流量影响相符",
+                    content="： AS ",
                     strength=semantic,
                     reliability=self.SOURCE_PRIORITY["causal_analysis"],
                 ))
@@ -698,7 +677,7 @@ class EvidenceChainBuilder:
                 id="routing_traffic_not_associated",
                 source="causal_analysis",
                 type="negative",
-                content="没有足够的时间和语义证据将路由事件与目标 AS 的流量异常关联起来",
+                content=" AS ",
                 strength=0.4,
                 reliability=self.SOURCE_PRIORITY["causal_analysis"],
             ))
@@ -712,7 +691,7 @@ class EvidenceChainBuilder:
         causal_analysis: Optional[dict],
         bayesian_result: Optional[dict],
     ) -> list:
-        """构建推理步骤"""
+        """"""
         steps = []
 
         traffic_anomaly = (traffic_result or {}).get("anomaly_count", 0) > 0
@@ -721,10 +700,10 @@ class EvidenceChainBuilder:
         steps.append({
             "step": 1,
             "type": "observation",
-            "content": "首先观察到以下事实：",
+            "content": "：",
             "sub_steps": [
-                f"{'检测到流量异常' if traffic_anomaly else '流量无异常'}",
-                f"{'检测到路由异常' if routing_anomaly else '路由无异常'}",
+                f"{'' if traffic_anomaly else ''}",
+                f"{'' if routing_anomaly else ''}",
             ]
         })
 
@@ -734,14 +713,14 @@ class EvidenceChainBuilder:
                 steps.append({
                     "step": 2,
                     "type": "correlation",
-                    "content": "时间与事件角色支持路由事件和流量异常之间的观测关联，尚不能单独证明因果关系",
+                    "content": "，",
                     "confidence": causal_analysis.get("association_score", causal_analysis.get("causal_score", 0)),
                 })
             else:
                 steps.append({
                     "step": 2,
                     "type": "correlation",
-                    "content": "时间或事件角色证据不足，未建立路由事件与目标 AS 流量异常的关联",
+                    "content": "， AS ",
                     "confidence": 0.2,
                 })
 
@@ -751,14 +730,14 @@ class EvidenceChainBuilder:
             steps.append({
                 "step": 3,
                 "type": "hypothesis",
-                "content": f"贝叶斯分析支持「{best}」假设",
+                "content": f"「{best}」",
                 "confidence": confidence,
             })
 
         steps.append({
             "step": 4,
             "type": "conclusion",
-            "content": "综合以上证据，得出最终判决",
+            "content": "，",
         })
 
         return steps
@@ -769,16 +748,16 @@ class EvidenceChainBuilder:
         routing_result: dict,
         evidence_chain: list,
     ) -> list:
-        """识别假设（默认版本）"""
+        """（）"""
         assumptions = [
-            "BGP 数据采集延迟在可接受范围内",
-            "Cloudflare 流量数据能反映真实流量变化",
-            "历史同期的流量模式具有参考价值",
-            "路由异常会导致流量下降（而非其他复杂因果）",
+            "BGP ",
+            "Cloudflare ",
+            "",
+            "（）",
         ]
 
         if not evidence_chain:
-            assumptions.append("检测数据来源可靠")
+            assumptions.append("")
 
         return assumptions
 
@@ -788,21 +767,21 @@ class EvidenceChainBuilder:
         traffic_result: dict,
         routing_result: dict
     ) -> list:
-        """识别限制"""
+        """"""
         limitations = [
-            "BGP 数据可能存在 15-30 分钟采集延迟",
-            "流量数据来自第三方 API，可能存在采样偏差",
-            "无法完全排除所有混淆变量（如 CDN 切换、备用路由）",
-            "多尺度历史数据可能不可用或质量不佳",
+            "BGP  15-30 ",
+            " API，",
+            "（ CDN 、）",
+            "",
         ]
 
         has_routing = any(e.type in ["anomaly", "normal"] and e.source == "bgp" for e in evidence_chain)
         if not has_routing:
-            limitations.append("缺乏路由数据支撑")
+            limitations.append("")
 
         has_traffic = any(e.type in ["anomaly", "normal"] and e.source == "cloudflare" for e in evidence_chain)
         if not has_traffic:
-            limitations.append("缺乏流量数据支撑")
+            limitations.append("")
 
         return limitations
 
@@ -812,43 +791,20 @@ class EvidenceChainBuilder:
         routing_result: dict,
         causal_analysis: Optional[dict] = None,
     ) -> list:
-        """识别证据缺口"""
+        """"""
         gaps = []
 
         if not traffic_result or not traffic_result.get("data_available", True):
-            gaps.append("缺少可用流量监测数据，无法判断流量影响")
+            gaps.append("，")
 
         if not routing_result or not routing_result.get("success", True):
-            gaps.append("缺少可用 BGP 路由数据，无法确认路由异常")
+            gaps.append(" BGP ，")
 
         multi_scale = (traffic_result or {}).get("multi_scale_analysis")
         if not multi_scale:
-            gaps.append("缺少多尺度基线对比，历史参考有限")
+            gaps.append("，")
 
         # Bug fix 2026-09-13 (BUG-R45): previously this branch incorrectly
-        # read ``traffic_result["multi_scale_analysis"]["is_anomaly"]`` and
-        # named the local variable ``causal``. Two problems:
-        #   (1) The name shadowed the function's intent — the variable
-        #       wasn't about causal association at all, but about multi-scale
-        #       anomaly detection. So when multi-scale ran and returned
-        #       is_anomaly=False, the gap "缺少因果关联分析" was silently
-        #       omitted even if causal_analysis was absent.
-        #   (2) The function signature didn't accept ``causal_analysis`` so
-        #       the caller in ``build()`` (line 449) silently dropped it on
-        #       the floor — ``identify_hypotheses`` got it but
-        #       ``_identify_evidence_gaps`` did not.
-        # Now we honour the optional ``causal_analysis`` parameter and only
-        # raise the gap when causal_analysis is genuinely missing/empty.
-        # Bug fix 2026-09-13 (BUG-R96): the original BUG-R45 fix was
-        # written without parentheses around the disjunction:
-        #     if not A or not B and not C:
-        # which Python parses as ``if not A or (not B and not C)`` —
-        # i.e. the gap is reported whenever ``causal_analysis`` exists
-        # but the LLM decided ``has_association`` is False (regardless
-        # of whether a real analysis ran). The intended semantic is
-        # "analysis missing", not "analysis ran but found nothing",
-        # so we now wrap the disjunction explicitly and require
-        # BOTH absence indicators before flagging the gap.
         causal_present = bool(causal_analysis)
         has_association_flag = bool(
             causal_analysis.get("has_association")
@@ -857,7 +813,7 @@ class EvidenceChainBuilder:
             causal_analysis.get("association_score")
         ) if causal_present else False
         if not causal_present and not (has_association_flag or has_association_score):
-            gaps.append("缺少因果关联分析")
+            gaps.append("")
 
         return gaps
 
@@ -877,7 +833,7 @@ class EvidenceChainBuilder:
         causal_analysis: Optional[dict],
         bayesian_result: Optional[dict],
     ) -> str:
-        """确定判决"""
+        """"""
         if bayesian_result:
             return bayesian_result.get("verdict", "inconclusive")
         if not traffic_result or not traffic_result.get("data_available", True):
@@ -905,7 +861,7 @@ class EvidenceChainBuilder:
         evidence_chain: list,
         bayesian_result: Optional[dict],
     ) -> float:
-        """计算置信度"""
+        """"""
         if bayesian_result:
             return bayesian_result.get("confidence", 0.5)
 
@@ -931,7 +887,7 @@ class EvidenceChainBuilder:
         routing_result: dict,
         bayesian_result: Optional[dict],
     ) -> str:
-        """获取假设"""
+        """"""
         if bayesian_result:
             return bayesian_result.get("best_hypothesis", "unknown")
 
@@ -948,7 +904,7 @@ class EvidenceChainBuilder:
             return "no_anomaly"
 
     def to_dict(self, chain: EvidenceChain) -> dict:
-        """转换为字典"""
+        """"""
         return {
             "verdict": chain.verdict,
             "confidence": chain.confidence,
@@ -973,50 +929,50 @@ class EvidenceChainBuilder:
         }
 
     def to_natural_language(self, chain: EvidenceChain) -> str:
-        """生成自然语言报告"""
+        """"""
         lines = []
 
-        lines.append("## 证据链分析报告")
+        lines.append("## ")
         lines.append("")
 
-        lines.append(f"**判决**: {self._format_verdict(chain.verdict)}")
-        lines.append(f"**置信度**: {chain.confidence:.1%}")
-        lines.append(f"**假设**: {self._format_hypothesis(chain.hypothesis)}")
+        lines.append(f"****: {self._format_verdict(chain.verdict)}")
+        lines.append(f"****: {chain.confidence:.1%}")
+        lines.append(f"****: {self._format_hypothesis(chain.hypothesis)}")
         lines.append("")
 
-        lines.append("### 证据链")
+        lines.append("### ")
         for e in chain.evidence_chain:
             icon = self._get_evidence_icon(e.type)
             lines.append(f"{icon} **{e.source}**: {e.content}")
         lines.append("")
 
         if chain.reasoning_steps:
-            lines.append("### 推理过程")
+            lines.append("### ")
             for step in chain.reasoning_steps:
                 if step["type"] == "observation":
-                    lines.append(f"**步骤 {step['step']}: {step['content']}**")
+                    lines.append(f"** {step['step']}: {step['content']}**")
                     for sub in step.get("sub_steps", []):
                         lines.append(f"  - {sub}")
                 else:
                     conf = step.get("confidence", 0)
-                    conf_str = f" (置信度 {conf:.1%})" if conf else ""
-                    lines.append(f"**步骤 {step['step']}**: {step['content']}{conf_str}")
+                    conf_str = f" ( {conf:.1%})" if conf else ""
+                    lines.append(f"** {step['step']}**: {step['content']}{conf_str}")
             lines.append("")
 
         if chain.assumptions:
-            lines.append("### 假设条件")
+            lines.append("### ")
             for a in chain.assumptions:
                 lines.append(f"- {a}")
             lines.append("")
 
         if chain.limitations:
-            lines.append("### 已知限制")
+            lines.append("### ")
             for l in chain.limitations:
                 lines.append(f"- {l}")
             lines.append("")
 
         if chain.evidence_gaps:
-            lines.append("### 证据缺口")
+            lines.append("### ")
             for g in chain.evidence_gaps:
                 lines.append(f"- {g}")
             lines.append("")
@@ -1024,32 +980,32 @@ class EvidenceChainBuilder:
         return "\n".join(lines)
 
     def _format_verdict(self, verdict: str) -> str:
-        """格式化判决"""
+        """"""
         formats = {
-            "correlated_observations": "路由与流量观测存在关联",
-            "cooccurring_anomalies": "路由与流量均异常，但关联尚未建立",
-            "inconclusive_missing_traffic": "缺少可用流量数据，无法判断实际影响",
-            "inconclusive_missing_routing": "缺少可用路由数据，无法判断告警真实性",
-            "routing_only_anomaly": "仅路由异常",
-            "verified_normal": "验证为正常",
-            "contested": "争议事件",
-            "inconclusive": "无法确定",
+            "correlated_observations": "",
+            "cooccurring_anomalies": "，",
+            "inconclusive_missing_traffic": "，",
+            "inconclusive_missing_routing": "，",
+            "routing_only_anomaly": "",
+            "verified_normal": "",
+            "contested": "",
+            "inconclusive": "",
         }
         return formats.get(verdict, verdict)
 
     def _format_hypothesis(self, hypothesis: str) -> str:
-        """格式化假设"""
+        """"""
         formats = {
-            "correlated": "路由异常与流量异常相关",
-            "observationally_associated": "路由与流量观测同时异常",
-            "routing_only": "仅路由异常",
-            "no_anomaly": "无异常",
-            "unknown": "未知",
+            "correlated": "",
+            "observationally_associated": "",
+            "routing_only": "",
+            "no_anomaly": "",
+            "unknown": "",
         }
         return formats.get(hypothesis, hypothesis)
 
     def _get_evidence_icon(self, evidence_type: str) -> str:
-        """获取证据图标"""
+        """"""
         icons = {
             "anomaly": "[!]",
             "normal": "[OK]",

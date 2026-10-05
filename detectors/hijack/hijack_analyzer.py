@@ -184,8 +184,14 @@ def save_alert_messages(target_as, start_time, end_time,
             }
         }
 
-        with open(alert_file, 'w', encoding='utf-8') as f:
+        # Write atomically: parallel verification workers can otherwise read a
+        # half-written file and report a spurious JSONDecodeError.
+        tmp_file = alert_file.with_suffix(alert_file.suffix + f".tmp{os.getpid()}")
+        with open(tmp_file, 'w', encoding='utf-8') as f:
             json.dump(alert_data, f, indent=2, ensure_ascii=False, default=str)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_file, alert_file)
 
         logger.info(f"Saved {alert_data['alerts']['total_alerts']} hijack alerts to {alert_file}")
         return str(alert_file)

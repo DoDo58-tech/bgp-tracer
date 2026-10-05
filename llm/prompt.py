@@ -2,10 +2,6 @@ from llama_index.core import PromptTemplate
 
 BGP_REASONING_LAWS = """
 # BGP Routing Security Reasoning Laws
-
-## Core Decision Priorities (Version 1.0)
-
-### 1. Origin Hijacking Rules
 1.1: If origin_hijacked/origin_hijacking events exist → classify as Origin Hijack (not Route Leak).
 1.2: Origin hijacking severity = HIGH if victim ASN serves critical infrastructure prefixes.
 1.3: Origin hijacking duration > 2 hours → classify as persistent attack, require immediate response.

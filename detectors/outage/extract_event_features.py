@@ -44,8 +44,6 @@ else:
 logger = logging.getLogger(__name__)
 
 # Analysis parameters
-# Event window: [event_start, event_end]
-# Baseline window: [event_start - BASELINE_DAYS, event_start)
 BASELINE_DAYS = 7
 Z_SCORE_THRESHOLD = 3.0
 BUCKET_MINUTES = 5
@@ -115,9 +113,6 @@ def _download_and_decode(url: str, gz_path: Path, txt_path: Path) -> bool:
         if not gz_path.exists() or gz_path.stat().st_size < 100:
             return False
         # Decode with bgpdump. Use the proc as a context manager so the
-        # stdout pipe is always closed and the child reaped, even if the
-        # consumer raises mid-stream — without this the bgpdump process
-        # could outlive this helper as a zombie if writing the txt fails.
         proc = subprocess.Popen(
             ["bgpdump", "-M", "-t", "change", str(gz_path)],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
@@ -683,8 +678,6 @@ def extract_timeseries_for_as(update_files, target_as_set):
                     part = fut.result()
                 except Exception as worker_exc:
                     # A worker process crashed (e.g. Broken pipe / EOFError /
-                    # OOM).  Log it and move on — losing one file's worth of
-                    # features is acceptable for outage fallback behaviour.
                     logger.debug(f"Outage worker failed (file skipped): {worker_exc}")
                     completed += 1
                     continue

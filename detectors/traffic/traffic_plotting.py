@@ -24,34 +24,34 @@ def _parse_iso_safe(ts: str):
 
 def _percentile_bounds_for_baseline(historical_values_list: list, current_len: int, lower_pct: float = 2.5, upper_pct: float = 97.5):
     """
-    用分位数计算置信边界（替代 mean ± 3σ）。
-    适用于流量等非负右偏数据，分位数天然保证下界为正。
+    （ mean ± 3σ）。
+    ，。
     
     Args:
-        historical_values_list: 历史数据列表，每个元素是对齐后的历史值数组
-        current_len: 当前数据长度
-        lower_pct: 下界百分位（默认 2.5%）
-        upper_pct: 上界百分位（默认 97.5%）
+        historical_values_list: ，
+        current_len: 
+        lower_pct: （ 2.5%）
+        upper_pct: （ 97.5%）
     
     Returns:
-        (lower_bounds, upper_bounds, median): 下界、上界、中位数数组
+        (lower_bounds, upper_bounds, median): 、、
     """
     import numpy as np
     
     if not historical_values_list:
         return np.array([]), np.array([]), np.array([])
     
-    # 转换为 numpy 数组
+    #  numpy 
     hist_arr = np.array(historical_values_list, dtype=float)  # shape: (n_periods, n_timepoints)
     
     if hist_arr.size == 0:
         return np.array([]), np.array([]), np.array([])
     
-    # 确保长度一致
+    # 
     min_len = min(hist_arr.shape[1], current_len)
     hist_arr = hist_arr[:, :min_len]
     
-    # 计算分位数
+    # 
     lower_bounds = np.nanpercentile(hist_arr, lower_pct, axis=0)
     upper_bounds = np.nanpercentile(hist_arr, upper_pct, axis=0)
     median = np.nanmedian(hist_arr, axis=0)
@@ -60,7 +60,7 @@ def _percentile_bounds_for_baseline(historical_values_list: list, current_len: i
 
 
 def _effective_std_for_baseline(mean_arr: np.ndarray, std_arr: np.ndarray):
-    """与 detect_anomalies_statistical 一致：极小 std 用下限，避免图上 ±3σ 与检测阈值不一致。"""
+    """ detect_anomalies_statistical ： std ， ±3σ 。"""
     mean_arr = np.asarray(mean_arr, dtype=float)
     std_arr = np.asarray(std_arr, dtype=float)
     floor = np.maximum(0.05 * np.maximum(np.abs(mean_arr), 1.0), 0.02)
@@ -81,7 +81,7 @@ def plot_traffic_comparison_beautiful(
     event_name = None,
     output_dir = None,
     title_suffix = "",
-    historical_values_list = None,  # 对齐后的历史数据列表，用于分位数计算
+    historical_values_list = None,  # ，
 ):
     try:
         plt.rcParams['font.family'] = 'DejaVu Sans'
@@ -167,14 +167,14 @@ def plot_traffic_comparison_beautiful(
             std_arr = std_arr[:min_len]
             x_plot = x[:min_len]
 
-            # 使用分位数替代 mean ± 3σ（适用于流量等非负右偏数据）
+            #  mean ± 3σ（）
             if (historical_values_list and len(historical_values_list) >= 2) or \
                (historical_data and len(historical_data) >= 2):
-                # 优先使用传入的对齐后的历史数据列表
+                # 
                 if historical_values_list and len(historical_values_list) >= 2:
                     hist_vals_for_percentile = historical_values_list
                 else:
-                    # 回退：从 historical_data 构建历史值列表
+                    # ： historical_data 
                     hist_vals_for_percentile = []
                     for h in historical_data:
                         vals = np.array(h.get("values", []), dtype=float)
@@ -193,21 +193,21 @@ def plot_traffic_comparison_beautiful(
                         ax.plot(x_plot, median, label='Historical Median', 
                                 color='#FF8C42', linestyle='--', linewidth=2.5, alpha=0.9)
                     else:
-                        # 回退到原来的 mean ± 3σ
+                        #  mean ± 3σ
                         eff_std = _effective_std_for_baseline(mean_arr, std_arr)
                         upper_3sigma = mean_arr + 3 * eff_std
                         lower_3sigma = mean_arr - 3 * eff_std
                         ax.fill_between(x_plot, lower_3sigma, upper_3sigma, color='#D0D0D0', alpha=0.25, label='Baseline ±3σ (fallback)')
                         ax.plot(x_plot, mean_arr, label='Historical Mean', color='#FF8C42', linestyle='--', linewidth=2.5, alpha=0.9)
                 else:
-                    # 历史数据不足，使用原来的 mean ± 3σ
+                    # ， mean ± 3σ
                     eff_std = _effective_std_for_baseline(mean_arr, std_arr)
                     upper_3sigma = mean_arr + 3 * eff_std
                     lower_3sigma = mean_arr - 3 * eff_std
                     ax.fill_between(x_plot, lower_3sigma, upper_3sigma, color='#D0D0D0', alpha=0.25, label='Baseline ±3σ (fallback)')
                     ax.plot(x_plot, mean_arr, label='Historical Mean', color='#FF8C42', linestyle='--', linewidth=2.5, alpha=0.9)
             else:
-                # 无历史数据，使用原来的 mean ± 3σ
+                # ， mean ± 3σ
                 eff_std = _effective_std_for_baseline(mean_arr, std_arr)
                 upper_3sigma = mean_arr + 3 * eff_std
                 lower_3sigma = mean_arr - 3 * eff_std

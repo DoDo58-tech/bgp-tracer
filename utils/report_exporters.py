@@ -40,13 +40,6 @@ def save_html_report(asn, time_range, html_content, output_dir=None):
         file_path = output_dir / filename
 
         # Bug fix 2026-09-13 (BUG-R116): the previous code wrote the
-        # HTML via ``open(path, "w").write(html_content)`` — a
-        # non-atomic operation that could leave a partial file on
-        # disk if the process died mid-write (power outage, OOM
-        # kill, Ctrl-C). The report file would then be half-written
-        # and unreadable in the browser. The fix writes to
-        # ``path.tmp`` first, fsyncs, then ``os.replace`` onto the
-        # real path — atomic on POSIX.
         import os as _os
         tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
         try:
@@ -98,9 +91,6 @@ def save_json_report(analysis_data: Dict[str, Any], asn, output_dir=None):
         json_data = _make_json_serializable(analysis_data)
 
         # Bug fix 2026-09-13 (BUG-R116, second case): same atomic-write
-        # fix as ``save_html_report`` — write to ``path.tmp`` first,
-        # fsync, then ``os.replace`` so a crash mid-write does not
-        # leave a half-written JSON file on disk.
         import os as _os
         tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
         try:
@@ -183,7 +173,7 @@ def generate_comprehensive_report(
         probe_reachability_result: Reachability probe results
         roa_validation_result: ROA validation results
         threat_intel_result: Threat intelligence results
-        hcaf_attribution: HCAF 因果归因结果（三个创新方法：MSCBD/CTPR/CIC）
+        hcaf_attribution: HCAF （：MSCBD/CTPR/CIC）
 
     Returns:
         Dict with success, html_report_path, json_report_path, target_as, etc.
@@ -341,14 +331,6 @@ def generate_batch_html_report(batch_result: Dict[str, Any], start_time,
         )
 
         # The BATCH_ANALYSIS_HTML_TEMPLATE uses Python ``str.format``-style
-        # single-brace placeholders (e.g. ``{analysis_period}``).  The
-        # previous implementation targeted Jinja-style ``{{KEY}}`` markers
-        # which never matched the template, so every batch report was
-        # shipped with literal ``{analysis_period}`` etc. leaking into the
-        # final HTML.  We use a tolerant custom formatter that leaves
-        # unknown placeholders intact (so a future template addition does
-        # not crash existing callers) while still substituting every key
-        # we have a value for.
         from string import Formatter
 
         replacements = {
@@ -365,16 +347,12 @@ def generate_batch_html_report(batch_result: Dict[str, Any], start_time,
             "per_as_sections": "\n".join(per_as_sections),
             "recommendations": "\n".join(f"<li>{rec}</li>" for rec in recommendations),
             # BATCH_ANALYSIS_HTML_TEMPLATE currently only knows these
-            # three keys; pass them through explicitly so the current
-            # template renders without leftover literals.
             "as_sections": "\n".join(per_as_sections),
         }
 
         class _SafeDict(dict):
             def __missing__(self, key):  # type: ignore[override]
                 # Leave unknown placeholders untouched (rendered as
-                # ``{key}``) so a template addition never crashes
-                # existing callers and the operator can spot the gap.
                 return "{" + key + "}"
 
         html = Formatter().vformat(BATCH_ANALYSIS_HTML_TEMPLATE, (), _SafeDict(replacements))

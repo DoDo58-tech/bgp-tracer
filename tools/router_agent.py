@@ -268,11 +268,6 @@ Now, what is your next step?"""
         action = action_match.group(1).strip() if action_match else ""
 
         # Extract Action Input. We avoid the lazy ``\{.*?\}`` form here:
-        # for an input like ``{"template": "{a} and {b}", ...}`` the
-        # lazy regex stops at the first inner ``}``, leaving an
-        # incomplete fragment. Instead, match the opening ``{`` only
-        # and let ``extract_json_object`` below walk the braces
-        # (string-aware) to find the real terminator.
         input_match = re.search(r"Action Input:\s*\{", response)
         action_input = {}
 
@@ -281,26 +276,12 @@ Now, what is your next step?"""
             # Handle empty or incomplete JSON
             if input_str and input_str != "{}":
                 # Bug fix 2026-09-13 (BUG-R107): the previous code did
-                # a string-unaware brace count to find the JSON end:
-                # every literal ``{``/``}`` toggled a counter and the
-                # first zero balance closed the JSON. When a value
-                # contained a JSON string with embedded braces (e.g.
-                # ``{"template": "{a} and {b}"}``) the counter went
-                # negative at the first inner ``}`` and the JSON was
-                # truncated, leading to ``json.loads`` failing and the
-                # whole Action Input being silently discarded. The same
-                # pattern was fixed in ``react_agent.parse_response``
-                # (BUG-R94) using ``utils.helpers.extract_json_object``,
-                # which understands nested braces inside string
-                # literals.
                 from utils.helpers import extract_json_object
                 parsed = extract_json_object(input_str)
                 if isinstance(parsed, dict):
                     action_input = parsed
                 else:
                     # Last-ditch: try ``json.loads`` on the raw string
-                    # in case the LLM emitted well-formed JSON whose
-                    # only issue was a leading/trailing whitespace.
                     try:
                         action_input = json.loads(input_str)
                     except json.JSONDecodeError:

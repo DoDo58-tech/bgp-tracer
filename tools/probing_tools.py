@@ -27,8 +27,6 @@ from typing import Optional, List, Dict, Any
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Scapy-based traceroute (no root required for basic probes)
-# ---------------------------------------------------------------------------
 _HAVE_SCAPY = False
 try:
     import scapy.all as sp
@@ -256,8 +254,6 @@ class TracerouteProbe:
         result.data["internet_check"] = "ok"
 
         # Now try the actual target IP
-        # For DNS servers like 8.8.8.8, try ping-equivalent via port 53 (DNS)
-        # For regular IPs, try HTTP/HTTPS
         target_reachable = False
         for port in [443, 80, 53]:
             try:
@@ -382,9 +378,6 @@ def _parse_system_traceroute(output: str) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# BGP Looking Glass query
-# ---------------------------------------------------------------------------
-
 class BGPLookingGlass:
     """
     Query public BGP Looking Glass servers.
@@ -456,9 +449,6 @@ class BGPLookingGlass:
 
 
 # ---------------------------------------------------------------------------
-# RIPE RIS API
-# ---------------------------------------------------------------------------
-
 class RIPERisAPI:
     """
     Query RIPE RIS (Routing Information Service) API.
@@ -524,9 +514,6 @@ class RIPERisAPI:
 
 
 # ---------------------------------------------------------------------------
-# Cloudflare Radar
-# ---------------------------------------------------------------------------
-
 class CloudflareRealtime:
     """
     Query Cloudflare Radar public API for Internet traffic data.
@@ -586,9 +573,6 @@ class CloudflareRealtime:
 
 
 # ---------------------------------------------------------------------------
-# Probing Orchestrator
-# ---------------------------------------------------------------------------
-
 class ProbingOrchestrator:
     """
     Coordinate multiple probe types for a comprehensive network analysis.
@@ -695,9 +679,6 @@ class ProbingOrchestrator:
 
 
 # ---------------------------------------------------------------------------
-# Convenience function
-# ---------------------------------------------------------------------------
-
 async def run_traceroute(
     target: str,
     method: str = "icmp",
@@ -710,9 +691,6 @@ async def run_traceroute(
 
 
 # ---------------------------------------------------------------------------
-# Format helpers
-# ---------------------------------------------------------------------------
-
 def format_probe_result_html(result: ProbeResult) -> str:
     """Format a ProbeResult as HTML for reports."""
     if not result.success and not result.hops:

@@ -69,9 +69,6 @@ def load_asrel(fpath):
                 rel_type = int(parts[2])
                 
                 # rel_type: -1 means as1 is provider of as2 (as2 is customer of as1)
-                # rel_type: 0 means as1 and as2 are peers
-                
-                # Record provider relationships
                 if rel_type == -1:
                     # as1 is provider of as2
                     if as2 not in as_to_providers:

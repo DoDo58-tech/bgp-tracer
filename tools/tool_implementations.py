@@ -158,9 +158,6 @@ from agents.report_agent import generate_report_html
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Module-level helpers (exported for tests and reuse across tools)
-# ══════════════════════════════════════════════════════════════════════════════
-
 def _unwrap_traffic_for_payload_standalone(t, target_asn=""):
     """Flatten ``{ASN: {...detector fields...}}`` → detector-level ``{...}``.
 
@@ -229,9 +226,6 @@ from agents.payload_builder import PayloadBudget, build_payload, cap_payload, es
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool category: Evidence collection
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _analyze_traffic(tool_input: dict, session) -> dict:
     """
     Analyze traffic anomalies for one or more ASes within a time window.
@@ -246,15 +240,6 @@ async def _analyze_traffic(tool_input: dict, session) -> dict:
     if isinstance(asn_list, str):
         asn_list = [asn_list]
     # Bug fix 2026-09-13 (BUG-R58): previously an empty ``asn_list``
-    # silently fell through the for-loop, leaving ``results = {}``.
-    # ``all(r.get('anomalies_detected', False) for r in results.values()
-    #   if r.get('success'))`` returns ``True`` for an empty iterable, so
-    # ``all_anomalous`` was set to True and the observation falsely
-    # claimed "Traffic anomalies detected for ASes: []" — pushing the
-    # inventory tool into the wrong verdict. Now we treat the empty
-    # case explicitly: ``success=False`` with a clear error message so
-    # the LLM caller can recover (rather than receiving a misleading
-    # "anomalies detected" observation).
     if not asn_list:
         return {
             "success": False,
@@ -322,9 +307,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: analyze_routing
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _analyze_routing(tool_input: dict, session) -> dict:
     """
     Analyze BGP routing anomalies (hijacks, leaks, outages) for an AS
@@ -359,16 +341,9 @@ async def _analyze_routing(tool_input: dict, session) -> dict:
     logger.info(f"[routing_tool] Analyzing AS{asn}  {start} → {end}  (detail={detail})")
 
     # ── Pre-computed shortcut ────────────────────────────────────────────────
-    # When the chief_agent passes annotation_package routing data via the
-    # shared evidence dict, return it directly instead of running the live
-    # detectors (which download 49+ RIPE RIS files and can take 10+ minutes
-    # for ASes with thousands of BGP announcements).
     try:
         from agents.react_agent import _SHARED_EVIDENCE
         # Bug fix 2026-09-16: ReactAgent writes the precomputed payload to
-        # ``_SHARED_EVIDENCE[run_id]["precomputed_routing"]``, not to the
-        # top-level ``"precomputed_routing"`` key. Scan every run_id bucket
-        # until we find one with a populated precomputed payload.
         pre = {}
         for _run_id, _bucket in (_SHARED_EVIDENCE or {}).items():
             candidate = _bucket.get("precomputed_routing") if isinstance(_bucket, dict) else None
@@ -382,8 +357,6 @@ async def _analyze_routing(tool_input: dict, session) -> dict:
                 f"leaks={len(pre.get('leak', {}).get('route_leaks', []))})"
             )
             # Flatten annotation_package format into the same shape that
-            # run_routing_agent_async returns, so downstream consumers see
-            # consistent structure.
             result = {
                 "success": True,
                 "origin_hijacked": pre.get("hijack", {}).get("origin_hijacked", []),
@@ -398,14 +371,19 @@ async def _analyze_routing(tool_input: dict, session) -> dict:
         logger.debug(f"[routing_tool] precomputed check failed: {e}; falling through to live detection")
 
     try:
-        # Light-mode tools skip the slow 24h-baseline outage detector to keep
-        # wall time bounded. The deep-phase report can still pull outage from
-        # precomputed_routing if needed.
-        # NOTE: LLM agents almost always request detail_level="full", which would
-        # trigger a 5-minute outage baseline scan every call. We force light
-        # mode for the ReAct path unless the user explicitly opts in via the
-        # chief_agent (deep-phase rerun).
-        effective_detail = "light" if detail != "deep_full" else "full"
+        # BUG-R135 2026-09-28: the previous mapping (`"light" if detail !=
+        # "deep_full"`) conflated the React-loop LLM's `detail_level=full`
+        # intent with the legacy one-phase default. When the LLM explicitly
+        # says `detail_level=full`, run full detection (leak + streaming
+        # hijack + outage). Only fall back to light mode for the empty /
+        # unknown explicit request.
+        explicit_level = (detail or "").strip().lower()
+        if explicit_level in ("full", "deep_full"):
+            effective_detail = "full"
+        elif explicit_level == "light":
+            effective_detail = "light"
+        else:
+            effective_detail = "full"  # default to full so leak/hijack/origin all run
         result = await run_routing_agent_async(
             asn=asn,
             start_time=start,
@@ -433,11 +411,6 @@ async def _analyze_routing(tool_input: dict, session) -> dict:
     outage = result.get("outage_analysis") or {}
 
     # ── Extract victim ASes from routing events ─────────────────────────────────
-    # Rule: if queried AS is a victim (origin_hijacked/forge_hijacked),
-    #        victims are in result["origin_hijacked"]/["forge_hijacked"].origin_as
-    # Rule: if queried AS is an attacker (origin_hijacking/forge_hijacking),
-    #        victims are in result["origin_hijacking"]/["forge_hijacking"].origin_as
-    # For leaks, extract origin_as as potential victims.
     victim_asns = set()
     if result.get("origin_hijacked") or result.get("forge_hijacked"):
         # Queried AS was a victim — extract origin_as from victim_anomalies
@@ -457,16 +430,16 @@ async def _analyze_routing(tool_input: dict, session) -> dict:
     victim_asns.discard(asn)
     victim_asns_sorted = sorted(victim_asns)
 
-    # ── 构建详细的 observation，给 LLM 更多上下文 ──
+    # ──  observation， LLM  ──
     obs_parts = []
 
-    # 基本统计
+    # 
     obs_parts.append(
         f"Routing anomalies: {len(hijacks)} hijack events, {len(leaks)} leaks, "
         f"outage_score={outage.get('outage_score', 'N/A')}"
     )
 
-    # 具体的劫持事件示例（关键！）
+    # （！）
     if hijacks:
         obs_parts.append("\nTop hijack examples (prefix -> hijacker -> victim):")
         for ev in hijacks[:3]:
@@ -480,13 +453,13 @@ async def _analyze_routing(tool_input: dict, session) -> dict:
         if len(hijacks) > 3:
             obs_parts.append(f"  ... ({len(hijacks) - 3} more)")
 
-    # 受害者 AS 列表
+    #  AS 
     if victim_asns_sorted:
         obs_parts.append(f"\nDiscovered {len(victim_asns_sorted)} potential victim AS(es): {victim_asns_sorted[:5]}")
         if len(victim_asns_sorted) > 5:
             obs_parts.append(f"  (+{len(victim_asns_sorted) - 5} more)")
 
-    # 路由泄露示例
+    # 
     if leaks:
         obs_parts.append(f"\nRoute leak examples (prefix -> leaking AS):")
         for ev in leaks[:3]:
@@ -520,9 +493,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: check_traffic_routing_correlation
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _check_correlation(tool_input: dict, session) -> dict:
     """
     Three-card joint-evidence analysis for routing and traffic signals.
@@ -711,9 +681,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: query_as_info
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _query_as_info(tool_input: dict, session) -> dict:
     """
     Enrich AS data with org info, AS relationships, and announced prefixes.
@@ -842,8 +809,6 @@ async def _query_as_info(tool_input: dict, session) -> dict:
             info["bgpview_error"] = str(e)
 
     # Use local CAIDA AS-organization data when external registries do not
-    # provide a name or country. This prevents an external-data outage from
-    # being represented as an unknown AS in ReAct prompts and reports.
     if not info.get("as_name") or not info.get("country"):
         lookup_time = tool_input.get("start_time") or tool_input.get("time")
         try:
@@ -885,9 +850,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: reason_and_classify
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _reason_and_classify(tool_input: dict, session) -> dict:
     """
     LLM-powered reasoning on traffic + routing results to produce a final
@@ -918,7 +880,7 @@ async def _reason_and_classify(tool_input: dict, session) -> dict:
 
     asn = tool_input.get("asn") or _run_asn or ""
     if not asn:
-        # 兼容 query_as_info 返回 {"info": {"asn": ...}} 的格式
+        #  query_as_info  {"info": {"asn": ...}} 
         qai = ev.get("query_as_info", {})
         asn = qai.get("info", {}).get("asn") or qai.get("result", {}).get("asn") or "unknown"
     asn = str(asn)
@@ -929,8 +891,6 @@ async def _reason_and_classify(tool_input: dict, session) -> dict:
     # ── Resolve traffic (from session.evidence when tool_input is empty) ───────
     traffic = tool_input.get("traffic_result") or {}
     # Guard: LLM sometimes passes a plain string (e.g. "No significant traffic
-    # anomalies found") instead of a dict. Treat it as empty rather than crashing
-    # with "'str' object is not subscriptable" in downstream code.
     if isinstance(traffic, str):
         try:
             traffic = json.loads(traffic)
@@ -1363,12 +1323,6 @@ def _parse_json(raw: str) -> dict:
         return json.loads(raw)
     except Exception:
         # Bug fix 2026-09-13 (BUG-R47): previously the fallback was
-        # ``raw.index("{") + raw.rindex("}") + 1`` which truncates
-        # JSON when string values contain literal braces (e.g.
-        # ``"note": "looks like {foo} bar"``). Switch to the shared
-        # brace-balanced extractor so nested string braces don't trip
-        # the parser. Final fallback still returns {} for irrecoverable
-        # input.
         try:
             from utils.helpers import extract_json_object as _safe_extract
             snippet = _safe_extract(raw)
@@ -1396,9 +1350,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: generate_report
-# ══════════════════════════════════════════════════════════════════════════════
-
 def _inject_traffic_plot_into_file(html_path: str, traffic_plot_base64: str) -> None:
     """After the HTML is saved, inject the traffic plot if the LLM missed it."""
     import pathlib
@@ -1476,18 +1427,9 @@ async def _generate_report(tool_input: dict, session) -> dict:
             traffic = {}
 
     # Unwrap traffic to a flat "traffic_result.shape = {anomaly_count, percent_change, ...}"
-    # The legacy analyze_traffic output nests detector fields under `results: {ASN: {...}}`.
-    # The payload builder + LLM read fields at the top level (e.g. `traffic.anomaly_count`,
-    # `traffic.max_severity`), but the LLM-replacement step (`_substitute_field_references`)
-    # also reads top-level keys. Without this unwrap both the prompt and the post-processing
-    # end up seeing `payload.traffic = {ASN: {...}}` and never find the metrics at the
-    # expected location, so the report shows literal "[traffic.anomaly_count]" / "(no data)".
     traffic = _unwrap_traffic_for_payload_standalone(traffic, target_asn=str(asn) if asn else "")
 
     # Surface `max_severity` at the top level so _substitute_field_references and
-    # the LLM prompt can both find it. analyze_traffic's detector output doesn't
-    # compute this field (only TrafficAgent.step → Blackboard does), so we add
-    # it here on the react path. The helper lives in traffic_agent.py.
     if isinstance(traffic, dict) and "max_severity" not in traffic:
         try:
             from agents.traffic_agent import _to_canonical_severity
@@ -1648,8 +1590,6 @@ async def _generate_report(tool_input: dict, session) -> dict:
 
     try:
         # When LLM is disabled, skip the LLM-driven path entirely and render
-        # the deterministic fallback. The LLM call otherwise blocks the
-        # whole report flow on a slow upstream.
         if os.environ.get("BGP_TRACER_DISABLE_LLM_REPORT", "").strip() in ("1", "true", "yes"):
             from agents.report_agent import generate_report_html as _gen
             # generate_report_html raises on LLM failure but raises RuntimeError.
@@ -1736,20 +1676,6 @@ async def _generate_report(tool_input: dict, session) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: analyze_prefix_traffic
-# ══════════════════════════════════════════════════════════════════════════════
-#
-# IMPORTANT NOTE on data availability:
-#   Cloudflare Radar API provides AS-level traffic data only.
-#   Prefix-level traffic is not available from any public CDN API.
-#
-#   This tool uses BGP AS-path distribution as a TRAFFIC PROXY:
-#     - During a hijack, the attacker AS appears in AS-paths for the victim's prefixes
-#     - The proportion of paths passing through the attacker = traffic impact proxy
-#     - AS-path changes = real-world traffic rerouting evidence
-#
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
     """
     Analyze traffic impact for specific BGP prefixes involved in routing events.
@@ -1805,12 +1731,6 @@ async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
                 "observation": "Cannot analyze prefix traffic without prefix list."}
 
     # Parse times. Bug fix 2026-09-13 (BUG-R61): the original double
-    # try/except here was redundant — both branches called
-    # ``_parse_dt(start)`` and assigned to ``start_dt``. The nested
-    # try always re-raised the same ValueError so the second one
-    # could never run. Replace with a single attempt that returns
-    # ``None`` on any parsing failure (downstream code already
-    # handles ``start_dt = None``).
     try:
         start_dt = _parse_dt(start)
     except Exception:
@@ -1850,9 +1770,6 @@ async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
 
     def in_window(ts_str: str, w_start, w_end) -> bool:
         # Bug fix 2026-09-13 (BUG-R61): the original nested
-        # try/except _parse_dt pair was unreachable — the inner call
-        # raised the same ValueError as the outer one and never
-        # produced a useful result. Replace with a single attempt.
         try:
             ts = _parse_dt(ts_str)
         except Exception:
@@ -1870,12 +1787,6 @@ async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
     import gc
 
     # Bug fix 2026-09-13 (BUG-R61): the previous code called
-    # ``_parse_dt(all_start)`` directly inside the ``get_updates_streaming``
-    # argument list. If the caller passed an unparseable timestamp, the
-    # ValueError propagated out of ``_analyze_prefix_traffic`` and crashed
-    # the whole tool call. Defensively resolve to ``None`` on parse
-    # failure — ``get_updates_streaming`` treats ``None`` as "no bound",
-    # which is a safer failure mode than propagating the exception.
     try:
         _all_start_dt = _parse_dt(all_start) if all_start else None
     except Exception:
@@ -1935,14 +1846,6 @@ async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
     logger.info(f"[prefix_traffic] Processed {processed} BGP messages, building results...")
 
     # ── Compute metrics per prefix ─────────────────────────────────────────────
-    # Bug fix 2026-09-13 (BUG-R62): the previous code had ``import pl``
-    # here — a typo. ``pl`` is already bound at module scope to the
-    # Polars package (line 24 ``import polars as pl``), so the broken
-    # import only triggered when this late section actually executed
-    # (typically when the processed-chunks counter was non-zero). In
-    # the more common path where no chunks produced data, this branch
-    # was skipped, masking the bug. Now we rely on the module-level
-    # import.
     results = {}
     for prefix in prefix_set:
         s = stats.get(prefix, {})
@@ -2053,9 +1956,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: classify_traffic_anomaly
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _classify_traffic_anomaly(tool_input: dict, session) -> dict:
     """
     Classify the root cause type of a traffic anomaly using LLM reasoning.
@@ -2126,7 +2026,7 @@ upstream provider issues, routing table churn, etc.
 - cdn_shielding: Gradual traffic reduction with no routing change (CDN provider shielding).
 - network_outage: Traffic dropped to near-zero for the entire AS, routing outage detected.
 - legitimate_spike: Traffic increase with valid business reason (product launch, marketing campaign).
-- bgp_churn: Traffic波动 with routing changes but no clear attacker pattern (normal routing churn).
+- bgp_churn: Traffic with routing changes but no clear attacker pattern (normal routing churn).
 - inconclusive: Insufficient data to determine the cause.
 - normal: No real anomaly — statistical variation within normal range.
 
@@ -2212,9 +2112,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: compute_traffic_routing_correlation_score
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _compute_traffic_routing_correlation_score(tool_input: dict, session) -> dict:
     """
     Quantify the correlation between traffic anomalies and routing events.
@@ -2293,9 +2190,6 @@ async def _compute_traffic_routing_correlation_score(tool_input: dict, session) 
     # Hijack: victim AS traffic drops, attacker (if in victim_traffic) traffic may increase
     traffic_pct = traffic.get("percent_change", 0)
     # Positive pct = traffic increase, negative = decrease
-    # For a victim AS under hijack, expect traffic decrease (negative)
-    # For the attacker AS, expect traffic increase (positive)
-    # Score based on whether direction matches hijack expectation
     direction_score = 0
     direction_detail = ""
     if traffic_pct < -10:
@@ -2393,8 +2287,6 @@ async def _compute_traffic_routing_correlation_score(tool_input: dict, session) 
     }
 
     # ── Overall score ─────────────────────────────────────────────────────────
-    # Use magnitude-based labels that match the score semantics — avoid L1-L5
-    # because those are reserved by report_agent for "L1=likely / L4=unrelated".
     total = sum(scores.values())
     level = "EXCEPTIONAL" if total >= 90 else \
             "STRONG"      if total >= 70 else \
@@ -2510,9 +2402,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: analyze_as_path_delta
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _analyze_as_path_delta(tool_input: dict, session) -> dict:
     """
     Analyze AS-path structural changes during a hijack window and optionally
@@ -2525,9 +2414,9 @@ async def _analyze_as_path_delta(tool_input: dict, session) -> dict:
         verify current routing path and confirm whether the hijack is still active.
 
     Analysis dimensions:
-      - AS-path length delta (劫持期间路径是否变长/绕远)
-      - Path structural changes (新增陌生 AS、循环等)
-      - AS relationship inference (attacker 相对于 victim 的位置)
+      - AS-path length delta (/)
+      - Path structural changes ( AS、)
+      - AS relationship inference (attacker  victim )
       - Traceroute verification (recent events only)
 
     Required params:
@@ -2561,12 +2450,6 @@ async def _analyze_as_path_delta(tool_input: dict, session) -> dict:
     normal_end_input = tool_input.get("normal_end", "")
 
     # Parse times. Bug fix 2026-09-13 (BUG-R61): the original double
-    # try/except here was redundant — both branches called
-    # ``_parse_dt(start)`` and assigned to ``start_dt``. The nested
-    # try always re-raised the same ValueError so the second one
-    # could never run. Replace with a single attempt that returns
-    # ``None`` on any parsing failure (downstream code already
-    # handles ``start_dt = None``).
     try:
         start_dt = _parse_dt(start)
     except Exception:
@@ -2699,22 +2582,8 @@ async def _do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
 
     try:
         # Try mtr first (richer output), fallback to traceroute
-        # Bug fix 2026-09-13 (BUG-R84): the previous code built the
-        # command via f-string + ``shlex.split`` — fine when
-        # ``target_prefix`` is a sane IP, but ``target_prefix``
-        # originates from upstream routing/LLM output and could be
-        # controlled by an attacker. ``shlex.split`` does *not*
-        # sanitise embedded shell metacharacters when the resulting
-        # arguments are eventually passed to ``subprocess.run`` (the
-        # args list is fine, but the f-string is a footgun: a future
-        # caller passing ``shell=True`` would be vulnerable to
-        # argument injection). We now pass arguments as a list to
-        # bypass any shell parsing entirely.
         target_ip = target_prefix.split('/')[0].strip()
         # Minimal sanity-check: refuse anything that isn't an IP or
-        # hostname-shaped token. mtr accepts both but rejecting
-        # shell-like characters defends against accidental
-        # injection from upstream data.
         import re as _re_probe
         if not _re_probe.match(r'^[A-Za-z0-9.\-:]+$', target_ip):
             raise ValueError(f"unsafe target_prefix {target_ip!r}")
@@ -2739,8 +2608,6 @@ async def _do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
         probe_result["raw_output"] = output[:500]
 
         # Try to resolve AS numbers for each hop
-        # Note: requires working rdap/ASN lookup — best-effort only
-        # For now, mark attacker presence if any attacker ASN string appears in raw output
         probe_result["attacker_in_path"] = any(
             str(a) in output for a in attacker_asns
         )
@@ -2783,13 +2650,6 @@ def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
         if not ts_str:
             return False
         # Bug fix 2026-09-13 (BUG-R85): the previous implementation
-        # had a triple-nested try/except that called ``_parse_dt``
-        # twice and ``datetime.fromisoformat`` once. The second
-        # ``_parse_dt`` call was unreachable — the outer except
-        # already caught the ValueError and the inner except was
-        # only entered if the outer succeeded, which is impossible.
-        # Replace with a single cascade of fallbacks so each parser
-        # runs at most once.
         try:
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
         except Exception:
@@ -2954,9 +2814,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: analyze_as_relationships
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _analyze_as_relationships(tool_input: dict, session) -> dict:
     """
     Analyze the AS-level business relationship between attacker and victim,
@@ -3257,9 +3114,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: probe_prefix_reachability
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _probe_prefix_reachability(tool_input: dict, session) -> dict:
     """
     Verify prefix reachability and hijack effectiveness.
@@ -3379,16 +3233,6 @@ async def _live_traceroute_probe(prefix: str, attacker_asn: str, victim_asn: str
         import subprocess, shlex
         output = ""
         # Bug fix 2026-09-13 (BUG-R86): the previous code used
-        # ``cmd_tmpl.format(ip=target_ip)`` which both (a) crashes on
-        # any literal ``{`` or ``}`` in ``target_ip`` (e.g. an IPv6
-        # address like ``2001:db8::{1}``) and (b) is a tiny
-        # format-string injection surface if ``target_ip`` ever
-        # contained unintended ``{key}`` substitutions. We now
-        # build the argv list directly using string substitution that
-        # is ``str.replace``-only (no format spec parsing) and add a
-        # sanity regex check before invoking subprocess. ``shlex.quote``
-        # is not strictly needed when passing args as a list (no
-        # shell), but we keep it for defence in depth.
         import re as _re_probe2
         if not _re_probe2.match(r'^[A-Za-z0-9.\-:]+$', target_ip):
             logger.warning(f"[probe_prefix_reachability] unsafe target_ip {target_ip!r}; skipping fallback probe")
@@ -3437,8 +3281,6 @@ async def _historical_prefix_probe(prefix: str, start: str, end: str,
     results_by_method = {}
 
     # Helper: fetch URL on a worker thread, return ``(status_code, body)``
-    # without blocking the event loop.  Body is parsed JSON when possible
-    # otherwise the raw text.  Any failure short-circuits to ``(0, None)``.
     def _sync_get(url: str, want_json: bool = True):
         try:
             r = requests.get(url, timeout=15)
@@ -3606,9 +3448,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: validate_roa_status
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _validate_roa_status(tool_input: dict, session) -> dict:
     """
     Validate prefix hijacks against RPKI ROA (Route Origin Attestation) data.
@@ -3865,9 +3704,6 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tool: lookup_as_threat_intel
-# ══════════════════════════════════════════════════════════════════════════════
-
 async def _lookup_as_threat_intel(tool_input: dict, session) -> dict:
     """
     Gather threat intelligence on attacker AS(es): BGP history, known hijack

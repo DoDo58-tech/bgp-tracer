@@ -423,7 +423,7 @@ def _build_assessment(asn: str, as_name: str, business_type: str,
     if indicators["has_real_domains"]:
         parts.append(f"Passive DNS analysis found {domain_count} unique domain names associated with this AS, indicating it hosts real web services.")
     else:
-        parts.append("No passive DNS records were found for this AS's IP ranges. This AS may not host web services, or its traffic is primarily transit/peer流量.")
+        parts.append("No passive DNS records were found for this AS's IP ranges. This AS may not host web services, or its traffic is primarily transit/peer.")
 
     if indicators["has_government_targets"]:
         parts.append("Government domains are present — anomalies affecting this AS could have significant public impact.")

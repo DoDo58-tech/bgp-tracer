@@ -48,21 +48,21 @@ def init_database(conn):
         )
     """)
 
-    # 新增AS对缓存表 - 按AS对缓存而不是整个AS路径
+    # AS - ASAS
     conn.execute("""
         CREATE TABLE IF NOT EXISTS as_pair_cache (
             as1 TEXT NOT NULL,
             as2 TEXT NOT NULL,
             date_str TEXT NOT NULL,
-            is_fake INTEGER NOT NULL,  -- 0=合法连接, 1=假连接
+            is_fake INTEGER NOT NULL,  -- 0=, 1=
             asrel_hash TEXT NOT NULL,
-            timestamp TEXT,  -- BGP更新时间戳
+            timestamp TEXT,  -- BGP
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (as1, as2, date_str, asrel_hash)
         )
     """)
 
-    # 为性能创建索引
+    # 
     conn.execute("""
         CREATE INDEX IF NOT EXISTS idx_as_pair_date ON as_pair_cache(date_str)
     """)
@@ -469,7 +469,7 @@ def is_fake_connection_detection_cached(as_path, asrel_hash):
         return False
 
 
-# ============== 新增AS对缓存函数 ==============
+# ============== AS ==============
 
 def get_cached_as_pair(as1, as2, date_str, asrel_hash):
     try:
@@ -501,11 +501,11 @@ def get_cached_as_pair(as1, as2, date_str, asrel_hash):
 
 def set_cached_as_pair(as1, as2, date_str, asrel_hash, is_fake, timestamp=None):
     try:
-        # 确保时间戳是日期格式，如果没有提供则使用date_str
+        # ，date_str
         if timestamp is None:
             timestamp = date_str
         else:
-            # 如果提供了完整时间戳，只保留日期部分
+            # ，
             if ' ' in str(timestamp):
                 timestamp = str(timestamp).split(' ')[0]
 

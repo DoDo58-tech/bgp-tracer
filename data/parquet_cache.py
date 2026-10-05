@@ -49,8 +49,6 @@ from utils.logger import logger
 from config import RIPE_RIS_URL, UPDATES_DIR
 
 # Reuse the download / decode helpers from updates_loader so the layered
-# cache in this module and the historical code path in updates_loader share
-# a single implementation. This avoids drift between the two.
 try:
     from data.updates_loader import (
         is_valid_gz_file,
@@ -541,12 +539,6 @@ def iter_window_chunks(
             df = df.filter(pl.col("announce") == "A")
 
         # Re-confirm window: only emit rows within the current 5-min bucket.
-        # The bgpdump-decoded txt and the gz both contain timestamp strings
-        # like "01/03/24 14:45:00" which `_txt_to_announcements_df` parses
-        # into the `ts` column as UTC-naive datetime. We re-filter here so
-        # an out-of-range row in the source file (rare, but possible with
-        # overlapping collections) never leaks into the next 5-minute
-        # bucket.
         if "ts" in df.columns:
             ts_lo = cur
             ts_hi = cur + timedelta(minutes=5)
@@ -559,14 +551,6 @@ def iter_window_chunks(
                 pass
 
         # ── Backward-compat column aliases ──────────────────────────────────
-        # Historical detectors (hijack/leak) reference the column as
-        # `as-path` (with a hyphen), and `A/W` (with a slash). Modern Polars
-        # schema and parquet writing prefer underscores. We expose BOTH names
-        # on every chunk so the old code keeps working without modification.
-        # `DataFrame.rename` is a pure schema rename — zero copy, no row
-        # materialisation.  Using `with_columns` here was a 100x regression
-        # on a 22M-row window because Polars materialised a full copy per
-        # chunk.
         rename_map: dict = {}
         if "as_path" in df.columns and "as-path" not in df.columns:
             rename_map["as_path"] = "as-path"

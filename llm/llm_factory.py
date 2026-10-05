@@ -16,17 +16,6 @@ from llama_index.core.base.llms.types import (
 
 
 # Temperature policy
-# LLM temperature is task-specific. Hardcoding 1.0 across the board produces
-# hallucination-heavy outputs and breaks reproducibility for a security tool.
-#
-#   * REASONING  (0.1) — multi-step analysis / causal inference / debate.
-#                       Low randomness so reasoning chains stay coherent.
-#   * REPORT     (0.2) — final user-facing HTML report. Slightly higher so the
-#                       prose reads naturally, but still grounded.
-#   * CLASSIFY   (0.0) — JSON classification (severity, event_type, role...).
-#                       Deterministic so output schemas don't drift.
-#
-# Override any of these via env vars if needed (advanced users only).
 DEFAULT_TEMP_REPORT = float(os.environ.get("LLM_TEMP_REPORT", "0.2"))
 DEFAULT_TEMP_REASONING = float(os.environ.get("LLM_TEMP_REASONING", "0.1"))
 DEFAULT_TEMP_CLASSIFY = float(os.environ.get("LLM_TEMP_CLASSIFY", "0.0"))
@@ -43,10 +32,6 @@ except ImportError:
 
 
 # ── Thinking / reasoning-disable helper ─────────────────────────────────────
-# Some API providers (GLM-5, Kimi) place assistant output in reasoning_content
-# instead of content unless a vendor-specific extra_body flag is set.
-# LLM_THINKING_DISABLE (env var) holds the JSON-serialized extra_body dict.
-# We merge it with any caller-provided extra_body so both are honoured.
 _extra_body_disable: dict | None = None  # lazily parsed, cached at module level
 
 def _get_thinking_disable() -> dict | None:
@@ -129,11 +114,6 @@ def build_token_counter():
 
 
 # ── Process-wide token counter (Bug fix: react path was reporting N/A) ─────
-# TokenCountingHandler keeps per-handler totals in ``total_llm_token_count``.
-# We aggregate every handler created via ``build_token_counter()`` into a
-# module-level set so the chief agent can report a single ``Tokens: N`` line
-# even on the ReAct code path (which builds its own LLM instance and does not
-# thread the counter through to the result object).
 _GLOBAL_TOKEN_HANDLERS: list = []
 
 
@@ -167,27 +147,6 @@ def reset_global_token_counter() -> None:
 
 
 # ── 429 Rate-Limit Circuit Breaker ──────────────────────────────────────────
-# Without this, when the upstream provider rate-limits us (HTTP 429), each
-# application-level retry stacks on top of the OpenAI SDK's own retry loop,
-# which can drag a single LLM call out for several minutes and burn through
-# the report-orchestration timeout (e.g. 900s) before the report is written.
-# Two safeguards here:
-#   1. Per-process rolling window of recent 429s. When consecutive 429s exceed
-#      a threshold (default 3), the next call fails fast with a dedicated
-#      ``LLMRateLimitedError`` so the caller can render the deterministic
-#      fallback HTML instead of hanging on a doomed retry chain.
-#   3. A proactive budget tracker: GLM-5 (sfkey.cn) enforces
-#      ~1000 requests per 5-hour rolling window. We track all calls
-#      with a rolling window and block new calls before the limit is hit.
-#      If the limit IS reached, raise BudgetExhausted instead of wasting
-#      a request slot on a call that will just get a 429.
-#
-# Tunable via env vars:
-#   LLM_429_BREAKER_THRESHOLD (default 3)    consecutive 429s before tripping
-#   LLM_429_BREAKER_WINDOW_S  (default 60)   rolling window length, seconds
-#   LLM_429_COOLDOWN_S        (default 5.0)  base cool-off after a 429
-#   LLM_BUDGET_MAX_CALLS      (default 950)   max calls in budget window (keep 5% headroom)
-#   LLM_BUDGET_WINDOW_S       (default 18000)  rolling window = 5 hours = 18000s
 import threading
 import collections
 
@@ -212,8 +171,6 @@ class _RateLimitBreaker:
         # Deque of timestamps (monotonic seconds) at which a 429 was seen.
         self._hits: collections.deque[float] = collections.deque()
         # When the breaker tripped (0.0 means closed). Used by is_open()
-        # so we can distinguish "tripped" (hard block until cool-off ends)
-        # from "post-429 throttle" (soft cool-down, call still permitted).
         self._tripped_at: float = 0.0
         # Monotonic time at which the cool-off expires.
         self._cooldown_until: float = 0.0
@@ -245,8 +202,6 @@ class _RateLimitBreaker:
                 self._hits.popleft()
             if len(self._hits) >= threshold and self._tripped_at == 0.0:
                 # Just-tripped: exponential cool-off based on overshoot
-                # so a sustained 429 storm gives the provider more
-                # breathing room (5s, 10s, 20s, capped at 60s).
                 cooldown = min(
                     base_cooldown * (2 ** (len(self._hits) - threshold)),
                     60.0,
@@ -290,8 +245,6 @@ class _RateLimitBreaker:
 
 
 # Module-level singleton; shared across every OpenAICompatibleLLM instance
-# in this process so a 429 from one tool/call still trips the breaker for
-# every subsequent call until the cool-off elapses.
 _RATE_LIMIT_BREAKER = _RateLimitBreaker()
 
 
@@ -408,9 +361,6 @@ class _BudgetTracker:
                 f.write(f"{ts_wall:.6f}\n")
 
             # Rotate every N appends to bound file size. We use a file lock
-            # via a side lock file to avoid two subprocesses rotating at the
-            # same time. Rotation is best-effort; a failed rotation just
-            # leaves the file a bit larger.
             rotate_every = int(os.environ.get("LLM_BUDGET_ROTATE_EVERY", "50"))
             with self._lock:
                 self._append_count = getattr(self, "_append_count", 0) + 1
@@ -418,8 +368,6 @@ class _BudgetTracker:
                     self._rotate_shared()
         except Exception:
             # Don't fail the LLM call just because the budget file
-            # write failed — log silently. The in-process deque is
-            # still accurate.
             pass
 
     def _rotate_shared(self) -> None:
@@ -550,8 +498,6 @@ class OpenAICompatibleLLM(LLM):
         object.__setattr__(self, 'api_key', api_key)
         object.__setattr__(self, 'base_url', base_url)
         # Some endpoints (e.g. Kimi kimi-for-coding) only accept a single
-        # fixed temperature (1.0). When we detect that family, force the
-        # value the upstream expects instead of the requested default.
         model_lower = (model or "").lower()
         base_lower = (base_url or "").lower()
         is_kimi_coding = (
@@ -578,24 +524,10 @@ class OpenAICompatibleLLM(LLM):
 
             request_timeout = float(self.timeout)
             # Read timeout is what matters most for LLM responses. The hard
-            # 90s cap was originally below the orchestration timeout
-            # (COORDINATION_TIMEOUT=900s) to avoid pipeline stalls, but it
-            # becomes a bottleneck for slower endpoints (Kimi on CSTCLOUD,
-            # GLM on sfkey) whose report-stream can take several minutes.
-            # Bump it via env var to give these providers headroom while
-            # keeping the default behaviour for fast endpoints.
-            #
-            # REPORT_LLM_TIMEOUT_S (default 180s) is the hard watchdog that
-            # kills the whole report call. The httpx read timeout must be at
-            # least that large, otherwise the HTTP layer times out first and
-            # leaves us with a partial/incomplete stream that looks empty.
             report_llm_timeout = float(os.environ.get("REPORT_LLM_TIMEOUT_S", "180.0"))
             read_cap = float(os.environ.get("LLM_READ_TIMEOUT", "0"))  # 0 = no cap
             if read_cap <= 0:
                 # No cap: use the larger of request_timeout and report timeout + 60s buffer.
-                # This ensures the HTTP layer never cuts off a report call prematurely.
-                # Cap at report_llm_timeout + 30 so HTTP timeout never exceeds the
-                # application-level watchdog by more than a small margin.
                 effective_read = min(
                     max(request_timeout, report_llm_timeout + 60.0),
                     report_llm_timeout + 30.0,
@@ -610,14 +542,6 @@ class OpenAICompatibleLLM(LLM):
             )
 
             # Bug fix 2026-09-14 (BUG-R200): the OpenAI SDK retries on
-            # 429/5xx by default up to ``max_retries`` times with its own
-            # backoff (which reads Retry-After when present). That used
-            # to stack on top of the application-level retry loop,
-            # producing a multi-minute retry chain on a single rate-limit
-            # response and getting the entire orchestration subprocess
-            # SIGKILL'd by the 900s watchdog. Disable SDK-level retries
-            # at the client layer so the application owns the retry
-            # budget via the rate-limit circuit breaker instead.
             sdk_max_retries = 0
 
             self._client = OAI(
@@ -679,19 +603,6 @@ class OpenAICompatibleLLM(LLM):
                     return False
                 if code == 429:
                     # Bug fix 2026-09-14 (BUG-R200): previously 429 was
-                    # retried by the application layer, which STACKS on top
-                    # of the OpenAI SDK's own internal retry loop. The
-                    # combined retry chain could drag a single call out for
-                    # several minutes, burning through the report
-                    # orchestration timeout (e.g. 900s) and getting the
-                    # whole subprocess SIGKILL'd without writing the
-                    # report. Now: 429 is NOT application-retryable. The
-                    # caller trips the rate-limit circuit breaker (which
-                    # short-circuits all subsequent calls in the cool-off
-                    # window with a dedicated ``LLMRateLimitedError``),
-                    # and the caller is expected to fall back to the
-                    # deterministic HTML renderer instead of hanging on
-                    # a doomed retry chain.
                     return False
                 if code in (500, 502, 503, 504):
                     return True
@@ -705,8 +616,6 @@ class OpenAICompatibleLLM(LLM):
             "upstream connect error", "socket timeout",
         ]
         # NOTE: "429" and "rate limit" are deliberately removed from the
-        # application-layer retry keys — see above. Those errors must
-        # propagate so the circuit breaker can record them.
         return any(k in err_lower for k in kw)
 
     @staticmethod
@@ -818,8 +727,6 @@ class OpenAICompatibleLLM(LLM):
         """
         from llama_index.core.base.llms.types import CompletionResponse
         # ── Budget tracker guard (entry) ───────────────────────────────
-        # Check the rolling-window budget BEFORE attempting the call.
-        # This prevents wasted request slots when the GLM-5 1000/5h limit is hit.
         from llm.llm_factory import get_budget_tracker, BudgetExhausted
         try:
             get_budget_tracker().check_and_record()
@@ -828,17 +735,11 @@ class OpenAICompatibleLLM(LLM):
 
 
         # ── Circuit breaker guard (entry) ─────────────────────────────────
-        # Fail fast before doing any work if we've been rate-limited
-        # recently. The breaker is process-wide so a 429 from any tool
-        # call still protects subsequent report / debate / classify calls.
         self._breaker_guard()
 
         last_exc: Exception = RuntimeError("sentinel")
 
         # ── JSON-mode guardrail ────────────────────────────────────────────
-        # When json_mode=True we inject a concise system instruction so the
-        # model produces clean JSON even if the upstream API does not support
-        # the native json_object response_format.
         _JSON_GUARD = (
             "IMPORTANT: You must respond with ONLY valid JSON. "
             "Do NOT include any text before or after the JSON. "
@@ -852,15 +753,8 @@ class OpenAICompatibleLLM(LLM):
             try:
                 last_exc = None  # clear on successful entry
                 # Allow caller to override max_tokens per-call (e.g. for
-                # Kimi report generation which needs a smaller cap to stay
-                # under the upstream API rate limit).
                 call_max_tokens = kwargs.get("max_tokens", self.max_tokens)
                 # Bug fix 2026-09-14 (BUG-R200 corollary): the OpenAI SDK
-                # has its own retry loop, which previously stacked on top
-                # of this application-level loop and could produce a
-                # multi-minute retry chain on a single 429. Pass an
-                # explicit ``max_retries=0`` per-call so the SDK does NOT
-                # retry; our breaker handles backoff policy globally.
                 response = self.client.chat.completions.create(
                     model=self._model_name,
                     messages=[{"role": "user", "content": prompt}],
@@ -869,9 +763,6 @@ class OpenAICompatibleLLM(LLM):
                     stream=False,
                     extra_body=_merge_extra_body(kwargs.get("extra_body")),
                     # Disable SDK-level retries so we own the retry budget
-                    # via the breaker. The SDK will still respect a
-                    # single transient timeout/connection failure by
-                    # raising it immediately, which is what we want.
                 )
                 text = _extract_message_text(response.choices[0].message)
 
@@ -925,9 +816,6 @@ class OpenAICompatibleLLM(LLM):
             except Exception as e:
                 last_exc = e  # always preserve the actual error
                 # Rate-limit specific path: record into the breaker so
-                # subsequent calls short-circuit instead of compounding
-                # the retry storm. The breaker raises ``LLMRateLimitedError``
-                # on the next entry if the threshold is exceeded.
                 if self._is_rate_limit_error(e):
                     tripped = _RATE_LIMIT_BREAKER.record_hit()
                     if tripped:
@@ -969,10 +857,6 @@ class OpenAICompatibleLLM(LLM):
 
     def stream_complete(self, prompt, formatted=False, **kwargs):
         # Bug fix 2026-09-14 (BUG-R200): check the rate-limit circuit
-        # breaker on entry so streaming calls fail fast too.
-        # ── Budget tracker guard (entry) ───────────────────────────────
-        # Check the rolling-window budget BEFORE attempting the call.
-        # This prevents wasted request slots when the GLM-5 1000/5h limit is hit.
         from llm.llm_factory import get_budget_tracker, BudgetExhausted
         try:
             get_budget_tracker().check_and_record()
@@ -1025,10 +909,6 @@ class OpenAICompatibleLLM(LLM):
 
     def chat(self, messages, **kwargs):
         # Bug fix 2026-09-14 (BUG-R200): check the rate-limit circuit
-        # breaker on entry so non-streaming chat calls fail fast too.
-        # ── Budget tracker guard (entry) ───────────────────────────────
-        # Check the rolling-window budget BEFORE attempting the call.
-        # This prevents wasted request slots when the GLM-5 1000/5h limit is hit.
         from llm.llm_factory import get_budget_tracker, BudgetExhausted
         try:
             get_budget_tracker().check_and_record()
@@ -1067,14 +947,6 @@ class OpenAICompatibleLLM(LLM):
             )
         except Exception as e:
             # Bug fix 2026-09-13 (BUG-R67): previously every chat()
-            # error was re-raised as ``"LLM chat timed out..."``,
-            # regardless of the actual cause. That hid e.g.
-            # authentication failures, model-not-found, or rate-limit
-            # errors behind a misleading "timed out" message, making
-            # network diagnostics confusing. Now we keep the original
-            # exception class and only rephrase the message if the
-            # cause really is a timeout — otherwise we re-raise the
-            # original exception.
             if self._is_rate_limit_error(e):
                 tripped = _RATE_LIMIT_BREAKER.record_hit()
                 if tripped:
@@ -1102,8 +974,6 @@ class OpenAICompatibleLLM(LLM):
 
     def stream_chat(self, messages, **kwargs):
         # Budget tracker guard (entry) — check rolling-window budget
-        # before opening the stream so we don't waste a request slot.
-        # Same logic as complete() / chat(); see _BudgetTracker for details.
         from llm.llm_factory import get_budget_tracker, BudgetExhausted
         try:
             get_budget_tracker().check_and_record()
@@ -1229,19 +1099,6 @@ def setup_llm_settings(
     )
 
     # Bug fix 2026-09-13 (BUG-R66): previously every call to
-    # ``setup_llm_settings`` registered a fresh TokenCountingHandler
-    # in ``_GLOBAL_TOKEN_HANDLERS`` (module-level list) and never
-    # cleaned up the old ones. Over the lifetime of a long-running
-    # batch driver (17+ call sites in this codebase), the list grew
-    # unboundedly — each handler holds accumulated token counts in
-    # llama-index's TokenCountingHandler, so ``get_global_token_counter()``
-    # returned the *sum across all past runs*, not the current run.
-    # The chief_agent summary line then printed e.g. ``Tokens: 854,000``
-    # after one batch that actually consumed 12,000.
-    #
-    # We now cap the registry at ``_MAX_TOKEN_HANDLERS`` (default 16)
-    # by dropping the oldest entries on overflow, which bounds both
-    # the memory footprint and the historic-token accumulation.
     token_counter = build_token_counter()
     _GLOBAL_TOKEN_HANDLERS.append(token_counter)
     if len(_GLOBAL_TOKEN_HANDLERS) > _MAX_TOKEN_HANDLERS:

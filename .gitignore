@@ -84,7 +84,15 @@ data/event_plots/
 .env.deepseek
 
 # Configuration with sensitive data
+#
+# The real config.py reads .env, so it holds no secrets itself and is imported
+# by nearly every module in the project. It must be tracked: leaving it
+# ignored means a fresh clone cannot import `config`, so every entry point
+# fails at import time and the ignored file is invisible to `git status`.
 config.py
+
+# Per-AS prefix2as expansion caches (regenerable from data/prefix2as).
+data/prefix2as/ipv6_cache/
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -117,3 +125,9 @@ htmlcov/
 dmypy.json
 
 data_check/evaluation/run_*/
+
+# Pre-submission cleanup 2026-10-02
+_graveyard/
+scripts/_archive_round29/
+data_check/ground_truth_collection/_archive/
+data_check/ground_truth_collection/_archive_old/
