@@ -37,10 +37,6 @@ import pytest
 
 
 # ──────────────────────────────────────────────────────────────────────
-# 1. Standalone generator runs substitution
-# ──────────────────────────────────────────────────────────────────────
-
-
 def test_standalone_generate_report_html_substitutes_traffic_refs(monkeypatch, tmp_path):
     """Standalone ``generate_report_html`` must call
     ``_substitute_field_references`` so ``[traffic.*]`` and
@@ -56,15 +52,6 @@ def test_standalone_generate_report_html_substitutes_traffic_refs(monkeypatch, t
     monkeypatch.setenv("BGP_TRACER_DISABLE_LLM_REPORT", "1")
 
     # We bypass the disabled fallback by patching the LLM-completion
-    # code path. The standalone function's first action after building
-    # payload is to call llm.complete(). We substitute by manipulating
-    # the html stream so that, after the trailing balance/auto-close
-    # passes, the saved file is something we fully control.
-    #
-    # Easiest path: directly invoke the post-processing functions on a
-    # hand-rolled HTML string — that proves substitution + width fix +
-    # balance work without involving the real LLM or network.
-
     sample_html = (
         "<html><head><title>X</title></head><body>"
         "<div class='report-container'>"
@@ -102,10 +89,6 @@ def test_standalone_generate_report_html_substitutes_traffic_refs(monkeypatch, t
 
 
 # ──────────────────────────────────────────────────────────────────────
-# 2. ASN-keyed traffic flatten helper
-# ──────────────────────────────────────────────────────────────────────
-
-
 def test_generate_report_flattens_asn_keyed_traffic():
     """The react path receives ``analyze_traffic`` evidence shaped like
     ``{success, results: {ASN: {...detector fields...}}}``. The flatten
@@ -138,10 +121,6 @@ def test_generate_report_flattens_asn_keyed_traffic():
 
 
 # ──────────────────────────────────────────────────────────────────────
-# 3. max_severity auto-added
-# ──────────────────────────────────────────────────────────────────────
-
-
 def test_generate_report_adds_max_severity_when_missing(monkeypatch):
     """The detector output doesn't include ``max_severity``; the
     flattened react-path payload must derive it from the anomalies list

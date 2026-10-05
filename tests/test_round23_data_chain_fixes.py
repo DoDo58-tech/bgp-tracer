@@ -72,8 +72,6 @@ def test_anchor_three_tables_distinct_headings_each_lands_correctly():
     b_pos = out.find("<table>B</table>")
     c_pos = out.find("<table>C</table>")
     # The table position must be greater than the heading opening tag
-    # position (table comes after heading), and less than the next
-    # heading opening tag position.
     ta_heading_pos = out.find("Traffic Analysis</h2>") + len("Traffic Analysis</h2>")
     tan_heading_pos = out.find("Traffic Anomaly Events</h2>") + len("Traffic Anomaly Events</h2>")
     hij_heading_pos = out.find("Origin Hijacking Events</h2>") + len("Origin Hijacking Events</h2>")

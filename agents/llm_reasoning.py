@@ -1,13 +1,13 @@
 """
-LLM 增强推理模块
+LLM 
 ================
 
-用 LLM 替代硬编码的事件分类、严重性评估等。
+ LLM 、。
 
-核心改进：
-- LLM 根据上下文动态评估事件类型
-- LLM 根据证据动态计算严重性
-- LLM 提供更准确的分类置信度
+：
+- LLM 
+- LLM 
+- LLM 
 """
 
 from __future__ import annotations
@@ -38,13 +38,13 @@ def _safe_event_get(event, key, default=None):
     return getattr(event, key, default)
 
 
-# LLM 事件分类器
+# LLM 
 
 class LLMIncidentClassifier:
     """
-    LLM 驱动的事件分类器
+    LLM 
     
-    根据路由和流量数据，动态评估事件类型。
+    ，。
     """
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in incident classification.
@@ -108,11 +108,11 @@ If multiple types are possible, provide alternative classifications with confide
 
     def __init__(self, llm=None):
         self.llm = llm
-        # 已显式传入 LLM（例如被注入的 BadLLM / mock）→ 跳过 ensure_llm
+        #  LLM（ BadLLM / mock）→  ensure_llm
         self._llm_initialized = llm is not None
 
     def ensure_llm(self):
-        """延迟初始化 LLM；初始化失败时抛出异常，不静默回退。"""
+        """ LLM；，。"""
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL,
@@ -132,7 +132,7 @@ If multiple types are possible, provide alternative classifications with confide
         run_id: str = "",
     ) -> Dict[str, Any]:
         """
-        分类事件类型
+        
         
         Returns:
             {
@@ -146,7 +146,7 @@ If multiple types are possible, provide alternative classifications with confide
         """
         self.ensure_llm()
 
-        # 提取数据
+        # 
         origin_hijacked = routing_data.get("origin_hijacked", []) or routing_data.get("origin_hijack", []) or []
         forge_hijacked = routing_data.get("forge_hijacked", []) or routing_data.get("forge_hijack", []) or []
         leaks = routing_data.get("route_leaks", []) or []
@@ -156,7 +156,7 @@ If multiple types are possible, provide alternative classifications with confide
         traffic_count = traffic_data.get("anomaly_count", 0) or 0
         percent_change = traffic_data.get("percent_change", 0.0) or 0.0
 
-        # 如果没有异常，用规则快速判断
+        # ，
         if not (origin_hijacked or forge_hijacked or leaks or traffic_anomaly):
             return {
                 "incident_type": "No Anomaly Detected",
@@ -170,7 +170,7 @@ If multiple types are possible, provide alternative classifications with confide
         self.ensure_llm()
 
         try:
-            # 限制事件数量避免 token 过多
+            #  token 
             origin_sample = origin_hijacked[:2] if origin_hijacked else []
             forge_sample = forge_hijacked[:2] if forge_hijacked else []
             leak_sample = leaks[:2] if leaks else []
@@ -218,7 +218,7 @@ If multiple types are possible, provide alternative classifications with confide
         traffic_anomaly: bool,
         traffic_count: int,
     ) -> Dict[str, Any]:
-        """规则-based 分类（备用）"""
+        """-based （）"""
         if origin_hijacked:
             return {
                 "incident_type": "Origin Hijacking",
@@ -275,7 +275,7 @@ If multiple types are possible, provide alternative classifications with confide
             }
 
     def parse_llm_response(self, response: str) -> Dict[str, Any]:
-        """解析 LLM 响应"""
+        """ LLM """
         try:
             # Use brace-balanced extraction so values containing
             # literal ``{...}`` substrings don't truncate the JSON.
@@ -304,13 +304,13 @@ If multiple types are possible, provide alternative classifications with confide
         }
 
 
-# LLM 严重性评估器
+# LLM 
 
 class LLMSeverityAssessor:
     """
-    LLM 驱动的严重性评估器
+    LLM 
     
-    根据事件特征动态评估严重性。
+    。
     """
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in incident severity assessment.
@@ -371,11 +371,11 @@ Assess the severity of this incident based on:
 
     def __init__(self, llm=None):
         self.llm = llm
-        # 已显式传入 LLM（例如被注入的 BadLLM / mock）→ 跳过 ensure_llm
+        #  LLM（ BadLLM / mock）→  ensure_llm
         self._llm_initialized = llm is not None
 
     def ensure_llm(self):
-        """延迟初始化 LLM；初始化失败时抛出异常，不静默回退。"""
+        """ LLM；，。"""
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL,
@@ -395,7 +395,7 @@ Assess the severity of this incident based on:
         run_id: str = "",
     ) -> Dict[str, Any]:
         """
-        评估严重性
+        
         
         Returns:
             {
@@ -409,12 +409,12 @@ Assess the severity of this incident based on:
         """
         self.ensure_llm()
 
-        # 提取数据
+        # 
         origin_hijacked = routing_data.get("origin_hijacked", []) or routing_data.get("origin_hijack", []) or []
         forge_hijacked = routing_data.get("forge_hijacked", []) or routing_data.get("forge_hijack", []) or []
         leaks = routing_data.get("route_leaks", []) or []
         
-        # 统计唯一前缀
+        # 
         prefixes = set()
         for event in origin_hijacked + forge_hijacked + leaks:
             prefix = _safe_event_get(event, "prefix")
@@ -425,7 +425,7 @@ Assess the severity of this incident based on:
         traffic_count = traffic_data.get("anomaly_count", 0) or 0
         percent_change = abs(traffic_data.get("percent_change", 0.0) or 0.0)
 
-        # 如果没有事件，快速返回低严重性
+        # ，
         if not (origin_hijacked or forge_hijacked or leaks) and not traffic_anomaly:
             return {
                 "severity": "Low",
@@ -479,10 +479,10 @@ Assess the severity of this incident based on:
         percent_change: float,
         duration_minutes: float,
     ) -> Dict[str, Any]:
-        """规则-based 严重性评估（备用）"""
+        """-based （）"""
         score = 0
         
-        # 事件数量
+        # 
         event_count = origin_count + forge_count + leak_count
         if event_count >= 5:
             score += 30
@@ -491,7 +491,7 @@ Assess the severity of this incident based on:
         elif event_count >= 1:
             score += 10
         
-        # 影响范围
+        # 
         if prefix_count >= 5:
             score += 25
         elif prefix_count >= 3:
@@ -499,7 +499,7 @@ Assess the severity of this incident based on:
         elif prefix_count >= 1:
             score += 5
         
-        # 流量影响
+        # 
         if traffic_anomaly and percent_change >= 50:
             score += 30
         elif traffic_anomaly and percent_change >= 20:
@@ -507,7 +507,7 @@ Assess the severity of this incident based on:
         elif traffic_anomaly:
             score += 10
         
-        # 持续时间
+        # 
         if duration_minutes > 120:
             score += 15
         elif duration_minutes > 30:
@@ -515,7 +515,7 @@ Assess the severity of this incident based on:
         elif duration_minutes > 10:
             score += 5
         
-        # 确定严重性级别
+        # 
         if score >= 70:
             severity = "High"
         elif score >= 40:
@@ -538,7 +538,7 @@ Assess the severity of this incident based on:
         }
 
     def parse_llm_response(self, response: str) -> Dict[str, Any]:
-        """解析 LLM 响应"""
+        """ LLM """
         try:
             snippet = _extract_json_object(response)
             if snippet is not None:
@@ -565,13 +565,13 @@ Assess the severity of this incident based on:
         }
 
 
-# LLM 流量关联评估器
+# LLM 
 
 class LLMTrafficCorrelator:
     """
-    LLM 驱动的流量关联评估器
+    LLM 
     
-    评估路由异常与流量异常之间的关联性。
+    。
     """
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in causal correlation analysis.
@@ -627,11 +627,11 @@ Consider timing, intensity, and possible alternative explanations.
 
     def __init__(self, llm=None):
         self.llm = llm
-        # 已显式传入 LLM（例如被注入的 BadLLM / mock）→ 跳过 ensure_llm
+        #  LLM（ BadLLM / mock）→  ensure_llm
         self._llm_initialized = llm is not None
 
     def ensure_llm(self):
-        """延迟初始化 LLM；初始化失败时抛出异常，不静默回退。"""
+        """ LLM；，。"""
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL,
@@ -648,7 +648,7 @@ Consider timing, intensity, and possible alternative explanations.
         run_id: str = "",
     ) -> Dict[str, Any]:
         """
-        评估关联性
+        
         
         Returns:
             {
@@ -664,7 +664,7 @@ Consider timing, intensity, and possible alternative explanations.
         """
         self.ensure_llm()
 
-        # 提取数据
+        # 
         origin_hijacked = routing_data.get("origin_hijacked", []) or routing_data.get("origin_hijack", []) or []
         forge_hijacked = routing_data.get("forge_hijacked", []) or routing_data.get("forge_hijack", []) or []
         leaks = routing_data.get("route_leaks", []) or []
@@ -673,7 +673,7 @@ Consider timing, intensity, and possible alternative explanations.
         traffic_count = traffic_data.get("anomaly_count", 0) or 0
         percent_change = traffic_data.get("percent_change", 0.0) or 0.0
 
-        # 快速检查
+        # 
         routing_count = len(origin_hijacked) + len(forge_hijacked) + len(leaks)
         if routing_count == 0 and not traffic_anomaly:
             return {
@@ -712,7 +712,7 @@ Consider timing, intensity, and possible alternative explanations.
         self.ensure_llm()
 
         try:
-            # 构建事件详情（限制数量）
+            # （）
             routing_details = []
             for event in (origin_hijacked + forge_hijacked + leaks)[:3]:
                 ts = _safe_event_get(event, "timestamp") or _safe_event_get(event, "first_seen", "unknown")
@@ -763,9 +763,9 @@ Consider timing, intensity, and possible alternative explanations.
         traffic_count: int,
         percent_change: float,
     ) -> Dict[str, Any]:
-        """规则-based 关联评估（备用）"""
+        """-based （）"""
         if routing_count > 0 and traffic_anomaly:
-            # 简单的时间/强度关联评估
+            # /
             intensity = min(1.0, (routing_count / 5) * (abs(percent_change) / 50))
             
             return {
@@ -791,7 +791,7 @@ Consider timing, intensity, and possible alternative explanations.
         }
 
     def parse_llm_response(self, response: str) -> Dict[str, Any]:
-        """解析 LLM 响应"""
+        """ LLM """
         try:
             snippet = _extract_json_object(response)
             if snippet is not None:

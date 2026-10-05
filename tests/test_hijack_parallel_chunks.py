@@ -1,14 +1,13 @@
 """Tests for the parallel chunk-processing refactor (Round-24 perf fix).
 
-The hijack detector used to process each chunk sequentially. After the
-refactor it dispatches each chunk to a worker process via
-ProcessPoolExecutor. These tests verify:
+The hijack detector dispatches each chunk to a worker thread via
+ThreadPoolExecutor, bounded to CHUNK_INFLIGHT chunks in flight so peak memory
+does not grow with the width of the analysis window. These tests verify:
 
   1. The worker function handles empty / malformed input safely.
   2. The worker function returns alerts with the expected shape.
   3. The serial path (BGP_TRACER_PARALLEL_CHUNKS=0) still works.
-  4. The parallel path produces the same result structure as the serial
-     one (no broken shared state, no missing alerts).
+  4. The in-flight cap is enforced and chunks merge in temporal order.
 
 Most of these are unit tests of _process_chunk_worker; the end-to-end
 parallel vs serial parity is exercised by the existing smoke tests
@@ -66,8 +65,6 @@ def test_worker_filters_to_announces_only():
     ]
     out = _process_chunk_worker((records, _make_params()))
     # Only the A row is processed; the W row is filtered out.
-    # It may produce zero alerts (synthetic data is not a real hijack),
-    # but it MUST NOT crash and MUST NOT return alerts with W data.
     assert isinstance(out, list)
 
 
@@ -129,16 +126,15 @@ def test_detect_hijacks_batch_has_parallel_path():
     from detectors.hijack.hijack_detector import detect_hijacks_batch
     src = inspect.getsource(detect_hijacks_batch)
     assert "BGP_TRACER_PARALLEL_CHUNKS" in src, "parallel gate should be present"
-    assert "ProcessPoolExecutor" in src, "worker pool should be wired"
+    assert "ThreadPoolExecutor" in src, "worker pool should be wired"
     assert "_process_chunk_worker" in src, "worker fn should be referenced"
+    assert "CHUNK_INFLIGHT" in src, "in-flight cap should bound resident chunks"
 
 
 def test_parallel_is_default_when_env_unset():
     """Without BGP_TRACER_PARALLEL_CHUNKS=0, the parallel path is selected."""
     os.environ.pop("BGP_TRACER_PARALLEL_CHUNKS", None)
     # Re-read the source: the gate is `_os.environ.get("...", "1") != "0"`
-    # which means parallel=1 by default. We verify this by parsing the
-    # source rather than calling the function (which would need network).
     import inspect
     from detectors.hijack.hijack_detector import detect_hijacks_batch
     src = inspect.getsource(detect_hijacks_batch)
@@ -163,3 +159,127 @@ def test_detect_hijacks_batch_serial_path_compatible():
         )
     finally:
         os.environ.pop("BGP_TRACER_PARALLEL_CHUNKS", None)
+
+
+# ─── Bounded in-flight window ─────────────────────────────────────────────
+
+
+class _Recorder:
+    def __init__(self):
+        self.chunks = []
+
+    def add_chunk(self, chunk):
+        self.chunks.append(len(chunk))
+
+
+def _build_batch(asns):
+    return {
+        asn: {
+            "_aggregator": _Recorder(),
+            "origin_hijacked": [],
+            "origin_hijacking": [],
+            "forge_hijack": [],
+        }
+        for asn in asns
+    }
+
+
+def test_merge_chunk_alerts_buckets_and_strips_tag():
+    """Alerts are routed to the right per-AS bucket and __asn is removed."""
+    from detectors.hijack.hijack_detector import _merge_chunk_alerts
+
+    batch = _build_batch(["AS1", "AS2"])
+    _merge_chunk_alerts(
+        batch,
+        [
+            {"__asn": "AS1", "hijack_type": "origin_hijacked", "t": 1},
+            {"__asn": "AS1", "hijack_type": "origin_hijacked", "t": 2},
+            {"__asn": "AS1", "hijack_type": "forge_hijack", "t": 3},
+            {"__asn": "AS404", "hijack_type": "origin_hijacked", "t": 4},
+            "not-a-dict",
+        ],
+    )
+
+    assert len(batch["AS1"]["origin_hijacked"]) == 2
+    assert len(batch["AS1"]["forge_hijack"]) == 1
+    assert batch["AS2"]["origin_hijacked"] == []
+    assert all("__asn" not in h for h in batch["AS1"]["origin_hijacked"])
+
+
+def test_merge_chunk_alerts_respects_sample_cap():
+    """Retained alert samples stop at MAX_ALERT_SAMPLE; counts still flow
+    to the aggregator, which is what the report quotes."""
+    from detectors.hijack import hijack_detector as hd
+
+    batch = _build_batch(["AS1"])
+    original_cap = hd.MAX_ALERT_SAMPLE
+    hd.MAX_ALERT_SAMPLE = 3
+    try:
+        hd._merge_chunk_alerts(
+            batch,
+            [
+                {"__asn": "AS1", "hijack_type": "origin_hijacked", "i": i}
+                for i in range(10)
+            ],
+        )
+    finally:
+        hd.MAX_ALERT_SAMPLE = original_cap
+
+    assert len(batch["AS1"]["origin_hijacked"]) == 3
+    assert batch["AS1"]["_aggregator"].chunks == [10]
+
+
+def test_inflight_cap_holds_and_merges_in_order():
+    """The pump never exceeds CHUNK_INFLIGHT and merges in chunk order.
+
+    Workers deliberately finish out of order, so a pump that collected by
+    completion time would interleave the alert samples and lose the temporal
+    ordering the report relies on.
+    """
+    import time
+    from collections import deque
+    from concurrent.futures import ThreadPoolExecutor
+
+    from detectors.hijack.hijack_detector import (
+        _merge_chunk_alerts,
+        CHUNK_INFLIGHT,
+    )
+
+    n_chunks = 40
+    asns = [f"AS{i}" for i in range(1, 4)]
+    batch = _build_batch(asns)
+
+    def worker(idx):
+        time.sleep(0.01 if idx % 2 == 0 else 0.001)
+        return [
+            {
+                "__asn": asns[idx % len(asns)],
+                "hijack_type": "origin_hijacked",
+                "i": idx,
+            }
+        ]
+
+    peak = 0
+    next_idx = 0
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        pending = deque()
+        exhausted = False
+        while not exhausted or pending:
+            while not exhausted and len(pending) < CHUNK_INFLIGHT:
+                if next_idx >= n_chunks:
+                    exhausted = True
+                    break
+                pending.append(ex.submit(worker, next_idx))
+                next_idx += 1
+                peak = max(peak, len(pending))
+            if pending:
+                _merge_chunk_alerts(batch, pending.popleft().result())
+
+    assert peak <= CHUNK_INFLIGHT, f"in-flight {peak} exceeded cap {CHUNK_INFLIGHT}"
+
+    seen = []
+    for asn in asns:
+        idxs = [h["i"] for h in batch[asn]["origin_hijacked"]]
+        assert idxs == sorted(idxs), f"{asn} merged out of temporal order"
+        seen.extend(idxs)
+    assert sorted(seen) == list(range(n_chunks)), "chunks lost or duplicated"

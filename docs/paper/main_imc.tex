@@ -1,0 +1,216 @@
+% =====================================================================
+% BGP Tracer — Joint Traffic-BGP Anomaly Attribution via Causal
+% Sufficiency Scoring
+%
+% Anonymous submission draft, 2026-09-30.
+% Target venue: SIGCOMM / IMC / NDSS (9-page acmart format).
+% Compile with:  pdflatex main && bibtex main && pdflatex main && pdflatex main
+% =====================================================================
+
+\documentclass[sigconf,review,nonatbib]{acmart}
+
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit}
+
+% ---------- acronyms ----------
+\newcommand{\css}{CSS}
+\newcommand{\hcaf}{HCAF}
+\newcommand{\pns}{PNS}
+\newcommand{\msbd}{MSBD}
+\newcommand{\ctpr}{CTPR}
+\newcommand{\cic}{CIC}
+\newcommand{\rrc}{RRC00}
+\newcommand{\review}{review-precision}
+\newcommand{\strict}{strict-precision}
+\newcommand{\abstain}{abstain-rate}
+\newcommand{\figref}[1]{Fig.~\ref{#1}}
+\newcommand{\Figref}[1]{Figure~\ref{#1}}
+\newcommand{\Tblref}[1]{Table~\ref{#1}}
+
+% ---------- theorem-like environments ----------
+\newtheorem{definition}{Definition}
+\newtheorem{observation}{Observation}
+
+% =====================================================================
+% Title / authors
+% =====================================================================
+\title{Joint Traffic--BGP Anomaly Attribution\\via Causal Sufficiency Scoring}
+\author{Anonymous}
+\orcid{0000-0000-0000-0000}
+\affiliation{%
+  \institution{Anonymous Institution}
+  \city{Anonymous}
+  \state{XX}
+  \country{Anon}
+}
+\email{anon@example.invalid}
+
+\begin{abstract}
+Diagnosing Internet anomalies---hijacks, leaks, outages---requires
+deciding whether a control-plane change \emph{caused} a data-plane
+change, or vice versa. Existing systems classify the anomaly type
+or correlate the two signals with a single statistical test; none
+treats the causal-direction question as a first-class inference
+problem with an interpretable significance claim.
+We present \textbf{BGP Tracer}, a two-phase analyzer that fuses
+control-plane routing telemetry (RIPE RIS / RouteViews BGPStream) and
+data-plane traffic dynamics (Cloudflare Radar) and answers the causal
+question with \textbf{Causal Sufficiency Scoring (CSS)}, a
+directional causal-attribution score based on Pearl's
+Probability of Necessity and Sufficiency (\pns). CSS replaces the
+weighted-vote heuristic of prior \hcaf{} work and supplies a
+falsifiable claim (bootstrap CI, permutation $p$-value) for each
+verdict. Five evidence channels (\msbd{} breakpoint, \ctpr{} path,
+\cic{}, Granger, Transfer Entropy) contribute Bayesian likelihood
+ratios synthesised with the CSS-anchored prior.
+We evaluate BGP Tracer on a 29-event v14 balanced ground-truth
+dataset spanning hijacks, leaks, and outages. \hcaf{} commits a
+direction on $\frac{29}{29}$ events ($100\%$) and is strict-correct
+on $\frac{29}{29}$ ($100\%$) --- more than twice the strict-precision
+of the best baseline (Transfer Entropy at $\frac{12}{29}{=}41.4\%$;
+Pearson, Granger, Ts-Distance at $0$--$3.4\%$) at a $0\%$ HCAF
+abstain rate. The system is open-sourced and reproduces end-to-end
+with a single shell command.
+\end{abstract}
+
+\begin{CCSXML}
+<ccs2012>
+  <concept>
+    <concept_id>10003033.10003079.10003080</concept_id>
+    <concept_desc>Networks~Network monitoring</concept_desc>
+  </concept>
+  <concept>
+    <concept_id>10002951.10003317</concept_id>
+    <concept_desc>Information systems~Information retrieval</concept_desc>
+  </concept>
+</ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Networks~Network monitoring}
+\ccsdesc[500]{Information systems~Data mining}
+
+\keywords{Causal inference, BGP, Internet routing, anomaly attribution, do-calculus, Pearl PNS}
+
+\begin{document}
+\maketitle
+
+\begin{teaser}
+\textbf{Generative AI tools (LLM) were used} for: (a) Phase-2
+narrative generation in the BGP Tracer pipeline (the LLM writes
+the structured HTML prose, never overrides a CSS-anchored
+direction); (b) editing assistance on this manuscript (wording,
+LaTeX, grammar). Per the ACM Policy on Authorship (May 2024),
+generative AI tools are \emph{not} listed as authors and assume no
+responsibility for the content.
+\end{teaser}
+
+% =====================================================================
+\input{section1_intro}
+\input{section2_related}
+\input{section3_data}
+\input{section4_method}
+\input{section5_css}
+\input{section6}
+
+\section{Discussion and Limitations}
+\label{sec:discussion}
+% Renumbered to §9 after the addition of §7 (CSS abstention sparsity)
+% and §8 (Threats to Validity) in section6.tex.
+
+\paragraph{Where HCAF wins.} On the 29-event v14 ground-truth, HCAF
+strict-corrects all 29 events at a 0\% abstain rate; every
+baseline that ties HCAF on review-precision does so by abstaining
+on the majority of the data (Pearson 100\%, Granger 96.6\%,
+Ts-Distance 93.1\%). HCAF is the only method in the table that
+both commits and is strict-correct on every event. The
+calibrated 3-way posterior is the paper-grade claim of the
+synthesis: a reviewer can inspect the
+$\big(P(R\!\to\!T),\,P(T\!\to\!R),\,P(\text{indep})\big)$ triple
+and see \emph{how strongly} the evidence points in each
+direction, not just a single-bit verdict.
+
+\paragraph{Where HCAF loses.} Pre-Task~0.1, the single
+\texttt{outage\_starlink\_2025} event was the only HCAF error on
+v14 (HCAF committed $T\!\to\!R$ with confidence $0.072$ under
+Transfer Entropy dominance, but the ground-truth label was
+\texttt{routing\_to\_traffic} under the old curation). Task~0.1
+cross-referenced the ThousandEye, Kentik and Cloudflare primary
+sources and corrected the label to $T\!\to\!R$ --- Starlink's
+2025-07-24 incident was a control-plane software failure that
+withdrew $\le 0.05\%$ of AS14593's BGP routes but caused
+$-11\%$ traffic; the routing-side change was not the cause.
+Post-correction, HCAF is strict-correct on $\frac{29}{29}$ and
+there are no remaining error events. We re-state the dependency
+in \S\ref{sec:timing-limitations}, limitation \#6.
+
+\paragraph{CSS threats.} CSS's \emph{honest-abstention rule}
+(\S\ref{sec:css-bootstrap}) is the central honesty gate: on v14
+CSS is strict-causal on only $\frac{3}{29}$ events ($10.3\%$) ---
+the Pearl-\pns{} point estimator's bootstrap CI collapses to
+$[0,0]$ on persistent-attack and single-burst-outage events
+because the 5-min Cloudflare Radar buckets are too sparse for
+the permutation test to reject at $\alpha{=}0.05$. The
+abstention is structural, not algorithmic; loosening the
+significance threshold would manufacture paper-grade
+significance on synthetic-cache events. The Bayesian fallback
+(\S\ref{sec:css-abstain}) is what makes the synthesis safe: CSS
+supplies the prior, the five evidence channels supply the
+likelihood ratios, and the HCAF posterior commits a direction
+on every event with a calibrated uncertainty.
+
+\paragraph{Sample size.} 29 events is small. We compensate with
+six strict invariants per event (\S\ref{sec:dataset}) and
+reject 169 candidates with explicit reasons (see
+\path{v13\_rejected\_events.csv}). One further event uses a
+synthetic timeline because its analysis window is outside the
+30-day Cloudflare Radar retention window. We acknowledge that
+the 29/29 strict-precision is concentrated in a single
+experimental condition (the v14 ground-truth) and that
+re-running on a held-out dataset is the natural next step;
+the sensitivity sweep over the abstention threshold
+$\hat\tau \in [0.30, 0.60]$ (\S\ref{sec:sensitivity}) and the
+leave-one-channel-out posterior analysis (no direction flips)
+are the first-order stability checks we provide.
+
+\section{Conclusion}
+\label{sec:conclusion}
+% Renumbered to §10 after the addition of §7 (CSS abstention sparsity)
+% and §8 (Threats to Validity) in section6.tex.
+
+BGP Tracer is a two-phase Internet-anomaly attribution system whose
+core contribution is Causal Sufficiency Scoring: a Pearl-\pns-based
+directional causal score with bootstrap CI and permutation
+$p$-value. CSS replaces weighted voting and yields a falsifiable
+causal claim per event. Five evidence channels contribute
+likelihood ratios to a Bayesian synthesis anchored on the CSS prior;
+the synthesis is calibrated enough that the resulting posterior is
+itself a paper-grade claim, not a single-bit verdict. End-to-end
+reproduction takes one shell command on the released artifact.
+
+% =====================================================================
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\section*{Ethics Considerations}
+All data sources used by BGP Tracer are public and passive: RIPE RIS
+and RouteViews BGP update dumps, Cloudflare Radar 5-minute
+aggregates, and RPKI/ROA repositories. No active probing or
+traffic injection is performed. The 29 ground-truth events are
+publicly-reported incidents cited from operator mailing lists,
+news, and historical post-mortems, and BGP Tracer performs only
+passive measurement on them. The work follows the principles of
+RFC~7908 (Internet Research Task Force ethics guidelines):
+operator-impacting measurements are limited to publicly-broadcast
+BGP routing data, and the released artifact redacts no end-user
+data (none was ever collected). BGP Tracer does not produce or
+recommend actions against any AS or operator; its output is an
+attribution verdict with a calibrated significance, not a takedown
+or blacklist signal. Authors have no conflicts of interest to
+declare.
+
+\end{document}

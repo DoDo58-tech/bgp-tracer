@@ -77,8 +77,6 @@ def test_jitter_env_var_overrides_range():
     os.environ["BGP_TRACER_CTPR_PSEUDO_DELAY_JITTER"] = "10"
     try:
         # Reload to pick up the new env var. The function reads it on
-        # every call, but Python may have already imported the module.
-        # Force a re-import via sys.modules.
         import importlib
         import agents.causal_attribution as ca_mod
         importlib.reload(ca_mod)

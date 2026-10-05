@@ -32,17 +32,22 @@ if str(ROOT) not in sys.path:
 
 
 # ---------------------------------------------------------------------------
-# BUG-R121: run_mode no longer leaks file descriptors
-# ---------------------------------------------------------------------------
-
 def test_run_mode_uses_with_open_for_subprocess_stdout():
-    """BUG-R121: ``run_mode`` must use ``with open(...)`` when piping
+    """BUG-R121: ``run_one`` must use ``with open(...)`` when piping
     subprocess output to a log file so the file handle is closed
     deterministically — not left to GC. Without that, long batch
-    runs leak descriptors on every event."""
+    runs leak descriptors on every event.
+
+    UPDATED 2026-10-05: the function was renamed ``run_mode`` -> ``run_one``
+    during slimming, so this test had been failing with AttributeError. The
+    invariant itself is still intact at scripts/run_4mode_batch.py:177.
+    """
     from scripts import run_4mode_batch
 
-    src = inspect.getsource(run_4mode_batch.run_mode)
+    assert hasattr(run_4mode_batch, "run_one"), (
+        "run_4mode_batch must still expose run_one (renamed from run_mode)"
+    )
+    src = inspect.getsource(run_4mode_batch.run_one)
     # Strip comments + docstrings so the BUG-R121 explanation in the
     # method's comments doesn't itself trip the assertion.
     code_only = re.sub(r"#.*", "", src)
@@ -50,11 +55,11 @@ def test_run_mode_uses_with_open_for_subprocess_stdout():
     # The buggy pattern is ``stdout=open(log_path, "w")``. After the
     # fix the source should contain the safer ``with open(...) as`` form.
     assert "stdout=open(log_path, \"w\")" not in code_only, (
-        "run_4mode_batch.run_mode must no longer pass "
+        "run_4mode_batch.run_one must no longer pass "
         "stdout=open(log_path, 'w') directly into subprocess.run"
     )
-    assert "with open(log_path, \"w\") as log_fh" in code_only, (
-        "run_4mode_batch.run_mode should wrap the log file in a "
+    assert re.search(r"with open\(log_path, \"w\"\) as \w+:", code_only), (
+        "run_4mode_batch.run_one should wrap the log file in a "
         "`with open(...) as log_fh:` block."
     )
 
@@ -75,10 +80,6 @@ def test_batch_runner_subprocess_does_not_leak_fd(tmp_path):
             timeout=10,
         )
     # We should be able to reopen the file immediately for append
-    # access; if the previous handle was leaked, Python would still
-    # let us open it but the underlying OS handle count would grow.
-    # Since checking /proc/PID/fd is OS-dependent, the cheapest
-    # proxy is a write-test on Windows-friendly and POSIX paths.
     with open(log_path, "a", encoding="utf-8") as f:
         f.write("\n[test] closed-handle-check\n")
     assert (log_path.read_text(encoding="utf-8")).endswith(
@@ -87,9 +88,6 @@ def test_batch_runner_subprocess_does_not_leak_fd(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# BUG-R122: Quick-phase cache uses atomic write
-# ---------------------------------------------------------------------------
-
 def test_quick_cache_uses_atomic_write():
     """BUG-R122: ``_run_quick_analysis_async`` must use the
     tmp + os.replace pattern when persisting its cache so a crash
@@ -108,9 +106,6 @@ def test_quick_cache_uses_atomic_write():
 
 
 # ---------------------------------------------------------------------------
-# BUG-R123: extract_prefixes validates octets + supports IPv6
-# ---------------------------------------------------------------------------
-
 def test_extract_prefixes_validates_octets():
     """BUG-R123: ``extract_prefixes`` must reject octets > 255 and
     prefix lengths > 32 instead of passing nonsense to RPKI/traceroute
@@ -153,9 +148,6 @@ def test_extract_prefixes_empty_or_invalid_input():
 
 
 # ---------------------------------------------------------------------------
-# BUG-R127: outage detector cache is OrderedDict-based LRU, not list-based
-# ---------------------------------------------------------------------------
-
 def test_outage_detector_cache_is_ordered_dict():
     """BUG-R127: the parsed_cache must be an OrderedDict (O(1)
     recency refresh), not a dict + list pair that used O(n) ``remove``."""
@@ -221,8 +213,6 @@ def test_outage_detector_lru_performance_no_quadratic():
         detector.parse_cached(iso)
 
     # Hit each cached entry once. With the buggy O(n) implementation
-    # this was quadratic — easily tens of seconds. With the O(1)
-    # OrderedDict it should be well under a second.
     t0 = time.perf_counter()
     for k in keys:
         detector.parse_cached(k)
@@ -237,9 +227,6 @@ def test_outage_detector_lru_performance_no_quadratic():
 
 
 # ---------------------------------------------------------------------------
-# BUG-R128: process_prefix2as uses atomic write
-# ---------------------------------------------------------------------------
-
 def test_process_prefix2as_uses_atomic_write():
     """BUG-R128: ``process_prefix2as`` must use the tmp + os.replace
     pattern when persisting parsed JSON; otherwise a crash mid-write
@@ -257,9 +244,6 @@ def test_process_prefix2as_uses_atomic_write():
 
 
 # ---------------------------------------------------------------------------
-# BUG-R129: token count extracts MAX not last-value
-# ---------------------------------------------------------------------------
-
 def test_extract_token_count_uses_max_not_assignment():
     """BUG-R129: when both traffic and routing results carry
     ``total_across_agents`` values, ``_extract_token_count`` must take
@@ -332,9 +316,6 @@ def test_extract_token_count_handles_total_across_agents_zero():
 
 
 # ---------------------------------------------------------------------------
-# Sanity: every modified file still parses
-# ---------------------------------------------------------------------------
-
 def test_all_modified_files_parse():
     """Round 16 modifications touched chief_agent.py,
     scripts/run_4mode_batch.py, agents/auto_probe_executor.py,

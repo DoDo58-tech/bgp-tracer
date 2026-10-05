@@ -133,8 +133,6 @@ def test_network_guard_allows_loopback_in_fast_tests():
     A refused connection is OK (no server); a raise from the guard is not.
     """
     # Loopback must not raise RuntimeError from the guard fixture.
-    # We accept either success or ConnectionRefusedError — both mean
-    # the guard did not erroneously interfere.
     try:
         s = socket.create_connection(("127.0.0.1", 1), timeout=0.1)
         s.close()

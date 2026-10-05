@@ -63,19 +63,9 @@ from utils.logger import logger
 
 
 # Constants & defaults
-
-# Rough char→token ratio for mixed Chinese/English technical text.
-# We deliberately over-estimate (0.4 tokens/char) so the cap is safe.
 _CHARS_PER_TOKEN = 0.4
 
 # Default budget tier sizes — in *bytes* (JSON-serialized form).
-# 1 token ≈ 3.5 bytes of JSON (openai/gpt tokenizer rule of thumb).
-# These bytes values translate roughly to:
-#   REASONING:   150 KB ≈ 42K tokens   (Kimi has 128K, this is safe)
-#   REPORT:      100 KB ≈ 28K tokens   (50K max, leave room for output)
-#   SPECIALIST:   60 KB ≈ 17K tokens   (specialist validations)
-#   CLASSIFY:     15 KB ≈ 4K tokens    (sub-LLM classifiers)
-#   CALIBRATE:    20 KB ≈ 6K tokens    (confidence calibrator)
 _DEFAULT_BUDGETS = {
     "reasoning": int(os.environ.get("PAYLOAD_BUDGET_REASONING_KB", "150")) * 1024,
     "report":    int(os.environ.get("PAYLOAD_BUDGET_REPORT_KB", "100")) * 1024,
@@ -97,11 +87,6 @@ class PayloadBudget:
 
 
 # Section-aware slim profiles
-# Each section declares:
-#   KEEP_TOP_KEYS       — top-level keys to keep (others dropped)
-#   LIST_ITEM_LIMITS    — name → max items in any list with that name
-#   PRIVACY_DROP_KEYS   — keys to strip from EVERY nested level (e.g. raw_dump)
-
 _TRAFFIC_KEEP = {
     # Wrapper key (chief_agent.envelope / workflow passes {result: traffic_agent_output})
     "result",
@@ -136,9 +121,6 @@ _TRAFFIC_LIST_LIMITS = {
 }
 
 # NOTE on format compatibility:
-#   - Live detector output: origin_hijacked/forge_hijacked/route_leaks at top level.
-#   - Annotation package output: wrapped under hijack/leak/outage containers.
-# Both formats are supported by including both shapes in the allow list.
 _ROUTING_KEEP = {
     # Wrapper key
     "result",
@@ -150,6 +132,17 @@ _ROUTING_KEEP = {
     "origin_hijacked", "forge_hijacked",
     "origin_hijacking", "forge_hijacking",
     "route_leaks", "outages",
+    # BUG-R141 2026-09-29: the live routing payload produced by
+    # routing_impl.run_routing_agent_async() carries its leak data under
+    # ``leak_analysis`` (and the outage block under ``outage_analysis``).
+    # Neither was allow-listed, so both were stripped before the report was
+    # rendered — the detector had already found the leaks, the report showed
+    # zero. Also keep the scalar counts so a truncated list still reports the
+    # true total.
+    "leak_analysis", "outage_analysis", "leak_count", "outage_score",
+    "mitm_alerts", "routing_status", "llm_insights", "impact_scope",
+    "analysis_timestamp", "no_data_reason", "anomalies_detected",
+    "anomaly_count",
     # Annotation format containers
     "hijack", "leak", "outage",
     "event_role_type", "role", "analysis_period",
@@ -166,12 +159,6 @@ _ROUTING_LIST_LIMITS = {
     "route_leaks": 40,
     "outages": 10,
     # Annotation format lists (nested under hijack/leak/outage) — keys
-    # reuse the same names as the live format so the dictionary here is
-    # the single source of truth for both shapes (the comment block
-    # below that duplicated these entries was dead code that the dict
-    # literal overwrote; kept the live-format values, which are the
-    # larger of the two so annotation payloads get the same generous
-    # quota as live ones). Bug fix 2026-09-13 (BUG-R77).
     "indicators": 10,         # routing.outage.indicators
     "event_features": 5,    # routing.outage.event_features
 }
@@ -181,6 +168,13 @@ _CORRELATION_KEEP = {
     "temporal_alignment", "cross_validation",
     "hypotheses", "correlation_level", "correlation_confidence",
     "joint_tier", "joint_score", "hcaf_attribution",
+    # Round-26: keep the inner correlation dict too — it carries
+    # ``signals.temporal_proximity`` and ``confidence`` which downstream
+    # renderers (Correlation Confidence gauge, TCA, Executive Summary
+    # verdict) read. Without it the gauge collapses to the "none / 0.10"
+    # fallback and the TCA strength shows "0.00" while the level says
+    # "strong", producing the contradictory output the reviewer flagged.
+    "correlation",
 }
 _CORRELATION_LIST_LIMITS = {
     "delta_ts": 20,
@@ -213,8 +207,6 @@ _REASONING_LIST_LIMITS = {
 }
 
 # Keys to ALWAYS drop from nested event dicts (per-event keys that are
-# huge but don't inform the LLM's decision).  These are field NAMES
-# that can appear at any depth.
 _EVENT_DENY_KEYS = frozenset({
     "as_paths",                           # full list of paths (large), dropped
     # "as_path" intentionally kept: routing_agent.prepare_routing_payload
@@ -539,8 +531,6 @@ def record_llm_call(
         return
     except Exception as e:
         # Concrete error inside TokenBudget (bad run_id, init failure,
-        # etc.).  Surface it as a warning so silent corruption of the
-        # token ledger is detectable.
         logger.warning(
             "[record_llm_call] TokenBudget unavailable, skipping record: %s",
             e,

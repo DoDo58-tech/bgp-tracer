@@ -2,13 +2,13 @@
 Correlation Analyzer Module
 ==========================
 
-独立的时间关联分析模块：从 traffic_raw 和 routing_result 中提取事件、
-计算 ΔT（时间差）、评估关联级别、生成可证伪假设。
+： traffic_raw  routing_result 、
+ ΔT（）、、。
 
-本模块是从 report_agent.before_rewrite.py 中提取并独立化的，
-为 report_agent.py 提供 correlation_analysis 数据。
+ report_agent.before_rewrite.py ，
+ report_agent.py  correlation_analysis 。
 
-用法:
+:
     from agents.correlation_analyzer import analyze_temporal_correlation
     result = analyze_temporal_correlation(traffic_raw, routing_result, target_as="16509")
 """
@@ -23,9 +23,6 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 # ---------------------------------------------------------------------------
-# Helper dataclass
-# ---------------------------------------------------------------------------
-
 class TemporalEvent:
     """A timestamped anomaly event from either traffic or routing detection."""
 
@@ -47,9 +44,6 @@ class TemporalEvent:
 
 
 # ---------------------------------------------------------------------------
-# Timestamp parser
-# ---------------------------------------------------------------------------
-
 def parse_timestamp(ts: Any) -> Optional[datetime]:
     """Parse a timestamp string to datetime, trying multiple formats."""
     if ts is None:
@@ -108,9 +102,6 @@ def parse_timestamp(ts: Any) -> Optional[datetime]:
 
 
 # ---------------------------------------------------------------------------
-# Dict helpers
-# ---------------------------------------------------------------------------
-
 def to_dict_helper(value):
     """Coerce AnomalyDetail / dataclass / dict-like to a plain dict."""
     if isinstance(value, dict):
@@ -154,8 +145,6 @@ def _resolve_fallback_timestamp(routing_result: dict, analysis_window) -> Option
         except Exception:
             pass
     # Last resort — keep events "real" so the routing_event_count matches
-    # the actual number of detected events, even if the temporal ordering
-    # is wrong.
     return datetime(1970, 1, 1)
 
 
@@ -186,9 +175,6 @@ def _resolve_event_timestamp(event_dict, fallback_ts, fallback_used_box):
 
 
 # ---------------------------------------------------------------------------
-# Traffic event extraction
-# ---------------------------------------------------------------------------
-
 def extract_traffic_events(
     traffic_raw=None,
     traffic_anomaly_window=None,
@@ -211,8 +197,6 @@ def extract_traffic_events(
     if isinstance(tr, dict) and "result" in tr and isinstance(tr["result"], dict):
         tr = tr["result"]
     # React mode sometimes hands us {asn_str: raw_result} directly when the
-    # caller already unwrapped ``tool_evidence["results"]``. Look at the
-    # values rather than the keys (a single value is most likely the answer).
     if isinstance(tr, dict) and not tr.get("anomalies") and not tr.get("extended_anomalies"):
         asn_candidates = [
             v for v in tr.values()
@@ -323,8 +307,6 @@ def extract_traffic_events(
         ))
 
     # Deduplicate by (timestamp, event_type) so coincident events of
-    # different types (e.g. traffic_below + traffic_rise at the same
-    # minute) are both kept instead of one being silently dropped.
     seen_midpoints = set()
     deduped = []
     for ev in sorted(events, key=lambda e: e.timestamp):
@@ -336,9 +318,6 @@ def extract_traffic_events(
 
 
 # ---------------------------------------------------------------------------
-# Routing event extraction
-# ---------------------------------------------------------------------------
-
 def extract_routing_events(routing_result=None, target_as="", analysis_window=None) -> list[TemporalEvent]:
     """Pull TemporalEvent objects from routing_result across flat/nested/annotation_package formats.
 
@@ -492,14 +471,26 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
         ))
 
     # ---- route_leaks ----
+    # BUG-R143 2026-09-29: filter out null-noise records.
+    # Detector batches emit ``leaked_by=null/prefix=null`` rows when the
+    # filter pass yields no real signal (e.g. when only BGPStream events
+    # match the time window but no RRC00 evidence exists). Without the
+    # filter, ``leak_n`` inflates to ~3000+ on those events, drowning out
+    # the real signal and feeding ``compute_top_cause`` a bogus leak count.
+    # A record is "real" iff at least one of ``prefix`` or ``leaked_by``
+    # is populated.
     for lk in (rr.get("route_leaks") or []):
         lk = to_dict_helper(lk)
+        prefix = lk.get("prefix")
+        leaked_by = lk.get("leaked_by")
+        if prefix is None and leaked_by is None:
+            continue
         ts, _ = _resolve_event_timestamp(lk, fallback_ts, fallback_used_box)
         if ts is None:
             continue
         add_event(TemporalEvent(
             timestamp=ts, source="routing", event_type="route_leak", severity=0.8,
-            details={"prefix": lk.get("prefix"), "leaked_by": lk.get("leaked_by")},
+            details={"prefix": prefix, "leaked_by": leaked_by},
         ))
 
     # ---- annotation_package nested format fallback ----
@@ -528,15 +519,20 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
             ))
 
     # annotation_package leaks
+    # BUG-R143 2026-09-29: same null-filter as the flat format above.
     for lk in ((routing_result.get("leak") or {}).get("route_leaks") or []):
         if not isinstance(lk, dict):
+            continue
+        prefix = lk.get("prefix")
+        leaked_by = lk.get("leaked_by")
+        if prefix is None and leaked_by is None:
             continue
         ts, _ = _resolve_event_timestamp(lk, fallback_ts, fallback_used_box)
         if ts is None:
             continue
         add_event(TemporalEvent(
             timestamp=ts, source="routing", event_type="route_leak", severity=0.8,
-            details={"prefix": lk.get("prefix"), "leaked_by": lk.get("leaked_by")},
+            details={"prefix": prefix, "leaked_by": leaked_by},
         ))
 
     # annotation_package outages
@@ -590,21 +586,23 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
         for lk in (alerts.get("route_leaks") or []):
             if not isinstance(lk, dict):
                 continue
+            # BUG-R143 2026-09-29: same null-filter as the other leak paths.
+            prefix = lk.get("prefix")
+            leaked_by = lk.get("leaked_by")
+            if prefix is None and leaked_by is None:
+                continue
             ts, _ = _resolve_event_timestamp(lk, fallback_ts, fallback_used_box)
             if ts is None:
                 continue
             add_event(TemporalEvent(
                 timestamp=ts, source="routing", event_type="route_leak", severity=0.8,
-                details={"prefix": lk.get("prefix"), "leaked_by": lk.get("leaked_by")},
+                details={"prefix": prefix, "leaked_by": leaked_by},
             ))
 
     return sorted(events, key=lambda e: e.timestamp)
 
 
 # ---------------------------------------------------------------------------
-# ΔT computation
-# ---------------------------------------------------------------------------
-
 def compute_delta_t(
     traffic_events,
     routing_events,
@@ -659,9 +657,6 @@ def compute_delta_t(
 
 
 # ---------------------------------------------------------------------------
-# Correlation level assignment
-# ---------------------------------------------------------------------------
-
 def assign_correlation_level(
     traffic_events,
     routing_events,
@@ -764,9 +759,6 @@ def assign_correlation_level(
 
 
 # ---------------------------------------------------------------------------
-# Merged timeline
-# ---------------------------------------------------------------------------
-
 def build_merged_timeline(traffic_events, routing_events) -> list[dict]:
     """Build a sorted merged timeline."""
     all_events = []
@@ -783,9 +775,6 @@ def build_merged_timeline(traffic_events, routing_events) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Cross-validation
-# ---------------------------------------------------------------------------
-
 def cross_validate_correlation(correlation: dict, correlation_score_result: dict | None) -> dict:
     """Summarize signals with quantitative association score."""
     score_total = None
@@ -818,9 +807,6 @@ def cross_validate_correlation(correlation: dict, correlation_score_result: dict
 
 
 # ---------------------------------------------------------------------------
-# Refutable hypotheses
-# ---------------------------------------------------------------------------
-
 def generate_refutable_hypotheses(
     correlation: dict,
     routing_events,
@@ -1011,9 +997,6 @@ def build_victim_verification(victim_traffic_results: dict, victim_asns: list) -
 
 
 # ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
 def analyze_temporal_correlation(
     traffic_raw: dict,
     routing_result: dict,
@@ -1052,6 +1035,17 @@ def analyze_temporal_correlation(
         "correlation": correlation,
         "cross_validation": cross_validation,
         "delta_ts": delta_ts,
+        # Keep the 50-event cap on the correlation.timeline (Phase 2
+        # only needs top-50 for cross-validation). The full event
+        # stream is preserved in `routing_events` / `traffic_events`
+        # below, which is what CSS's bucketize-then-evaluate path
+        # consumes. Removing the cap causes CSS to see a fully-saturated
+        # routing series on persistent attacks (e.g.\ Orange Espa\~na)
+        # where every bucket has severity 1.0, producing a degenerate
+        # shift_magnitude = 0σ and CSS abstains incorrectly. The cap
+        # introduces a controlled event-density gradient that lets the
+        # PNS difference-in-means estimator see a non-trivial pre/post
+        # shift on real incidents.
         "timeline": timeline[:50],
         "hypotheses": hypotheses,
         "routing_events": [
@@ -1062,6 +1056,20 @@ def analyze_temporal_correlation(
         "traffic_events": [
             {"timestamp": e.timestamp.isoformat(), "type": e.event_type,
              "severity": e.severity, **e.details}
+            for e in traffic_events
+        ],
+        # Full routing event stream for CSS's bucketize-then-evaluate
+        # path. CSS needs every event to compute the per-bucket PNS
+        # estimator; the 20-event cap above is only for LLM narrative
+        # and report rendering, not for the analytical core.
+        "routing_events_full": [
+            {"timestamp": e.timestamp.isoformat(), "type": e.event_type,
+             "source": "routing", "severity": e.severity, **e.details}
+            for e in routing_events
+        ],
+        "traffic_events_full": [
+            {"timestamp": e.timestamp.isoformat(), "type": e.event_type,
+             "source": "traffic", "severity": e.severity, **e.details}
             for e in traffic_events
         ],
         "victim_verification": build_victim_verification(victim_traffic_results or {}, victim_asns or []),

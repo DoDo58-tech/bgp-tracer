@@ -76,13 +76,6 @@ def query_as_relationships(asn, asrel_file):
     providers_data = data.get("providers", {})
     peers_data = data.get("peers", {})
     # Bug fix 2026-09-13 (BUG-R65): AS-rel files from different
-    # sources use different ASN key formats — some use the bare
-    # number (``"13335"``), others use the ``AS`` prefix
-    # (``"AS13335"``). The previous lookup used ``asn_str`` directly,
-    # so a caller querying ``AS13335`` against a bare-number-indexed
-    # file (or vice-versa) would receive an empty providers/peers list
-    # and silently lose the AS's relationship context. We now build a
-    # double-format key map so both forms resolve correctly.
     asn_stripped = str(asn).strip().upper().lstrip("AS")
 
     def _lookup(d, asn_key):
@@ -97,10 +90,6 @@ def query_as_relationships(asn, asrel_file):
     for customer_asn, customer_providers in providers_data.items():
         try:
             # Bug fix 2026-09-13 (BUG-R65 corollary): the providers
-            # *values* in CAIDA dumps also use a mix of bare-number
-            # and ``AS``-prefixed forms. We strip the prefix on each
-            # element before comparison so ``asn_stripped in
-            # [normalised(customer_providers)]`` is symmetric.
             normalised = [str(x).strip().upper().lstrip("AS") for x in customer_providers]
             if asn_stripped in normalised:
                 customers.append(str(customer_asn).strip().upper().lstrip("AS"))
@@ -126,16 +115,6 @@ def query_as_prefixes(asn, prefix2as_file):
         return {"success": False, "error": "Failed to load prefix-to-AS data", "asn": asn}
     asn_str = str(asn)
     # Bug fix 2026-09-13 (BUG-R64): CAIDA's pfx2as schema historically
-    # used either a bare string (single-origin prefix) or a list of
-    # strings (multi-origin prefix). The previous comparison
-    # ``origin_asn == asn_str`` only matched the bare-string form and
-    # silently dropped every multi-origin prefix. As a result, ASes
-    # whose prefixes were "anycasted" or "multi-homed" appeared to own
-    # zero prefixes and were reported with no legitimate prefixes in
-    # the final report — a misleading "the AS announced nothing" claim
-    # that biased downstream hijack/origin decisions. We now accept
-    # both shapes and also tolerate ``AS12345``-prefixed values (some
-    # downstream tooling injects the prefix during preprocessing).
     asn_stripped = asn_str.upper().lstrip("AS")
     prefixes = []
     for prefix, origin in data.items():
@@ -197,15 +176,6 @@ def generate_integrated_report(
             routing_data = evidence_summary.get("routing_data", {})
         elif isinstance(reasoning_analysis, str):
             # Bug fix (2026-09-13): the previous implementation fell back to
-            # ``eval(reasoning_analysis)`` when json.loads failed. That is a
-            # remote-code-execution hazard — any caller that could influence
-            # this string (e.g. an LLM-produced reply persisted to disk by
-            # another agent, or an attacker who controls a checkpoint file)
-            # could execute arbitrary Python on the next workflow run.
-            # We now use ``ast.literal_eval`` which only accepts Python
-            # literals (dict/list/str/int/float/bool/None/tuple/set) and
-            # never reaches global scope. If even that fails we return
-            # the same ``parsed = None`` as before, just safely.
             import ast
             parsed = None
             try:
@@ -244,8 +214,6 @@ def generate_integrated_report(
             traffic_data = reasoning_analysis.get("evidence_summary", {}).get("traffic_data", {})
         elif isinstance(reasoning_analysis, str):
             # Bug fix (2026-09-13): see the routing_data branch above — the
-            # previous ``eval()`` fallback was a remote-code-execution hazard.
-            # Use ``ast.literal_eval`` to limit to safe Python literals.
             import ast
             parsed = None
             try:
@@ -432,18 +400,6 @@ def count_consecutive_anomalies_in_longest_period(
         return 0
     period_start, period_end = max(periods, key=lambda p: (p[1] - p[0]).total_seconds())
     # Bug fix 2026-09-13 (BUG-R83): the previous expression
-    # ``parse_anomaly_timestamp(...) or period_end`` quietly mapped
-    # *every* unparseable anomaly timestamp onto ``period_end`` —
-    # so all such anomalies were counted as falling inside the
-    # longest period. With many malformed timestamps (a real risk
-    # when LLM-generated narrative events leak into the pipeline),
-    # the count was inflated above the true value, biasing the
-    # ``is_anomaly`` verdict toward "many anomalies inside one
-    # window" when actually there were zero parseable ones.
-    #
-    # We now skip unparseable anomalies silently (a debug log per
-    # skip keeps the count diagnostic) so the returned count
-    # reflects *only* anomalies whose timestamps we can compare.
     count = 0
     for a in anomalies:
         ts = parse_anomaly_timestamp(a.get("timestamp", ""))

@@ -10,23 +10,10 @@ from enum import Enum, auto
 from time import perf_counter
 
 # Enable section-level slimming on Blackboard writes. When ``True``
-# (default), ``Blackboard.update_section()`` automatically applies
-# ``payload_builder.slim_section()`` to each value, preventing noisy traffic
-# / routing dumps from propagating to every downstream reader.  Set
-# ``BB_SLIM_DISABLE=1`` to bypass for debugging.
 _BB_SLIM_ENABLED = os.environ.get("BB_SLIM_DISABLE", "0") != "1"
 
 
 # Critical-result write-once guard for `routing.result` and `traffic.result`.
-# Downstream stages (chief expert / report / correlation analyzer) read these
-# keys to derive the verdict. Two failure modes this guard prevents:
-#
-#   1. Concurrent writers overwriting each other with diverging payloads,
-#      producing inconsistent verdicts across runs on identical inputs.
-#   2. A late writer (e.g. error-recovery branch) silently replacing a
-#      successful upstream payload with a partial one.
-#
-# Set ``BB_CRITICAL_WRITEONCE_DISABLE=1`` to opt out (debugging only).
 _BB_CRITICAL_WRITEONCE = os.environ.get("BB_CRITICAL_WRITEONCE_DISABLE", "0") != "1"
 _CRITICAL_RESULT_KEYS = {
     ("routing", "result"),
@@ -60,8 +47,6 @@ def _fingerprint_section_data(value):
                 return _canon(parsed)
             except (ValueError, TypeError):
                 # Strings shorter than 64 chars are kept verbatim (event types,
-                # ASN, prefix); longer strings are length-only to avoid
-                # fingerprint drift on free-text fields.
                 return v if len(v) < 64 else f"<str:{len(v)}>"
         return repr(v)
 
@@ -70,10 +55,6 @@ def _fingerprint_section_data(value):
 
 
 # Operational fingerprint for the *event lists* that drive the verdict.
-# This is the data the correlation analyzer reads via
-# ``extract_routing_events`` / ``extract_traffic_events``. If two writes
-# carry identical lists here, the verdict MUST be the same — anything else
-# would be a bug.
 _EVENT_LIST_KEYS = (
     "origin_hijacked",
     "origin_hijacking",
@@ -119,8 +100,6 @@ def _event_list_signature(value):
 
 
 # Keys whose values influence the report verdict / correlation output.
-# Anything outside this set is treated as cosmetic and ignored by the
-# fingerprint comparison.
 import re as _re
 _SIGNIFICANT_KEYS = _re.compile(
     r"^(hijack|leak|outage|origin_hijack|forge_hijack|route_leak|"
@@ -377,8 +356,6 @@ class Blackboard:
                         f"If this is intentional, pass _allow_overwrite=True."
                     )
                     # Drop the lock before notifying (notify may await on
-                    # async subscribers; holding the lock across that would
-                    # serialize all blackboard traffic).
                     asyncio.ensure_future(self._notify(section, key, existing))
                     return
             self._sections.setdefault(section, {})[key] = value
@@ -391,8 +368,6 @@ class Blackboard:
     async def update_section(self, section, data, *, _writer: str = "", _allow_overwrite: bool = False):
         data = self.maybe_slim_section(section, data)
         # Concurrency fix 2026-09-13: move the write-once check inside the
-        # lock so concurrent calls don't race the check-then-act pattern.
-        # We snapshot ``data`` first because we'll mutate it on rejection.
         rejected: dict = {}
         async with self._lock:
             current = self._sections.setdefault(section, {})
@@ -419,20 +394,13 @@ class Blackboard:
             asyncio.ensure_future(self._notify(section, key, value))
 
     # Section-level slimming
-    # When enabled, every write/update goes through ``payload_builder.slim_section``
-    # so downstream readers never have to remember to apply the cap themselves.
-    # This is opt-out via env var ``BB_SLIM_DISABLE=1``.
-
-    # Map blackboard sections → payload_builder section profiles.
     _BB_SECTION_MAP = {
         "traffic": "traffic",
         "routing": "routing",
         "diagnosis": "reasoning",
         "evidence": "reasoning",
         "report": "reasoning",
-        # validation section 现在包含 causal_analysis / joint_alert /
-        # joint_evidence_cards / hcaf_attribution 等大对象，
-        # 需映射到 reasoning profile 进行 slim
+        # validation section  causal_analysis / joint_alert /
         "validation": "reasoning",
         "meta": "reasoning",
     }
@@ -440,9 +408,6 @@ class Blackboard:
     def maybe_slim(self, section: str, key: str, value):
         """Slim only LLM-facing blackboard values, preserving agent contracts."""
         # The workflow's traffic/routing result entries are the contract used
-        # by joint evidence, causal analysis, and report rendering.  Those
-        # stages need their event lists; each LLM call applies its own bounded
-        # payload builder before sending data upstream.
         if (section, key) in {("traffic", "result"), ("routing", "result")}:
             return value
         if not _BB_SLIM_ENABLED:
@@ -519,7 +484,7 @@ class Blackboard:
         if isinstance(record, HypothesisClaim):
             return record.to_dict()
         payload = dict(record)
-        # 递归将所有 datetime 对象转换为 ISO 字符串，避免 JSON 序列化失败
+        #  datetime  ISO ， JSON 
         def _dt(v):
             if isinstance(v, datetime):
                 return v.isoformat()
@@ -691,8 +656,6 @@ class Blackboard:
                 raise
             except Exception as exc:
                 # Log loudly so silent subscriber failures don't mask
-                # self-correlation bugs that look like "the routing
-                # agent never saw the traffic result".
                 try:
                     from utils.logger import logger
                     logger.warning(

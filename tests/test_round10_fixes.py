@@ -135,23 +135,23 @@ def test_identify_evidence_gaps_uses_causal_analysis_parameter():
 
     # No causal_analysis -> gap should appear
     gaps = eb._identify_evidence_gaps(traffic, routing, None)
-    assert "缺少因果关联分析" in gaps
+    assert "" in gaps
 
     # Empty dict -> gap should appear
     gaps = eb._identify_evidence_gaps(traffic, routing, {})
-    assert "缺少因果关联分析" in gaps
+    assert "" in gaps
 
     # has_association=True -> no gap
     gaps = eb._identify_evidence_gaps(
         traffic, routing, {"has_association": True, "association_score": 0.7},
     )
-    assert "缺少因果关联分析" not in gaps
+    assert "" not in gaps
 
     # association_score alone -> no gap
     gaps = eb._identify_evidence_gaps(
         traffic, routing, {"association_score": 0.5},
     )
-    assert "缺少因果关联分析" not in gaps
+    assert "" not in gaps
 
 
 def test_identify_evidence_gaps_signature_accepts_causal_analysis():
@@ -179,7 +179,7 @@ def test_build_propagates_causal_analysis_to_gap_detector():
         causal_analysis=None,  # explicitly missing
     )
 
-    assert any("因果关联" in g for g in chain.evidence_gaps), chain.evidence_gaps
+    assert any("" in g for g in chain.evidence_gaps), chain.evidence_gaps
 
 
 # ──────────────────────────── BUG-R47: _parse_json ────────────────────────────

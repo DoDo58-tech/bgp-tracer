@@ -700,10 +700,6 @@ class MultiRoleClassifier:
         outage_score = outage.get("outage_score", 0.0) or 0.0
 
         # Internal fault indicators:
-        # 1. Outage but no origin_hijacked events (wasn't externally attacked)
-        # 2. BGP announcements dropped but no one else announced those prefixes
-        # 3. Starlink-like pattern: announced space dropped but routes still there
-
         if is_outage:
             origin_hijacked = routing_data.get("hijack", {}).get("origin_hijacked", []) or []
             # If outage but nobody hijacked our prefixes → internal fault
@@ -717,9 +713,6 @@ class MultiRoleClassifier:
                 })
 
         # Check for "BGP looks normal but traffic dropped" pattern
-        # This is internal fault, not external attack
-        # (Handled by traffic correlation in victim classifier)
-
         if not sub_types:
             return RoleClassification(
                 role="internal_fault",

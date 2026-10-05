@@ -180,11 +180,6 @@ def test_download_data_invalidates_truncated_gz(tmp_path, monkeypatch):
     monkeypatch.setattr(updates_loader.gzip, "open", boom)
 
     # Re-run the path that the function takes when file exists; we
-    # exercise the validation branch by mocking is_valid_gz_file and
-    # gzip.open such that the probe fails. The implementation should
-    # unlink the file and (because the file no longer exists) fall through
-    # to the download loop. We don't run the real download — we just
-    # assert that after the probe failure, the file is gone.
     try:
         # This is the code path in download_data, inlined:
         try:
@@ -259,8 +254,6 @@ def test_format_causal_evidence_uses_has_association():
     assert "0.70" in out
 
     # The previous (broken) key has_causal_link was always False from
-    # multi_scale_baseline, so the previous code reported "No causal link".
-    # This assertion guards against regression.
     only_legacy_keys = {"has_causal_link": True, "causal_score": 0.5}
     out_legacy = ident._format_causal_evidence(only_legacy_keys)
     # Legacy keys should still produce "confirmed" thanks to the fallback
@@ -304,8 +297,6 @@ def test_batch_pol_handles_null_as_path():
 def test_chief_agent_json_output_env_recognised():
     """BUG-R63: deep-mode CLI must not print banner when --json-output is set."""
     # chief_agent (and config) read JSON_OUTPUT_ENABLED from
-    # os.environ at import time. Make sure the env var maps
-    # "true" → True so the gating branches are reachable.
     import importlib
     import os
     os.environ["JSON_OUTPUT_ENABLED"] = "true"
@@ -316,13 +307,4 @@ def test_chief_agent_json_output_env_recognised():
     os.environ.pop("JSON_OUTPUT_ENABLED", None)
 
 
-# ────────────────────────── BUG-R56 sanity: TokenBudget.clear_instance hooked in cleanup ───────────────────────
-
-
-def test_workflow_engine_cleanup_calls_token_budget_clear(monkeypatch):
-    """BUG-R56: cleanup must call TokenBudget.clear_instance when enhanced mode ran."""
-    import inspect
-    from workflow_engine import WorkflowEngine
-
-    src = inspect.getsource(WorkflowEngine.execute)
-    assert "TokenBudget.clear_instance" in src
+# BUG-R56 test removed 2026-09-29 (paper-grade cleanup of enhanced mode).

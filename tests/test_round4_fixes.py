@@ -33,10 +33,6 @@ if str(ROOT) not in sys.path:
 
 
 # ---------------------------------------------------------------------------
-# R7 — TokenBudget.summary()["by_agent"] correctness
-# ---------------------------------------------------------------------------
-
-
 def test_token_budget_summary_by_agent_returns_per_agent_values():
     """Each agent must report its own prompt/completion totals, not the
     global totals copied into every entry.
@@ -71,10 +67,6 @@ def test_token_budget_summary_by_agent_returns_per_agent_values():
 
 
 # ---------------------------------------------------------------------------
-# R8 — correlation_analyzer dedup preserves concurrent different-type events
-# ---------------------------------------------------------------------------
-
-
 def test_correlation_dedup_preserves_concurrent_different_type_events():
     """When two traffic events share a timestamp but represent different
     event types (e.g. simultaneous drop and rise) the dedup key must
@@ -124,10 +116,6 @@ def test_correlation_dedup_preserves_concurrent_different_type_events():
 
 
 # ---------------------------------------------------------------------------
-# R9 — updates_loader.ensure_updates_from_xlsx uses defined `idx`
-# ---------------------------------------------------------------------------
-
-
 def test_ensure_updates_from_xlsx_logs_row_index_without_nameerror(monkeypatch, caplog):
     """Regression: the for-loop iterates with ``enumerate`` so ``idx``
     is defined when an exception is caught and logged.  Without the
@@ -182,10 +170,6 @@ def test_ensure_updates_from_xlsx_logs_row_index_without_nameerror(monkeypatch, 
 
 
 # ---------------------------------------------------------------------------
-# R10 — parquet_cache._source_fingerprint stable across touch()
-# ---------------------------------------------------------------------------
-
-
 def test_source_fingerprint_stable_across_touch(tmp_path):
     """After a ``touch`` that does not change size or mtime-second,
     the fingerprint must remain identical (otherwise every cache entry
@@ -226,10 +210,6 @@ def test_source_fingerprint_changes_when_size_changes(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# R11 — payload_builder.record_llm_call must surface non-ImportError errors
-# ---------------------------------------------------------------------------
-
-
 def test_record_llm_call_does_not_swallow_non_importerror(monkeypatch, caplog):
     """A bare ``except Exception`` was hiding real failures inside
     TokenBudget.  The fix narrows the no-op branch to ImportError and
@@ -264,10 +244,6 @@ def test_record_llm_call_does_not_swallow_non_importerror(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
-# R12 — failed tool results must not contribute confidence_boost
-# ---------------------------------------------------------------------------
-
-
 def test_investigation_supervisor_skips_confidence_boost_for_failed_tools():
     """When a tool's result reports ``success=False`` (e.g. RPKI failure),
     the supervisor must NOT add its confidence_boost to the running
@@ -323,10 +299,6 @@ def test_investigation_supervisor_skips_confidence_boost_for_failed_tools():
 
 
 # ---------------------------------------------------------------------------
-# R13 — reasoning_agent.cross_validate_temporal_overlap exists & works
-# ---------------------------------------------------------------------------
-
-
 def test_cross_validate_temporal_overlap_counts_aligned_events():
     """The dead-code block from the dangling docstring is now a real,
     callable helper.  Verify it counts routing events that fall within

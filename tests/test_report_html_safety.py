@@ -45,9 +45,6 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# _repair_missing_lt
-# ---------------------------------------------------------------------------
-
 def test_repair_missing_lt_restores_open_and_close_brackets():
     from agents.report_agent import _repair_missing_lt, validate_html_balance
 
@@ -193,18 +190,12 @@ def test_repair_missing_lt_skips_word_internal_tags():
     from agents.report_agent import _repair_missing_lt
 
     # ``recommended<div>`` → the word "recommended" precedes the tag. We
-    # don't want to insert another ``<`` before ``<div>`` (it's already
-    # well-formed). What we DO test: we don't insert one between "recommended"
-    # and the existing "<div>".
     html = "<p>The recommended<div>x</div></p>"
     repaired = _repair_missing_lt(html)
     assert "recommended<div>x</div>" in repaired
 
 
 # ---------------------------------------------------------------------------
-# validate_html_balance
-# ---------------------------------------------------------------------------
-
 def test_validate_html_balance_accepts_well_formed_html():
     from agents.report_agent import validate_html_balance
 
@@ -215,22 +206,40 @@ def test_validate_html_balance_accepts_well_formed_html():
     assert problems == []
 
 
-def test_validate_html_balance_detects_unclosed_div():
+def test_validate_html_balance_tolerates_unclosed_block_tags():
+    """Unclosed block containers are valid; genuinely broken nesting is not.
+
+    BUG-R133 (2026-09-28): div/section/article were added to the HTML5
+    optional-end set because LLMs routinely emit decorative block wrappers they
+    never close, and flagging those pushed good reports into the deterministic
+    fallback. Browsers auto-close these, so the validator agrees with the
+    browser. Tags with no implicit end are still reported, and a closing tag
+    that never opened is still a mismatch.
+    """
     from agents.report_agent import validate_html_balance
 
     ok, problems = validate_html_balance(
         '<html><body><div><p>x</p></body></html>'
     )
-    assert not ok
-    assert any("div" in p for p in problems)
+    assert ok, problems == []
+
+    ok2, problems2 = validate_html_balance(
+        '<html><body><span>x</body></html>'
+    )
+    assert not ok2
+    assert any("span" in p for p in problems2)
+
+    ok3, problems3 = validate_html_balance(
+        '<html><body><div></span></body></html>'
+    )
+    assert not ok3
+    assert any("span" in p for p in problems3)
 
 
 def test_validate_html_balance_detects_mismatched_close():
     from agents.report_agent import validate_html_balance
 
     # ``</p>`` appears without a matching opener.
-    # (Note: <p> is HTML5-optional-end, so a stray </p> without an
-    # opener is tolerated — browsers do the same.)
     ok, problems = validate_html_balance(
         '<html><body></p></body></html>'
     )
@@ -250,9 +259,6 @@ def test_validate_html_balance_void_tags_are_not_pushed():
 
 
 # ---------------------------------------------------------------------------
-# inject_traffic_plot width alignment
-# ---------------------------------------------------------------------------
-
 def _fake_b64_png() -> str:
     """1x1 transparent PNG encoded as base64."""
     return base64.b64encode(
@@ -314,9 +320,6 @@ def test_inject_traffic_plot_strips_path_based_image_refs():
 
 
 # ---------------------------------------------------------------------------
-# Blackboard write-once
-# ---------------------------------------------------------------------------
-
 def test_blackboard_writeonce_keeps_original_on_equivalent_writes():
     """Two semantically equivalent writes must NOT clobber each other."""
     from agents.core import Blackboard
@@ -424,9 +427,6 @@ def test_blackboard_update_section_also_protects_critical_keys():
 
 
 # ---------------------------------------------------------------------------
-# BUG-R117: standalone generate_report_html must call _repair_missing_lt
-# ---------------------------------------------------------------------------
-
 def test_standalone_generate_report_html_calls_repair_missing_lt():
     """BUG-R117: the standalone ``generate_report_html`` entry point must
     invoke ``_repair_missing_lt`` on the LLM response, otherwise callers
@@ -487,9 +487,6 @@ def test_repair_missing_lt_handles_bare_openers_without_attributes_via_lookahead
 
 
 # ---------------------------------------------------------------------------
-# BUG-R134: valid_llm_html_report must reject reports with bare tag openers
-# ---------------------------------------------------------------------------
-
 def test_valid_llm_html_report_rejects_broken_html():
     """BUG-R134 (2026-09-14): valid_llm_html_report only checked doctype and
     </html>, missing the case where the LLM drops '<' from tags. A report
@@ -576,9 +573,6 @@ def test_valid_llm_html_report_accepts_well_formed_html():
 
 
 # ---------------------------------------------------------------------------
-# BUG-R135: Cloudflare HTTP 400 fallback to coarser aggInterval
-# ---------------------------------------------------------------------------
-
 def test_cloudflare_400_fallback_coarser_agginterval(monkeypatch):
     """BUG-R135 (2026-09-14): When Cloudflare Radar returns HTTP 400 because
     the aggInterval is too granular for the date range, the old code raised

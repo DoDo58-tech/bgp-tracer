@@ -222,12 +222,12 @@ class PatternDetector:
     def detect(self, routing_data: dict, traffic_data: dict, context: dict) -> EvidencePattern:
         """Detect patterns from routing and traffic evidence.
 
-        修 P0-#2：同步支持 annotation_package 嵌套格式 {hijack:{...}, leak: {...}, outage:{...}}。
-        原版只用顶层 origin_hijacked，annotation_package 数据被吃掉，pattern 不触发任何工具。
+         P0-#2： annotation_package  {hijack:{...}, leak: {...}, outage:{...}}。
+         origin_hijacked，annotation_package ，pattern 。
         """
         pattern = EvidencePattern()
 
-        # Routing patterns — 同时检查 flat 和 annotation_package 嵌套格式
+        # Routing patterns —  flat  annotation_package 
         origin_hijacks = (
             routing_data.get("origin_hijacked") or
             routing_data.get("origin_hijack") or
@@ -454,16 +454,6 @@ class ToolOrchestrator:
                 await asyncio.gather(*[run_tool(t) for t in batch], return_exceptions=True)
             except Exception as _gather_exc:
                 # Bug fix 2026-09-13 (BUG-R74): previously we used
-                # ``asyncio.gather(...)`` without ``return_exceptions=True``,
-                # so any single tool raising would re-raise from gather,
-                # cancel all the other parallel tools mid-flight, and lose
-                # the partial evidence they had already collected. For a
-                # tool-batched supervisor this is the worst possible
-                # behaviour — we burn the whole batch to save one failing
-                # tool. Now we just log and move on; the per-tool ``except``
-                # in ``run_tool`` already records the failure into
-                # ``tool.status='failed'`` and the enricher can still
-                # attribute the partial successes.
                 logger.warning(f"[supervisor] Batch {batch_num}: gather raised {_gather_exc!r}; "
                                f"continuing with per-tool statuses")
             logger.info(f"[supervisor] Batch {batch_num}: completed")
@@ -519,8 +509,6 @@ class EvidenceEnricher:
                 "success": success,
             }
             # Only count confidence boost when the tool actually succeeded —
-            # otherwise RPKI / RIPE-query failures would inflate the
-            # overall confidence.
             if success:
                 total_confidence_boost += tool.rule.confidence_boost
 

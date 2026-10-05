@@ -76,9 +76,6 @@ AVAILABLE_TOOLS = {
 }
 
 # Shared evidence dict — populated by each tool execution so generate_report
-# can read data from earlier tools in the same run.  Keys are run_id so
-# parallel --parallel>1 invocations don't trample each other. Cleared when
-# an agent.run() starts with a matching run_id.
 _SHARED_EVIDENCE: Dict[str, Dict[str, Any]] = {}
 
 
@@ -137,19 +134,9 @@ def valid_llm_html_report(report_path: str) -> bool:
         return False
 
     # CRITICAL CHECK: Verify HTML tags have proper '<' prefix.
-    # LLM (Qwen/GLM) often drops '<' from tags, producing 'div class="x">'
-    # instead of '<div class="x">'. Such files display as raw text in browsers.
-    #
-    # Strategy: Strip CSS <style> blocks first (they contain tag-like patterns
-    # that are NOT broken HTML), then check the remaining HTML for bare tags.
-
-    # 1. Remove CSS <style>...</style> blocks (CSS contains tag selectors like
-    #    `body { ... }` and `h1, h2 { ... }` which are not broken HTML).
     html_no_style = re.sub(r"<style\b[^>]*>.*?</style>", " ", html, flags=re.DOTALL | re.IGNORECASE)
 
     # 2. Now look for known HTML tag patterns that are NOT preceded by '<'.
-    #    We use SIMPLE patterns with (?<!<) lookbehind to avoid false matches
-    #    inside CSS or normal text. Each pattern is checked independently.
     broken_count = 0
     broken_examples = []
 
@@ -211,11 +198,6 @@ def valid_llm_html_report(report_path: str) -> bool:
     return True
 
 # ── DEPRECATED globals ──────────────────────────────────────────────────────────
-# These module-level variables are maintained only for backward compatibility
-# with any external code that still reads them via sys.modules.  New code
-# MUST NOT read them.  Instead, pass `run_context` explicitly to tools via
-# `_SessionShim.run_context` (set from ReactAgent instance attributes).
-# Using these globals makes concurrent runs and re-entrancy unsafe.
 _RUN_ASN: str = ""
 _RUN_START: str = ""
 _RUN_END: str = ""
@@ -243,9 +225,9 @@ class ReactResult:
     tools_used: List[str] = field(default_factory=list)
     error: str = ""
     total_rounds: int = 0
-    # 添加 evidence 字段，携带 run() 期间的完整工具输出。
+    #  evidence ， run() 。
     evidence: Dict[str, Any] = field(default_factory=dict)
-    # run_id 让外部消费者（chief_agent 等）能定位对应的共享 evidence bucket。
+    # run_id （chief_agent ） evidence bucket。
     run_id: str = ""
 
 
@@ -295,9 +277,6 @@ class ReactAgent:
     ):
         self.llm = llm
         # If the upstream LLM is unreachable / disabled, collapse the ReAct
-        # loop so we don't burn time on per-round calls that will all fail.
-        # The agent will still run one round and emit whatever evidence was
-        # gathered before the LLM was called.
         import os
         if os.environ.get("BGP_TRACER_DISABLE_LLM_REPORT", "").strip() in ("1", "true", "yes"):
             max_rounds = min(max_rounds, 2)
@@ -309,7 +288,7 @@ class ReactAgent:
         self.streaming_callback = streaming_callback
         self.precomputed_routing = precomputed_routing
         self.precomputed_traffic = precomputed_traffic
-        # enhanced 模式启用 LLMDebateAgent + MultiAgentReportAgent
+        # enhanced  LLMDebateAgent + MultiAgentReportAgent
         self.enhanced = enhanced
         self._evidence: Dict[str, Any] = {}
         self.trace: List[ReactTraceEntry] = []
@@ -321,32 +300,14 @@ class ReactAgent:
         self._start_time: str = ""
         self._end_time: str = ""
 
-        # ── enhanced 模式共用 Blackboard ────────────────────────────────────────
-        # Create a blackboard BEFORE the loop so LLMDebateAgent can read claims/
-        # routing/traffic written progressively by tools. The blackboard is the
-        # same shared-memory substrate the traffic_first_enhanced workflow uses,
-        # which is why debate results are now interoperable between the two
-        # enhanced modes.
+        # ── enhanced  Blackboard ────────────────────────────────────────
         self._blackboard = None
         if self.enhanced:
             try:
                 from agents.core import Blackboard as _BB
                 # Bug fix 2026-09-13 (BUG-R98): the previous code created
-                # a coroutine inside __init__ and tried to schedule or
-                # run it from this synchronous method. ``asyncio.ensure_future``
-                # would only schedule it without awaiting, leaving a
-                # "dangling" coroutine that may never complete before the
-                # agent starts; ``loop.run_until_complete`` is unsafe to
-                # call from inside a running loop; and the silent defer
-                # path meant the seed never ran. ``__init__`` must remain
-                # synchronous and side-effect free — defer the blackboard
-                # seeding to the first awaitable method (``run``) where a
-                # proper event loop is guaranteed.
                 self._blackboard = _BB()
                 # Placeholder so downstream code can check existence without
-                # relying on the agent being "fully seeded". The actual
-                # seeding happens in ``_ensure_blackboard_seeded`` at the
-                # top of ``run``.
                 self._blackboard_seeded = False
             except Exception as e:
                 logger.warning(f"[ReactAgent] Blackboard init failed: {e}; "
@@ -382,9 +343,6 @@ class ReactAgent:
         self._evidence.clear()
 
         # Store run context as instance attributes — explicit and thread-safe.
-        # The legacy module globals (_RUN_ASN etc.) are still written for
-        # backward-compat with any external reader, but new code MUST use
-        # session.run_context instead.
         self._asn = asn or ""
         self._start_time = start_time or ""
         self._end_time = end_time or ""
@@ -393,7 +351,7 @@ class ReactAgent:
         _RUN_START = self._start_time
         _RUN_END = self._end_time
 
-        # enhanced 模式：把运行上下文写入 Blackboard 让辩论 Agent 能拿到
+        # enhanced ： Blackboard  Agent 
         if self.enhanced and self._blackboard is not None:
             try:
                 await self._blackboard.update_section(
@@ -411,10 +369,6 @@ class ReactAgent:
                 logger.debug(f"[ReactAgent] bb config seed at run start failed: {e}")
 
         # ── Pre-inject pre-computed evidence (annotation_package) ────────────
-        # When the orchestrator passes precomputed_routing/traffic, populate
-        # the per-run shared evidence dict so the corresponding tool calls become
-        # cheap cache lookups instead of running live BGP detection (which
-        # can take 10+ minutes on ASes with thousands of announcements).
         bucket = shared_evidence(self.run_id)
         if self.precomputed_routing:
             self._evidence["precomputed_routing"] = self.precomputed_routing
@@ -422,10 +376,6 @@ class ReactAgent:
             logger.info(f"[ReactAgent] Injected precomputed_routing "
                         f"({len(str(self.precomputed_routing))//1024} KB, run_id={self.run_id[:8]})")
             # Bug fix: generate_report gates on `analyze_routing` evidence
-            # (success=True plus hijack/leak/outage events). When the caller
-            # already has a precomputed routing result, mirror it under that
-            # key so the report tool's gating check passes without needing
-            # the user to first run the analyze_routing tool.
             _mirrored_routing = {
                 "success": True,
                 "_from_precomputed": True,
@@ -512,8 +462,8 @@ class ReactAgent:
             if parsed["type"] == "answer":
                 self.stream_print(f"\n[Final Answer]\n{parsed['answer']}\n")
 
-                # 当 LLM 直接输出 Answer 时，也要检查是否需要运行
-                # InvestigationSupervisor 自动增强。
+                #  LLM  Answer ，
+                # InvestigationSupervisor 。
                 if (
                     not self._supervisor_enrichment_done
                     and self._traffic_result is not None
@@ -526,8 +476,8 @@ class ReactAgent:
                             context_for_supervisor, self._asn, self._traffic_result, self._routing_result
                         )
                         self._supervisor_enrichment_done = True
-                        # Supervisor enrichment 结果不会被写回 Answer（Answer 已由 LLM 给出），
-                        # 但 enrich_result 可以通过 self._supervisor_enrichment_result 传递给 generate_report。
+                        # Supervisor enrichment  Answer（Answer  LLM ），
+                        #  enrich_result  self._supervisor_enrichment_result  generate_report。
                         logger.info("[ReAct] Supervisor enrichment complete before Answer return")
                     except Exception as e:
                         logger.warning(f"[ReAct] Supervisor enrichment in Answer path failed: {e}")
@@ -565,8 +515,6 @@ class ReactAgent:
             action_name = parsed["action"]
             action_input = parsed["input"]
             # Bug #9 fix: if LLM produced an empty action (e.g. JS safety guard
-            # refused the role), pick the next sensible tool so the workflow
-            # doesn't loop forever on "Unknown tool: .".
             if not action_name:
                 action_name, action_input = self._pick_fallback_action(context)
                 logger.warning(
@@ -601,16 +549,6 @@ class ReactAgent:
                         self._routing_result = result
 
                     # ── Optimization: Early termination when both analyses are done ──
-                    # Bug fix 2026-09-17: previously the ReAct loop kept running
-                    # 5+ rounds calling check_correlation and finally
-                    # generate_report even when the agent already had all the
-                    # evidence it needed. Each round costs ~1 LLM call (3-15s
-                    # per round). For the common "no anomalies detected" path,
-                    # we can detect that traffic + routing are both done and
-                    # short-circuit straight to generate_report, saving 2-4
-                    # round-trips of latency and LLM cost. The agent still has
-                    # the option to continue iterating if it wants — we just
-                    # inject a strong hint into the context to stop.
                     if (
                         self._traffic_result is not None
                         and self._routing_result is not None
@@ -687,19 +625,6 @@ class ReactAgent:
                                 action_name = parsed["action"]
                                 action_input = parsed.get("input", {})
                                 # Bug fix 2026-09-13 (BUG-R79): ``self.trace``
-                                # is a plain ``List[ReactTraceEntry]`` and
-                                # does not have an ``add_entry`` method
-                                # (only ``append``). The previous code
-                                # called the missing method, which raised
-                                # ``AttributeError`` every time the retry
-                                # path executed — the exception was caught
-                                # by the outer ``except Exception`` and
-                                # silently logged as ``Retry think
-                                # failed``, so the retry never actually
-                                # appended the new entry nor ``continue``d
-                                # the retry loop. It fell through to the
-                                # ``break`` and the outer round exited,
-                                # losing the partial retry state.
                                 new_entry = ReactTraceEntry(
                                     round_num=self._round,
                                     thought=parsed.get("thought", response),
@@ -753,16 +678,6 @@ class ReactAgent:
                             tools_used=list(self.tools_used),
                             total_rounds=self._round,
                             # Bug fix 2026-09-13 (BUG-R55): previously this
-                            # retry-after-answer return path dropped
-                            # ``evidence`` and ``run_id``. As a result, when
-                            # a tool returned ``success=False`` and the
-                            # follow-up retry thought decided to answer,
-                            # the chief_agent's HCAF post-processing
-                            # (``_post_react_hcaf``) read an empty evidence
-                            # dict and ran HCAF over an unrelated fallback.
-                            # Mirror the same fields every other return
-                            # site includes so the result shape is
-                            # consistent.
                             evidence=dict(self._evidence),
                             run_id=self.run_id,
                         ))
@@ -963,9 +878,6 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
         if result["action"].lower() == "answer":
             result["type"] = "answer"
             # Extract Action Input using string-aware brace counting.
-            # Bug fix 2026-09-13 (BUG-R94): see the parallel fix below
-            # for the non-answer Action Input branch — same string-
-            # awareness issue applied here.
             input_match = re.search(r"Action Input:\s*(?:```json\s*)?", response)
             if input_match:
                 json_start = input_match.end()
@@ -982,14 +894,6 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
         if result["action"]:
             result["type"] = "action"
             # Bug fix 2026-09-13 (BUG-R94): the previous brace counter
-            # was not string-aware — when an Action Input contained
-            # nested literal braces inside a string value (e.g.
-            # ``{"template": "{a} and {b}"}``) the counter would open
-            # on the inner ``{`` and close early on the inner ``}``,
-            # handing back a truncated JSON object that fails to
-            # parse. Use the project-wide balanced-brace extractor
-            # (``utils.helpers.extract_json_object``) which honours
-            # string literals and escape sequences.
             input_match = re.search(r"Action Input:\s*(?:```json\s*)?", response)
             if input_match:
                 json_start = input_match.end()
@@ -1008,9 +912,6 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
     async def execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool by name and given input."""
         # Shared evidence dict so tools can pass data to each other (e.g.
-        # analyze_traffic → generate_report).  Class variable keeps the same
-        # dict across all _SessionShim instances created during a run.
-
         runContext = {
             "asn": self._asn or _RUN_ASN or "",
             "start_time": self._start_time or _RUN_START or "",
@@ -1093,16 +994,6 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             traffic_ready = _traffic_has_evidence(traffic)
             routing_ready = _routing_has_evidence(routing)
             # Bug fix 2026-09-15: the previous gate required BOTH traffic and
-            # routing to have events (hijacks/leaks/anomalies) before allowing
-            # ``generate_report`` to run. For an AS / time window with no
-            # detected anomalies this gate kept rejecting every call, and the
-            # ReAct loop burned 10+ rounds calling ``generate_report`` over and
-            # over while the same observation came back. Operators saw no report
-            # produced. The correct behaviour is: once the tools have *run*
-            # (regardless of whether they found anything), ``generate_report``
-            # is allowed to emit a "no anomalies" report. Detect that case by
-            # checking whether the tools succeeded (success=True) — empty
-            # event lists mean "no anomalies", not "missing data".
             traffic_completed = isinstance(traffic, dict) and traffic.get("success") is True
             routing_completed = isinstance(routing, dict) and routing.get("success") is True
             if not (traffic_completed or routing_completed):
@@ -1117,17 +1008,6 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                     "observation": "Report deferred until at least one of traffic/routing analysis is completed.",
                 }
             # If at least one tool produced evidence (anomalies/hijacks), use
-            # that for the report. Otherwise fall through and let the report
-            # path render a "no anomalies" report from the empty evidence.
-
-            # enhanced 模式：先触发 LLMDebateAgent 对抗辩论（如果还没有跑过），
-            # 然后交给 MultiAgentReportAgent 多专家生成报告。
-            #
-            # 关键设计变更：辩论阶段从原来的"质量门检测到争议时才触发"
-            # 改为"只要 enhanced=True 且 evidence 充分就跑一次"，与
-            # traffic_first_enhanced 的设计对齐。两边都用同一个 Blackboard
-            # → LLMDebateAgent → verdict 写入 self._evidence["debate_outcome"]
-            # 的数据流，因此多 Agent 报告可以共享同一个 debate verdict。
             if self.enhanced:
                 try:
                     if "debate_outcome" not in self._evidence and self._blackboard is not None:
@@ -1156,8 +1036,8 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 self._evidence[tool_name] = result
                 logger.info(f"[execute_tool] stored '{tool_name}', keys now: {list(self._evidence.keys())}")
 
-                # enhanced 模式：把关键 evidence 写入 Blackboard，
-                # 让后续的 LLMDebateAgent / MultiAgentReportAgent 能拿到。
+                # enhanced ： evidence  Blackboard，
+                #  LLMDebateAgent / MultiAgentReportAgent 。
                 if self.enhanced and self._blackboard is not None:
                     try:
                         await self._sync_evidence_to_blackboard(tool_name, result)
@@ -1219,13 +1099,13 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
     def format_observation(self, result: Dict[str, Any]) -> str:
         """Format tool result as observation string.
 
-        修 P1-#2：原始 tool 结果（如 analyze_traffic 返回的 traffic_timeline 数
-        千个数据点）会随每次 round 进入 context，几个 round 就触发 LLM 拒绝
-        (400 token 限制)。这里统一做证据摘要：
-        - 把 dict 列表压成 count + first/last + 关键字段摘要
-        - 长度上限 OBSERVATION_MAX_CHARS（默认 4000）
-        - 时序（timestamp）和数值（score/drop_ratio/anomaly_score）保留
-        - _SHARED_EVIDENCE 原始数据保留给后续工具读，不丢；只 slim 回写 context 的 observation 字符串
+         P1-#2： tool （ analyze_traffic  traffic_timeline 
+        ） round  context， round  LLM 
+        (400 token )。：
+        -  dict  count + first/last + 
+        -  OBSERVATION_MAX_CHARS（ 4000）
+        - （timestamp）（score/drop_ratio/anomaly_score）
+        - _SHARED_EVIDENCE ，； slim  context  observation 
         """
         if not result:
             return "No result returned."
@@ -1238,7 +1118,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             obs = str(result["observation"])
             cap = getattr(self, "OBSERVATION_MAX_CHARS", 4000)
             if len(obs) > cap:
-                return obs[:cap] + f"...[省略 {len(obs) - cap} 字符，原始数据保留在 _SHARED_EVIDENCE]"
+                return obs[:cap] + f"...[ {len(obs) - cap} ， _SHARED_EVIDENCE]"
             return obs
 
         # Generic formatting with slimming
@@ -1253,18 +1133,6 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 first = value[0]
                 last = value[-1]
                 # Bug fix 2026-09-13 (BUG-R100): the previous code called
-                # ``json.dumps(first, ensure_ascii=False)[:200]`` directly.
-                # If ``first`` contained non-JSON-serialisable values
-                # (datetime, set, numpy scalars, custom dataclasses) the
-                # call would raise ``TypeError`` and propagate up to
-                # ``entry.observation = self.format_observation(result)``
-                # at the call site, which had no surrounding try/except,
-                # crashing the entire tool execution and turning a
-                # successful tool call into a generic "Tool X failed:
-                # TypeError" message. The fix uses ``default=str`` so any
-                # non-serialisable object is converted to its string form
-                # (e.g. ``datetime(2024, ...)`` becomes ``"2024-..."``)
-                # and silently truncates very long strings.
                 def _safe(obj):
                     try:
                         return json.dumps(obj, ensure_ascii=False, default=str)[:200]
@@ -1273,11 +1141,11 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 # When count == 1 we would otherwise print the same item
                 # twice — emit a single-line form to save context tokens.
                 if count == 1:
-                    parts.append(f"{key}: 总数={count}, 唯一条目={_safe(first)}")
+                    parts.append(f"{key}: ={count}, ={_safe(first)}")
                 else:
                     parts.append(
-                        f"{key}: 总数={count}, 第一条={_safe(first)}, "
-                        f"最后一条={_safe(last)}"
+                        f"{key}: ={count}, ={_safe(first)}, "
+                        f"={_safe(last)}"
                     )
             elif key in ("success",):
                 continue
@@ -1300,22 +1168,22 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
         # Final cap
         cap = getattr(self, "OBSERVATION_MAX_CHARS", 4000)
         if len(summary) > cap:
-            return summary[:cap] + f"...[原始数据更详细]"
+            return summary[:cap] + f"...[]"
         return summary
 
     def update_context(self, old_context: str, entry: ReactTraceEntry) -> str:
         """Update context with new observation for next round.
 
-        修 P1-#1：context 字符串会随轮次无界增长，触发 489K token 爆炸。
-        这里硬性截断到 MAX_CONTEXT_CHARS（约 50K chars ≈ 13K tokens），
-        保留最近若干轮次的 trace。早期的 trace 写到 trace summary 供报告使用。
+         P1-#1：context ， 489K token 。
+         MAX_CONTEXT_CHARS（ 50K chars ≈ 13K tokens），
+         trace。 trace  trace summary 。
 
-        修 B-#10：把 observation 用 [Tool Observation] ... [/Tool Observation]
-        显式 fence 包裹。这有两个作用：
-          1. 让 LLM 一眼看出这是工具输出而非用户消息，避免 chat-completion
-             安全护栏（GLM-5 / 部分 GPT 部署）把 observation 内容误判为
-             "用户试图注入指令"，导致后续 round 拒绝角色扮演。
-          2. 防止 observation 中夹带的"我是 glm-5"等身份确认文本污染后续推理。
+         B-#10： observation  [Tool Observation] ... [/Tool Observation]
+         fence 。：
+          1.  LLM ， chat-completion
+             （GLM-5 /  GPT ） observation 
+             ""， round 。
+          2.  observation " glm-5"。
         """
         new_context = old_context
 
@@ -1335,22 +1203,22 @@ Action Input: {json.dumps(entry.action_input, ensure_ascii=False)}
         return self.cap_context(new_context)
 
     def cap_context(self, context: str) -> str:
-        """对 context 字符串做硬截断，保留系统消息和最近的轮次。
+        """ context ，。
 
-        MAX_CONTEXT_CHARS 在 __init__ 已设为 50000（约 13K tokens），低于 LLM
-        context window 的安全余量。任何时候 context 超出该阈值就丢弃最早
-        的轮次段，保留头部（system + initial query）和最新部分。
+        MAX_CONTEXT_CHARS  __init__  50000（ 13K tokens）， LLM
+        context window 。 context 
+        ，（system + initial query）。
         """
         cap = getattr(self, "MAX_CONTEXT_CHARS", 50000)
         if len(context) <= cap:
             return context
-        # 头部 = system + initial query；尾部 = 最近轮次
-        # 按 round 分段保留
+        #  = system + initial query； = 
+        #  round 
         rounded = context.split("\n## Round ")
-        # rounded[0] = 头部（system + 初始指令），rounded[1:] = 各 round 块
+        # rounded[0] = （system + ），rounded[1:] =  round 
         head = rounded[0]
         body_parts = [f"## Round {p}" for p in rounded[1:]]
-        # 从尾部保留
+        # 
         kept = []
         total = len(head)
         for part in reversed(body_parts):
@@ -1362,8 +1230,8 @@ Action Input: {json.dumps(entry.action_input, ensure_ascii=False)}
         dropped = len(body_parts) - len(kept)
         if dropped > 0:
             logger.warning(
-                f"[ReAct] context 超过 {cap} 字符，丢弃最早 {dropped} 轮，"
-                f"trace summary 中保留完整 {dropped + len(kept)} 轮记录"
+                f"[ReAct] context  {cap} ， {dropped} ，"
+                f"trace summary  {dropped + len(kept)} "
             )
         return head + "\n" + "\n".join(kept)
 
@@ -1555,8 +1423,6 @@ Number of auxiliary tools executed: {tool_count}
             await bb.update_section("routing", {"result": payload})
         elif tool_name == "reason_and_classify":
             # ReasonAndClassify produces a final diagnosis with claims[].
-            # We expose it to debate via two BB locations so the agent
-            # picks it up whether it reads from diagnosis or evidence.
             payload = await _unwrap(result)
             if isinstance(payload, dict):
                 claims = payload.get("claims") or payload.get("diagnosis_claims") or []
@@ -1570,288 +1436,16 @@ Number of auxiliary tools executed: {tool_count}
                     await bb.write("diagnosis", "final_claim", final_claim)
 
     async def _run_enhanced_debate(self, traffic, routing):
-        """Run the LLMDebateAgent on the current evidence so verdict is available
-        before the multi-agent report is generated.
-
-        Mirrors the workflow_engine.step path (cf. traffic_first_enhanced):
-          - reads reasoning claims from Blackboard
-          - runs Prosecutor + Defense + Judge debate rounds (default 2)
-          - writes the winner to self._evidence["debate_outcome"]
-        """
-        if self._blackboard is None:
-            logger.debug("[ReactAgent] debate skipped: no blackboard")
-            return
-        # Optimization 2026-09-17: skip the 2-round debate entirely when
-        # there are no claims to debate. Debate calls the LLM 2-4 times
-        # (prosecutor, defense, judge per round) — running it on empty data
-        # wastes ~10-30s and produces a "neutral / 0.5 confidence" verdict
-        # that adds nothing to the final report. Detect the empty case by
-        # checking whether any reasoning evidence exists.
-        try:
-            claim_count = 0
-            for sec in ("reasoning", "diagnosis", "evidence"):
-                payload = await self._blackboard.read_section(sec)
-                if not payload:
-                    continue
-                for k, v in payload.items():
-                    if isinstance(v, list):
-                        claim_count += len(v)
-                    elif isinstance(v, dict):
-                        # Nested claims list under .claims / .items
-                        for subk in ("claims", "items", "events"):
-                            sub = v.get(subk) if hasattr(v, "get") else None
-                            if isinstance(sub, list):
-                                claim_count += len(sub)
-            if claim_count == 0:
-                logger.info(
-                    "[ReactAgent] debate skipped: no claims in blackboard "
-                    "(traffic + routing produced no events to debate)"
-                )
-                # Inject a minimal "no findings" verdict so downstream code
-                # that reads debate_outcome still has a stable shape.
-                await self._blackboard.write(
-                    "evidence", "debate_outcome",
-                    {
-                        "winner": "neutral",
-                        "conclusion": "No anomalous claims to debate",
-                        "final_confidence": 0.5,
-                        "skipped_empty_evidence": True,
-                    },
-                )
-                return
-        except Exception as e:
-            logger.debug(f"[ReactAgent] debate skip-check failed: {e}")
-        # Make sure config carries asn/start/end so debate agent can read them
-        try:
-            await self._blackboard.update_section(
-                "config",
-                {
-                    "asn": self._asn or "",
-                    "start_time": self._start_time or "",
-                    "end_time": self._end_time or "",
-                },
-            )
-        except Exception as e:
-            logger.debug(f"[ReactAgent] bb config update failed: {e}")
-
-        try:
-            from agents.enhanced.debate_agent import LLMDebateAgent
-            debate_agent = LLMDebateAgent(bb=self._blackboard, max_rounds=2)
-            debate_result = await debate_agent.step()
-            if not (debate_result and getattr(debate_result, "success", False)):
-                logger.debug(f"[ReactAgent] debate returned no result: "
-                             f"success={getattr(debate_result, 'success', None)}")
-                return
-            data = getattr(debate_result, "data", None) or {}
-            debate_results = data.get("debate_results", [])
-            if not debate_results:
-                return
-            best = debate_results[0]
-            verdict = {
-                "debate_results": debate_results,
-                "winner": best.get("winner"),
-                "conclusion": best.get("conclusion") or best.get("winner"),
-                "original_claim": best.get("original_claim"),
-                "final_confidence": best.get("final_confidence", 0.5),
-                "rounds": data.get("rounds", len(debate_results)),
-            }
-            self._evidence["debate_outcome"] = verdict
-            logger.info(
-                f"[ReactAgent] debate complete: winner={verdict['winner']!r} "
-                f"confidence={verdict['final_confidence']:.2f} rounds={verdict['rounds']}"
-            )
-            # Also publish on blackboard so subsequent debate rounds / reports
-            # can read it without needing self._evidence.
-            try:
-                await self._blackboard.write("evidence", "debate_outcome", verdict)
-            except Exception:
-                pass
-        except Exception as e:
-            logger.warning(f"[ReactAgent] debate failed: {e}")
+        """Stub: enhanced mode removed 2026-09-29 (paper-grade cleanup)."""
+        return None
 
     def run_enhanced_quality_gate(self, traffic, routing):
-        """Run OnlineEvaluationAgent quality gate before report generation.
-
-        Returns dict with:
-          - quality_score (float)
-          - gate_passed (bool)
-          - issues (list of strings)
-        """
-        try:
-            from agents.enhanced.evaluation_loop import OnlineEvaluationAgent
-            agent = OnlineEvaluationAgent()
-            metrics, gate_passed, corrections = asyncio.run(agent.evaluate_stage(
-                stage_name="report",
-                agent_output={"traffic": traffic, "routing": routing},
-                context={},
-            ))
-            metrics_dict = metrics.to_dict() if hasattr(metrics, "to_dict") else {}
-            return {
-                "quality_score": metrics_dict.get("overall_score", 0.0),
-                "gate_passed": gate_passed,
-                "issues": [i.get("description", str(i)) for i in metrics_dict.get("issues", [])],
-            }
-        except Exception as e:
-            logger.debug(f"[ReactAgent] quality gate unavailable: {e}")
-            return {"quality_score": 0.0, "gate_passed": True, "issues": []}
+        """Stub: enhanced mode removed 2026-09-29 (paper-grade cleanup)."""
+        return {"quality_score": 0.0, "gate_passed": True, "issues": []}
 
     async def try_enhanced_report(self, tool_input, session):
-        """Generate report via MultiAgentReportAgent in enhanced mode.
-
-        Returns the saved HTML path on success, None on failure so the caller
-        falls back to the default `_generate_report` tool.
-        """
-        try:
-            from agents.enhanced.multi_report import ReportCoordinator
-            from agents.report_agent import analyze_temporal_correlation
-
-            rc = getattr(session, "run_context", {}) or {}
-            traffic = self._evidence.get("analyze_traffic", {})
-            routing = self._evidence.get("analyze_routing", {})
-            traffic_data = traffic.get("results") or traffic.get("result") or traffic
-            routing_data = routing.get("results") or routing.get("result") or routing
-
-            # Optimization 2026-09-17: short-circuit the multi-agent coordinator
-            # when there is nothing to debate / calibrate. Multi-agent runs
-            # 5 specialist LLM calls (TrafficExpert → RoutingExpert →
-            # EvidenceLinker → ConfidenceCalibrator → ReportCoordinator) and
-            # then a synthesizer — totaling 6+ LLM calls just to produce a
-            # "no anomalies" report. When traffic + routing produced zero
-            # events, return None so the caller falls back to the standard
-            # single-call ReportAgent (which already produces an excellent
-            # "no anomaly" report in ~30s instead of ~3 minutes for the
-            # multi-agent pipeline).
-            def _has_events(payload):
-                if not isinstance(payload, dict):
-                    return False
-                # traffic has 'anomalies' / 'anomaly_events' / nested results
-                for k in ("anomalies", "anomaly_events"):
-                    v = payload.get(k)
-                    if isinstance(v, list) and v:
-                        return True
-                results = payload.get("results")
-                if isinstance(results, dict):
-                    for sub in results.values():
-                        if isinstance(sub, dict):
-                            for k in ("anomalies", "anomaly_events",
-                                      "traffic_plot_path", "plot_path"):
-                                v = sub.get(k)
-                                if isinstance(v, list) and v:
-                                    return True
-                                if isinstance(v, str) and v:
-                                    return True
-                # routing has list fields
-                for k in ("origin_hijacked", "forge_hijacked",
-                          "origin_hijacking", "forge_hijacking",
-                          "route_leaks", "outages"):
-                    v = payload.get(k)
-                    if isinstance(v, list) and v:
-                        return True
-                    if isinstance(v, dict) and v:
-                        return True
-                # outage_analysis positive score also counts
-                outage = payload.get("outage_analysis")
-                if isinstance(outage, dict) and (
-                    outage.get("outage_score", 0) > 0
-                    or outage.get("is_outage_suspected") is True
-                ):
-                    return True
-                return False
-
-            traffic_has = _has_events(traffic_data if isinstance(traffic_data, dict) else {})
-            routing_has = _has_events(routing_data if isinstance(routing_data, dict) else {})
-            if not traffic_has and not routing_has:
-                logger.info(
-                    "[ReactAgent] Multi-agent report skipped: no anomalies in "
-                    "traffic + routing (single-call ReportAgent will be used "
-                    "instead). Saves 5 LLM calls."
-                )
-                return None
-
-            correlation = analyze_temporal_correlation(
-                traffic_raw=traffic_data,
-                routing_result=routing_data,
-                target_as=rc.get("asn", "unknown"),
-            )
-
-            # Bug fix 2026-09-16: MultiAgentReportAgent is an Agent wrapper that
-            # reads data from the Blackboard. Its ``step()`` method calls
-            # ``ReportCoordinator.generate()`` internally. We need the coordinator
-            # directly here (not the agent wrapper) so we can pass traffic/routing
-            # data explicitly. Directly instantiating ``ReportCoordinator`` bypasses
-            # the agent layer and avoids "no attribute 'generate'" AttributeError.
-            from agents.enhanced.multi_report import setup_llm_settings, MODEL, API_KEY, BASE_URL, DEFAULT_TEMP_REPORT
-            multi_llm, _ = setup_llm_settings(
-                model=MODEL, api_key=API_KEY, base_url=BASE_URL,
-                temperature=DEFAULT_TEMP_REPORT, timeout=600.0, max_retries=1,
-            )
-            coordinator = ReportCoordinator(llm=multi_llm, run_id=rc.get("run_id", ""))
-            # 在 enhanced 模式下，把辩论结果也作为 reasoning_result 的
-            # 优先输入传给多 Agent 报告生成器，让 ConflictResolver /
-            # ConfidenceCalibrator 看到辩论结论而不是只有 LLM 单方面分类。
-            #
-            # 注意：如果辩论比 reason_and_classify 更具信息量，则用辩论版本；
-            # 反之保留原本的 reason_and_classify。绝大多数情况下辩论会补充置信度。
-            reasoning_input = self._evidence.get("reason_and_classify")
-            debate_outcome = self._evidence.get("debate_outcome")
-            if isinstance(debate_outcome, dict):
-                reasoning_input = {
-                    **(reasoning_input if isinstance(reasoning_input, dict) else {}),
-                    "debate_verdict": debate_outcome,
-                    "debate_winner": debate_outcome.get("winner"),
-                    "debate_confidence": debate_outcome.get("final_confidence"),
-                }
-            result = await coordinator.generate(
-                traffic_data=traffic_data,
-                routing_data=routing_data,
-                correlation_analysis=correlation,
-                reasoning_result=reasoning_input,
-                user_analysis_window=f"{rc.get('start_time', '')} to {rc.get('end_time', '')}",
-            )
-            if result is None:
-                return None
-            # Bug fix 2026-09-16: ReportGenerationResult does not carry a
-            # ``report_path`` field — it holds ``final_html`` (the synthesized
-            # HTML body) and ``metadata``. Persist the HTML to disk the same
-            # way generate_report_html does so react_enhanced actually
-            # produces a multi-agent report on disk rather than silently
-            # returning None and falling back to the plain generate_report.
-            final_html = getattr(result, "final_html", None) or (
-                result.get("final_html") if isinstance(result, dict) else None
-            )
-            if not final_html:
-                return None
-            import os
-            from pathlib import Path
-            from datetime import datetime
-            from agents.report_agent import inject_traffic_plot
-            asn = rc.get("asn", "unknown")
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            out_dir = Path("results/html")
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = out_dir / f"multi_agent_report_{asn}_{ts}.html"
-            # Embed traffic plot if available in evidence.
-            plot_path = (
-                self._evidence.get("analyze_traffic", {})
-                .get("results", {})
-                .get(asn, {})
-                .get("traffic_plot_path")
-                if isinstance(self._evidence.get("analyze_traffic"), dict)
-                else None
-            )
-            try:
-                from agents.report_agent import embed_file_as_base64
-                plot_b64 = embed_file_as_base64(plot_path) if plot_path else None
-            except Exception:
-                plot_b64 = None
-            final_html = inject_traffic_plot(final_html, plot_b64) if plot_b64 else final_html
-            out_path.write_text(final_html, encoding="utf-8")
-            logger.info(f"[ReactAgent] Multi-agent enhanced report saved to {out_path}")
-            return str(out_path)
-        except Exception as e:
-            logger.warning(f"[ReactAgent] MultiAgentReportAgent unavailable: {e}")
-            return None
-
+        """Stub: enhanced mode removed 2026-09-29 (paper-grade cleanup)."""
+        return None
 
 def create_react_agent(
     model: Optional[str] = None,

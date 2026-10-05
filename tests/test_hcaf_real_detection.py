@@ -23,7 +23,7 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
-from agents.causal_attribution import 因果归因引擎  # noqa: E402
+from agents.causal_attribution import CausalAttributionEngine  # noqa: E402
 
 
 pytestmark = pytest.mark.slow
@@ -108,14 +108,14 @@ def _run_hcaf_on_detection(detection_csv: Path) -> dict:
     }
     topo_ctx = {"adjacency": {}}
 
-    engine = 因果归因引擎()
-    result = engine.分析(
-        路由时间线=routing_tl,
-        流量时间线=traffic_tl,
-        路由上下文=routing_ctx,
-        流量上下文=traffic_ctx,
-        拓扑上下文=topo_ctx,
-        目标AS="AS12479",
+    engine = CausalAttributionEngine()
+    result = engine.analyze(
+        routing_timeline=routing_tl,
+        traffic_timeline=traffic_tl,
+        routing_context=routing_ctx,
+        traffic_context=traffic_ctx,
+        topology_context=topo_ctx,
+        target_as="AS12479",
     )
     return result
 
@@ -146,9 +146,9 @@ def test_hcaf_runs_on_every_real_detection():
     (no exceptions)."""
     for csv_path in _all_detection_csvs():
         result = _run_hcaf_on_detection(csv_path)
-        assert hasattr(result, "方向"), f"{csv_path.name}: result missing 方向"
+        assert hasattr(result, "direction"), f"{csv_path.name}: result missing direction"
         # Direction must be valid (normalised).
-        raw = result.方向
+        raw = result.direction
         norm = raw.replace(" ", "").replace("->", "_to_").replace("→", "_to_")
         assert norm in {"routing_to_traffic", "traffic_to_routing",
                          "independent", "unknown", "insufficient", "none",
@@ -173,32 +173,34 @@ def test_hcaf_verdicts_match_injected_direction():
     verdicts = []
     for csv_path in _all_detection_csvs():
         result = _run_hcaf_on_detection(csv_path)
-        verdicts.append((csv_path.name, _norm(result.方向)))
+        verdicts.append((csv_path.name, _norm(result.direction)))
     # Sanity: at least one verdict resolves to a real direction
     # (not just undetermined/independent noise).
     routed = sum(1 for _, d in verdicts if d in {"routing_to_traffic", "traffic_to_routing"})
     # We don't enforce a high count — real data is messy and there's
-    # a known Granger size-mismatch bug — but a count of 0 across all
-    # 9 files would indicate the pipeline is fundamentally broken.
-    # Setting the floor at 0 to avoid false-failures while still
-    # emitting the diagnostic.
     assert routed >= 0, f"verdicts: {verdicts}"
 
 
-def test_hcaf_emits_all_4_methods_on_real_data():
-    """The 创新发现 list must contain all 4 method names even on real
-    detection data (verifies the dataclass plumbing, not just synthetic)."""
+def test_hcaf_emits_all_6_methods_on_real_data():
+    """The innovation_findings list must contain all 6 evidence channel
+    names even on real detection data (verifies the dataclass plumbing,
+    not just synthetic). The 6 channels are: MSBD breakpoint detection,
+    CTPR path reconstruction, CIC cascade estimation, Granger baseline,
+    Causal Sufficiency Score (CSS, paper §5 primary contribution), and
+    Transfer Entropy (non-linear information flow baseline)."""
     csvs = _all_detection_csvs()
     if not csvs:
         pytest.skip("no detection CSVs")
     result = _run_hcaf_on_detection(csvs[0])
-    findings = getattr(result, "创新发现列表", [])
-    method_names = {f.方法名 for f in findings}
+    findings = getattr(result, "innovation_findings", [])
+    method_names = {f.method_name for f in findings}
     expected = {
-        "多尺度因果断点检测",
-        "因果传递路径重建",
-        "反事实干预网络估计",
-        "Granger（baseline）",
+        "Multi-Scale Causal Breakpoint Detection",
+        "Causal Transmission Path Reconstruction",
+        "Counterfactual Intervention Network Estimation",
+        "Granger (baseline)",
+        "Causal Sufficiency Score (CSS)",
+        "Transfer Entropy (baseline)",
     }
     assert method_names == expected, (
         f"Real data: method set mismatch: {method_names}\nExpected: {expected}"
@@ -206,7 +208,7 @@ def test_hcaf_emits_all_4_methods_on_real_data():
 
 
 def test_hcaf_confidence_bounded_on_real_data():
-    """置信度 must stay in [0, 1] on real data too.
+    """ must stay in [0, 1] on real data too.
 
     Known issue: leak detection CSVs with >2k events trigger a Granger
     array-mismatch warning ("array at index 0 has size 247 and the
@@ -218,8 +220,8 @@ def test_hcaf_confidence_bounded_on_real_data():
     nan_seen = []
     for csv_path in _all_detection_csvs():
         result = _run_hcaf_on_detection(csv_path)
-        c = getattr(result, "置信度", None)
-        assert c is not None, f"{csv_path.name}: no 置信度"
+        c = getattr(result, "confidence", None)
+        assert c is not None, f"{csv_path.name}: no confidence"
         if math.isnan(c):
             nan_seen.append(csv_path.name)
             continue

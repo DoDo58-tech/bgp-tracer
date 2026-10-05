@@ -51,10 +51,6 @@ def _read(path: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# R39 — detect_origin_hijacks uses trie, dead code removed
-# ---------------------------------------------------------------------------
-
-
 def test_detect_origin_hijacks_uses_parent_prefix_trie():
     """detect_origin_hijacks must delegate sub-prefix resolution to the
     ParentPrefixTrie, not the legacy /24-/16 string-truncation heuristic.
@@ -84,8 +80,6 @@ def test_detect_origin_hijacks_no_legacy_heuristic():
     func_body = src[func_start:next_def]
 
     # Strip the docstring before scanning: it's allowed to mention the
-    # legacy heuristic names for context, but no code path may construct
-    # a ``parent24_prefix`` / ``parent16_prefix`` column.
     if '"""' in func_body:
         # Drop everything between the first and second triple-quote pair.
         first = func_body.index('"""')
@@ -120,8 +114,6 @@ def test_detect_origin_hijacks_dead_code_removed():
     func_body = src[func_start:next_def]
 
     # Exactly one top-level ``try:`` inside the function body.
-    # (Helper functions inside may have their own try, but only the
-    # main try that wraps the original implementation should be counted.)
     top_level_tries = len(re.findall(r"^    try:\n", func_body, flags=re.MULTILINE))
     assert top_level_tries <= 1, (
         f"detect_origin_hijacks has {top_level_tries} top-level try-blocks; "
@@ -175,19 +167,12 @@ def test_detect_origin_hijacks_handles_empty_input():
 
 
 # ---------------------------------------------------------------------------
-# R40 — safe_read handles key=None gracefully
-# ---------------------------------------------------------------------------
-
-
 def test_safe_read_key_none_does_not_raise():
     """``safe_read(bb, section, None)`` must return the entire section
     (or default), not raise KeyError/TypeError."""
     src = _read("agents/report_agent.py")
 
     # The current safe_read body:
-    #   val = await bb.read(section, key, default)
-    # We require the implementation to handle key=None (when caller asks
-    # for an entire section).
     assert "async def safe_read" in src, "safe_read function must exist"
     func_start = src.index("async def safe_read")
     func_end = src.index("\n\n", func_start + 1)
@@ -201,10 +186,6 @@ def test_safe_read_key_none_does_not_raise():
 
 
 # ---------------------------------------------------------------------------
-# R42 — outage_detector.analyze return-type consistency
-# ---------------------------------------------------------------------------
-
-
 def test_outage_detector_analyze_returns_dict():
     """``analyze`` must always return a dict, regardless of code path.
 
@@ -218,8 +199,6 @@ def test_outage_detector_analyze_returns_dict():
     src = _read("detectors/outage/outage_detector.py")
 
     # Find every ``return {...`` literal inside analyze that is NOT
-    # wrapped in wrap(...).to_dict(). Before the fix there were exactly
-    # two such returns; after the fix there should be zero.
     func_start = src.index("def analyze(")
     func_body = src[func_start:func_start + 6000]
 
@@ -233,10 +212,6 @@ def test_outage_detector_analyze_returns_dict():
 
 
 # ---------------------------------------------------------------------------
-# R43 — _download_and_decode short-circuits empty .gz
-# ---------------------------------------------------------------------------
-
-
 def test_download_and_decode_short_circuits_empty_gz():
     """When wget succeeds but the file is < 100 bytes, _download_and_decode
     must return False BEFORE spawning bgpdump."""
@@ -251,11 +226,6 @@ def test_download_and_decode_short_circuits_empty_gz():
 
 
 # ---------------------------------------------------------------------------
-# R39 functional — trie detects sub-prefix hijacks that the legacy /24
-# heuristic missed
-# ---------------------------------------------------------------------------
-
-
 def test_trie_detects_subprefix_hijack_legacy_heuristic_missed():
     """The legacy ``parent24_prefix`` / ``parent16_prefix`` string-truncation
     heuristic could NOT detect sub-prefix hijacks nested under arbitrary
@@ -269,9 +239,6 @@ def test_trie_detects_subprefix_hijack_legacy_heuristic_missed():
     from detectors.hijack.hijack_detector_core import detect_origin_hijacks
 
     # /25 nested inside /24 owned by AS13335, announced by AS99999.
-    # The legacy /24 heuristic would have mapped 1.0.0.0/25 to its
-    # parent /24, which IS in target_owned_prefixes — so it happened
-    # to work for /25 in /24. But /28 inside /27 inside /24 was lost.
     df = pl.DataFrame({
         "prefix": ["10.0.0.0/28"],
         "as-path": ["99999"],

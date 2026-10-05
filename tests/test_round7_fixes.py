@@ -46,10 +46,6 @@ if str(ROOT) not in sys.path:
 
 
 # ---------------------------------------------------------------------------
-# R32 — extract_json_object handles braces inside string values
-# ---------------------------------------------------------------------------
-
-
 def test_extract_json_object_handles_braces_in_string_value():
     """A LLM response that has ``{...}`` inside a string value should
     not truncate the JSON at the inner brace.
@@ -100,10 +96,6 @@ def test_extract_json_object_picks_first_object_when_multiple():
 
 
 # ---------------------------------------------------------------------------
-# R33 — parse_llm_json falls back through fences / balanced-extract
-# ---------------------------------------------------------------------------
-
-
 def test_parse_llm_json_strict_success():
     from utils.helpers import parse_llm_json
     assert parse_llm_json('{"a": 1, "b": "x"}') == {"a": 1, "b": "x"}
@@ -138,10 +130,6 @@ def test_parse_llm_json_handles_none_and_empty():
 
 
 # ---------------------------------------------------------------------------
-# R34 — RouteOutageDetector parsed cache is bounded
-# ---------------------------------------------------------------------------
-
-
 def test_outage_detector_parsed_cache_is_bounded():
     from datetime import datetime, timedelta
     from detectors.outage.outage_detector import RouteOutageDetector
@@ -155,11 +143,6 @@ def test_outage_detector_parsed_cache_is_bounded():
 
     assert len(detector.parsed_cache) <= detector._MAX_PARSED_CACHE_SIZE
     # Bug fix 2026-09-13 (BUG-R127 regression check): the cache used
-    # to maintain a parallel ``_parsed_cache_order`` list that was
-    # kept in sync with ``parsed_cache``. The cache is now an
-    # OrderedDict directly, so the auxiliary list is no longer
-    # needed. We assert that the cache stays bounded regardless, and
-    # that no auxiliary state has crept in.
     assert hasattr(detector, "parsed_cache")
     from collections import OrderedDict as _OD
     assert isinstance(detector.parsed_cache, _OD), (
@@ -204,14 +187,6 @@ def test_outage_detector_parsed_cache_initial_state():
     detector = RouteOutageDetector()
     assert len(detector.parsed_cache) == 0
     # _parsed_cache_order was removed in BUG-R127 (cache is now just the
-    # OrderedDict ``parsed_cache``); verify it isn't recreated somewhere.
-
-
-# ---------------------------------------------------------------------------
-# R35 — async_get_json helper exists and uses asyncio.to_thread
-# ---------------------------------------------------------------------------
-
-
 def test_async_get_json_helper_exists_and_is_async():
     from tools.tool_implementations import _async_get_json
     assert asyncio.iscoroutinefunction(_async_get_json)
@@ -267,10 +242,6 @@ def test_bgpview_as_info_does_not_block(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# R36 — call sites switched to brace-balanced extractor
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize("path", [
     "agents/llm_reasoning.py",
     "agents/reasoning_agent.py",
@@ -295,10 +266,6 @@ def test_call_sites_no_longer_use_buggy_find_rfind(path):
 
 
 # ---------------------------------------------------------------------------
-# R37 — report_agent RPKI fallback uses asyncio.to_thread
-# ---------------------------------------------------------------------------
-
-
 def test_report_agent_rpki_fallback_uses_asyncio_to_thread():
     """The RPKI fallback in ``_try_fetch_rpki_fallback`` must offload
     its ``requests.get`` call to a worker thread."""

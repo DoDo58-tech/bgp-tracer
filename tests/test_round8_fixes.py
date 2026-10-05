@@ -48,9 +48,6 @@ def test_download_and_decode_kills_proc_on_consumer_error():
     src = _read("detectors/outage/extract_event_features.py")
 
     # Look for the kill branch: ``proc.kill()`` inside the outer-try
-    # (i.e. the path that fires when ``for line in proc.stdout`` raises).
-    # We require the substring appears within the function body (after
-    # ``def _download_and_decode``).
     func_start = src.index("def _download_and_decode")
     func_body = src[func_start:func_start + 4000]
     assert "proc.kill()" in func_body, (

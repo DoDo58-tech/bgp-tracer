@@ -1,32 +1,42 @@
-"""HCAF consistency tests against the 34-event ground-truth dataset.
+"""HCAF ground-truth consistency test (REVIEW_SIGCOMM_GRADE_v2 §1.3).
 
-Tests the HCAF verdict (routing_to_traffic / traffic_to_routing /
-independent / unknown) against the human-reviewed labels in
-``data_check/ground_truth_collection/human_review_report.csv``.
+Iterates through ``data_check/ground_truth_collection/final_balanced_dataset_v13.csv``,
+synthesises a minimal routing + traffic timeline from each row's
+``routing_origin_count`` / ``routing_withdrawal_count`` /
+``traffic_pct_deviation_pct``, runs ``CausalAttributionEngine.analyze()``,
+and asserts:
 
-The CSV doesn't carry an explicit "direction" label (only a
-"traffic_route_correlation" strength of {高, 中}), so we measure:
+    1. HCAF returns a verdict for every event (no crashes).
+    2. The direction precision against ground truth is >= 0.85
+       (counting "unknown" as a non-error per review v2 §1.3.3).
+    3. Per-event verdict table is dumped to JSON for the paper.
 
-    1. **Detection coverage**: % of events where HCAF returns a known
-       direction (not "unknown") vs ground-truth "verified=True".
-    2. **Direction agreement** (proxy): among events that human reviewers
-       marked as "高" correlation, what fraction of HCAF verdicts agree
-       with the "expected" direction implied by event_type?
-       - hijack / leak → routing→traffic expected
-       - outage → traffic→routing expected (operational failure → routing change)
+Direction mapping (v9 ground-truth → expected HCAF direction):
 
-This is a coarse proxy — real ground-truth direction labels would need
-a separate human study. The test is tagged ``slow`` because it iterates
-over all 34 events and runs the full HCAF pipeline on synthetic
-data for each.
+    | ground_truth_cause_label                | routing withdrawal | expected direction    |
+    |-----------------------------------------|--------------------|-----------------------|
+    | route_leak / origin_hijack_* / roa_*    | any                | routing_to_traffic    |
+    | outage                                  | >0                 | routing_to_traffic    |
+    | outage                                  | 0 (DPI / filternet)| traffic_to_routing or independent |
+
+Notes:
+- Rows with only traffic data (no routing origin/withdrawal) enter the
+  ``traffic_only`` branch of ``CausalAttributionEngine.analyze`` and
+  return ``direction="unknown"``. Per review v2 §1.3.3, "unknown" is
+  not counted as wrong.
+- Tier C ``*_attacker_view`` rows are excluded from the precision
+  calculation: they are derived test variants, not independent
+  ground truth. They are still exercised so the pipeline doesn't
+  crash on them.
 """
-
 from __future__ import annotations
 
 import csv
+import json
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
-from collections import Counter, defaultdict
+from typing import Any
 
 import numpy as np
 import pytest
@@ -34,231 +44,385 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_ROOT))
 
-from agents.causal_attribution import 因果归因引擎  # noqa: E402
+from agents.causal_attribution import CausalAttributionEngine  # noqa: E402
 
 
-pytestmark = pytest.mark.slow
-
-_GT_PATH = _ROOT / "data_check" / "ground_truth_collection" / "human_review_report.csv"
+pytestmark = pytest.mark.fast
 
 
-# ─── Ground-truth loader ────────────────────────────────────────────────
+CSV_PATH_V13 = _ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v13.csv"
+CSV_PATH = CSV_PATH_V13
+RESULTS_PATH = _ROOT / "tests" / "_hcaf_consistency_results.json"
+PRECISION_THRESHOLD = 0.85
 
 
-def _load_ground_truth():
-    """Return list of dicts from the ground-truth CSV."""
-    with open(_GT_PATH) as f:
+# ─── Helpers ────────────────────────────────────────────────────────────
+
+
+def _load_v9_rows() -> list[dict[str, str]]:
+    """Load the v9 ground-truth CSV (29 rows)."""
+    with open(CSV_PATH, encoding="utf-8") as f:
         return list(csv.DictReader(f))
 
 
-# ─── Synthetic timelines ────────────────────────────────────────────────
+def _expected_direction(cause_label: str, withdrawal_count: int) -> str | None:
+    """Map a v9 row to the expected HCAF direction label.
+
+    Returns one of:
+        "routing_to_traffic"     -- routing change drove traffic change
+        "traffic_to_routing"     -- traffic event drove routing change (DPI)
+        "independent"            -- no causal link
+        None                     -- not determinable from this row (unknown)
+    """
+    if cause_label in {"route_leak", "origin_hijack_victim", "origin_hijack_attacker",
+                       "roa_misconfig"}:
+        return "routing_to_traffic"
+    if cause_label == "outage":
+        if withdrawal_count > 0:
+            return "routing_to_traffic"
+        # No BGP withdrawal → DPI / filternet → expected traffic_to_routing
+        # or "independent" if the engine deems the two signals uncorrelated.
+        return "traffic_to_routing"
+    return None
 
 
-def _synth_timeline(n: int = 120, base: float = 0.4, spike_at: int = 60,
-                    spike_height: float = 0.7, spike_width: int = 10,
-                    seed: int = 0):
-    """Build a Cloudflare-style 5-min timeline with a single anomaly window."""
-    from datetime import datetime, timedelta
-    rng = np.random.default_rng(seed)
-    series = np.full(n, base) + rng.normal(0, 0.05, size=n)
-    series[spike_at:spike_at + spike_width] = spike_height + rng.normal(0, 0.05, size=spike_width)
-    base_dt = datetime.fromisoformat("2024-01-01T00:00:00+00:00")
+def _expected_dir_set(cause_label: str, withdrawal_count: int) -> set[str]:
+    """Return the set of acceptable HCAF direction strings for this row.
+
+    Acceptable = the expected direction OR "unknown" (review v2 §1.3.3
+    treats unknown as a non-error).
+    """
+    expected = _expected_direction(cause_label, withdrawal_count)
+    if expected is None:
+        return {"unknown"}
+    return {expected, "unknown"}
+
+
+def _parse_int(s: str, default: int = 0) -> int:
+    try:
+        return int(s.strip()) if s.strip() else default
+    except (ValueError, AttributeError):
+        return default
+
+
+def _parse_float(s: str, default: float = 0.0) -> float:
+    try:
+        return float(s.strip()) if s.strip() else default
+    except (ValueError, AttributeError):
+        return default
+
+
+def _make_timeline(event_label: str, base_ts: datetime, scores: list[float]) -> list[dict]:
+    """Build a 5-minute-spaced timeline from a list of scores."""
     return [
-        {"timestamp": (base_dt + timedelta(minutes=5 * i)).isoformat(), "score": float(v)}
-        for i, v in enumerate(series)
+        {"timestamp": (base_ts + timedelta(minutes=5 * i)).isoformat(),
+         "score": float(s)}
+        for i, s in enumerate(scores)
     ]
 
 
-def _hcaf_run(event: dict) -> dict:
-    """Run the full HCAF pipeline on a synthetic pair of timelines derived
-    from the event's traffic_score / route_score."""
-    try:
-        traffic_score = float(event["traffic_score"])
-    except (ValueError, KeyError):
-        traffic_score = 0.6
-    try:
-        route_score = float(event["route_score"])
-    except (ValueError, KeyError):
-        route_score = 0.7
+def _build_timelines_for_row(row: dict[str, str]) -> tuple[list, list, dict, dict]:
+    """Build routing + traffic timelines + contexts for one v9 row.
 
-    # Build routing timeline with a spike at index 30.
-    routing_tl = _synth_timeline(n=120, base=0.3, spike_at=30,
-                                  spike_height=route_score, spike_width=5,
-                                  seed=hash(event["event_id"]) & 0xFFFF)
-    # Build traffic timeline with a spike at index 50 (delayed).
-    traffic_tl = _synth_timeline(n=120, base=0.4, spike_at=50,
-                                  spike_height=traffic_score, spike_width=5,
-                                  seed=(hash(event["event_id"]) >> 16) & 0xFFFF)
+    Uses REAL Phase-1 quick caches (``results/quick/quick_AS<n>_<start>_<end>.json``)
+    when available, so the test exercises the same data path as the
+    production eval. Events without a matching cache fall back to a
+    *minimal* synthetic shape that captures the BGP event semantics
+    (routing spike at event onset, traffic trough after) — but this
+    fallback is only used for the 7 events in v13 that lack real
+    cache coverage, and the test reports them separately.
 
-    routing_ctx = {
-        "origin_as": event.get("attacker_as", "AS65000"),
-        "event_type": event.get("event_type", "unknown"),
-        "affected_as_count": 3,
+    The synthetic shape was previously the *primary* test fixture, which
+    made the test tautological: the shape was constructed to match the
+    expected answer. Loading from real caches breaks the circularity.
+    """
+    origin_count = _parse_int(row.get("routing_origin_count", ""), 0)
+    withdrawal_count = _parse_int(row.get("routing_withdrawal_count", ""), 0)
+    traffic_pct = _parse_float(row.get("traffic_pct_deviation_pct", ""), 0.0)
+
+    base = datetime(2026, 1, 1, 12, 0, 0)
+
+    # Try to load from real cache first. This is the production-equivalent
+    # data path that ``scripts/eval_hcaf_vs_baselines.py`` uses.
+    routing_tl: list = []
+    traffic_tl: list = []
+    cache_loaded = False
+    try:
+        from scripts.eval_hcaf_vs_baselines import (
+            find_quick_cache, split_merged_timeline,
+            _load_traffic_csv_for_event,
+        )
+        asn = (row.get("victim_as", "") or row.get("leak_as", "") or "").replace("AS", "").strip()
+        start = row.get("start_time_utc", "")
+        end = row.get("end_time_utc", "")
+        if asn and start and end:
+            quick_dir = _ROOT / "results" / "quick"
+            cache = find_quick_cache(asn, start, end, quick_dir)
+            if cache is not None:
+                cache_data = json.loads(cache.read_text(encoding="utf-8"))
+                routing_full = cache_data.get("correlation", {}).get("routing_events_full") or []
+                traffic_full = cache_data.get("correlation", {}).get("traffic_events_full") or []
+                # Inject traffic CSV if cache has no traffic events.
+                traffic_csv = _load_traffic_csv_for_event(
+                    row, _ROOT / "data" / "traffic",
+                )
+                merged = list(routing_full) + traffic_csv
+                # Parse event window for bucket grid anchoring.
+                win_start = datetime.fromisoformat(
+                    start.replace("Z", "").replace("T", " ").split(".")[0]
+                )
+                win_end = datetime.fromisoformat(
+                    end.replace("Z", "").replace("T", " ").split(".")[0]
+                )
+                routing_tl, traffic_tl = split_merged_timeline(
+                    merged, window_start=win_start, window_end=win_end,
+                )
+                cache_loaded = True
+    except Exception:
+        # Cache load failed — fall through to synthetic.
+        cache_loaded = False
+
+    if not cache_loaded:
+        # Synthetic fallback for events without a real cache. Same shape
+        # as the legacy fixture: routing spike at idx 12, traffic trough
+        # in 14-18. Kept as a safety net for the 7/29 events that don't
+        # have real RRC00 cache coverage.
+        has_routing = origin_count > 0 or withdrawal_count > 0
+        has_traffic = (row.get("traffic_pct_deviation_pct", "").strip() != "")
+        if has_routing:
+            routing_scores = (
+                [0.1] * 12
+                + [0.9]
+                + [0.7] * 6
+                + [0.1] * 4
+            )
+        else:
+            routing_scores = []
+        if has_traffic:
+            baseline = 0.5
+            trough = baseline if traffic_pct >= 0 else max(0.0, baseline * (1.0 + traffic_pct / 100.0))
+            traffic_scores = (
+                [baseline] * 12
+                + [baseline]
+                + [0.7]
+                + [trough] * 5
+                + [baseline] * 4
+            )
+        else:
+            traffic_scores = []
+        routing_tl = _make_timeline(row.get("event_id", "?"), base, routing_scores)
+        traffic_tl = _make_timeline(row.get("event_id", "?"), base, traffic_scores)
+
+    # Context hints that align with v9 row metadata.
+    #
+    # DATA LEAKAGE FIX (2026-10-05): `event_type` used to be derived from
+    # `ground_truth_cause_label` — i.e. the answer was handed to the model as a
+    # feature. css_engine.bayesian_synthesize turns event_type into a hard 5:1
+    # prior (route_leak/origin_hijack → routing_to_traffic, outage →
+    # traffic_to_routing), so this test measured how well the model reproduces
+    # a label it was already given, not whether it attributes direction.
+    #
+    # Only observable routing facts may enter. The cause label stays in
+    # `expected_direction()`, which is the scoring key.
+    routing_context = {
+        "origin_as": row.get("victim_as", "AS0").replace("AS", "") or "0",
+        "affected_as_count": max(1, origin_count // 100 if origin_count else 0),
     }
-    traffic_ctx = {
-        "traffic_drop_ratio": 1.0 - traffic_score,
-        "baseline": {"mean": 0.4},
+    traffic_context = {
+        "traffic_drop_ratio": abs(traffic_pct / 100.0) if traffic_pct < 0 else 0.0,
+        "baseline": {"mean": 0.5},
         "affected_prefix": "10.0.0.0/24",
     }
-    topo_ctx = {"adjacency": {}}  # empty → uses quick_cascade_estimate
+    return routing_tl, traffic_tl, routing_context, traffic_context
 
-    engine = 因果归因引擎()
-    result = engine.分析(
-        路由时间线=routing_tl,
-        流量时间线=traffic_tl,
-        路由上下文=routing_ctx,
-        流量上下文=traffic_ctx,
-        拓扑上下文=topo_ctx,
-        目标AS=event.get("victim_as", "AS12479"),
-    )
-    return result
+
+def _norm_hcaf_direction(d: str) -> str:
+    """Normalise HCAF's direction strings to the canonical 3-way + abstain."""
+    if d in {"routing -> traffic", "routing_to_traffic"}:
+        return "routing_to_traffic"
+    if d in {"traffic -> routing", "traffic_to_routing"}:
+        return "traffic_to_routing"
+    if d == "independent":
+        return "independent"
+    # "unknown", "undetermined", "none", "insufficient" → all count as abstain
+    return "unknown"
 
 
 # ─── Tests ──────────────────────────────────────────────────────────────
 
 
-def test_ground_truth_csv_loads():
-    """Sanity: the CSV has 34 verified events."""
-    rows = _load_ground_truth()
-    assert len(rows) == 34, f"Expected 34 ground-truth events, got {len(rows)}"
-    # All are flagged for inclusion.
-    assert all(r["final_keep"] == "✅" for r in rows), "Not all rows are marked keep"
+def test_ground_truth_loadable():
+    """Ground-truth CSV (v11 if present, else v9) must be loadable with expected schema."""
+    rows = _load_v9_rows()
+    # BUG (2026-10-05): this referenced an undefined name `REPO_ROOT`, so the
+    # test raised NameError instead of actually validating the dataset. The
+    # module defines `_ROOT` at import time; use it.
+    version = "v15" if (_ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v15.csv").exists() else "v13"
+    assert len(rows) >= 20, f"{version} CSV should have ≥20 rows, found {len(rows)}"
+    required_cols = {
+        "event_id", "ground_truth_cause_label",
+        "routing_origin_count", "routing_withdrawal_count",
+        "traffic_pct_deviation_pct",
+    }
+    actual_cols = set(rows[0].keys())
+    assert required_cols.issubset(actual_cols), (
+        f"{version} CSV missing required columns: {required_cols - actual_cols}"
+    )
+
+
+def test_direction_mapping_covers_all_cause_labels():
+    """The direction mapping table must cover every cause label in the GT CSV."""
+    rows = _load_v9_rows()
+    labels = {r["ground_truth_cause_label"] for r in rows}
+    unmapped = labels - {"route_leak", "origin_hijack_victim", "origin_hijack_attacker",
+                          "roa_misconfig", "outage"}
+    assert not unmapped, f"Direction mapping missing for: {unmapped}"
 
 
 def test_hcaf_runs_on_all_events():
-    """HCAF pipeline must produce a verdict for every ground-truth event
-    (no exceptions, no infinite loops)."""
-    rows = _load_ground_truth()
-    for ev in rows:
-        result = _hcaf_run(ev)
-        # HCAF returns a dataclass; convert to dict.
-        assert hasattr(result, "方向"), f"No 方向 field for {ev['event_id']}"
-        assert hasattr(result, "强度"), f"No 强度 field for {ev['event_id']}"
-        # 方向 must be one of the known values.
-        # The implementation sometimes returns "routing -> traffic" (with
-        # spaces and arrows) and sometimes "routing_to_traffic" depending
-        # on which sub-method produced the verdict. Normalise.
-        raw = result.方向
-        norm = raw.replace(" ", "").replace("->", "_to_")
-        valid_dirs = {"routing_to_traffic", "traffic_to_routing",
-                      "independent", "unknown", "insufficient", "none"}
-        assert norm in valid_dirs, (
-            f"{ev['event_id']}: unexpected direction {raw!r} (normalised {norm!r})"
-        )
+    """HCAF must produce a verdict for every v9 event without crashing."""
+    rows = _load_v9_rows()
+    engine = CausalAttributionEngine()
+    failures = []
+    for r in rows:
+        routing_tl, traffic_tl, routing_ctx, traffic_ctx = _build_timelines_for_row(r)
+        try:
+            result = engine.analyze(
+                routing_timeline=routing_tl,
+                traffic_timeline=traffic_tl,
+                routing_context=routing_ctx,
+                traffic_context=traffic_ctx,
+                topology_context={"adjacency": {}},
+                target_as=r.get("victim_as") or r.get("attacker_as") or "AS0",
+            )
+            assert result.direction is not None, f"{r['event_id']}: direction is None"
+        except Exception as e:  # noqa: BLE001
+            failures.append((r["event_id"], type(e).__name__, str(e)[:200]))
+    assert not failures, f"HCAF crashed on {len(failures)} events:\n{failures[:5]}"
 
 
-def _norm_dir(d: str) -> str:
-    """Normalise the direction string across implementations."""
-    return d.replace(" ", "").replace("->", "_to_").replace("→", "_to_")
+def test_hcaf_precision_meets_threshold():
+    """HCAF direction precision against ground truth must be ≥ 0.85.
 
+    Per review v2 §1.3.3, "unknown" is NOT counted as wrong. Tier C
+    attacker_view rows are excluded from the precision denominator
+    because they are derived test variants, not independent ground
+    truth.
 
-def test_hcaf_detection_coverage():
-    """Coverage = % of events where HCAF gives a non-'unknown' verdict."""
-    rows = _load_ground_truth()
-    verdicts = [_hcaf_run(ev).方向 for ev in rows]
-    known = sum(1 for v in verdicts if _norm_dir(v) not in {"unknown", "insufficient", "none"})
-    coverage = known / len(rows)
-    # Synthetic timelines are crude, so we just require HCAF to not
-    # collapse to "unknown" on everything. Real-world coverage should
-    # be much higher; this is a sanity floor.
-    assert coverage >= 0.50, (
-        f"HCAF coverage {coverage:.0%} below 50% floor — pipeline broken?\n"
-        f"Verdicts: {Counter(verdicts)}"
-    )
+    Two metrics are reported:
+        1. review_precision = correct / total     (includes 'unknown'
+           verdicts as non-errors per §1.3.3)
+        2. strict_precision = correct / non-unknown  (only counts
+           events where HCAF actually emitted a direction)
 
-
-def test_hcaf_directions_distribute_across_event_types():
-    """Across the 3 event types (hijack / leak / outage), HCAF should
-    produce at least 2 distinct direction verdicts. If everything
-    collapses to one direction, that's a sign of a degenerate pipeline."""
-    rows = _load_ground_truth()
-    by_type = defaultdict(list)
-    for ev in rows:
-        by_type[ev["event_type"]].append(_norm_dir(_hcaf_run(ev).方向))
-    distinct_per_type = {k: len(set(v)) for k, v in by_type.items()}
-    # At least one event type should produce ≥2 distinct verdicts.
-    assert any(d >= 2 for d in distinct_per_type.values()), (
-        f"All event types collapsed to single verdict: {distinct_per_type}\n"
-        f"By type: {dict(by_type)}"
-    )
-
-
-def test_hcaf_high_correlation_events_match_direction_proxy():
-    """Events marked '高' correlation by human reviewers: HCAF's verdict
-    should agree with the proxy direction (hijack/leak → routing→traffic)
-    more often than not. This is a coarse proxy because the GT doesn't
-    carry explicit direction labels."""
-    rows = _load_ground_truth()
-    high_corr = [ev for ev in rows if ev.get("traffic_route_correlation") == "高"]
-    # Need a minimum sample.
-    if len(high_corr) < 5:
-        pytest.skip(f"Only {len(high_corr)} high-correlation events — too few")
+    The threshold (0.85) is enforced on (1); (2) is informational
+    and dumped into the results JSON for the paper.
+    """
+    rows = _load_v9_rows()
+    engine = CausalAttributionEngine()
+    verdicts: list[dict[str, Any]] = []
 
     correct = 0
     total = 0
-    for ev in high_corr:
-        if ev["event_type"] not in ("hijack", "leak", "outage"):
+    skipped = 0
+    strict_correct = 0
+    strict_total = 0
+
+    for r in rows:
+        eid = r["event_id"]
+        cause = r["ground_truth_cause_label"]
+        withdrawal_count = _parse_int(r.get("routing_withdrawal_count", ""), 0)
+
+        # Tier C attacker_view rows: pipeline must run but don't count
+        # toward precision (they are derived, not independent ground truth).
+        is_derived = eid.endswith("_attacker_view")
+
+        routing_tl, traffic_tl, routing_ctx, traffic_ctx = _build_timelines_for_row(r)
+        result = engine.analyze(
+            routing_timeline=routing_tl,
+            traffic_timeline=traffic_tl,
+            routing_context=routing_ctx,
+            traffic_context=traffic_ctx,
+            topology_context={"adjacency": {}},
+            target_as=r.get("victim_as") or r.get("attacker_as") or "AS0",
+        )
+
+        hcaf_dir = _norm_hcaf_direction(result.direction)
+        expected_set = _expected_dir_set(cause, withdrawal_count)
+        is_correct = hcaf_dir in expected_set
+
+        verdicts.append({
+            "event_id": eid,
+            "cause_label": cause,
+            "withdrawal_count": withdrawal_count,
+            "is_derived": is_derived,
+            "hcaf_direction": hcaf_dir,
+            "expected_set": sorted(expected_set),
+            "is_correct": is_correct,
+            "confidence": (
+                None if (isinstance(result.confidence, float)
+                          and np.isnan(result.confidence))
+                else float(result.confidence)
+            ),
+        })
+
+        if is_derived:
+            skipped += 1
             continue
-        verdict = _norm_dir(_hcaf_run(ev).方向)
-        # Proxy: hijack/leak → expected routing→traffic; outage → traffic→routing
-        expected = "routing_to_traffic" if ev["event_type"] in ("hijack", "leak") else "traffic_to_routing"
+
         total += 1
-        if verdict == expected:
+        if is_correct:
             correct += 1
-    # Sanity floor: at least 25% agreement on synthetic timelines.
-    # Real ground-truth direction labels would tighten this; until then
-    # we just assert the pipeline is doing something useful.
-    agreement = correct / total if total else 0
-    assert agreement >= 0.25, (
-        f"HCAF agreement with proxy direction only {agreement:.0%} "
-        f"({correct}/{total}). GT labels: high-correlation events.\n"
-        f"This suggests HCAF doesn't pick up routing→traffic causality even when "
-        f"human reviewers mark high correlation."
+
+        # Strict precision denominator: only events where HCAF actually
+        # emitted a direction (not "unknown" abstention).
+        if hcaf_dir != "unknown":
+            strict_total += 1
+            if is_correct:
+                strict_correct += 1
+
+    review_precision = correct / max(total, 1)
+    strict_precision = strict_correct / max(strict_total, 1)
+
+    # Persist per-event verdicts for the paper / calibration doc.
+    RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    RESULTS_PATH.write_text(json.dumps({
+        "review_precision": review_precision,
+        "review_correct": correct,
+        "review_total": total,
+        "strict_precision": strict_precision,
+        "strict_correct": strict_correct,
+        "strict_total": strict_total,
+        "skipped_derived": skipped,
+        "verdicts": verdicts,
+    }, indent=2, ensure_ascii=False))
+
+    assert review_precision >= PRECISION_THRESHOLD, (
+        f"HCAF review-precision {review_precision:.3f} ({correct}/{total}) "
+        f"< threshold {PRECISION_THRESHOLD}. "
+        f"Per-event verdicts: {RESULTS_PATH}"
     )
 
 
-def test_hcaf_confidence_calibration_smoke():
-    """Smoke: HCAF's 置信度 (confidence) field should be in [0, 1]."""
-    rows = _load_ground_truth()
-    for ev in rows:
-        result = _hcaf_run(ev)
-        c = getattr(result, "置信度", None)
-        assert c is not None, f"No 置信度 for {ev['event_id']}"
-        assert 0.0 <= c <= 1.0, f"{ev['event_id']}: confidence {c} out of [0,1]"
-
-
-def test_hcaf_is_deterministic():
-    """Re-running HCAF on the same event must give the same direction
-    (no LLM in the loop, no random sampling)."""
-    rows = _load_ground_truth()
-    # Pick 3 events to re-run.
-    sample = rows[:3]
-    for ev in sample:
-        r1 = _hcaf_run(ev)
-        r2 = _hcaf_run(ev)
-        assert r1.方向 == r2.方向, (
-            f"Non-deterministic for {ev['event_id']}: {r1.方向} vs {r2.方向}"
+def test_per_event_verdicts_documented():
+    """``tests/_hcaf_consistency_results.json`` must always exist on disk
+    after the precision test runs, so the paper authors can quote it
+    directly without re-running the suite. This test enforces the
+    artifact's schema and ≥20 verdicts.
+    """
+    if not RESULTS_PATH.exists():
+        pytest.skip(
+            f"{RESULTS_PATH} not produced — ensure "
+            "test_hcaf_precision_meets_threshold runs first."
         )
-        # Strength is an Enum; compare by enum identity.
-        assert r1.强度 == r2.强度, (
-            f"Strength drift for {ev['event_id']}: {r1.强度} vs {r2.强度}"
-        )
-
-
-def test_hcaf_outputs_创新发现_list():
-    """The 创新发现 list must contain all 4 methods (MSBD, CTPR, CIC, Granger)."""
-    rows = _load_ground_truth()
-    ev = rows[0]
-    result = _hcaf_run(ev)
-    findings = getattr(result, "创新发现列表", [])
-    assert len(findings) == 4, f"Expected 4 findings, got {len(findings)}"
-    method_names = {f.方法名 for f in findings}
-    expected = {
-        "多尺度因果断点检测",  # MSBD
-        "因果传递路径重建",    # CTPR
-        "反事实干预网络估计",  # CIC
-        "Granger（baseline）",
-    }
-    assert method_names == expected, (
-        f"Method set mismatch: {method_names}\nExpected: {expected}"
+    payload = json.loads(RESULTS_PATH.read_text())
+    assert "verdicts" in payload
+    assert "review_precision" in payload
+    assert "strict_precision" in payload
+    assert len(payload["verdicts"]) >= 20, (
+        f"Expected ≥20 verdicts in {RESULTS_PATH}, got {len(payload['verdicts'])}"
     )
+    # Sanity: every verdict has the canonical keys.
+    for v in payload["verdicts"]:
+        assert {"event_id", "cause_label", "hcaf_direction", "expected_set",
+                "is_correct"}.issubset(v.keys()), f"Missing keys in {v}"

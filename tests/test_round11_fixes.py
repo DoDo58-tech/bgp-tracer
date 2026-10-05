@@ -132,15 +132,11 @@ def test_analyze_traffic_string_asn_normalised_to_list():
         evidence = {}
 
     # We don't care if run_traffic_agent raises inside the loop —
-    # what we care about is that the empty-asn-list early-exit doesn't
-    # fire when asn is a non-empty string.
     result = asyncio.run(_analyze_traffic(
         {"asn": "13335", "start_time": "2024-01-01 00:00", "end_time": "2024-01-01 01:00"},
         _Sess(),
     ))
     # Either the run succeeded (returning all_anomalous=False) or some
-    # inner failure was caught. The key invariant: ``success`` is not
-    # False with the empty-asn-list message.
     if not result.get("success"):
         assert "Empty asn_list" not in result.get("error", "")
 
@@ -168,8 +164,6 @@ def test_analyze_prefix_traffic_handles_unparseable_start():
         _Sess(),
     ))
     # start_dt/end_dt being None means we can't run the heavy path,
-    # which is fine — the function should still return *something*
-    # rather than raise.
     assert result is not None
 
 
@@ -211,17 +205,6 @@ def test_batch_connection_frequency_polars_returns_results():
     from detectors.hijack.hijack_detector_core import _batch_connection_frequency_polars
 
     # Bug fix 2026-09-13 (BUG-R82): the legacy
-    # ``analyze_connection_frequency`` uses ``str.contains("a|b")``
-    # which treats ``|`` as a regex OR — so the legacy count of
-    # "a|b" returns the number of rows whose as-path contains
-    # *either* AS (a loose co-occurrence, not strict adjacency).
-    # The batched helper preserves this semantic so the threshold
-    # logic stays comparable. The expectations below therefore
-    # match the OR behaviour:
-    #   - "13335|174" matches row 1 (contains 13335 AND 174),
-    #     row 2 (contains 174), row 3 (contains 13335 AND 174),
-    #     row 4 (contains 174) → 4 rows.
-    #   - "174|1299" matches all 4 rows → 4.
     df = pl.DataFrame({
         "as-path": ["13335 174 1299 12345", "174 1299 12345", "13335 174 1299", "174 1299"],
         "timestamp": ["2024-01-01 10:00", "2024-01-01 10:01", "2024-01-01 10:02", "2024-01-01 10:03"],

@@ -44,68 +44,25 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+# REMOVED 2026-10-05: test_checkpoint_save_uses_os_replace and
+# test_checkpoint_atomic_write_does_not_clobber_existing_on_failure.
+#
+# Both imported `CheckpointManager` from chief_agent, which no longer exists
+# (removed during project slimming), so both raised ImportError and had been
+# failing ever since.
+#
+# The invariant they guarded (BUG-R113: never leave a half-written file that
+# wipes out completed stages) is real and still enforced for every writer
+# that remains:
+#     chief_agent.py:1303,1863            analysis + quick cache
+#     utils/report_exporters.py:44,95     HTML + JSON reports
+# and is covered by test_save_html_report_uses_atomic_write and
+# test_save_json_report_uses_atomic_write in this same file. Deleting these two
+# loses no coverage; keeping them only yields permanent false failures.
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
-# BUG-R113: CheckpointManager.save uses atomic write
-# ---------------------------------------------------------------------------
-
-def test_checkpoint_save_uses_os_replace(tmp_path):
-    """BUG-R113: the checkpoint must be written atomically (tmp + fsync +
-    os.replace) so a crash mid-write cannot leave a half-written JSON
-    file that wipes out every previously-completed stage on resume."""
-    import inspect
-    from chief_agent import CheckpointManager
-
-    src = inspect.getsource(CheckpointManager.save)
-    # Strip comments + docstrings so the BUG-R113 explanation in the
-    # method's docstring doesn't itself trip the assertion.
-    code_only = re.sub(r"#.*", "", src)
-    code_only = re.sub(r"\"{3}.*?\"{3}", "", code_only, flags=re.DOTALL)
-
-    assert "os.replace" in code_only, (
-        "CheckpointManager.save must use os.replace for atomic write"
-    )
-    assert ".tmp" in code_only, (
-        "CheckpointManager.save must write to a tmp file first"
-    )
-
-
-def test_checkpoint_atomic_write_does_not_clobber_existing_on_failure(tmp_path):
-    """BUG-R113: if ``make_json_safe`` fails AND we abort mid-write, the
-    old checkpoint file must remain intact."""
-    from chief_agent import CheckpointManager
-
-    # Pre-populate the checkpoint with a completed "traffic" stage.
-    ckpt = CheckpointManager(
-        asn="13335",
-        start_time="2024-01-15 00:00",
-        mode="react",
-        checkpoint_dir=tmp_path,
-        enabled=True,
-    )
-    ckpt.save("traffic", {"hello": "world"})
-
-    # Read the on-disk content for comparison.
-    original_path = ckpt.path
-    original_bytes = original_path.read_bytes()
-    assert b"hello" in original_bytes
-    assert b"world" in original_bytes
-
-    # Now write another stage — this should still leave the file intact.
-    ckpt.save("routing", {"foo": "bar"})
-
-    # File must still parse as valid JSON.
-    parsed = json.loads(ckpt.path.read_text())
-    assert "traffic" in parsed["stages"]
-    assert "routing" in parsed["stages"]
-    assert parsed["stages"]["traffic"] == {"hello": "world"}
-
-
-# ---------------------------------------------------------------------------
-# BUG-R115: AutoProbeExecutor enforces per-task timeout
-# ---------------------------------------------------------------------------
-
 def test_auto_probe_executor_wraps_in_wait_for():
     """BUG-R115: ``execute_probes`` must wrap each dispatch task in
     ``asyncio.wait_for(timeout=...)`` so a stuck probe does not hang
@@ -159,9 +116,6 @@ def test_auto_probe_executor_returns_finding_on_timeout():
 
 
 # ---------------------------------------------------------------------------
-# BUG-R116: save_html_report / save_json_report use atomic write
-# ---------------------------------------------------------------------------
-
 def test_save_html_report_uses_atomic_write(tmp_path):
     """BUG-R116: ``save_html_report`` must use the tmp + os.replace
     pattern so a crash mid-write cannot leave a half-written HTML
@@ -235,31 +189,65 @@ def test_save_json_report_writes_correct_content(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# BUG-R119: stop decision no longer triggers legacy fallback
-# ---------------------------------------------------------------------------
+def test_reasoning_handler_returns_completion_event():
+    """Every state handler must return the WorkflowEvent that advances the
+    state machine.
 
-def test_stop_decision_skips_legacy_fallback():
-    """BUG-R119: when the decision engine returns ``action="stop"`` the
-    workflow's reasoning handler must NOT subsequently invoke the
-    legacy diagnosis pipeline (the previous code did, defeating the
-    stop). We verify the source contains the synthetic success record
-    that signals the fallback to skip."""
+    BUG FIX 2026-10-05: ``_handle_reasoning`` had its success path end in a
+    bare ``pass`` (the enhanced-debate branch was deleted 2026-09-29), so the
+    handler returned ``None``. The runner does
+    ``next_event = await handler(context)`` followed by
+    ``get_next_state(REASONING, None)``; no transition matched, so
+    ``get_next_state`` returned ``current`` -- REASONING. Every
+    enhanced/traffic_first run therefore spun in REASONING until the global
+    workflow timeout forced report generation, burning the whole time budget
+    and being recorded as a timeout instead of a completion.
+
+    This replaces the old ``test_stop_decision_skips_legacy_fallback``, which
+    asserted on a ``_StopDebateResult`` shim that no longer exists.
+    """
     import inspect
-    from workflow_engine import WorkflowEngine
+    from workflow_engine import WorkflowEngine, WorkflowState, WorkflowEvent
 
+    engine = WorkflowEngine()
+    engine.register_default_handlers()
+
+    # Each registered handler must be able to leave its state. We assert the
+    # transition table is complete for the success event of every state that
+    # has a defined next state, which is what a None return would break.
+    for state, event, expected in (
+        (WorkflowState.REASONING, WorkflowEvent.REASONING_COMPLETE, WorkflowState.VALIDATION),
+        (WorkflowState.VALIDATION, WorkflowEvent.VALIDATION_PASSED, WorkflowState.DATA_ENRICHMENT),
+        (WorkflowState.DATA_ENRICHMENT, WorkflowEvent.DATA_COLLECTED, WorkflowState.REPORT_GENERATION),
+        (WorkflowState.REPORT_GENERATION, WorkflowEvent.REPORT_GENERATED, WorkflowState.COMPLETE),
+    ):
+        nxt = engine.get_next_state(state, event)
+        assert nxt == expected, (
+            f"{state.name} + {event.name} must advance to {expected.name}, "
+            f"got {nxt.name}"
+        )
+        assert nxt != state, (
+            f"{state.name} + {event.name} is a self-loop; the handler would "
+            "spin until the workflow timeout"
+        )
+
+    # A None return (the old bug) must NOT resolve to a self-loop silently.
+    assert engine.get_next_state(WorkflowState.REASONING, None) == WorkflowState.REASONING, (
+        "sanity: get_next_state falls back to `current` on an unknown event, "
+        "which is exactly why a missing return stalls the workflow"
+    )
+
+    # The handler itself must return a WorkflowEvent on its success path.
     src = inspect.getsource(WorkflowEngine._handle_reasoning)
     code_only = re.sub(r"#.*", "", src)
     code_only = re.sub(r"\"{3}.*?\"{3}", "", code_only, flags=re.DOTALL)
-    assert "_StopDebateResult" in code_only, (
-        "WorkflowEngine._handle_reasoning must define a _StopDebateResult "
-        "shim so the stop branch skips the legacy fallback."
+    assert "return WorkflowEvent.REASONING_COMPLETE" in code_only, (
+        "WorkflowEngine._handle_reasoning must return REASONING_COMPLETE; "
+        "returning None stalls the state machine"
     )
 
 
 # ---------------------------------------------------------------------------
-# BUG-R120: run_reasoning_agent accepts ISO 8601 timestamps
-# ---------------------------------------------------------------------------
-
 def test_run_reasoning_agent_accepts_iso():
     """BUG-R120: ``run_reasoning_agent`` must accept ISO 8601 timestamps
     and return a successful result (the parser used to raise ValueError
@@ -268,8 +256,6 @@ def test_run_reasoning_agent_accepts_iso():
     from agents.reasoning_agent import run_reasoning_agent
 
     # The parser runs before any heavy LLM work; if it fails, the
-    # function returns early with ``success=False`` and an
-    # ``"Invalid time"`` error message.
     result = run_reasoning_agent(
         asn="13335",
         start_time="2024-01-15T00:00:00",
@@ -278,8 +264,6 @@ def test_run_reasoning_agent_accepts_iso():
         max_rounds=1,
     )
     # We don't care whether the reasoning pipeline itself succeeds —
-    # we only care that the parser accepted the ISO strings and did
-    # NOT return the ``"Invalid time: ..."`` failure.
     if isinstance(result, dict) and result.get("success") is False:
         assert "Invalid time" not in (result.get("error") or ""), (
             f"BUG-R120 regressed: run_reasoning_agent rejected ISO input: {result}"
@@ -305,9 +289,6 @@ def test_run_reasoning_agent_reports_invalid_time_structured():
 
 
 # ---------------------------------------------------------------------------
-# Sanity: every modified file still parses
-# ---------------------------------------------------------------------------
-
 def test_all_modified_files_parse():
     """Round 15 modifications touched chief_agent.py, workflow_engine.py,
     utils/report_exporters.py, agents/auto_probe_executor.py,

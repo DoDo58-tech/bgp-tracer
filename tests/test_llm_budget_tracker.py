@@ -155,11 +155,6 @@ def test_budget_warning_at_threshold():
 
 
 # ─── Shared-file mode tests ─────────────────────────────────────────────
-# The shared-file mode enables cross-process budget coordination. Each
-# subprocess loads the shared call history on construction and appends
-# to it on every call. This lets the batch driver and chief_agent
-# subprocesses share a single rolling-window budget.
-
 def test_shared_file_persists_across_subprocesses(tmp_path):
     """Two tracker instances reading the same shared file see consistent state.
 
@@ -245,8 +240,6 @@ def test_shared_file_rotation_bounds_size(tmp_path):
         for i in range(20):
             tracker.check_and_record()
         # File should be small (only most-recent timestamps)
-        # We can't assert exact size without knowing timing, but we can
-        # assert it's bounded by ~the 10-second window of recent calls.
         size = shared.stat().st_size
         assert size < 1024, f"file should be tiny after rotation, got {size} bytes"
     finally:

@@ -57,9 +57,9 @@ def test_concurrent_run_faster_than_serial(monkeypatch):
     }
     modes = [
         ("traffic_first", "traffic_first", False),
-        ("traffic_first_enhanced", "traffic_first", True),
         ("react", "react", False),
-        ("react_enhanced", "react", True),
+        # enhanced modes removed 2026-09-29 — the 4-mode ablation is now
+        # a 2-mode ablation.
     ]
 
     mod = _import_batch()
@@ -68,8 +68,7 @@ def test_concurrent_run_faster_than_serial(monkeypatch):
     sleep_per_call = 0.10
     call_count = {"n": 0}
 
-    def fake_run_mode(event_, mode_name_, mode_flag_, enhanced_,
-                      log_path_, results_log, idx_, total_modes_):
+    def fake_run_mode(event_, mode_name_, mode_flag_):
         call_count["n"] += 1
         time.sleep(sleep_per_call)
         return {
@@ -82,37 +81,33 @@ def test_concurrent_run_faster_than_serial(monkeypatch):
             "tokens": 0,
         }
 
-    monkeypatch.setattr(mod, "run_mode", fake_run_mode)
+    monkeypatch.setattr(mod, "run_one", fake_run_mode)
 
     # Re-import the constants the script reads; easier: drive the loop
     # body directly via a tiny harness rather than re-running ``main``.
-    n_serial = 4
+    n_serial = len(modes)
     t0 = time.monotonic()
-    for idx, (mode_name, mode_flag, enhanced) in enumerate(modes, 1):
-        fake_run_mode(fake_event, mode_name, mode_flag, enhanced,
-                      Path(f"/tmp/fake_{mode_name}.log"),
-                      None, idx, n_serial)
+    for idx, (mode_name, mode_flag, _enhanced) in enumerate(modes, 1):
+        fake_run_mode(fake_event, mode_name, mode_flag)
     serial_elapsed = time.monotonic() - t0
 
-    # Concurrent: ThreadPoolExecutor with 4 workers.
+    # Concurrent: ThreadPoolExecutor with ``len(modes)`` workers.
     from concurrent.futures import ThreadPoolExecutor
     t0 = time.monotonic()
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=max(1, n_serial)) as executor:
         futs = [
             executor.submit(
-                fake_run_mode, fake_event, mode_name, mode_flag, enhanced,
-                Path(f"/tmp/fake_{mode_name}.log"),
-                None, idx, n_serial,
+                fake_run_mode, fake_event, mode_name, mode_flag,
             )
-            for idx, (mode_name, mode_flag, enhanced) in enumerate(modes, 1)
+            for idx, (mode_name, mode_flag, _enhanced) in enumerate(modes, 1)
         ]
         for f in futs:
             f.result()
     conc_elapsed = time.monotonic() - t0
 
-    # Serial: 4 × 0.1 = 0.4 s.
-    # Concurrent: ≤ 0.2 s (because 4 workers × 0.1 s each finish in parallel).
-    assert serial_elapsed >= 4 * sleep_per_call * 0.95, (
+    # Serial: ``len(modes)`` × 0.1 s.
+    # Concurrent: ≤ serial / 1.5 because workers finish in parallel.
+    assert serial_elapsed >= n_serial * sleep_per_call * 0.95, (
         f"serial too fast: {serial_elapsed:.3f}s — stub not sleeping?"
     )
     assert conc_elapsed <= serial_elapsed / 1.5, (
@@ -125,8 +120,7 @@ def test_module_imports_without_llm(monkeypatch):
     """``import run_4mode_batch`` must not trigger any LLM calls."""
     mod = _import_batch()
     assert hasattr(mod, "main"), "main() must exist"
-    assert hasattr(mod, "run_mode"), "run_mode() must exist"
-    assert hasattr(mod, "has_good_report"), "has_good_report() must exist"
+    assert hasattr(mod, "run_one"), "run_one() must exist"
 
 
 def test_concurrency_env_var_respected(monkeypatch):

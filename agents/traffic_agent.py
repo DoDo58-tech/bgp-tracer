@@ -98,11 +98,6 @@ class TrafficAgent(Agent):
                 "end_time": str(end_time),
                 "confidence": 0.8 if result.get("anomalies_detected") else 0.5,
                 # Surface unified schema fields so the evaluator can distinguish
-                # "no data" from "no anomaly" (data_available=False ⇒ skip in F1).
-                # Cloudflare Radar frequently returns 0 points for ASes that are
-                # not sampled by their probe network; without these flags the
-                # evaluator would mis-classify every such sample as a false
-                # negative and drag traffic F1 down to 0.
                 "data_available": result.get("data_available", result.get("success", False)),
                 "no_data_reason": result.get("no_data_reason", ""),
                 "data_points": result.get("data_points", 0),
@@ -113,12 +108,6 @@ class TrafficAgent(Agent):
                 "expanded_windows": result.get("expanded_windows", []),
                 "consecutive_anomaly_windows": result.get("consecutive_anomaly_windows", []),
                 # Promote detector-level fields to the blackboard top level so
-                # the report LLM (which reads the *outer* section, not the
-                # nested `result` payload) can quote them directly in
-                # "Traffic Analysis" without falling back to "(no data)".
-                # Previously these were only reachable via the inner `result`
-                # dict and the LLM had to guess — leading to "(no data)"
-                # placeholders despite 5 real anomalies being available.
                 "percent_change": result.get("percent_change", 0.0),
                 "current_avg": result.get("current_avg", 0.0),
                 "historical_avg": result.get("historical_avg", 0.0),
@@ -128,11 +117,6 @@ class TrafficAgent(Agent):
                 "trough_value": result.get("trough_value", 0.0),
                 "multi_scale_analysis": result.get("multi_scale_analysis"),
                 # Highest severity across all anomalies — the prompt explicitly
-                # asks for severity, so surface a single "worst severity" string
-                # at the top level. Without this the LLM hits the inner anomaly
-                # list but doesn't know what the headline severity value is.
-                # Map both string ("high"/"medium"/"low") and numeric severities
-                # (0-1 z-score or 0-3 scale) to a canonical label the LLM reads.
                 "max_severity": _to_canonical_severity(
                     result.get("anomalies") or [],
                 ),

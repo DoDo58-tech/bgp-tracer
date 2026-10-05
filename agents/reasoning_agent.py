@@ -88,13 +88,10 @@ class ReasoningAgent:
         self.structured_facts = []
         self.retrieved_context = []
         # Per-round summary accumulator for multi-round reasoning.
-        # In round > 1, the LLM prompt only receives previous rounds' summaries
-        # (not the full routing/traffic dumps), reducing token consumption by
-        # 40-60% in typical 3-round runs.
         self._round_summaries: list[dict] = []
 
         # Evidence gap detection for proactive data collection.
-        # 用于主动识别缺失的证据并规划数据收集
+        # 
         self._evidence_gaps: list[dict] = []
         self._gap_resolutions: dict[str, str] = {}
 
@@ -491,15 +488,15 @@ class ReasoningAgent:
         enrichment_result: dict = None,
     ) -> list[dict]:
         """
-        Bug Fix 3.1: 主动识别证据缺口（来自 enhanced_reasoning_agent.py）。
+        Bug Fix 3.1: （ enhanced_reasoning_agent.py）。
 
-        与 EnhancedReasoningAgent.identify_evidence_gaps 等价，但集成到 ReasoningAgent。
-        在进入多轮推理之前，主动识别缺失的证据类型，帮助指导后续推理方向。
+         EnhancedReasoningAgent.identify_evidence_gaps ， ReasoningAgent。
+        ，，。
         """
         gaps = []
         gap_counter = 0
 
-        # 缺口1：流量异常检测缺失
+        # 1：
         if not traffic_data.get("anomalies_detected") and traffic_data.get("success"):
             gap_counter += 1
             gaps.append({
@@ -511,7 +508,7 @@ class ReasoningAgent:
                 "resolution": None,
             })
 
-        # 缺口2：路由异常检测缺失
+        # 2：
         total_hijacks = (
             len(routing_data.get("origin_hijacked", []) or []) +
             len(routing_data.get("forge_hijacked", []) or []) +
@@ -529,7 +526,7 @@ class ReasoningAgent:
                 "resolution": None,
             })
 
-        # 缺口3：路由与流量不一致
+        # 3：
         routing_has_anomaly = total_hijacks > 0 or len(routing_data.get("route_leaks", []) or []) > 0
         traffic_has_anomaly = traffic_data.get("anomalies_detected", False)
         if routing_has_anomaly and not traffic_has_anomaly:
@@ -553,7 +550,7 @@ class ReasoningAgent:
                 "resolution": None,
             })
 
-        # 缺口4：AS 组织信息缺失
+        # 4：AS 
         has_as_info = (
             traffic_data.get("as_info") or
             routing_data.get("as_info") or
@@ -570,7 +567,7 @@ class ReasoningAgent:
                 "resolution": None,
             })
 
-        # 缺口5：辅助信息缺失（threat intel, news context 等）
+        # 5：（threat intel, news context ）
         if enrichment_result is None:
             gap_counter += 1
             gaps.append({
@@ -643,8 +640,6 @@ class ReasoningAgent:
             need_more_rounds = self.assess_analysis_completeness()
 
             # Record per-round summary so subsequent rounds can use it
-            # of re-sending the full routing/traffic dumps.  This cuts token usage
-            # by 40-60% in 3-round runs.
             round_summary = {
                 "round_num": round_num,
                 "evidence_analysis": evidence_analysis,
@@ -749,8 +744,6 @@ class ReasoningAgent:
                 routing_result.get("forge_hijacking")
             ])
             # data_available=False ⇒ RIPE RIS had no updates for this AS/time
-            # window. Treat as missing data so it doesn't count toward
-            # "routing_available" (the evaluator follows the same convention).
             routing_data_available = routing_result.get("data_available", True)
             if routing_data_available:
                 quality_factors.append("routing_available")
@@ -761,9 +754,6 @@ class ReasoningAgent:
 
         if traffic_result.get("success", False):
             # Same rule as above for the traffic layer. Without this gate,
-            # an AS not sampled by Cloudflare Radar would get "traffic_available"
-            # and the reasoning would treat absence of anomalies as a true
-            # negative — same root cause as the F1=0 issue.
             traffic_data_available = traffic_result.get("data_available", True)
             if traffic_data_available:
                 quality_factors.append("traffic_available")
@@ -1135,8 +1125,6 @@ Respond concisely in JSON:
             return None
 
         # Accept both with-Z and without-Z ISO formats.  We don't import
-        # parse_timestamp here to keep this helper independent of the
-        # correlation_analyzer module.
         routing_times: set = set()
         for ev in routing_events:
             ts = ev.get("timestamp") or ev.get("first_seen")
@@ -1188,11 +1176,11 @@ Respond concisely in JSON:
         routing_data = self.evidence_pool.get("routing_data", {})
         traffic_data = self.evidence_pool.get("traffic_data", {})
         
-        # 计算持续时间
+        # 
         duration_minutes = (self.end_time - self.start_time).total_seconds() / 60
         time_range = f"{self.start_time} to {self.end_time}"
         
-        # LLM 增强的事件分类
+        # LLM 
         if self.use_llm_reasoning and self.incident_classifier:
             classification_result = self.incident_classifier.classify(
                 routing_data=routing_data,
@@ -1210,7 +1198,7 @@ Respond concisely in JSON:
             classification = self.classify_incident_type(routing_data)
             classification_confidence = 0.7
         
-        # LLM 增强的流量关联评估
+        # LLM 
         if self.use_llm_reasoning and self.traffic_correlator:
             correlation_result = self.traffic_correlator.assess_correlation(
                 routing_data=routing_data,
@@ -1226,7 +1214,7 @@ Respond concisely in JSON:
             has_correlation = "Correlated" in traffic_correlation
             temporal_alignment = 0.5
         
-        # LLM 增强的严重性评估
+        # LLM 
         if self.use_llm_reasoning and self.severity_assessor:
             severity_result = self.severity_assessor.assess(
                 routing_data=routing_data,
@@ -1309,9 +1297,6 @@ Respond concisely in JSON:
         classification_confidence = self.apply_small_bgp_penalty(classification_confidence)
         
         # Apply iterative refinement: confidence should improve with more rounds (up to a point)
-        # Round 1: base confidence
-        # Round 2: slight improvement if evidence is consistent
-        # Round 3: further refinement or stabilization
         refinement_factor = 1.0
         if round_num > 1:
             # If previous rounds had consistent results, increase confidence slightly
@@ -1379,7 +1364,7 @@ Respond concisely in JSON:
     
     def get_classification_confidence(self, law_application):
         """Get confidence level for classification - uses LLM assessment if available"""
-        # 如果有 LLM 分类结果，使用它
+        #  LLM ，
         llm_classification = self.evidence_pool.get("llm_classification")
         if llm_classification and llm_classification.get("source") == "llm":
             return llm_classification.get("confidence", 0.5)
@@ -1581,8 +1566,6 @@ Respond concisely in JSON:
         """Parse LLM coordination response"""
         try:
             # Brace-balanced extraction so nested objects (e.g.
-            # ``"contextual_insights": ["{something}"]``) don't cause
-            # the parser to truncate the JSON early.
             snippet = _extract_json_object(response_text or "")
             if snippet is not None:
                 return json.loads(snippet)
@@ -1642,7 +1625,7 @@ Respond concisely in JSON:
         }
 
     def build_confidence_assessment(self) -> dict:
-        """构建最终置信度评估（包含校准结果）"""
+        """（）"""
         base = self.get_final_confidence()
 
         calibration = self.evidence_pool.get("calibration", {})
@@ -1801,18 +1784,6 @@ def run_reasoning_agent(asn = None, start_time = None, end_time = None,
             }
         
         # Parse time strings - handle both human-readable AND ISO 8601 formats.
-        # Bug fix 2026-09-13 (BUG-R120): the previous implementation only
-        # tried ``"%Y-%m-%d %H:%M:%S"`` and ``"%Y-%m-%d %H:%M"``. ISO
-        # strings like ``"2024-01-15T00:00:00"`` (very common when the
-        # chief_agent passes through ``detected_start`` from
-        # ``_extract_anomaly_times``, or when the React agent hands off
-        # ISO strings via ``run_context``) raised ``ValueError`` and the
-        # outer ``except Exception as e:`` block returned
-        # ``{"success": False, "error": "Invalid time: ..."}`` —
-        # silently aborting the reasoning stage with a confusing error
-        # the LLM caller could not recover from. The fix mirrors the
-        # pattern applied in BUG-R110/R111: try multiple formats, then
-        # ``fromisoformat``, then a plain-date fallback.
         def _parse_ts(value, label):
             if value is None:
                 return None
@@ -1982,8 +1953,6 @@ def run_reasoning_agent_batch(
                 logger.info(f"  Window {w_start.strftime('%Y-%m-%d %H:%M')} to {w_end.strftime('%Y-%m-%d %H:%M')}: {len(as_group)} AS ({', '.join([f'AS{a}' for a in as_group])})")
             
             # batch_hijack_results initialization alignment:
-            # for 循环跑到了 else 块之外，会在 as_with_windows 为空时也跑空迭代。
-            # 重新对齐到 else 块内部，确保控制流正确。
             batch_hijack_results = None
             for (r_start, r_end), as_group in window_to_as.items():
                 window_start_str = r_start.strftime('%Y-%m-%d %H:%M')
@@ -2018,8 +1987,6 @@ def run_reasoning_agent_batch(
                         try:
                             asn_str = str(asn)
                             # FIXED: Access results through 'results_by_as' key
-                            # detect_hijacks_batch returns {"success": True, "results_by_as": {asn: data}}
-                            # The data contains "origin_hijack" and "forge_hijack" (NOT "origin_hijacked" etc.)
                             batch_results_by_as = batch_hijack_results.get("results_by_as", {})
                             hijack_data = batch_results_by_as.get(asn_str, {})
                             
@@ -2054,13 +2021,30 @@ def run_reasoning_agent_batch(
                                 "aggregated_alerts": hijack_data.get("aggregated_alerts", []),
                                 
                                 "route_leaks": leak_result.get("route_leaks", []),
-                                "leak_count": leak_result.get("leak_count", 0),
+                                "leak_count": leak_result.get("leak_count") or 0,
                                 "leak_detection_success": leak_result.get("success", False),
                                 "leak_detection_error": leak_result.get("error"),
-                                
+                                # Skipped detectors report None (not 0.0) so they
+                                # cannot be mistaken for a measurement. Keep the
+                                # score None here too and let the report render
+                                # "Skipped"; `or 0.0` would silently reintroduce
+                                # the false-clean-reading this replaced.
+                                "leak_detection_skipped": bool(leak_result.get("skipped")),
+
                                 "outage_analysis": outage_result,
-                                "outage_suspected": bool(outage_result.get("is_outage_suspected", False)),
-                                "outage_score": float(outage_result.get("outage_score", 0.0)) if outage_result.get("success") else 0.0,
+                                "outage_suspected": outage_result.get("is_outage_suspected"),
+                                # A skipped outage detector yields
+                                # outage_score=None. float(None) raises
+                                # TypeError, which would abort the whole
+                                # evidence assembly, so guard it explicitly and
+                                # preserve the None so "Skipped" survives.
+                                "outage_score": (
+                                    float(outage_result["outage_score"])
+                                    if outage_result.get("success")
+                                    and outage_result.get("outage_score") is not None
+                                    else (None if outage_result.get("skipped") else 0.0)
+                                ),
+                                "outage_detection_skipped": bool(outage_result.get("skipped")),
                                 
                                 "total_prefix_hijacks": len(hijack_data.get("origin_hijacked", [])) + len(hijack_data.get("forge_hijacked", [])),
                                 "total_prefix_hijacking": len(hijack_data.get("origin_hijacking", [])) + len(hijack_data.get("forge_hijacking", [])),

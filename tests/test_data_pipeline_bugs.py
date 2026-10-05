@@ -29,9 +29,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 
 # ---------------------------------------------------------------------------
-# Bug #R1: extract_routing_events silently dropped unparseable timestamps
-# ---------------------------------------------------------------------------
-
 def test_extract_routing_events_falls_back_to_analysis_window():
     """Events with timestamp='14:54:29' (no date) used to be dropped → 0 events.
 
@@ -129,9 +126,6 @@ def test_extract_routing_events_logs_warn_only_once_for_many_events():
 
 
 # ---------------------------------------------------------------------------
-# Bug #R2: victim_traffic only fetched in enhanced mode
-# ---------------------------------------------------------------------------
-
 def test_handle_validation_runs_victim_traffic_without_shared_blackboard():
     """``_handle_validation`` must call ``_fetch_victim_traffic`` even when
     ``context.shared_blackboard`` is None (the default non-enhanced path).
@@ -151,8 +145,6 @@ def test_handle_validation_runs_victim_traffic_without_shared_blackboard():
             confidence_score=0.7,
         )
         # shared_blackboard is a class-level attribute on WorkflowContext,
-        # not a dataclass field — set it directly to simulate the
-        # non-enhanced (no shared blackboard) code path.
         ctx.shared_blackboard = None
 
         async def fake_fetch(ctx, bb):
@@ -170,9 +162,6 @@ def test_handle_validation_runs_victim_traffic_without_shared_blackboard():
 
 
 # ---------------------------------------------------------------------------
-# Bug #R3: RoutingAgent step() should write rich result first, then bulk update
-# ---------------------------------------------------------------------------
-
 def test_routing_agent_writes_result_before_bulk_update(monkeypatch):
     """In RoutingAgent.step(), the rich ``routing.result`` must be written
     *before* the bulk ``update_section`` so concurrent readers can never see

@@ -20,9 +20,6 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 1. CTPR pseudo-delay honesty
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestCtprPseudoDelayHonesty:
     """The old `ctpr_step_delay` used a hash pseudo-random value and
     exposed it as ``propagation_delay``. We renamed it to
@@ -81,9 +78,6 @@ class TestCtprPseudoDelayHonesty:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 2. Granger stationarity pre-check
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestGrangerStationarityPreCheck:
     """The old GrangerEngine fed non-stationary series into
     statsmodels.grangercausalitytests — a textbook reviewer objection.
@@ -123,11 +117,6 @@ class TestGrangerStationarityPreCheck:
             granger_stationary_check_and_diff,
         )
         # Deterministic non-stationary, non-difference-stationary series:
-        # alternating random walk — differencing produces a stationary
-        # series, so we can't easily force stationarity_ok=False without
-        # monkey-patching. The realistic guarantee is therefore:
-        # * trending series → differencing applied OR raw accepted
-        # * suppressed result has the right shape
         trending = [i + (i % 5) for i in range(60)]  # trending + cycle
         result = granger_stationary_check_and_diff(trending, name="x")
         if result["stationarity_ok"] is False:
@@ -166,9 +155,6 @@ def _long_timeline(n: int = 60):
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 3. HCAF weights exposed via config.py
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestHcafWeightsConfigurable:
     """HCAF voting weights were hard-coded inside the engine. We move
     them to ``config.py`` so reviewers / operators can override them."""
@@ -203,9 +189,6 @@ class TestHcafWeightsConfigurable:
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 4. Report section completeness enforcement
-# ─────────────────────────────────────────────────────────────────────────
-
 class TestReportSectionCompleteness:
     """The LLM was free to ship reports with 1 hypothesis card instead of
     4. The new ``_enforce_section_completeness`` guarantees ≥3 cards

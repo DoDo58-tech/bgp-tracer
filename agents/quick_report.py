@@ -169,8 +169,6 @@ def render_quick_html(
     cache_hit = bool((quick_result or {}).get("cache_hit"))
 
     # If cache hit, show "instant" badge instead of elapsed time which would
-    # otherwise read 0.0s and confuse the user into thinking the analysis
-    # did nothing.
     elapsed_label = (
         "<code>instant (cache hit)</code>" if cache_hit
         else (
@@ -261,9 +259,6 @@ def render_quick_html(
 
 
 # ── Styling ────────────────────────────────────────────────────────────────
-# Intentionally light: no external assets, no JS, no fonts.  Phase-1 is a
-# 2-second preview, not a marketing page.  CSS lives inline so the report
-# is fully self-contained and renders identically in any modern browser.
 _HTML_DOC_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>

@@ -225,25 +225,6 @@ def parse_country_region_input(user_input):
 
 async def _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis=None, use_llm=True):
     # Bug fix 2026-09-13 (BUG-R111): the previous implementation only
-    # tried two human-readable formats (``"%Y-%m-%d %H:%M:%S"`` and
-    # ``"%Y-%m-%d %H:%M"``) for both ``start_time`` and ``end_time``
-    # independently. When the caller supplied ISO 8601 strings like
-    # ``"2024-01-15T00:30:00"`` (very common when callers pass through
-    # the React agent's run_context, or when chief_agent's
-    # ``_extract_anomaly_times`` returns ISO strings), both formats
-    # failed and the function returned
-    # ``{"success": False, "error": "Invalid time: ..."}`` —
-    # silently aborting the analysis with a confusing error message
-    # that the LLM caller could not recover from. The fix mirrors the
-    # one applied to ``routing_impl.run_routing_agent_async`` (BUG-R110):
-    # try the human-readable formats first, then ``fromisoformat``,
-    # then a plain-date fallback.
-
-    # ── Default-window fallback (BUG-R134, 2026-09-14) ───────────────────────
-    # Same logic as ``run_routing_agent_async``: when callers accidentally
-    # pass ``None`` or an empty string for ``start_time`` / ``end_time``,
-    # fall back to a 24-hour window ending now rather than aborting
-    # analysis and silently emitting a "no anomaly" report.
     if not start_time or not end_time:
         from datetime import datetime as _dt, timedelta as _td
         _now = _dt.utcnow()
@@ -304,12 +285,6 @@ async def _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis
                 ),
             }
         # Normalise to naive UTC so the downstream subtraction
-        # ``end_dt - start_dt`` (used for ``duration_hours``) cannot
-        # raise ``TypeError: can't subtract offset-naive and
-        # offset-aware datetimes`` when the caller mixed a tz-aware
-        # ISO string with a tz-naive human-readable one. The raw
-        # strings are still passed to the LLM call unchanged so
-        # downstream display formats are preserved.
         if start_dt.tzinfo is not None:
             start_dt = start_dt.astimezone(timezone.utc).replace(tzinfo=None)
         if end_dt.tzinfo is not None:
@@ -348,9 +323,6 @@ async def _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis
         result["outage_period_anomaly_count"] = len(within)
 
     # Ensure unified schema fields are present so the evaluator can distinguish
-    # "no data" from "no anomaly".  The detector already writes these, but
-    # wrap them explicitly here so callers that receive the outer result
-    # (rather than result["result"]) also see them.
     if "data_available" not in result:
         result["data_available"] = result.get("data_points", 0) > 0
     if "no_data_reason" not in result:
@@ -368,15 +340,15 @@ async def run_traffic_agent_batch(
     max_concurrent: int = 4,
 ):
     """
-    修 P2-Fix1：原 reasoning_agent.run_reasoning_agent_batch 试图 import 这个
-    函数但从未实现，调用时会 ImportError。
-    新增：并行对多个 AS 调用 analyze_traffic，汇总异常 AS 列表。
+     P2-Fix1： reasoning_agent.run_reasoning_agent_batch  import 
+    ， ImportError。
+    ： AS  analyze_traffic， AS 。
 
     Args:
-        as_list: 待分析的 AS 列表
-        start_time: 起始时间字符串
-        end_time: 结束时间字符串
-        max_concurrent: 最大并发数
+        as_list:  AS 
+        start_time: 
+        end_time: 
+        max_concurrent: 
 
     Returns:
         {
@@ -392,7 +364,7 @@ async def run_traffic_agent_batch(
     from datetime import datetime
 
     try:
-        # 解析时间为 datetime 对象
+        #  datetime 
         try:
             start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
         except ValueError:

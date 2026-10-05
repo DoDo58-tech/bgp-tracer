@@ -51,9 +51,6 @@ def _react_routing(asn: str = "12479", n: int = 401):
 
 
 # ---------------------------------------------------------------------------
-# Bug #R6: react-mode multi-AS wrapper
-# ---------------------------------------------------------------------------
-
 def test_extract_traffic_events_handles_react_wrapper():
     """React mode passes ``{asn: raw_result}`` to the analyzer — it must unwrap."""
     from agents.correlation_analyzer import extract_traffic_events

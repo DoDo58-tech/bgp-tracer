@@ -55,6 +55,13 @@ class LLMEnhancedRoutingAgent:
                 "forge_hijacking_count":           len(routing_results.get("forge_hijacking",  [])),
                 "mitm_alerts":                    len(routing_results.get("mitm_alerts", [])),
                 "route_leak_count":               routing_results.get("leak_count", 0),
+                # True count + truncation state, so the prompt and the rendered
+                # report never present max_leaks as if it were the measurement.
+                "route_leak_count_total":         routing_results.get("leak_count_total",
+                                                                       routing_results.get("leak_count", 0)),
+                "route_leak_results_truncated":   bool(routing_results.get("leak_results_truncated", False)),
+                "route_leak_truncation_limit":    routing_results.get("leak_truncation_limit"),
+                "route_leak_analysis_skipped":    bool(routing_results.get("leak_analysis_skipped", False)),
                 "outage_score":                   routing_results.get("outage_score", 0),
             }
         }
@@ -71,8 +78,6 @@ class LLMEnhancedRoutingAgent:
             return lst[:n] if len(lst) > n else lst
 
         # Bug fix 2026-09-15: AnomalyDetail is a dataclass; json.dumps can't
-        # serialise it by default. Wrap with default=str so dataclass.__str__
-        # is used (or use asdict when available).
         def _safe_json(obj, **kwargs):
             from dataclasses import asdict, is_dataclass
             return json.dumps(obj, default=lambda o: asdict(o) if is_dataclass(o) else str(o), **kwargs)
@@ -88,7 +93,7 @@ IMPORTANT — Two distinct roles must always be distinguished:
   - AS{data['asn']} is a VICTIM of {s['victim_of_origin_hijack_count']} origin-hijack event(s) and {s['victim_of_forge_hijack_count']} forge-hijack event(s)
   - AS{data['asn']} is an ATTACKER in {s['origin_hijacking_count']} origin-hijack event(s) and {s['forge_hijacking_count']} forge-hijack event(s)
   - MITM alerts: {s['mitm_alerts']}
-  - Route leaks: {s['route_leak_count']}
+  - Route leaks: {s['route_leak_count']}{" (SKIPPED — leak detection did not run; this is NOT a measurement and no route-leak conclusion may be drawn)" if s.get('route_leak_analysis_skipped') else ""}{" (TRUNCATED: at least " + str(s['route_leak_count_total']) + " actually detected; results were capped at the detector limit of " + str(s['route_leak_truncation_limit']) + ", so the per-event list below is NOT exhaustive)" if s.get('route_leak_results_truncated') else ""}
   - Outage score: {s['outage_score']}
 
 === VICTIM ALERTS (AS{data['asn']}'s prefixes were hijacked) ===
@@ -155,33 +160,8 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
         skip_forge = not enable_mitm
 
     # NOTE (2026-09-14, reverting BUG-R134 fallback):
-    # ``start_time`` / ``end_time`` must always be supplied by the caller
-    # (UI / CLI / chief_agent / reasoning_agent). An empty string here
-    # means a bug upstream — the UI never lets users submit an empty
-    # window. Swallowing the bug behind a silent 24-hour fallback would
-    # hide real defects and produce misleading "no anomaly" reports.
-    # If the parser cannot resolve the window, fail loudly with a
-    # structured error dict (see BUG-R110 below).
-
     try:
         # Bug fix 2026-09-13 (BUG-R110): the previous implementation tried
-        # to parse ``start_time`` and ``end_time`` *together* in a single
-        # loop: each iteration attempted ``datetime.strptime(start_time, fmt)``
-        # AND ``datetime.strptime(end_time, fmt)``, breaking on the first
-        # iteration where BOTH succeeded. When the caller supplied
-        # differently-formatted strings (e.g. ``"2024-01-15 00:00"`` and
-        # ``"2024-01-15T00:30:00Z"``), no single format matched both and the
-        # code fell through to ``datetime.fromisoformat(...)``. ``fromisoformat``
-        # only handles ISO 8601 strings, so a plain date like ``"2024-01-15"``
-        # produced a ``datetime.date`` (not ``datetime.datetime``), and an
-        # empty string raised ``ValueError`` that propagated as a 500-style
-        # error in callers that already did ``if start is None: start = ""``
-        # (see ``tools/tool_implementations._analyze_routing``).
-        #
-        # Parse each timestamp independently with a shared helper that
-        # tries the same format list, then falls back to ``fromisoformat``,
-        # then to a last-ditch ``datetime.combine(date, time.min)`` for
-        # plain dates.
         def _parse_ts(value, label):
             if value is None:
                 return None
@@ -245,6 +225,10 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
         logger.info(f"Routing analysis AS{asn}: {start_time}→{end_time} (MITM={enable_mitm}, skip_forge={skip_forge})")
 
         if skip_hijack_streaming:
+            # Same placeholder problem as the leak/outage branches: an empty
+            # hijack list plus success=True reads as "hijack detection ran and
+            # found nothing". Mark it as not-run so the report can say Skipped
+            # rather than asserting a clean routing result.
             hijack_results = {
                 "success": True,
                 "error": None,
@@ -256,8 +240,10 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
                 "as_rel_file": None,
                 "prefix2as_file": None,
                 "asorg_file": None,
+                "data_available": False,
                 "skipped": True,
                 "reason": "light_mode_single_pass",
+                "no_data_reason": "hijack streaming skipped in light mode",
             }
             logger.info("Hijack streaming skipped (light mode single-pass)")
         else:
@@ -282,16 +268,27 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
                 }
 
         if skip_leak:
-            leak_result = {"success": True, "route_leaks": [], "leak_count": 0, "skipped": True, "reason": "light_mode"}
+            # BUG (2026-10-05): this placeholder reported `success: True` with
+            # `leak_count: 0`, which is indistinguishable from "leak detection
+            # ran and found nothing". Consumers that only look at success +
+            # leak_count therefore reported a clean result for an analysis that
+            # never executed. `success` now means "produced a result";
+            # `skipped` marks the placeholder, and `leak_count` is None so a
+            # reader cannot mistake 0 for a measurement.
+            leak_result = {
+                "success": True,
+                "route_leaks": [],
+                "leak_count": None,
+                "leak_count_total": None,
+                "truncated": False,
+                "data_available": False,
+                "skipped": True,
+                "reason": "light_mode",
+                "no_data_reason": "leak detection skipped in light mode",
+            }
             logger.info("Leak detection skipped in light mode")
         else:
             # ── Optimization 2026-09-17: pass target_asns so leak detector
-            # can filter announcements before running the (expensive)
-            # path-probability scan.  Previously the detector ran over ALL
-            # announcements in the window (~5.5M rows for a 6h slice); with
-            # target_asns=[asn] it only scans the subset where asn appears
-            # in the AS-path (~few hundred-thousand rows).  ~10-20x speedup
-            # on the routing stage of traffic_first_enhanced.
             try:
                 leak_result = analyze_leak_surface(
                     asn,
@@ -304,12 +301,16 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
                 leak_result = analyze_leak_surface(asn, start_time, end_time)
 
         if skip_outage:
+            # Same placeholder problem as the leak branch above: a skipped
+            # detector must not look like a measured 0.0 score.
             outage_result = {
                 "success": True,
-                "is_outage_suspected": False,
-                "outage_score": 0.0,
+                "is_outage_suspected": None,
+                "outage_score": None,
+                "data_available": False,
                 "skipped": True,
                 "reason": "light_mode",
+                "no_data_reason": "outage detection skipped in light mode",
             }
             logger.info("Outage detection skipped in light mode")
         else:
@@ -331,6 +332,22 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
         _origin_h = hijack_results.get("origin_hijacked", [])
         _forge_h = hijack_results.get("forge_hijacked", [])
 
+        # `leak_count` is the length of the returned list, which the detector
+        # caps at max_leaks. Carry the true count and the truncation flag
+        # alongside it so the report can say ">=N (truncated)" rather than
+        # presenting the cap as a measurement.
+        #
+        # When leak detection was skipped the detector reports leak_count=None
+        # (not 0), so normalise to 0 here for arithmetic and carry
+        # `leak_analysis_skipped` so the report can say "Skipped" instead of
+        # "0 leaks detected".
+        _leak_skipped = bool(leak_result.get("skipped")) if isinstance(leak_result, dict) else False
+        _leak_count = leak_result.get("leak_count") if isinstance(leak_result, dict) else 0
+        _leak_count = 0 if _leak_count is None else int(_leak_count)
+        _leak_total = leak_result.get("total_detected") if isinstance(leak_result, dict) else None
+        if _leak_total is None:
+            _leak_total = _leak_count
+
         combined = {
             "success": True, "asn": asn,
             "analysis_period": f"{start_time} to {end_time}",
@@ -342,12 +359,18 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
             "mitm_alerts": hijack_results.get("mitm_alerts", []),
             "leak_analysis": leak_result if isinstance(leak_result, dict) else {},
             "route_leaks": leak_result.get("route_leaks", []) if isinstance(leak_result, dict) else [],
-            "leak_count": leak_result.get("leak_count", 0) if isinstance(leak_result, dict) else 0,
+            "leak_count": _leak_count,
+            "leak_count_total": _leak_total,
+            "leak_results_truncated": bool(leak_result.get("truncated", False)) if isinstance(leak_result, dict) else False,
+            "leak_truncation_limit": leak_result.get("truncation_limit") if isinstance(leak_result, dict) else None,
+            "leak_analysis_skipped": _leak_skipped,
             "outage_analysis": outage_result,
+            "outage_analysis_skipped": bool(outage_result.get("skipped")) if isinstance(outage_result, dict) else False,
             "as_rel_file": hijack_results.get("as_rel_file"),
             "prefix2as_file": hijack_results.get("prefix2as_file"),
             "asorg_file": hijack_results.get("asorg_file"),
             "total_prefix_hijacks": len(_origin_h) + len(_forge_h),
+            "hijack_analysis_skipped": bool(hijack_results.get("skipped")) if isinstance(hijack_results, dict) else False,
             "outage_suspected": bool(outage_result.get("is_outage_suspected", False)),
             "outage_score": _outage_score,
         }

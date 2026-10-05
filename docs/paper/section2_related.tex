@@ -1,0 +1,89 @@
+% Section 2 — Related Work
+% Cite prior art in BGP anomaly detection and joint traffic-routing
+% causal attribution. Three buckets:
+%   (i) routing anomaly detection alone (hijack/leak/outage)
+%   (ii) traffic anomaly detection alone (passive DNS / Radar)
+%   (iii) joint correlation / causal attribution
+% The gap we fill is (iii)-with-Pearl-anchor + falsifiable significance.
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Routing anomaly detection.}
+ARTEMIS \cite{artemis} pioneered real-time hijack detection using a
+push-based BGPStream listener and a CAIDA AS-relationship graph for
+validation. BGPStream \cite{bgpstream} is the de-facto data plane for
+academic hijack research. Route-leak detection has matured through the
+\msbd{} ``Peerlock'' mechanism \cite{peerlock}, NIST's RPKI validator
+\cite{rfc7908}, and MANRS' guidance documents \cite{manrs}. These
+systems are \emph{single-signal}: they classify what happened on the
+routing plane, but do not adjudicate the data-plane consequence.
+
+\paragraph{Traffic anomaly detection.}
+Cloudflare Radar \cite{cloudflare-radar} is the canonical public
+source of Internet traffic aggregates; the 5-minute sampled time
+series it exposes is what BGP Tracer consumes in Phase 1. ISP-internal
+NetFlow telemetry \cite{kentik} provides ground-truth labelling for
+several of the v14 events (Orange Espa\~na, Pakistan AAE1). These
+systems are also single-signal: they flag a traffic anomaly but do
+not adjudicate its cause.
+
+\paragraph{Joint correlation and causal attribution.}
+The closest prior work is the early literature on Granger causality
+applied to BGP and traffic \cite{granger-bgp-traffic}, which suffers
+from the non-stationarity objection raised by reviewer-v2~\S1.2.
+Transfer-entropy-based approaches \cite{transfer-entropy-internet}
+address non-linearity but introduce a heavy hyper-parameter burden
+(binning strategy, history length). The prior \hcaf{} used weighted
+voting across MSBD/CTPR/CIC/Granger \cite{hcaf-v1}; \S\ref{sec:css}
+shows that this cannot produce a falsifiable causal claim.
+CSS replaces the vote with a Pearl-anchored counterfactual, which is
+the methodological advance that lets us claim a significance claim
+for each verdict.
+
+\paragraph{Comparison with prior systems.}
+\Tblref{tab:related} summarises how BGP Tracer differs from the
+closest published systems. The columns are the four properties we
+believe a joint traffic--BGP attribution system must have to produce
+a paper-grade causal claim: (i)~a falsifiable significance statement,
+(ii)~explicit handling of non-stationary series (the standard
+objection to Granger), (iii)~direction-resolving when channels
+disagree, and (iv)~an honest abstention rule when data is missing.
+
+We mark ``significance'' only for systems whose primary output is a
+$p$-value or 95\% CI, not for systems whose output is a heuristic
+confidence value (which is a number in $[0,1]$ but not a significance
+statement). The prior \hcaf{} outputs a confidence in $[0,1]$ via
+weighted voting; we mark this ``$\circ$'' (partial: confidence but
+not significance) to be honest about the difference. We mark
+``direction conflict'' for systems whose channel outputs can be
+inspected individually, and abstention for systems that explicitly
+return \texttt{unknown} on data absence.
+
+\begin{table}[t]
+\centering
+\caption{Comparison of BGP Tracer with the closest published systems on
+four paper-grade properties: significance claim ($\checkmark$/$p$-value;
+$\circ$=confidence but not significance), non-stationarity handling,
+direction conflict resolution, honest abstention.}
+\label{tab:related}
+\small
+\begin{tabular}{lcccc}
+\hline
+System & significance & non-stationary & direction conflict & abstention \\ \hline
+ARTEMIS \cite{artemis}           & $\times$ & $\times$ & $\times$ & $\times$ \\
+Cloudflare Radar \cite{cloudflare-radar} & $\times$ & -- & $\times$ & -- \\
+Granger-on-BGP \cite{granger-bgp-traffic} & $\checkmark$ & $\circ$ & -- & -- \\
+Transfer Entropy \cite{transfer-entropy-internet} & $\checkmark$ & $\checkmark$ & -- & $\times$ \\
+Prior \hcaf{} (voting) \cite{hcaf-v1} & $\circ$ & $\checkmark$ & $\times$ & $\times$ \\
+\textbf{BGP Tracer (this paper)} & $\checkmark$ & $\checkmark$ & $\checkmark$ & $\checkmark$ \\ \hline
+\end{tabular}
+\end{table}
+
+\paragraph{Threat model and operational scope.}
+BGP Tracer inherits the threat model of Cloudflare Radar and RIPE RIS
+passive observers: the operator trusts the data plane to be honest
+about its own reachability, and the routing plane to be honest about
+its own announcements. Adversarial injection of synthetic routing or
+traffic signals is out of scope; this matches the operational reality
+of any post-mortem analysis tool.

@@ -41,10 +41,6 @@ if str(ROOT) not in sys.path:
 
 
 # ---------------------------------------------------------------------------
-# R16 — _SHARED_EVIDENCE cleanup
-# ---------------------------------------------------------------------------
-
-
 def test_shared_evidence_cleared_after_run():
     """Regression: every React run must drop its evidence bucket when it
     finishes.  Without this, every analysis run leaks a dict of tool
@@ -83,44 +79,21 @@ def test_finalize_run_swallows_exceptions():
 
     out = react_agent._finalize_run(_BadResult())
     assert out is not None
-
-
-# ---------------------------------------------------------------------------
-# R17 — CheckpointManager.start_time fidelity
-# ---------------------------------------------------------------------------
-
-
-def test_checkpoint_manager_persists_original_start_time(tmp_path):
-    """The checkpoint payload must round-trip the original ``start_time``
-    parameter, not the sanitized ``self.tag`` (which contains
-    ``AS<id>_<date>_<mode>``).
-    """
-    from chief_agent import CheckpointManager
-
-    ckpt = CheckpointManager(
-        asn=12345,
-        start_time="2024-06-01 00:00",
-        mode="quick",
-        checkpoint_dir=tmp_path,
-        enabled=True,
-    )
-    ckpt.save("traffic", {"success": True, "value": 1})
-
-    # Read the raw JSON on disk.
-    raw = json.loads(ckpt.path.read_text(encoding="utf-8"))
-    assert raw["start_time"] == "2024-06-01 00:00", (
-        f"start_time polluted with tag info: {raw['start_time']!r}"
-    )
-    # The tag itself remains a different field (or absent) — it must NOT
-    # leak into ``start_time``.
-    assert "12345_2024-06-01" not in raw["start_time"]
-
-
-# ---------------------------------------------------------------------------
-# R18 — report_exporters batch template actually substitutes
+# REMOVED 2026-10-05: test_checkpoint_manager_persists_original_start_time.
+#
+# It imported `CheckpointManager` from chief_agent, which no longer exists
+# (removed during project slimming), so it had been failing with ImportError.
+#
+# The concern -- that the persisted payload must round-trip the caller's
+# original start_time rather than a sanitized tag -- no longer has a live
+# code path to guard, since nothing writes checkpoints from chief_agent
+# anymore. The atomic-write invariant that *does* still exist is covered by
+# test_save_html_report_uses_atomic_write / test_save_json_report_uses_atomic_write
+# in test_round15_fixes.py.
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
 def test_batch_html_template_placeholders_substituted(tmp_path):
     """The batch HTML template uses Python format-style placeholders;
     the exporter must replace them rather than leaving literal
@@ -149,10 +122,6 @@ def test_batch_html_template_placeholders_substituted(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# R19 — unified_result.from_dict type aliasing
-# ---------------------------------------------------------------------------
-
-
 def test_unified_result_route_leak_alias_normalised():
     """Items in ``route_leaks`` whose ``type`` is the legacy
     ``'route_leak'`` (singular) must be normalised to ``'leak'`` so the
@@ -205,10 +174,6 @@ def test_unified_result_origin_hijack_alias_normalised():
 
 
 # ---------------------------------------------------------------------------
-# R20 — _light_origin_hijack column name compatibility
-# ---------------------------------------------------------------------------
-
-
 def test_light_origin_hijack_keeps_either_as_path_column():
     """The quick-mode hijack detector must keep the BGP AS-path column
     regardless of whether it's named ``as-path`` (MRT convention) or
@@ -236,10 +201,6 @@ def test_light_origin_hijack_keeps_either_as_path_column():
 
 
 # ---------------------------------------------------------------------------
-# R21 — utils.logger does not leak FDs across setup_logger calls
-# ---------------------------------------------------------------------------
-
-
 def test_setup_logger_does_not_duplicate_file_handlers():
     """Repeated ``setup_logger`` calls for the same name must NOT create
     a fresh ``FileHandler`` every time, otherwise repeated invocations
@@ -276,10 +237,6 @@ def test_setup_logger_does_not_duplicate_file_handlers():
 
 
 # ---------------------------------------------------------------------------
-# R23 — APICache bounded memory
-# ---------------------------------------------------------------------------
-
-
 def test_api_cache_enforces_max_entries():
     """``APICache.set`` must respect its ``max_entries`` cap so the
     cache cannot grow unbounded with ever-changing keys.
@@ -288,8 +245,6 @@ def test_api_cache_enforces_max_entries():
 
     cache = APICache(ttl_seconds=3600, max_entries=128)
     # Insert well over the cap. Each set drops the oldest ``max_entries // 16``
-    # (so the cap is loose enough that memory stays bounded but not
-    # over-aggressive).
     for i in range(500):
         cache.set(f"key_{i}", {"i": i})
 
@@ -317,10 +272,6 @@ def test_api_cache_set_prunes_expired_entries():
 
 
 # ---------------------------------------------------------------------------
-# R24 — WHOIS writer is closed even on read failure
-# ---------------------------------------------------------------------------
-
-
 def test_whois_query_closes_writer_on_failure(monkeypatch):
     """When ``reader.read`` raises, the WHOIS writer must still be
     closed so the TCP socket is released.

@@ -2,16 +2,16 @@
 Hypothesis Agent
 ================
 
-LLM 驱动的根因假设生成与评估。
+LLM 。
 
 Workflow:
-  1. 读取 Blackboard 上 traffic + routing 结果
-  2. 调 LLM 生成多假设 + 置信度
-  3. 把 claims 写回 Blackboard `diagnosis.claims`
-  4. 下游 (LLMDebateAgent / report generation) 直接消费
+  1.  Blackboard  traffic + routing 
+  2.  LLM  + 
+  3.  claims  Blackboard `diagnosis.claims`
+  4.  (LLMDebateAgent / report generation) 
 
-强依赖 LLM：输出无法解析时不静默回退，而是返回 TaskResult(success=False)
-并把错误写入 Blackboard `diagnosis.error`，让上游 workflow_engine / 报告如实展示。
+ LLM：， TaskResult(success=False)
+ Blackboard `diagnosis.error`， workflow_engine / 。
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ def extract_json_robust(text):
 
 @dataclass
 class Hypothesis:
-    """根因假设"""
+    """"""
     id: str
     kind: str                       # origin_hijack | route_leak | outage | misconfiguration | ...
     summary: str
@@ -81,7 +81,7 @@ class Hypothesis:
 
 @dataclass
 class Evidence:
-    """证据条目"""
+    """"""
     id: str
     source: str                     # traffic | routing | external | supervisor | manual
     kind: str
@@ -90,28 +90,28 @@ class Evidence:
     payload: dict = field(default_factory=dict)
 
 
-_HYPOTHESIS_AGENT_PROMPT = """你是 BGP 异常事件根因分析专家。基于下面 traffic + routing 的检测结果，
-生成 2-4 个相互独立的根因假设，按可能性从高到低排序，并对每个假设给出
-置信度（0.0 - 1.0）和支撑证据。
+_HYPOTHESIS_AGENT_PROMPT = """ BGP 。 traffic + routing ，
+ 2-4 ，，
+（0.0 - 1.0）。
 
-【traffic 异常】
+【traffic 】
 {traffic_json}
 
-【routing 异常】
+【routing 】
 {routing_json}
 
-【事件元数据】
+【】
 asn: {asn}
 time_range: {time_range}
 
-输出严格的 JSON（不要任何解释文字或 markdown 包裹）：
+ JSON（ markdown ）：
 {{
   "hypotheses": [
     {{
       "id": "h1",
       "kind": "origin_hijack | route_leak | outage | misconfiguration | legitimate_change | other",
-      "summary": "一句话根因",
-      "description": "详细描述（≤120 字）",
+      "summary": "",
+      "description": "（≤120 ）",
       "confidence": 0.0,
       "supporting_evidence_ids": ["ev-1", "ev-2"]
     }}
@@ -121,7 +121,7 @@ time_range: {time_range}
 
 
 class HypothesisAgent(Agent):
-    """LLM 驱动的假设代理"""
+    """LLM """
 
     name = "HypothesisAgent"
     description = "LLM-driven hypothesis generation and evaluation"

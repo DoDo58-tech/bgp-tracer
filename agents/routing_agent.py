@@ -64,16 +64,6 @@ class RoutingAgent(Agent):
             traffic = await self.bb.read_section("traffic")
             prepared["investigation_plan"] = build_investigation_plan(prepared, traffic)
             # Bug fix (2026-09-13): prepared contains a ``result`` key that
-            # points at the raw routing dict (no flat count fields). If we
-            # update_section(prepared) then write(result, normalized_result)
-            # in two steps, there's a window where ``routing.result`` holds
-            # the raw dict — any reader in that window would see
-            # ``hijack_count = missing`` and the correlation analyzer would
-            # fall back to its own (different) counts, causing verdict
-            # divergence. We avoid the issue by computing the
-            # normalized_result *first*, then writing it once via
-            # ``write(routing, "result", ...)`` *before* the bulk update
-            # so the ``result`` key is always the rich, normalized form.
             normalized_result = dict(result)
             normalized_result.update({
                 key: prepared[key]
@@ -115,9 +105,6 @@ class RoutingAgent(Agent):
                 {"step": "analyze", "asn": str(asn)},
             )
             # `routing.result` was already written above with the normalized
-            # payload (raw + flat count fields). The downstream readers
-            # (ChallengeAgent / RefereeAgent / DebateAgent) all read from
-            # this key, so no further write is needed.
             await self.bb.write("routing", "prepared", prepared, _writer="RoutingAgent")
             await self.bb.write("meta", "routing_done", True)
             self.state = AgentState.DONE
@@ -173,7 +160,7 @@ def prepare_routing_payload(result, partial_error=None):
     forge_hijacking = result.get("forge_hijacking", []) or []
     leaks = result.get("route_leaks", []) or []
     outages = (result.get("outage_analysis") or {}) or {}
-    # 也读 annotation_package 嵌套格式（路由_agent 之前没读，这里补上）
+    #  annotation_package （_agent ，）
     nested_hijack = result.get("hijack") or {}
     nested_leak = result.get("leak") or {}
     if isinstance(nested_hijack, dict):
@@ -190,7 +177,7 @@ def prepare_routing_payload(result, partial_error=None):
     forge_hijacking = [_normalize_event(e) for e in forge_hijacking]
     leaks = [_normalize_event(e) for e in leaks]
     outages = _safe_dt(outages)
-    # 也读 annotation_package 嵌套格式（路由_agent 之前没读，这里补上）
+    #  annotation_package （_agent ，）
     nested_hijack = result.get("hijack") or {}
     nested_leak = result.get("leak") or {}
     if isinstance(nested_hijack, dict):
@@ -221,7 +208,7 @@ def prepare_routing_payload(result, partial_error=None):
         "routing_status": "anomaly" if (has_victim_anomaly or has_attacker_anomaly or leaks or has_outage) else "normal",
         "impact_scope": routing_scope(hijacked_alerts, leaks, outages),
         "confidence": 0.85 if (has_victim_anomaly or has_attacker_anomaly or leaks or has_outage) else 0.6,
-        # 写入下游 ChallengeAgent/RefereeAgent/EvaluationLoop 依赖的 total_* 字段
+        #  ChallengeAgent/RefereeAgent/EvaluationLoop  total_* 
         "total_prefix_hijacks": len(hijacked_alerts),
         "total_prefix_hijacking": len(origin_hijacking + forge_hijacking),
         "total_route_leaks": len(leaks),
@@ -250,10 +237,6 @@ def routing_scope(hijacks, leaks, outages):
     prefixes = set()
     for event in hijacks + leaks:
         # `event` may be a plain dict (legacy hijack detector output) or an
-        # AnomalyDetail object (when wrapping through unified_result.to_dict()).
-        # Try .get() first (dict / AnomalyDetail-with-mapping), otherwise read
-        # attributes directly so this function doesn't blow up on the new
-        # AnomalyDetail objects.
         def _event_get(key, default=None):
             if hasattr(event, "get") and callable(getattr(event, "get")):
                 try:

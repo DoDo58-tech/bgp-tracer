@@ -50,9 +50,6 @@ def test_chief_agent_has_os_module():
     import os
 
     # Either os is in the module namespace (module-level import) or os.replace
-    # must be importable via the system path. The atomic-write helper at line
-    # ~1319 in chief_agent.py uses ``os.replace`` directly, so the module
-    # must have access to ``os``.
     assert hasattr(os, "replace"), "os.replace should be available"
 
 
