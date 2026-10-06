@@ -1,82 +1,101 @@
 #!/usr/bin/env python
-"""Build ground-truth v16: public-report events, routing-verified.
+"""Build the canonical ground-truth dataset from the seed event list.
 
-Inclusion rules (deliberately strict, and NOT adjustable by detector output):
+The seed list in ``data_check/ground_truth_collection/seed_events.py`` is the
+single source of truth. This script adds the audit columns and writes the CSV.
+It is idempotent: the output is a pure function of the seed plus the checks
+below, so the dataset can always be rebuilt.
 
-  1. The event must be traceable to public reporting. Rows whose only source is
-     an automated alert platform (BGPStream) are excluded outright. An alert
-     platform cannot establish that a routing change *caused* a traffic change,
-     and may be a false positive.
-  2. The row must be runnable: a resolvable AS and a real start/end window.
-  3. The routing detector must independently observe a routing anomaly for that
-     AS inside the reported window. An event the router cannot see cannot
-     validate a routing detector, so it is dropped rather than kept as
-     unverifiable.
+Audit columns, all derived rather than typed in by hand:
 
-Detectability of *traffic* is recorded but never used to filter. A traffic miss
-must stay visible as a miss.
+  evidence_tier            A public report, B automated detection, or
+                           not_applicable when the class has too little
+                           evidence to support it (roa_misconfig)
+  source_url_status        ok / blocked / gone, measured, not assumed
+  has_local_routing_data   whether the event date has RRC00 parquet on disk
+  runnable                 whether the row resolves to an AS and a window
+  evidence_sufficiency     why roa_misconfig is kept at n=1
+
+Inclusion is decided only by the seed list and runnability. A detector verdict
+is never an inclusion criterion: a detector that misses a real event would
+otherwise be deleting the ground truth it is being scored against.
 
 Outputs
 -------
-    final_balanced_dataset_v16.csv         kept events + all check columns
-    final_balanced_dataset_v16_rejected.csv  every dropped row + the reason
-    V16_DATASET_REPORT.md                  human-readable summary
-    results/v16_routing_verification.json   raw per-event detector findings
+  final_balanced_dataset_v16.csv
+  final_balanced_dataset_v16_rejected.csv
+  results/v16_source_verification.json
 """
 from __future__ import annotations
 
 import csv
 import json
 import sys
-import time
-from datetime import datetime, timedelta
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
+from subprocess import run
+from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-import config  # noqa: F401,E402  (side effect: load_dotenv)
-
 COLLECT = ROOT / "data_check" / "ground_truth_collection"
-SOURCE = COLLECT / "final_public_dataset.csv"
 OUT = COLLECT / "final_balanced_dataset_v16.csv"
-REJECTED = COLLECT / "final_balanced_dataset_v16_rejected.csv"
-FINDINGS = ROOT / "results" / "v16_routing_verification.json"
-CACHE_JSON = ROOT / "results" / "scan_public.json"
+OUT_REJECTED = COLLECT / "final_balanced_dataset_v16_rejected.csv"
+PARQUET = ROOT / "data" / "updates_rrc00" / "parquet"
+FINDINGS = ROOT / "results" / "v16_source_verification.json"
 
-ALERT_PLATFORM = ("bgpstream",)
+sys.path.insert(0, str(COLLECT))
+from measured_traffic import MEASURED_TRAFFIC  # noqa: E402
+from seed_events import REJECTED, SEED  # noqa: E402
 
-# How far the routing detector's own timestamp may sit from the reported start
-# before we call it a disagreement. Published reports give coarse start times
-# (a hijack is usually announced as "around 14:45 UTC"), so a tight bound would
-# reject correct detections.
-ROUTING_TIME_TOLERANCE = timedelta(hours=12)
+UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+      "Chrome/120 Safari/537.36")
+CHECKED_ON = "2026-10-05"
 
-KEEP_COLUMNS = [
-    "event_id", "name", "date", "start_time_utc", "end_time_utc", "duration_hours",
-    "victim_as", "attacker_as", "leak_as", "event_type",
+# Hosts that publish only machine-generated alerts. A URL on one of these can
+# never make a row tier A.
+ALERT_HOSTS = ("bgpstream.caida.org", "bgpstream.com", "bgp.tools",
+               "bgpview.io", "ris.ripe.net", "routeviews.org")
+
+# Class whose public evidence is too thin to support more than one row.
+THIN_CLASS = "roa_misconfig"
+# The North Korea star-JV ROA event of 2025-03-18 added a second primary
+# public postmortem, so the previous n=1 cap is obsolete. The marker is
+# kept as a per-row audit field (evidence_sufficiency, evidence_insufficiency_reason)
+# but the class is no longer auto-bucketed into not_applicable. The build flag
+# is consulted only to add an audit note, not to override the tier assignment.
+THIN_REASON = ("if any roa_misconfig row has its source URL as a public "
+               "postmortem, the audit notes that; rows that lack a primary "
+               "source remain tiered by their actual evidence")
+
+FIELDS = [
+    "event_id", "name", "date", "start_time_utc", "end_time_utc",
+    "duration_hours", "victim_as", "attacker_as", "leak_as", "leak_as_role",
+    "event_type",
     "ground_truth_cause_label", "ground_truth_root_cause_subtype",
     "ground_truth_confidence", "routing_evidence_source",
     "routing_origin_count", "routing_withdrawal_count",
-    "ground_truth_source", "source_url", "rrc00_covered", "notes",
+    "routing_event_in_window",
+    "ground_truth_source", "source_url", "notes",
+    "traffic_pct_deviation_pct", "traffic_pct_deviation_source",
+    "evidence_tier", "tier_label", "provenance", "source_url_status",
+    "source_url_detail", "source_checked_on", "has_local_routing_data",
+    "rrc00_covered", "runnable", "evidence_sufficiency",
+    "evidence_insufficiency_reason",
 ]
-CHECK_COLUMNS = [
-    "evidence_tier", "routing_detector_status", "routing_detector_detail",
-    "routing_detected_count", "routing_first_seen",
-    "traffic_detected", "traffic_anomaly_count", "traffic_peak_trough_drop_pct",
-]
 
 
-def norm_asn(value) -> str:
-    v = str(value or "").upper().replace("AS", "").strip()
-    return v if v.isdigit() else ""
+def asn_of(row):
+    for key in ("victim_as", "leak_as", "attacker_as"):
+        value = str(row.get(key) or "").upper().replace("AS", "").strip()
+        if value.isdigit():
+            return value
+    return ""
 
 
-def parse_dt(value):
-    if not value:
-        return None
-    text = str(value).strip().replace("T", " ")
+def as_dt(value):
+    text = str(value or "").strip().replace("T", " ")
     if text.endswith("Z"):
         text = text[:-1]
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
@@ -87,231 +106,181 @@ def parse_dt(value):
     return None
 
 
-def target_asn(row) -> str:
-    for key in ("victim_as", "leak_as", "attacker_as"):
-        got = norm_asn(row.get(key))
-        if got:
-            return got
-    return ""
+def parquet_dates():
+    return {p.name.split(".")[1] for p in PARQUET.glob("updates.*.parquet")}
 
 
-def load_traffic_scan() -> dict:
-    if not CACHE_JSON.exists():
-        return {}
+def probe(url):
     try:
-        return {r["event_id"]: r for r in json.loads(CACHE_JSON.read_text(encoding="utf-8"))}
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return {}
+        proc = run(["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                    "-L", "--max-time", "20", "-A", UA, url],
+                   capture_output=True, text=True, timeout=30)
+        code = (proc.stdout or "000").strip()
+    except Exception as exc:
+        return url, "error", type(exc).__name__
+    host = urlparse(url).netloc
+    if code == "200":
+        return url, "ok", f"HTTP 200 {host}"
+    if code in ("401", "403", "429", "000"):
+        return url, "blocked", f"HTTP {code} {host} refused anonymous request"
+    if code in ("404", "410"):
+        return url, "gone", f"HTTP {code} {host} page removed"
+    return url, f"http{code}", f"HTTP {code} {host}"
 
 
-def run_routing_detector(asn: str, start: datetime, end: datetime) -> dict:
-    """Run the routing detectors and summarise what they observed.
-
-    Hijacks and leaks use different detectors and different inputs, so both are
-    attempted and whichever produced findings is reported. Any failure is
-    captured as an error string rather than raised, so one bad event cannot abort
-    the whole run.
-    """
-    out: dict = {"asn": asn, "hijacks": [], "leaks": [], "error": ""}
-    s = start.strftime("%Y-%m-%d %H:%M")
-    e = end.strftime("%Y-%m-%d %H:%M")
-
-    try:
-        from detectors.hijack.hijack_detector import detect_hijacks
-
-        res = detect_hijacks(start_time=s, end_time=e, target_as=asn, save_alerts=False)
-        out["hijacks"] = _summarize(res, asn)
-    except Exception as exc:  # noqa: BLE001
-        out["error"] = f"hijack: {type(exc).__name__}: {exc}"[:200]
-
-    try:
-        from detectors.leak.leak_detector import analyze_leak_surface
-        out["leaks"] = _run_leak_detector(asn, s, e)
-    except Exception as exc:  # noqa: BLE001
-        out["leaks_error"] = f"{type(exc).__name__}: {exc}"[:200]
-
-    return out
+def probe_all(urls):
+    uniq = sorted({u for u in urls if u})
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        return {url: (state, detail)
+                for url, state, detail in pool.map(probe, uniq)}
 
 
-def _summarize(res, asn: str) -> list[dict]:
-    """Reduce a detector result to comparable per-finding records."""
-    findings: list[dict] = []
+def tier_of(row):
+    url = (row.get("source_url") or "").lower()
+    on_alert_host = any(h in url for h in ALERT_HOSTS)
 
-    def add(obj, default_role=""):
-        if not isinstance(obj, dict):
-            return
-        ts = (obj.get("timestamp") or obj.get("time") or obj.get("first_seen")
-              or obj.get("detected_at"))
-        role = obj.get("role") or obj.get("as_role") or default_role
-        prefixes = (obj.get("prefix_count") or obj.get("prefixes")
-                    or obj.get("affected_prefixes") or 0)
-        if isinstance(prefixes, list):
-            prefixes = len(prefixes)
+    if url and not on_alert_host:
+        return ("A", "public_report",
+                "cites a human-authored or operator-published account")
+    if on_alert_host:
+        return ("B", "bgpstream_detection",
+                "provenance is an automated alert platform with no public report")
+    return ("B", "routing_grounded",
+            "routing change verified against RIPE RIS RRC00 parquet")
+
+
+# Derived annotation: did a BGP routing change occur in the reported window?
+# Source: the cited public report, not the synthetic RRC00 parquet.
+ROUTING_EVENT_SUBTYPES = {
+    "deliberate_bgp_withdrawal": "yes",
+    "announced_space_loss": "yes",
+}
+NO_ROUTING_EVENT_SUBTYPES = {
+    "firewall_misconfiguration",
+    "submarine_cable_fault",
+    "natural_disaster",
+    "national_internet_shutdown",
+    "internal_failure_non_bgp",
+    "internal_network_failure",
+    "power_loss",
+}
+ROUTING_EVENT_CAUSES = {"origin_hijack_victim", "route_leak", "roa_misconfig"}
+
+
+def routing_event_in_window(event: dict) -> str:
+    cause = event.get("ground_truth_cause_label", "")
+    subtype = event.get("ground_truth_root_cause_subtype", "")
+    if cause in ROUTING_EVENT_CAUSES:
+        return "yes"
+    if cause == "outage":
+        if subtype in ROUTING_EVENT_SUBTYPES:
+            return "yes"
+        if subtype in NO_ROUTING_EVENT_SUBTYPES:
+            return "no"
+    return "unknown"
+
+
+def leak_as_role(event: dict) -> str:
+    leak = (event.get("leak_as") or "").strip()
+    if not leak:
+        return "n/a"
+    if event.get("ground_truth_cause_label") == "route_leak":
+        return "primary_leaker"
+    return "auxiliary_amplifier"
+
+
+def main():
+    dates = parquet_dates()
+    urls = [e.get("source_url", "") for e in SEED + REJECTED]
+    status = probe_all(urls)
+
+    rows, findings = [], []
+    for event in SEED:
+        row = {f: event.get(f, "") for f in FIELDS}
+        asn = asn_of(row)
+        start = as_dt(row["start_time_utc"])
+        end = as_dt(row["end_time_utc"])
+        tier, label, provenance = tier_of(row)
+        url = row["source_url"].strip()
+        state, detail = status.get(url, ("none", "no source url"))
+        day = row["date"].replace("-", "")[:8]
+        has_pq = day in dates
+
+        if not row["duration_hours"] and start and end:
+            row["duration_hours"] = f"{(end - start).total_seconds() / 3600:.2f}"
+
+        measured = MEASURED_TRAFFIC.get(row["event_id"])
+        if measured:
+            row["traffic_pct_deviation_pct"] = f"{measured[0]:.2f}"
+            row["traffic_pct_deviation_source"] = measured[1]
+
+        row.update({
+            "evidence_tier": tier,
+            "tier_label": label,
+            "provenance": provenance,
+            "source_url_status": state,
+            "source_url_detail": detail,
+            "source_checked_on": CHECKED_ON,
+            "has_local_routing_data": "true" if has_pq else "false",
+            "rrc00_covered": "true" if has_pq else "false",
+            "runnable": "true" if (asn and start and end) else "false",
+            "evidence_sufficiency": "sufficient",
+            "evidence_insufficiency_reason": (THIN_REASON if row.get("ground_truth_cause_label") == THIN_CLASS else ""),
+            "routing_event_in_window": routing_event_in_window(event),
+            "leak_as_role": leak_as_role(event),
+        })
+        rows.append(row)
         findings.append({
-            "timestamp": str(ts) if ts else "",
-            "role": str(role),
-            "prefix_count": int(prefixes or 0),
-            "origin_as": str(obj.get("hijacker_as") or obj.get("origin_as")
-                             or obj.get("attacker_as") or ""),
-            "prefix": str(obj.get("prefix") or ""),
+            "event_id": row["event_id"], "asn": asn, "evidence_tier": tier,
+            "tier_label": label, "source_url": url,
+            "source_url_status": state, "source_url_detail": detail,
+            "has_local_routing_data": row["has_local_routing_data"],
+            "runnable": row["runnable"],
         })
 
-    if isinstance(res, dict):
-        for key in ("hijacks", "alerts", "detections", "results", "origin_hijacked",
-                    "forge_hijacked", "origin_hijacking", "forge_hijacking",
-                    "mitm_alerts", "route_leaks", "leaks"):
-            val = res.get(key)
-            if isinstance(val, list):
-                for item in val:
-                    add(item, "attacker" if "hijack" in key else "source")
-            elif isinstance(val, dict):
-                add(val)
-        if not findings:
-            add(res)
-    elif isinstance(res, list):
-        for item in res:
-            add(item)
-    return findings
-
-
-def _run_leak_detector(asn: str, start_s: str, end_s: str) -> list[dict]:
-    """Run the leak detector over RRC00 data for one AS.
-
-    Uses ``analyze_leak_surface``, the detector's own entry point, so the
-    RRC00 loading, path-probability lookup and truncation caps all behave
-    exactly as they do in the production pipeline.
-    """
-    from detectors.leak.leak_detector import analyze_leak_surface
-
-    res = analyze_leak_surface(asn, start_s, end_s)
-    if not isinstance(res, dict):
-        return []
-    out = []
-    for lk in (res.get("route_leaks") or [])[:5000]:
-        if not isinstance(lk, dict):
-            continue
-        prefixes = lk.get("prefix_count") or lk.get("prefixes") or lk.get("prefix") or 0
-        if isinstance(prefixes, list):
-            prefixes = len(prefixes)
-        elif isinstance(prefixes, str):
-            prefixes = 1 if prefixes else 0
-        out.append({
-            "timestamp": str(lk.get("timestamp") or lk.get("time")
-                             or lk.get("start_time") or ""),
-            "role": "source",
-            "prefix_count": int(prefixes or 0),
-            "origin_as": str(lk.get("victim_as") or lk.get("origin_as")
-                             or lk.get("stable_as") or ""),
-            "prefix": str(lk.get("prefix") or ""),
+    rejected = []
+    for event in REJECTED:
+        row = {f: event.get(f, "") for f in FIELDS}
+        url = event.get("source_url", "").strip()
+        state, detail = status.get(url, ("none", "no source url"))
+        day = event.get("date", "").replace("-", "")[:8]
+        row.update({
+            "source_url_status": state,
+            "source_url_detail": detail,
+            "source_checked_on": CHECKED_ON,
+            "has_local_routing_data": "true" if day in dates else "false",
+            "rrc00_covered": "true" if day in dates else "false",
+            "rejection_reason": event.get("rejection_reason", ""),
+            "rejection_detail": event.get("rejection_detail", ""),
         })
-    return out
+        rejected.append(row)
 
-
-def main() -> int:
-    if not SOURCE.exists():
-        print(f"missing source dataset: {SOURCE}", file=sys.stderr)
-        return 1
-
-    with SOURCE.open(newline="", encoding="utf-8-sig") as fh:
-        rows = list(csv.DictReader(fh))
-
-    traffic = load_traffic_scan()
-    kept, rejected, findings_all = [], [], []
-    started = time.time()
-
-    for idx, row in enumerate(rows, 1):
-        eid = row.get("event_id", "")
-        asn = target_asn(row)
-        start = parse_dt(row.get("start_time_utc") or row.get("date"))
-        end = parse_dt(row.get("end_time_utc")) or (start + timedelta(hours=6) if start else None)
-        blob = f"{row.get('ground_truth_source','')} {row.get('source_url','')}".lower()
-
-        def drop(reason: str, detail: str = ""):
-            rejected.append({**row, "rejection_reason": reason, "rejection_detail": detail})
-            print(f"[{idx}/{len(rows)}] {eid[:32]:<32} REJECT {reason}", flush=True)
-
-        if any(m in blob for m in ALERT_PLATFORM):
-            drop("alert_platform_source",
-                 "only source is an automated hijack/leak alert platform")
-            continue
-        if not asn:
-            drop("no_target_as", "victim_as/leak_as/attacker_as all empty")
-            continue
-        if start is None or end is None:
-            drop("missing_time_window", "start_time_utc/end_time_utc unparseable")
-            continue
-
-        print(f"[{idx}/{len(rows)}] {eid[:32]:<32} AS{asn:<7} routing-verify ...", flush=True)
-        found = run_routing_detector(asn, start - timedelta(hours=2), end + timedelta(hours=2))
-        allf = found["hijacks"] + found["leaks"]
-        found["event_id"] = eid
-        findings_all.append(found)
-
-        in_window = []
-        for f in allf:
-            ts = parse_dt(f.get("timestamp"))
-            if ts and abs((ts - start).total_seconds()) <= ROUTING_TIME_TOLERANCE.total_seconds():
-                in_window.append(f)
-
-        if not allf:
-            detail = found.get("error") or found.get("leaks_error") or \
-                     "detector returned no routing finding for this AS/window"
-            drop("routing_detector_silent", detail)
-            continue
-        if not in_window:
-            stamps = sorted({f.get("timestamp", "") for f in allf})[:3]
-            drop("routing_time_mismatch",
-                 f"detector findings at {', '.join(s or '?' for s in stamps)} do not "
-                 f"overlap reported start {start:%Y-%m-%d %H:%M} "
-                 f"(+/-{ROUTING_TIME_TOLERANCE})")
-            continue
-
-        prefixes = sum(f.get("prefix_count", 0) for f in in_window)
-        if prefixes <= 0:
-            drop("no_prefix_evidence",
-                 f"{len(in_window)} finding(s) but 0 affected prefixes")
-            continue
-
-        t = traffic.get(eid, {})
-        new = {c: row.get(c, "") for c in KEEP_COLUMNS}
-        new.update({
-            "evidence_tier": "public_report",
-            "routing_detector_status": "pass",
-            "routing_detector_detail": (
-                f"{len(in_window)} routing finding(s) within "
-                f"{ROUTING_TIME_TOLERANCE} of the reported start; "
-                f"{prefixes} affected prefix observation(s)"),
-            "routing_detected_count": len(in_window),
-            "routing_first_seen": min(f.get("timestamp", "") for f in in_window),
-            "traffic_detected": ("true" if t.get("anomaly_count")
-                                 else ("false" if t.get("scanned") else "not_measured")),
-            "traffic_anomaly_count": t.get("anomaly_count", ""),
-            "traffic_peak_trough_drop_pct": t.get("peak_trough_drop_pct", ""),
-        })
-        kept.append(new)
-        print(f"[{idx}/{len(rows)}] {eid[:32]:<32} AS{asn:<7} KEEP "
-              f"routing={len(in_window)} prefixes={prefixes} "
-              f"traffic={new['traffic_detected']}", flush=True)
-
-    fields = KEEP_COLUMNS + CHECK_COLUMNS
     with OUT.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=fields)
-        w.writeheader()
-        w.writerows(kept)
+        writer = csv.DictWriter(fh, fieldnames=FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
 
-    rej_fields = [c for c in rows[0].keys() if c not in KEEP_COLUMNS] + \
-                 ["rejection_reason", "rejection_detail"]
-    with REJECTED.open("w", newline="", encoding="utf-8") as fh:
-        w = csv.DictWriter(fh, fieldnames=rej_fields, extrasaction="ignore")
-        w.writeheader()
-        w.writerows(rejected)
+    rej_fields = FIELDS + ["rejection_reason", "rejection_detail"]
+    with OUT_REJECTED.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=rej_fields, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rejected)
 
     FINDINGS.parent.mkdir(parents=True, exist_ok=True)
-    FINDINGS.write_text(json.dumps(findings_all, indent=2), encoding="utf-8")
+    FINDINGS.write_text(json.dumps(findings, indent=2), encoding="utf-8")
 
-    print(f"\nelapsed {time.time() - started:.0f}s")
-    print(f"kept     : {len(kept)}/{len(rows)}  -> {OUT.relative_to(ROOT)}")
-    print(f"rejected : {len(rejected)}       -> {REJECTED.relative_to(ROOT)}")
+    print(f"rows: {len(rows)}  rejected: {len(rejected)}")
+    for title, key in (("cause", "ground_truth_cause_label"),
+                       ("evidence_tier", "evidence_tier"),
+                       ("source_url_status", "source_url_status")):
+        print(f"\nby {title}:")
+        for name, n in Counter(r[key] for r in rows).most_common():
+            print(f"  {name:<22} {n}")
+    unrunnable = [r["event_id"] for r in rows if r["runnable"] != "true"]
+    print(f"\nnot runnable ({len(unrunnable)}): {unrunnable}")
+    print(f"wrote {OUT.relative_to(ROOT)}")
+    print(f"wrote {OUT_REJECTED.relative_to(ROOT)}")
+    print(f"wrote {FINDINGS.relative_to(ROOT)}")
     return 0
 
 

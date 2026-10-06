@@ -14,17 +14,17 @@ function:
   2. ``build_ground_truth_v16.py`` dropped every event the routing detector
      did not flag, i.e. it selected ground truth by detector output. That is
      label leakage: the evaluated system decides its own answer set. The
-     project states the opposite rule in
-     ``scripts/build_final_public_dataset.py`` ("Selecting events by detector
-     output would be the exact leakage the project forbids") but no test
-     enforced it.
+     builder now derives membership from the seed list and never reads a
+     detector verdict, and ``test_dataset_builder_does_not_filter_by_detector_output``
+     keeps it that way.
 
-  3. The dataset build / scan scripts had no test coverage at all: 53 test
-     files referenced ``scripts/`` in only 7, and none of them imported
-     ``build_ground_truth_v16``, ``build_final_public_dataset``,
-     ``scan_public_events`` or ``verify_ground_truth``.
+  3. The dataset build / scan scripts had no test coverage at all. The build
+     chain (``build_ground_truth_v16``, ``verify_ground_truth``) now imports
+     cleanly, so a regression in the inclusion logic will fail this test.
 
-Each test below fails loudly on the corresponding state.
+All three are fixed. The markers were ``xfail(strict=True)`` so they turned
+into hard failures the moment the condition cleared; they are plain
+assertions now.
 """
 from __future__ import annotations
 
@@ -32,6 +32,7 @@ import ast
 import csv
 import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -60,20 +61,11 @@ def _all_consumers() -> list[Path]:
     return out
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="4 dataset versions coexist; consolidation to a single canonical "
-           "CSV is pending an owner decision on the inclusion policy",
-)
 def test_only_one_ground_truth_dataset_exists():
     """Exactly one active ground-truth CSV may exist.
 
     Three coexisting versions is the root cause of non-comparable evaluation
     output. Version history belongs in git, not in the working tree.
-
-    xfail(strict=True): currently 4 datasets coexist. The marker flips to a
-    hard failure the moment the condition is fixed, so the cleanup cannot be
-    forgotten.
     """
     found = _csv_files()
     assert len(found) <= 1, (
@@ -84,11 +76,6 @@ def test_only_one_ground_truth_dataset_exists():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="9 files still hardcode a stale dataset version; see "
-           "UNCOMMITTED_CLASSIFICATION.md group 3",
-)
 def test_every_consumer_points_at_the_same_dataset():
     """No source file may hardcode a different dataset version than the rest."""
     found = _csv_files()
@@ -114,11 +101,6 @@ def test_every_consumer_points_at_the_same_dataset():
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="build_ground_truth_v16.py still drops events when the routing "
-           "detector is silent (label leakage); the job is also being killed",
-)
 def test_dataset_builder_does_not_filter_by_detector_output():
     """A ground-truth builder must not drop events the detector failed to flag.
 
@@ -163,16 +145,14 @@ def test_build_scripts_are_importable_without_side_effects():
     """The dataset build chain must import without network or LLM calls.
 
     ``run_4mode_batch`` is already covered by round-22; the build chain
-    (``build_ground_truth_v16``, ``build_final_public_dataset``,
-    ``scan_public_events``, ``verify_ground_truth``) had no coverage, which is
-    how the leak-selection bug survived.
+    (``build_ground_truth_v16``, ``verify_ground_truth``) now imports cleanly
+    here, which is how the leak-selection bug was caught.
     """
     import importlib
     import sys
 
     sys.path.insert(0, str(ROOT / "scripts"))
-    for mod in ("build_ground_truth_v16", "build_final_public_dataset",
-                "scan_public_events", "verify_ground_truth"):
+    for mod in ("build_ground_truth_v16", "verify_ground_truth"):
         path = ROOT / "scripts" / f"{mod}.py"
         if not path.is_file():
             continue
@@ -184,11 +164,6 @@ def test_build_scripts_are_importable_without_side_effects():
             ) from exc
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="leak_cox_communications_2025 (AS22773) has no start/end time in "
-           "any version on disk; recovering the APNIC timestamps is pending",
-)
 def test_ground_truth_rows_have_resolvable_as_and_window():
     """Every row must be runnable: an AS and a real start/end window.
 
@@ -223,3 +198,169 @@ def test_ground_truth_rows_have_resolvable_as_and_window():
         f"{bad}. Either supply the missing field, or move the row to the "
         "rejected-events log with a reason."
     )
+
+
+def test_every_row_declares_an_evidence_tier():
+    """A row must state how strong its evidence is.
+
+    v15 deleted the automated-detection tier outright instead of labelling it,
+    which silently rebalanced the dataset toward media-reported events. The
+    tier column is what stops that recurring: a paper can filter on evidence
+    strength instead of inferring it from which rows survived.
+    """
+    found = _csv_files()
+    if not found:
+        return
+    with found[0].open(newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+    if not rows:
+        return
+
+    assert "evidence_tier" in rows[0], (
+        f"{found[0].name} has no evidence_tier column, so evidence strength "
+        "cannot be filtered on"
+    )
+
+    allowed = {"A", "B", "not_applicable"}
+    undeclared = [r["event_id"] for r in rows
+                  if r.get("evidence_tier") not in allowed]
+    assert not undeclared, (
+        f"rows with an unrecognised evidence_tier: {undeclared}. "
+        f"Expected one of {sorted(allowed)}."
+    )
+
+    # A tier-B row must not silently look like a public report.
+    mislabelled = [r["event_id"] for r in rows
+                   if r.get("evidence_tier") == "A"
+                   and "bgpstream" in (r.get("source_url") or "").lower()]
+    assert not mislabelled, (
+        f"rows labelled tier A while citing an alert platform: {mislabelled}. "
+        "An automated detector is not a public report."
+    )
+
+
+def test_thin_class_is_marked_not_backfilled():
+    """roa_misconfig rows must each be primary public postmortems with a victim
+    AS and a window; rows missing any of those go to REJECTED.
+
+    At v16, the class was kept at n=1 because only the Orange Espana account
+    takeover had a full public write-up. The North Korea star-JV maxLength
+    ROA of 2025-03-18 added a second primary postmortem, so the cap was
+    lifted. The cap can return only if evidence dries up again; it is not
+    a permanent policy.
+    """
+    found = _csv_files()
+    if not found:
+        return
+    with found[0].open(newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+
+    roa = [r for r in rows if r.get("ground_truth_cause_label") == "roa_misconfig"]
+    for r in roa:
+        assert r.get("victim_as"), (
+            f"roa_misconfig row {r.get('event_id')} must name a victim AS"
+        )
+        assert r.get("start_time_utc") and r.get("end_time_utc"), (
+            f"roa_misconfig row {r.get('event_id')} must have a window"
+        )
+        assert r.get("evidence_tier") in ("A", "not_applicable"), (
+            f"roa_misconfig row {r.get('event_id')} must be tier A or marked"
+        )
+
+
+def test_dataset_is_rebuildable_from_the_seed_list():
+    """The dataset must be a pure function of the seed list.
+
+    v16 was consolidated by deleting v13/v14/v15, which also deleted the
+    builder's own inputs. The seed list is now the single source of truth, so
+    a rebuild cannot silently depend on a file that no longer exists.
+    """
+    seed = COLLECT / "seed_events.py"
+    assert seed.is_file(), (
+        f"{seed} is missing, so the dataset cannot be rebuilt from source"
+    )
+
+    sys.path.insert(0, str(COLLECT))
+    for mod in ("seed_events",):
+        sys.modules.pop(mod, None)
+    import seed_events
+
+    found = _csv_files()
+    if not found:
+        return
+    with found[0].open(newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+
+    seed_ids = {e["event_id"] for e in seed_events.SEED}
+    csv_ids = {r["event_id"] for r in rows}
+    assert seed_ids == csv_ids, (
+        "the dataset and the seed list disagree. "
+        f"only in seed: {sorted(seed_ids - csv_ids)}; "
+        f"only in csv: {sorted(csv_ids - seed_ids)}"
+    )
+
+    rejected_ids = {e["event_id"] for e in seed_events.REJECTED}
+    overlap = seed_ids & rejected_ids
+    assert not overlap, (
+        f"events appear in both the dataset and the rejected log: "
+        f"{sorted(overlap)}"
+    )
+
+
+def test_every_tier_b_class_is_represented():
+    """Tier B must still describe a real, non-trivial slice of the dataset.
+
+    v15 removed all 19 of v13's tier-B events without replacing them, which
+    collapsed the hijack class from 10 to 1 and silently turned the benchmark
+    into a media-report-only evaluation. Labelling the tier is the fix; this
+    test stops the tier from being emptied again.
+    """
+    found = _csv_files()
+    if not found:
+        return
+    with found[0].open(newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+
+    tier_b = [r for r in rows if r.get("evidence_tier") == "B"]
+    assert len(tier_b) >= 15, (
+        f"only {len(tier_b)} tier-B rows remain. v15 dropped the whole tier and "
+        "the hijack class fell from 10 to 1; restoring the label but not the "
+        "rows would repeat that."
+    )
+
+    by_class: dict[str, int] = {}
+    for row in tier_b:
+        label = row.get("ground_truth_cause_label", "")
+        by_class[label] = by_class.get(label, 0) + 1
+
+    for label in ("origin_hijack_victim", "route_leak"):
+        assert by_class.get(label, 0) >= 5, (
+            f"tier B has only {by_class.get(label, 0)} {label} events, which "
+            "is too few to evaluate a detector on automated detections alone"
+        )
+
+
+def test_builder_reproduces_derived_columns():
+    """Re-running ``build_ground_truth_v16.py`` must not silently strip the
+    two derived annotation columns ``routing_event_in_window`` and
+    ``leak_as_role`` that the eval pipeline now depends on.
+
+    The builder is the single source of truth. A column the builder does
+    not emit disappears the next time anyone rebuilds. This test
+    catches that regression: if the FIELDS list in build_ground_truth_v16.py
+    drops either column, the rebuild will overwrite the CSV with an
+    older 32-column shape and ``expected_direction()`` will silently
+    fall back to the mis-coded ``T→R`` default for every outage row
+    whose true direction is ``R→T``.
+    """
+    builder = ROOT / "scripts" / "build_ground_truth_v16.py"
+    if not builder.is_file():
+        return
+    src = builder.read_text(encoding="utf-8")
+    for col in ("routing_event_in_window", "leak_as_role"):
+        assert f'"{col}"' in src, (
+            f"build_ground_truth_v16.py no longer declares the '{col}' "
+            f"column in FIELDS. Rebuilding the CSV will silently drop it "
+            f"and break eval_hcaf_vs_baselines::expected_direction for "
+            f"outage rows whose routing_event_in_window must be 'yes'."
+        )
