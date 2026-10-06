@@ -1,6 +1,6 @@
 """HCAF ground-truth consistency test (REVIEW_SIGCOMM_GRADE_v2 §1.3).
 
-Iterates through ``data_check/ground_truth_collection/final_balanced_dataset_v13.csv``,
+Iterates through ``data_check/ground_truth_collection/final_balanced_dataset_v16.csv``,
 synthesises a minimal routing + traffic timeline from each row's
 ``routing_origin_count`` / ``routing_withdrawal_count`` /
 ``traffic_pct_deviation_pct``, runs ``CausalAttributionEngine.analyze()``,
@@ -50,7 +50,7 @@ from agents.causal_attribution import CausalAttributionEngine  # noqa: E402
 pytestmark = pytest.mark.fast
 
 
-CSV_PATH_V13 = _ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v13.csv"
+CSV_PATH_V13 = _ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v16.csv"
 CSV_PATH = CSV_PATH_V13
 RESULTS_PATH = _ROOT / "tests" / "_hcaf_consistency_results.json"
 PRECISION_THRESHOLD = 0.85
@@ -65,7 +65,7 @@ def _load_v9_rows() -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-def _expected_direction(cause_label: str, withdrawal_count: int) -> str | None:
+def _expected_direction(cause_label: str, withdrawal_count: int, routing_event_in_window: str = "") -> str | None:
     """Map a v9 row to the expected HCAF direction label.
 
     Returns one of:
@@ -73,11 +73,22 @@ def _expected_direction(cause_label: str, withdrawal_count: int) -> str | None:
         "traffic_to_routing"     -- traffic event drove routing change (DPI)
         "independent"            -- no causal link
         None                     -- not determinable from this row (unknown)
+
+    FIX (2026-10-06): the numeric ``withdrawal_count`` is empty for 36 / 37
+    rows in the canonical CSV (RRC00 parquet is synthetic test data, so
+    no real counts can be derived). The new ``routing_event_in_window``
+    column carries the per-event answer filled from the cited public
+    report ("yes" / "no" / "unknown") and is the authoritative signal.
     """
     if cause_label in {"route_leak", "origin_hijack_victim", "origin_hijack_attacker",
                        "roa_misconfig"}:
         return "routing_to_traffic"
     if cause_label == "outage":
+        rei = (routing_event_in_window or "").strip().lower()
+        if rei == "yes":
+            return "routing_to_traffic"
+        if rei == "no":
+            return "traffic_to_routing"
         if withdrawal_count > 0:
             return "routing_to_traffic"
         # No BGP withdrawal → DPI / filternet → expected traffic_to_routing
@@ -86,13 +97,13 @@ def _expected_direction(cause_label: str, withdrawal_count: int) -> str | None:
     return None
 
 
-def _expected_dir_set(cause_label: str, withdrawal_count: int) -> set[str]:
+def _expected_dir_set(cause_label: str, withdrawal_count: int, routing_event_in_window: str = "") -> set[str]:
     """Return the set of acceptable HCAF direction strings for this row.
 
     Acceptable = the expected direction OR "unknown" (review v2 §1.3.3
     treats unknown as a non-error).
     """
-    expected = _expected_direction(cause_label, withdrawal_count)
+    expected = _expected_direction(cause_label, withdrawal_count, routing_event_in_window)
     if expected is None:
         return {"unknown"}
     return {expected, "unknown"}
@@ -257,7 +268,7 @@ def test_ground_truth_loadable():
     # BUG (2026-10-05): this referenced an undefined name `REPO_ROOT`, so the
     # test raised NameError instead of actually validating the dataset. The
     # module defines `_ROOT` at import time; use it.
-    version = "v15" if (_ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v15.csv").exists() else "v13"
+    version = "v16"
     assert len(rows) >= 20, f"{version} CSV should have ≥20 rows, found {len(rows)}"
     required_cols = {
         "event_id", "ground_truth_cause_label",
@@ -332,6 +343,7 @@ def test_hcaf_precision_meets_threshold():
         eid = r["event_id"]
         cause = r["ground_truth_cause_label"]
         withdrawal_count = _parse_int(r.get("routing_withdrawal_count", ""), 0)
+        routing_event_in_window = r.get("routing_event_in_window", "")
 
         # Tier C attacker_view rows: pipeline must run but don't count
         # toward precision (they are derived, not independent ground truth).
@@ -348,13 +360,14 @@ def test_hcaf_precision_meets_threshold():
         )
 
         hcaf_dir = _norm_hcaf_direction(result.direction)
-        expected_set = _expected_dir_set(cause, withdrawal_count)
+        expected_set = _expected_dir_set(cause, withdrawal_count, routing_event_in_window)
         is_correct = hcaf_dir in expected_set
 
         verdicts.append({
             "event_id": eid,
             "cause_label": cause,
             "withdrawal_count": withdrawal_count,
+            "routing_event_in_window": routing_event_in_window,
             "is_derived": is_derived,
             "hcaf_direction": hcaf_dir,
             "expected_set": sorted(expected_set),

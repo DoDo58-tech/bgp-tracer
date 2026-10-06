@@ -39,6 +39,7 @@ import csv
 import json
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -67,13 +68,19 @@ def expected_direction(row: Dict[str, str]) -> Optional[str]:
     announcements (0.0005% rate) — pure noise. The root cause was
     software upgrade → control-plane failure → traffic drop, so the correct
     direction is ``traffic_to_routing``.
+
+    FIX (2026-10-06): routing_withdrawal_count is empty for 36 / 37 rows
+    in the canonical CSV, because the local RRC00 parquet is synthetic
+    test data (top origins are IGP / INCOMPLETE / EGP, not real ASNs).
+    The old logic inferred ``traffic_to_routing`` for every outage whose
+    withdrawal count was empty, which silently mis-scored four
+    announced_space_loss / deliberate_bgp_withdrawal outages (bangladesh,
+    russia_isp, haiti, syria) as traffic-to-routing. The new column
+    ``routing_event_in_window`` is filled from the cited public report
+    and is the authoritative signal here.
     """
     cause = row.get("ground_truth_cause_label", "")
     subtype = row.get("ground_truth_root_cause_subtype", "")
-    try:
-        withdrawal = int(row.get("routing_withdrawal_count", 0) or 0)
-    except ValueError:
-        withdrawal = 0
     # Tier C derived attacker_view rows have no independent ground truth;
     # skip them (matches tests/test_hcaf_consistency.py behaviour).
     if "_attacker_view" in row.get("event_id", ""):
@@ -87,6 +94,18 @@ def expected_direction(row: Dict[str, str]) -> Optional[str]:
         # withdrawal rate for Starlink is 2/406845 = 0.0005%, clearly noise.
         if subtype == "internal_network_failure":
             return "traffic_to_routing"
+        # New authoritative source: routing_event_in_window was filled from
+        # the cited public report. The numeric routing_withdrawal_count is
+        # only consulted when this is empty / unknown.
+        rei = (row.get("routing_event_in_window", "") or "").strip().lower()
+        if rei == "yes":
+            return "routing_to_traffic"
+        if rei == "no":
+            return "traffic_to_routing"
+        try:
+            withdrawal = int(row.get("routing_withdrawal_count", 0) or 0)
+        except ValueError:
+            withdrawal = 0
         if withdrawal > 0:
             return "routing_to_traffic"
         # No BGP withdrawal → DPI / filternet / internal fault → T→R
@@ -760,7 +779,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--csv",
-        default=str(ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v13.csv"),
+        default=str(ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v16.csv"),
     )
     ap.add_argument(
         "--quick-dir",

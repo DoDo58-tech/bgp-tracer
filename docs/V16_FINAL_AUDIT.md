@@ -165,3 +165,63 @@ about groundtruth quality:
   (corrected "29 of 34 rows" / "17 of 34" → 37; §7 cap-at-1 → cap-at-2)
 - Staged for commit (not yet committed): deletions of all old
   dataset CSVs and reports under `data_check/ground_truth_collection/`
+
+## 8. Second audit pass (2026-10-06, same day)
+
+The user asked again whether the ground truth is fully annotated. The
+first pass left four holes:
+
+1. **`routing_origin_count` / `routing_withdrawal_count` are not real
+   routing evidence.** The local RRC00 parquet at
+   `data/updates_rrc00/parquet/` is synthetic test data — the most
+   common `origin` values are `IGP`, `INCOMPLETE`, `EGP`, not real ASN
+   numbers. So the numeric routing fields cannot be filled from
+   RRC00. The only honest source for "did a routing change occur in
+   this window" is the cited public report.
+2. **`expected_direction()` in `eval_hcaf_vs_baselines.py` and
+   `test_hcaf_consistency.py` silently mis-scored four outage rows**
+   (bangladesh, russia_isp, haiti, syria) as `traffic_to_routing`
+   because `routing_withdrawal_count` is empty for them and the logic
+   treats empty as "no withdrawal". All four are
+   `announced_space_loss` / `deliberate_bgp_withdrawal` per their
+   public reports, so the correct direction is `routing_to_traffic`.
+3. **`leak_as` was filled on a non-route_leak row**
+   (`hijack_cloudflare_1.1.1.1_2024`) without an explicit role tag,
+   inviting readers to mis-score it as a route_leak ground truth.
+4. **`verify_ground_truth.py` reports `no_routing_evidence` for every
+   row.** The script looks for `results/routing_evidence.json` which
+   does not exist; without real RRC00 data it can never be filled.
+
+The second pass closes (1)-(3) and makes (4) visible. It does not
+attempt to fabricate fake RRC00 data — the gap is a project-level
+data acquisition problem, not a labelling problem.
+
+### Changes in the second pass
+
+- `data_check/ground_truth_collection/final_balanced_dataset_v16.csv`
+  gains two columns:
+  - `routing_event_in_window` — 31 `yes`, 6 `no`, filled from the
+    public report per row
+  - `leak_as_role` — 24 `n/a`, 12 `primary_leaker`, 1
+    `auxiliary_amplifier`
+- `scripts/eval_hcaf_vs_baselines.py::expected_direction` and
+  `tests/test_hcaf_consistency.py::_expected_direction` now prefer
+  `routing_event_in_window` over the empty `routing_withdrawal_count`
+  field. Four outage rows are no longer mis-scored.
+- `scripts/apply_routing_event_label.py`,
+  `scripts/apply_leak_as_role_label.py` — one-shot scripts that
+  produced the two new columns. Idempotent: re-running them on the
+  CSV is a no-op.
+- `data_check/ground_truth_collection/V16_DATASET_REPORT.md` §11
+  documents the new columns and the RRC00 data reality.
+
+### Tests after the second pass
+
+- `tests/test_dataset_invariants.py`: 9 / 9
+- `tests/test_hcaf_consistency.py`: 5 / 5 (precision still ≥ 0.85
+  threshold; 4 row-level mis-scores fixed, 0 new mis-scores
+  introduced)
+- `tests/test_detector_io_contract.py`: 37 / 37
+- `scripts/audit_detector_consistency.py`: unchanged, still 22 / 37
+  no-cache, 1 / 37 real-routing-detection (this is the project-level
+  detector coverage problem, not a labelling one)
