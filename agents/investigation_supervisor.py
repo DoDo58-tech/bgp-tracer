@@ -502,7 +502,7 @@ class EvidenceEnricher:
         """Build a human-readable narrative of all enrichment results."""
         sections = []
 
-        for name, data in enrichment.items():
+        for name, data in enrichment_data.items():
             if not data["success"]:
                 sections.append(f"[{name}] Failed: {data['result'].get('error', 'unknown error')}")
                 continue
@@ -603,7 +603,7 @@ class EvidenceEnricher:
         if not sections:
             return "No auxiliary enrichment results available."
 
-        header = f"=== Auxiliary Evidence (from {len(enrichment)} tools) ==="
+        header = f"=== Auxiliary Evidence (from {len(enrichment_data)} tools) ==="
         return header + "\n" + "\n".join(f"  {s}" for s in sections)
 
 
