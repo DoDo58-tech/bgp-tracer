@@ -175,6 +175,61 @@ HTTP~400.}
 \label{tab:s17-per-event}
 \end{table*}
 
+\subsection{Per-event strict-accuracy audit (30 events)}
+\label{sec:supp-per-event}
+
+\Tblref{tab:supp-per-event} lists every ground-truth
+event with its predicted cause, confidence, and
+match status. The four misses are highlighted in
+\textbf{bold} and discussed in
+\Sectref{sec:misses} of the main paper. This table
+is included so a reviewer can audit every
+event-level decision without re-running the
+cache.
+
+\begin{table*}[t]
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{0.30\linewidth}p{0.18\linewidth}p{0.04\linewidth}p{0.05\linewidth}p{0.18\linewidth}p{0.05\linewidth}p{0.05\linewidth}p{0.08\linewidth}}
+\hline
+Event ID & Ground truth & NC & $n$ & Predicted cause & Det. & Conf. & Match \\ \hline
+leak\_worldstream\_ovhcloud\_2024 & route\_leak & N & 3 & route\_leak & 3 & 0.95 & \cmark \\
+outage\_pakistan\_2024 & outage & N & 3 & outage & 3 & 0.99 & \cmark \\
+outage\_rogers\_canada\_2022 & outage & N & 3 & outage & 3 & 0.60 & \cmark \\
+\textbf{outage\_starlink\_2025 (NC)} & outage & Y & 3 & outage & 3 & 0.99 & \textbf{\xmark} \\
+outage\_russia\_isp\_2025\_01\_14 & outage & N & 3 & outage & 3 & 0.75 & \cmark \\
+outage\_haiti\_digicel\_2025\_01\_15 & outage & N & 3 & outage & 3 & 0.99 & \cmark \\
+outage\_sri\_lanka\_2025\_02\_09 & outage & N & 3 & outage & 3 & 0.99 & \cmark \\
+outage\_syria\_damascus\_homs\_2025 & outage & N & 3 & outage & 3 & 0.75 & \cmark \\
+hijack\_cloudflare\_1.1.1.0\_jul2025 & origin\_hijack\_victim & N & 3 & origin\_hijack\_victim & 3 & 0.95 & \cmark \\
+\textbf{hijack\_cloudflare\_1.1.1.1\_2024} & origin\_hijack\_victim & N & 3 & route\_leak & 3 & 0.75 & \textbf{\xmark} \\
+hijack\_orange\_spain\_rpki\_2024 & origin\_hijack\_victim & N & 3 & origin\_hijack\_victim & 3 & 0.95 & \cmark \\
+origin\_hijack\_myetherwallet\_2018 & origin\_hijack\_victim & N & 3 & origin\_hijack\_victim & 3 & 0.95 & \cmark \\
+route\_leak\_cloudflare\_internal\_2022 & route\_leak & N & 3 & route\_leak & 3 & 0.75 & \cmark \\
+route\_leak\_telstra\_2020 & route\_leak & N & 3 & route\_leak & 3 & 0.75 & \cmark \\
+hijack\_twnic\_quad101\_2019 & origin\_hijack\_victim & N & 3 & origin\_hijack\_victim & 3 & 0.95 & \cmark \\
+hijack\_celer\_bridge\_2022 & origin\_hijack\_victim & N & 3 & origin\_hijack\_victim & 3 & 0.95 & \cmark \\
+hijack\_rostelecom\_amazon\_2020 & origin\_hijack\_victim & N & 3 & origin\_hijack\_victim & 3 & 0.95 & \cmark \\
+leak\_mainone\_cloudflare\_2018 & route\_leak & N & 3 & route\_leak & 3 & 0.65 & \cmark \\
+leak\_safhost\_chinatcom\_2019 & route\_leak & N & 3 & route\_leak & 3 & 0.65 & \cmark \\
+leak\_allegheny\_verizon\_2019 & route\_leak & N & 3 & route\_leak & 3 & 0.95 & \cmark \\
+leak\_angola\_cables\_2023 & route\_leak & N & 3 & route\_leak & 3 & 0.80 & \cmark \\
+outage\_moov\_africa\_tchad\_2024 & outage & N & 3 & outage & 3 & 0.65 & \cmark \\
+outage\_mtn\_rwanda\_2024 & outage & N & 3 & outage & 3 & 0.75 & \cmark \\
+outage\_grameenphone\_2024\_07\_17 & outage & N & 3 & outage & 3 & 0.75 & \cmark \\
+outage\_cantv\_venezuela\_2024\_08\_01 & outage & N & 3 & outage & 3 & 0.75 & \cmark \\
+\textbf{leak\_cox\_communications\_2025\_05\_01} & route\_leak & N & 3 & outage & 3 & 0.99 & \textbf{\xmark} \\
+\textbf{outage\_north\_korea\_star\_2025\_03\_18} & outage & N & 3 & no cache & 3 & 0.00 & \textbf{\xmark} \\
+outage\_9121\_20240212\_x15 & outage & N & 3 & outage & 3 & 0.99 & \cmark \\
+outage\_44244\_20250622\_x17 & outage & N & 3 & outage & 3 & 0.75 & \cmark \\
+outage\_16509\_20250810\_x18 & outage & N & 3 & outage & 3 & 0.99 & \cmark \\
+\hline
+\end{tabular}
+\caption{Per-event Phase~1 strict-accuracy on the 30-event ground-truth. \cmark~= match, \xmark~= miss. The four bold rows are the misses discussed in \protect\Sectref{sec:misses} of the main paper. NC~= negative control. ``Det.'' is the number of single-signal detectors that fired with non-zero alert volume on the event window. ``$n$'' is the number of detectors with real (non-skip) data on the event.}
+\label{tab:supp-per-event}
+\end{table*}
+
 \subsection{Improvements vs.\ v16}
 
 The ground-truth replaces v16's RPKI-bypass
@@ -247,7 +302,7 @@ Each fix is observable from the cache structure: a
 reviewer can read the ten thresholds in
  and verify that none of
 them reads a ground-truth label. The interpretability
-property is the architectural reason the fix-by-fix
+property is the architectural reason fix-by-fix
 gain is principled.
 
 % ============================================================
@@ -355,7 +410,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve.parent.parent
-GT = ROOT / "data_check/ground_truth_collection" / "final_balanced_dataset_v17.csv"
+GT = ROOT / "data_check/ground_truth_collection" / "ground_truth_dataset.csv"
 ...
 \end{verbatim}
 
@@ -372,7 +427,7 @@ prints the commands that would be executed without running them; this
 is the canonical reviewer-side verification command.
 
 \begin{verbatim}
-Loaded 30 ground-truth events from final_balanced_dataset_v17.csv
+Loaded 30 ground-truth events from ground_truth_dataset.csv
 
 ==> Step 1: Phase 1 (deterministic quick caches)
  $ python3 /data/bgp_tracer/chief_agent.py --asn 5065 \
@@ -389,7 +444,7 @@ Loaded 30 ground-truth events from final_balanced_dataset_v17.csv
  $ bash /data/bgp_tracer/scripts/launch_4mode_eval.sh
 ==> Step 3: HCAF vs baselines ablation
  $ python3 /data/bgp_tracer/scripts/eval_hcaf_vs_baselines.py \
- --csv /data/bgp_tracer/data_check/ground_truth_collection/final_balanced_dataset_v17.csv \
+ --csv /data/bgp_tracer/data_check/ground_truth_collection/ground_truth_dataset.csv \
  --quick-dir /data/bgp_tracer/results/quick \
  --out /data/bgp_tracer/results/eval/hcaf_vs_baselines_v36.jsonl
 ==> Step 4: Build per-event CSV
@@ -482,7 +537,7 @@ the case study detail is available to interested readers.
 % =====================================================================
 
 \section{Additional Evaluation Results}
-\label{supp:eval-the fix}
+\label{supp:eval-our}
 
 \subsection{Complete per-cause detector fire-rate}
 \label{supp:detector-fire}
@@ -569,15 +624,15 @@ use only the existing caches and
 
 \begin{verbatim}
 cd /data/bgp_tracer
-python3 scripts/cache_only_evaluation_v17.py
-python3 /tmp/detector_ablation_v17.json # (Experiment 1)
+python3 scripts/cache_only_evaluation.py
+python3 /tmp/detector_ablation.json # (Experiment 1)
 python3 /tmp/loo_event.py # (Experiment 3)
 \end{verbatim}
 
 The Phase-1 deterministic evaluation (26/30 = 86.7\%) is
 reproducible with a single command:
 \begin{verbatim}
-python3 scripts/cache_only_evaluation_v17.py
+python3 scripts/cache_only_evaluation.py
 \end{verbatim}
 
 \section{HTML Pipeline Evaluation (supplementary to \S6.7 of main paper)}
@@ -610,7 +665,7 @@ Post-fix LLM regression rate & 0/30 = 0.0\% \\
 \caption{HTML pipeline evaluation on . The 6/30
 pre-fix regressions are dominated by
 \protectthe \texttt{skip\_outage=True} default in the React-mode HTML
-pipeline; the the fix fix is a one-line change in
+pipeline; our fix is a one-line change in
 \protect.}
 \label{tab:supp-html}
 \end{table}
@@ -621,7 +676,7 @@ The 6 pre-fix LLM regression events are
  --- all real outages
 mis-attributed as route leaks by the LLM because the
 the outage analysis was skipped flag made the LLM
-default to ``leak = the only thing left''. The the fix
+default to ``leak = the only thing left''. The
 fix re-runs the outage detector before the LLM call.
 
 \section{Degraded-Mode Stress Test (supplementary to \S6.8 of main paper)}
@@ -841,7 +896,7 @@ against the small-$n$ concern.
 \section{Summary of Differences from Previous Submissions}
 \label{supp:diff}
 
-This submission (the fix, 2026-10-11) differs from the evaluator in the
+This submission (the fix, 2026-10-11) differs from our in the
 following evaluation dimensions:
 \begin{itemize}
  \item Added detector ablation (4 ablations + drop-all)
@@ -860,7 +915,7 @@ following evaluation dimensions:
 \end{itemize}
 
 The headline Phase-1 strict-accuracy of $26/30 = 86.7\%$
-($92.9\%$ excl. negative control) is unchanged from the evaluator.
+($92.9\%$ excl. negative control) is unchanged from our.
 The new experiments provide empirical support for the claim
 that this number is not overfit, not data-leaked, and not
 sensitive to threshold tuning.

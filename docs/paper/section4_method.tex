@@ -29,7 +29,7 @@ is the explanatory causal-direction second layer.
 \label{sec:phase1}
 
 The Phase~1 pipeline is the user-facing root-cause
-classification layer that the the evaluator evaluation scores. It
+classification layer that our evaluation scores. It
 runs six deterministic detectors and a single arbitration
 function. No LLM call is made in Phase~1. Phase~1 runs in
 $\sim$60\,s per event on commodity hardware.
@@ -106,7 +106,7 @@ not to the cache signals. The explicit decision tree in
  has the counter-factual
 property that every cap, gate, and tie-breaker is a
 \emph{principled consequence} of an observable cache
-signal (\Sectref{sec:fixes}) and the the evaluator evaluation
+signal (\Sectref{sec:fixes}) and our evaluation
 scores it without ever reading the ground-truth labels.
 
 \paragraph{Latency budget.}
@@ -228,7 +228,7 @@ threshold:
 \end{equation}
 The choice is \emph{not} tuned on 30-event ground-truth;
 \Sectref{sec:sensitivity} sweeps
-$\hat\tau \in [0.30, 0.60]$ and shows the the evaluator Phase~2
+$\hat\tau \in [0.30, 0.60]$ and shows our Phase~2
 strict-precision is insensitive to the exact value
 within this range.
 
@@ -366,7 +366,7 @@ verdict to \texttt{traffic\_anomaly\_only}, missing
 routing data reduces it to the outage detector only);
 Phase~2 gracefully reduces the 5-channel scoring-rule output to
 the channels whose data is available. This is the
-architectural reason the single no-cache miss in the the evaluator
+architectural reason the single no-cache miss in our
 evaluation is explainable: the cache-rebuild failed, the
 detector pipeline emitted \texttt{traffic\_anomaly\_only},
 and the arbitration recorded the degradation in the

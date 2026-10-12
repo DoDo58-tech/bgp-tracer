@@ -59,11 +59,11 @@ alongside the 86.7\%: the \emph{end-to-end HTML pipeline}
 (70.0\% pre-fix, 86.7\% post-fix) and the \emph{held-out
 unseen-event stress test} (6/10 = 60.0\% on
 sufficient-data events). The 70.0\% pre-fix HTML number
-is the gap that drove the the fix LLM-override fix; the
+is the gap that drove our LLM-override fix; the
 60.0\% held-out number is the gap between the curated
 ground-truth and the unseen-event operational surface.
 Both gaps are honest and both are closed or bounded by
-the the fix fixes and the degraded-mode stress test
+our fixes and the degraded-mode stress test
 (\Sectref{sec:deg-stress}).
 
 \subsection{CSS as the second layer}
@@ -130,11 +130,11 @@ is 70.0\%, the half-fixes is 79.3\%, the full fixes is
 half-fixes run uses a single global cap on leak
 detector; the full-fixes run adds the nine additional
 principled rules. \emph{Residual risk:} the fixes
-were developed on 30-event ground-truth; a held-out the fix
+were developed on 30-event ground-truth; a held-out
 set is the natural next step.
 
 \paragraph{T3. Phase~2 vs.\ Phase~1 mixing and
-CSS sparsity.} The the evaluator evaluation scores only the
+CSS sparsity.} The our evaluation scores only the
 Phase~1 against the ground-truth cause
 label; the CSS prior is not invoked. The Phase~1
 arbitration is fully deterministic and does not depend
@@ -154,12 +154,12 @@ We commit to a single primary headline (\Tblref{tab:headline-bound}):
 the \emph{post-fix operator-facing 86.7\%} on is the
 number a reader should remember; the deterministic
 Phase~1 86.7\% is the diagnostic upper bound (the LLM
-never overrides a Phase~1 verdict in the the fix post-fix
+never overrides a Phase~1 verdict in our post-fix
 protocol); the held-out unseen-event stress test is
 6/10 = 60.0\% on sufficient-data events
 (\Sectref{sec:heldout-stress}). The 70.0\% pre-fix number
 in \Sectref{sec:html-eval} is the LLM-prompt audit
-baseline; the the fix fix is a one-line change to
+baseline; our fix is a one-line change to
 setting \texttt{skip\_outage=False} (\Sectref{sec:supp-html}
 in supplementary). \emph{Residual risk:} the 60.0\%
 held-out number is the realistic operational accuracy
@@ -180,7 +180,7 @@ degraded-mode stress test
 (\Sectref{sec:deg-stress}) shows the strict-accuracy in
 $[75.9\%, 86.7\%]$ under operational failure modes.
 \emph{Residual risk:} 30 events is small; the next-step
-reproduction on a held-out the fix set is documented as the
+reproduction on a held-out our held-out set is documented as the
 natural extension in \Sectref{sec:conclusion}.
 
 \subsection{Reproducibility as a first-class design property}
@@ -189,7 +189,7 @@ natural extension in \Sectref{sec:conclusion}.
 Reproducibility is the third dependability property named
 in the abstract. It is realised in five concrete
 artefacts: (i)~the ground-truth CSV is released with
-its 169 rejection reasons; (ii)~the the evaluator evaluation script
+its 169 rejection reasons; (ii)~our evaluation script
 is a single shell command and produces the 26/30 numbers
 by reading the cache and comparing against the
 ground-truth; (iii)~the full pipeline (Phase~1 + Phase~2)

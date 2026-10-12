@@ -1,6 +1,6 @@
 % Section 6 — Evaluation
 % DSN story:
-% - the evaluator cache-only evaluation protocol (reproducible, deterministic)
+% - our cache-only evaluation protocol (reproducible, deterministic)
 % - Headline: 26/30 = 86.7% (92.9% excl. NC), +16.7pp over held-out baseline
 % - Per-cause breakdown (balanced)
 % - 4-miss audit (graceful-degradation angle)
@@ -114,7 +114,7 @@ degradation (\Sectref{sec:heldout-stress}).}
 \hline
 Method (or ablation) & \strict{} (all) & \strict{} (excl.\ NC) \\ \hline
 held-out pre-optimization baseline & $21/30 = 70.0\%$ & $21/29 = 72.4\%$ \\
-\textbf{the evaluator final (this paper)} & \textbf{$26/30 = 86.7\%$} & \textbf{$26/28 = 92.9\%$} \\
+\textbf{our final (this paper)} & \textbf{$26/30 = 86.7\%$} & \textbf{$26/28 = 92.9\%$} \\
 \hline
 Net improvement & $+16.7$~pp ($+5$ events) & $+20.5$~pp ($+5$ events) \\
 \hline
@@ -347,7 +347,7 @@ ground-truth labels.}
 \paragraph{Why the held-out fixes are principled.}
 The principle is: ``if a signal implies a
 detector-firing pattern that does not match the
-event's true root cause, the fix is to gate, cap,
+event's true root cause, our fix is to gate, cap,
 or tie-break on signal --- not to use the
 ground-truth label as a discriminator.''
 
@@ -651,7 +651,7 @@ pipeline on 2026-08-21. The pre-fix 70.0\% number
 in this section is reproduced with
 the \texttt{skip\_outage=True} default (the default in the
 build of ). The
-the fix fix on 2026-10-10 sets
+our fix on 2026-10-10 sets
 setting \texttt{skip\_outage=False} for the React-mode HTML
 pipeline. The reproduce command for the pre-fix
 number is
@@ -665,7 +665,7 @@ Both reproduce commands are documented in
 \itemsep0pt
 \item \emph{Pre-fix HTML strict-accuracy: 21/30 = 70.0\%.}
 The HTML cause-verdict matches GT on 70.0\% of
-events before the the fix fix.
+events before our fix.
 \item \emph{LLM override rate: 8/30 = 26.7\%.}
 Eight HTML reports have an LLM narrative that
 contradicts the deterministic Phase~1 or the
@@ -680,7 +680,7 @@ drops to 2/30 = 6.7\% and the regression rate to 0/30.
 \end{itemize}
 
 The 70.0\% pre-fix $\to$ 86.7\% post-fix profile
-is the operator-facing dependability number. The the fix
+is the operator-facing dependability number. The
 fix is a one-line change in
  (supplementary
 \Sectref{sec:supp-html}).

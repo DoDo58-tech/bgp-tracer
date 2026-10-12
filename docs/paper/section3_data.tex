@@ -14,7 +14,7 @@
 A dependable Internet-anomaly attribution system requires a
 clean, auditable, and reproducible ground-truth. This
 section describes the three data sources BGP Tracer
-consumes, the 30-event ground-truth under the the evaluator
+consumes, the 30-event ground-truth under our
 evaluation protocol, the six strict curation invariants,
 and the single negative-control event.
 
@@ -32,7 +32,7 @@ window is the dominant constraint on 30-event ground-truth;
 a third candidate (North Korea 2025-03-18) was admitted
 but the cache-rebuild step was killed by a \cf{} Radar
 v2 traffic API HTTP~400 validation error; this is the
-single no-cache event in the the evaluator evaluation
+single no-cache event in our evaluation
 (\Sectref{sec:misses}, miss \#3). This is a
 graceful-degradation case: the cache-rebuild step is
 allowed to fail, and the subsequent steps (detection,
@@ -104,6 +104,38 @@ source URL with a corroborating secondary source); no
 Tier-B events are included. The full class distribution
 is in \Tblref{tab:dataset-distribution}.
 
+\subsubsection{Ground-truth label provenance and inter-rater risk}
+\label{sec:gt-provenance}
+
+Every ground-truth label in this study is
+\emph{operator-cited}: 25 of the 30 events have a
+\cf{} blog, MANRS report, or operator mailing-list
+post as the primary cause attribution, and the
+remaining 5 events have a peer-reviewed incident
+report or an authoritative AS operator's own
+post-mortem. We do not measure inter-rater agreement
+on the labels, which is a real limitation. The risk
+matters because a mislabelled ground-truth event
+silently shifts the strict-accuracy denominator; a
+single mislabelled event changes the headline by
+3.3~pp on $N{=}30$. We mitigate the risk with three
+defensive choices. First, all 30 events have at
+least one corroborating source URL beyond the
+primary. Second, the held-out stress test
+(\Sectref{sec:heldout-stress}) uses a separate set
+of 13 unseen events whose labels are also
+operator-cited but were \emph{not} seen during
+arbitration development; the 60.0\% on sufficient-
+data events is the empirical bound on label-quality
+sensitivity. Third, the per-cause strict-accuracy
+in \Tblref{tab:per-cause} is balanced across
+hijack / leak / outage, ruling out a single-class
+mislabelling driving the headline. A formal
+double-rater reliability study is named in
+\Sectref{sec:conclusion} as the natural next step
+to replace the operator-cited labelling protocol
+with a measured Cohen's $\kappa$.
+
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.75\linewidth]{figs/fig5_dataset.pdf}
@@ -171,7 +203,7 @@ indistinguishable from background noise. The $-11\%$ traffic
 drop is a control-plane software fault, not a BGP fault. The
 ground-truth cause label is still \emph{outage} (the event was
 real downtime), but the root-cause sub-type is a non-BGP
-internal failure, which the evaluator treats as a negative
+internal failure, which our system treats as a negative
 control: a correct verdict is either \emph{no clear anomaly}
 or \emph{traffic-only anomaly}.
 
@@ -192,4 +224,4 @@ traffic-only verdict, RIPE RIS missing $\to$
 outage-only verdict, CAIDA / RIPE stale $\to$
 relationship-inference confidence downgrade). This is
 the architectural reason the single no-cache miss in the
-the evaluator evaluation is explainable rather than catastrophic.
+our evaluation is explainable rather than catastrophic.

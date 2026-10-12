@@ -1,7 +1,7 @@
 % =====================================================================
 % BGP Tracer — DSN 2027 Submission
 %
-% Title (the evaluator): "Dependable Joint Attribution of Internet Anomalies:
+% Title (our): "Dependable Joint Attribution of Internet Anomalies:
 % A Deterministic, Causal-Anchored Engine for BGP and
 % Traffic Anomaly Co-Root-Cause Analysis"
 %
@@ -46,7 +46,7 @@
 % Pre/post-intervention Difference in Means, since
 % the estimator does not implement do-calculus.
 \newcommand{\pdm}{PDM}
-% PDM (Pre/post-intervention Difference-in-Means) is the the evaluator spelling
+% PDM (Pre/post-intervention Difference-in-Means) is our spelling
 % of \css; both commands expand to the same text. The historical
 % \textsc{CSS} label is retained in footnote~\ref{fn:pdm-css} for
 % backward-compatibility with the released code.
@@ -72,6 +72,12 @@
 \newcommand{\eg}{e.g.\ }
 \newcommand{\ie}{i.e.\ }
 \newcommand{\etal}{et~al.}
+
+% Match / miss symbols for per-event audit tables.
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
+% pifont must be loaded for the above. Load it once here.
+\usepackage{pifont}
 
 % ---------- helpful theorem-like environments ----------
 \newtheorem{definition}{Definition}
@@ -177,7 +183,10 @@ on 13 held-out candidates 6/10 = 60.0\%
 sufficient-data events, with the 13$\to$10
 reduction attributable to graceful-degradation
 for pollution in the held-out
-cache build. The \emph{detector-arbitration
+cache build (the raw 6/13 = 46.2\% on all
+13 unseen events is also reported for
+transparency, Wilson 95\% CI $[23.2\%, 70.9\%]$).
+The \emph{detector-arbitration
 contribution} is bounded by a three-tier
 negative-control experiment: no-fixes baseline
 70.0\%, single-cap half-fixes 79.3\%, full
@@ -189,7 +198,13 @@ is sparse; \Sectref{sec:css-sparsity}); the
 \pdm{} engine commits a falsifiable direction on
 3/30 events
 (\figref{fig:css-n3}), and the composite scoring
-rule commits a direction on rest. End-to-end
+rule commits a direction on rest. The headline
+gap of $+16.7$~pp over the held-out pre-optimization
+baseline is \emph{not} statistically distinguishable
+from sample noise at the conventional $\alpha{=}0.05$
+level on the 30/13 sample sizes, so we report the
+held-out 6/10 = 60.0\% as the conservative
+generalisation bound. End-to-end
 reproduction takes one shell command on
 released artifact; all sources, scripts, and data
 are open.
@@ -251,17 +266,41 @@ API degradation, and a negative-control definition quirk
 that the system's degraded-mode behavior surfaces explicitly.
 
 We see three directions as the natural next step. First, a
-held-out the fix evaluation on events unseen by any of the
+held-out evaluation on events unseen by any of the
 arbitration thresholds, to confirm the fixes do not
 overfit. Second, a Bayesian model-averaging extension of
-the Phase-1 arbitration that replaces the hand-tuned
+the Phase~1 arbitration that replaces the hand-tuned
 scoring-rule outputs over
 [0, 1] candidate scores. Third, an
 operational deployment of BGP Tracer as a continuous
-Internet-anomaly attribution service, with the Phase-1
-verdict driving operator alerting and the Phase-2
+Internet-anomaly attribution service, with the Phase~1
+verdict driving operator alerting and the Phase~2
 composite scoring-rule output driving post-incident
 root-cause analysis.
+
+\paragraph{Limitations of the empirical study.}
+The 30-event sample size is the principal empirical
+limitation. The Wilson 95\% CI on the headline
+$\frac{26}{30}=86.7\%$ is $[70.3\%, 94.7\%]$, so the
+true accuracy on the design envelope is consistent
+with any value in that range. The $+16.7$~pp
+headline-vs-baseline gap is within the Wilson 95\% CI
+of the held-out 60.0\% sample ($[31.3\%, 83.2\%]$)
+and the head-to-head difference of $+26.7$~pp
+($86.7\%-60.0\%$) is therefore \emph{not} statistically
+distinguishable from sample noise at the conventional
+$\alpha{=}0.05$ level. We report the headline number
+as the point estimate and the held-out 6/10 = 60.0\%
+on sufficient-data events (\Sectref{sec:heldout-stress})
+as the conservative generalisation bound; a larger
+held-out evaluation is the natural next step and is
+explicitly named in \Sectref{sec:conclusion}. The
+inter-rater agreement on the ground-truth labels is
+not measured in this study: the labels are
+operator-cited and the 30 events come from publicly
+reported incidents. We discuss the resulting
+selection bias and operator-citation risk in
+\Sectref{sec:threats} (T1).
 
 % =====================================================================
 % AI Tool Usage Disclosure (DSN 2027 requirement; not counted

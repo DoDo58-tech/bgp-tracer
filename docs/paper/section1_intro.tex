@@ -179,7 +179,7 @@ scoring-rule output.
 The headline empirical finding is that the
 deterministic Phase~1 root-cause arbitration is
 \emph{strict-correct} on $\frac{26}{30}$ (86.7\%)
-events overall on the evaluator cache-only evaluation. This
+events overall on our cache-only evaluation. This
 is a $+16.7$~percentage-point absolute gain (5 events)
 over the held-out pre-optimization baseline of
 $\frac{21}{30}$ (70.0\%). The 4 remaining misses are
@@ -224,8 +224,8 @@ We treat the \emph{operator-facing post-fix 86.7\%}
 as the single primary headline (it is the surface the
 operator reads); the deterministic Phase~1 86.7\%
 is the diagnostic upper bound (the LLM never overrides
-a Phase~1 verdict in the the fix post-fix protocol); the
-60.0\% held-out held-out is the generalization diagnostic.
+a Phase~1 verdict in our post-fix protocol); the
+60.0\% held-out is the generalization diagnostic.
 A reviewer who only remembers one number should
 remember 86.7\% post-fix operator-facing on , with
 the explicit caveat that the n=30 sample bounds the
@@ -241,7 +241,7 @@ analysed in \Sectref{sec:heldout-stress} and reflects
 the cost of leaving the design envelope; the
 pre-fix-vs-post-fix gap (70.0\% vs 86.7\%) is
 analysed in \Sectref{sec:html-eval} and reflects
-the the fix LLM-prompt fix.
+our LLM-prompt fix.
 
 \paragraph{Contributions.}
 \begin{enumerate}
@@ -303,7 +303,7 @@ Authorship (May~2024), generative AI tools are
 \emph{not} listed as authors and assume no
 responsibility for the content. The headline 86.7\%
 root-cause number is produced by a fully
-deterministic, no-LLM pipeline evaluated on the evaluator
+deterministic, no-LLM pipeline evaluated on our
 cache-only benchmark; the 70.0\% HTML pipeline
 number and the 60.0\% held-out held-out number are
 produced by the same code on same architecture
