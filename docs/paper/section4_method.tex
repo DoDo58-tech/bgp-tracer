@@ -29,7 +29,7 @@ is the explanatory causal-direction second layer.
 \label{sec:phase1}
 
 The Phase~1 pipeline is the user-facing root-cause
-classification layer that the the released evaluator evaluation scores. It
+classification layer that the the evaluator evaluation scores. It
 runs six deterministic detectors and a single arbitration
 function. No LLM call is made in Phase~1. Phase~1 runs in
 $\sim$60\,s per event on commodity hardware.
@@ -64,7 +64,7 @@ property is the key: every Phase~1 verdict is traceable
 to a detector output, and the arbitration is auditable
 by reading .
 
-\subsection{Phase-1 arbitration: \texttt{compute\_top\_cause}}
+\subsection{Phase-1 arbitration: \t\texttt{compute\_top\_cause}}
 \label{sec:arbitration}
 
 The arbitration function reduces the six detector outputs
@@ -92,13 +92,13 @@ candidates land within $0.05$ of each other.
 The output is one of five classes:
 , or
 . The fifth class is the only
-one that triggers a Phase~1 \texttt{unknown}; the other
+one that triggers a Phase~1 \t\texttt{unknown}; the other
 four commit a label with a calibrated confidence in
 $[0, 1]$.
 
 \paragraph{Why a small, explicit decision tree, not a
 learned classifier.}
-A learned classifier trained on the ground-truth
+A learned classifier trained on 30-event ground-truth
 would be the natural alternative, but it would fail the
 no-data-leakage constraint: the model's decision
 boundaries would be tuned to the ground-truth labels,
@@ -106,7 +106,7 @@ not to the cache signals. The explicit decision tree in
  has the counter-factual
 property that every cap, gate, and tie-breaker is a
 \emph{principled consequence} of an observable cache
-signal (\Sectref{sec:fixes}) and the the released evaluator evaluation
+signal (\Sectref{sec:fixes}) and the the evaluator evaluation
 scores it without ever reading the ground-truth labels.
 
 \paragraph{Latency budget.}
@@ -131,7 +131,7 @@ a \emph{composite scoring rule} with a CSS-anchored
 prior, and emits a calibrated 3-way scoring-rule
 output over three
 hypotheses: $R\!\to\!T$, $T\!\to\!R$,
-\texttt{independent}), and the ReportAgent (renders a
+\t\texttt{independent}), and the ReportAgent (renders a
 structured HTML report with deterministic tables and
 LLM-written prose; the LLM is forbidden from overriding
 the CSS-anchored direction). The
@@ -141,7 +141,7 @@ strictly independent; we therefore call the
 synthesis a composite scoring rule (\emph{not} a
 generative-model Bayesian posterior) and rely on
 the uniform-prior ablation to confirm the prior is
-doing real work without over-riding the channels
+doing real work without overriding the channels
 (\Sectref{sec:uniform-prior}).
 
 \subsection{5-channel weighted scoring rule (engineering decision)}
@@ -178,7 +178,7 @@ buckets are too sparse for Pearson's lag estimator to
 converge; Transfer Entropy replaces it as the non-linear
 directed-information channel.
 
-\begin{table}[t]
+\begin{table*}[t]
 \centering
 \caption{Evidence-channel likelihood ratios. Each channel
 $k$ reports a direction $d_k$ and a likelihood
@@ -196,14 +196,17 @@ Channel & $\mathrm{LR}_k(d_k)$ (anchor) & $w_{\text{strength}}$ \\ \hline
 Granger linearity & $\max(1.05,\ 1+1.5\,\tfrac{F}{F+3})$ & F-statistic \\
 Transfer Entropy & $\max(1.05,\ 1+1.2\,\mathrm{conf}_{\text{TE}})$ & TE confidence \\ \hline
 \end{tabular}
-\end{table}
+\end{table*}
 
 The 5-channel weighted scoring rule combines the CSS-anchored prior weight
 with the channel likelihoods as a discrete product of channel-specific contributions
 (an engineering scoring rule, not a generative-model
 Bayesian posterior):
 \begin{equation}
-S(h \mid \text{evidence}) \;\propto\; P_0(h) \cdot \prod_{k=1}^{5} \mathrm{LR}_k(h)^{\,\delta_k},
+\begin{aligned}
+S(h \mid \text{evidence}) \;\propto\; & P_0(h) \\
+& \cdot \prod_{k=1}^{5} \mathrm{LR}_k(h)^{\,\delta_k},
+\end{aligned}
 \label{eq:hcaf-score}
 \end{equation}
 where $\delta_k \in \{0.4, 1.0\}$ is the
@@ -216,16 +219,16 @@ heuristics refine, do not override, a Pearl-anchored
 direction.
 
 \paragraph{Abstention threshold.}
-\hcaf{} declares \texttt{unknown} when the dominant
+\hcaf{} declares \t\texttt{unknown} when the dominant
 scoring-rule output mass falls below a one-third plurality
 threshold:
 \begin{equation}
 \hat\tau \;=\; 0.34.
 \label{eq:threshold}
 \end{equation}
-The choice is \emph{not} tuned on the ground-truth;
+The choice is \emph{not} tuned on 30-event ground-truth;
 \Sectref{sec:sensitivity} sweeps
-$\hat\tau \in [0.30, 0.60]$ and shows the the released evaluator Phase~2
+$\hat\tau \in [0.30, 0.60]$ and shows the the evaluator Phase~2
 strict-precision is insensitive to the exact value
 within this range.
 
@@ -240,13 +243,13 @@ the CSS engine returns a directional commitment, which
 is the relevant sparsity for the Phase~2 anchoring; it
 is structurally low ($\leq 3/30$) for reasons analysed in
 \Sectref{sec:css-sparsity}. The MSBD / CTPR+CIC channels
-fire on the vast majority of events; Granger and TE
+fire on vast majority of events; Granger and TE
 abstain on roughly a quarter of events due to the
 5-minute Radar bucket resolution limit. The
-abstention pattern is the same on the held-out held-out set
+abstention pattern is the same on held-out held-out
 candidate set (supplementary \Sectref{sec:supp-heldout}).
 
-\begin{table}[h]
+\begin{table*}[t]
 \centering
 \small
 \begin{tabular}{lrrr}
@@ -270,7 +273,7 @@ intrinsic channel-property difference. \pdm{} strict-causal
 is the structurally-rare anchor on which the Phase~2
 design is explicitly built (\Sectref{sec:css-sparsity}).}
 \label{tab:ch-sparsity}
-\end{table}
+\end{table*}
 
 \paragraph{Channel independence and the uniform-prior ablation.}
 \label{sec:uniform-prior}
@@ -287,12 +290,12 @@ prior over the three hypotheses. On the ground-truth
 the uniform-prior run produces a flip rate of 6/30 = 20.0\%
 on committed directions and an abstention rate of
 $\leq 3/30$ (the same as the CSS-anchored run, because
-both runs abstain on the structurally-sparse CSS events).
+both runs abstain on structurally-sparse CSS events).
 The 20.0\% flip rate is the share of events on which the
 five channels disagree with the CSS-anchored direction by
-enough to overturn the prior; on the remaining 80\% the
+enough to overturn the prior; on remaining 80\% the
 prior is consistent with the channel evidence, so the
-prior is doing real work without over-riding the channels.
+prior is doing real work without overriding the channels.
 This 80/20 split is the headline result of the
 uniform-prior ablation; it is what justifies calling the
 CSS prior ``anchoring'' rather than ``overriding''.
@@ -313,7 +316,7 @@ directions. The sweep is implemented in
 output is
 :
 
-\begin{table}[h]
+\begin{table*}[t][h]
 \centering\small
 \begin{tabular}{lrrr}
 \hline
@@ -336,13 +339,13 @@ The flip rate stays at 0\% across $\delta_{\text{disagree}} \in [0.0,
 the $\delta=0.4$ default is monotone in
 $\delta_{\text{disagree}}$ ($0.053 \to 0.029 \to 0 \to 0.035 \to
 0.075 \to 0.119$), confirming that the discount has a
-small but non-zero effect on the scoring-rule output. The default
+small but non-zero effect on scoring-rule output. The default
 $\delta=0.4$ is the geometric midpoint of $[0,1]$ in
 LR-exponent space and is a stable operating point: moving
 $\pm 0.2$ around it produces no committed-verdict flips
-on the ground-truth.}
+on 30-event ground-truth.}
 \label{tab:discount-sens}
-\end{table}
+\end{table*}
 
 The 18.5\% $\to$ 29.6\% flip-rate range shows that
 the disagreement discount is an engineering lever,
@@ -360,12 +363,12 @@ as a first-class degraded mode
 (\Sectref{sec:reproducibility}). The two phases degrade
 independently: Phase~1 always produces a verdict from the
 available detectors (missing traffic data reduces the
-verdict to \texttt{traffic\_anomaly\_only}, missing
+verdict to \t\texttt{traffic\_anomaly\_only}, missing
 routing data reduces it to the outage detector only);
 Phase~2 gracefully reduces the 5-channel scoring-rule output to
 the channels whose data is available. This is the
-architectural reason the single no-cache miss in the the released evaluator
+architectural reason the single no-cache miss in the the evaluator
 evaluation is explainable: the cache-rebuild failed, the
-detector pipeline emitted \texttt{traffic\_anomaly\_only},
+detector pipeline emitted \t\texttt{traffic\_anomaly\_only},
 and the arbitration recorded the degradation in the
 cache.

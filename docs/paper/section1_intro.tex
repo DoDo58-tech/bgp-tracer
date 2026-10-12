@@ -11,7 +11,7 @@
 % reproducible logic that degrades gracefully.
 % 5. We propose BGP Tracer: two-phase analyzer with deterministic
 % Phase-1 + causal-anchored Phase-2.
-% 6. Headline: 26/30 (86.7%) on 30-event, +16.7 pp over held-out set.
+% 6. Headline: 26/30 (86.7%) on 30-event, +16.7 pp over held-out.
 % 7. Contributions enumerated.
 
 \section{Introduction}
@@ -47,9 +47,9 @@ event, with a worst case of \textbf{870{,}338} alerts
 on a single 1.5-hour window (the Rostelecom-Amazon 2020
 hijack, where origin-hijack detection alone fires on
 0.87M announcements). Of these raw alerts, only
-\textbf{953{,}863} (78.4\%) are on the GT-matching
+\textbf{953{,}863} (78.4\%) are on GT-matching
 detector; the remaining \textbf{21.6\%} are noise from
-other detectors firing on the same window (e.g. an
+other detectors firing on same window (e.g. an
 outage event triggers $5{,}000{+}$ leak alerts because
 the route withdrawal is misread as a leak by the leak
 detector). Even after capping the leak detector at
@@ -73,12 +73,12 @@ the three dependability properties above.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.75\linewidth]{figs/fig0_motivation.pdf}
-\caption{Alert-flood profile on the 30-event
+\caption{Alert-flood profile on 30-event
 ground-truth. \emph{Left}: per-event alert volume,
 split by detector---signal (matches GT) vs noise
 (other detectors). \emph{Right}: aggregate ---
-\textbf{21.6\% of raw alerts on the GT-matching detector
-are noise} when other detectors fire on the same
+\textbf{21.6\% of raw alerts on GT-matching detector
+are noise} when other detectors fire on same
 window. Median: 5{,}286 alerts per event; worst case:
 870{,}338 (Rostelecom-Amazon 2020 hijack).}
 \label{fig:motivation}
@@ -103,7 +103,7 @@ pathologies (BGP update streams are bursty and
 non-stationary; Cloudflare Radar carries 5-minute
 aggregated samples with substantial regular variation;
 the two clocks are not aligned), (ii)~distinguish
-hijack from leak when both detectors fire on the same
+hijack from leak when both detectors fire on same
 window, or (iii)~distinguish a real outage from a real
 leak that happens to cause an outage-like traffic
 drop. The deeper issue is not methodological but
@@ -179,9 +179,9 @@ scoring-rule output.
 The headline empirical finding is that the
 deterministic Phase~1 root-cause arbitration is
 \emph{strict-correct} on $\frac{26}{30}$ (86.7\%)
-events overall on the the released evaluator cache-only evaluation. This
+events overall on the evaluator cache-only evaluation. This
 is a $+16.7$~percentage-point absolute gain (5 events)
-over the held-out set pre-optimization baseline of
+over the held-out pre-optimization baseline of
 $\frac{21}{30}$ (70.0\%). The 4 remaining misses are
 honest, documented, and not algorithmic
 (\Sectref{sec:misses}): two are detector-coverage
@@ -192,7 +192,7 @@ is what makes the single no-cache miss explainable
 rather than catastrophic.
 
 The dependability story is captured by a
-\emph{three-number bound} on the ground-truth,
+\emph{three-number bound} on 30-event ground-truth,
 each measuring a different surface of the system:
 
 \begin{table}[h]
@@ -208,7 +208,7 @@ Held-out (sufficient data) & $6/10 = 60.0\%$ & $[31.3\%, 83.2\%]$ & unseen-event
 Held-out (raw) & $6/13 = 46.2\%$ & $[23.2\%, 70.9\%]$ & unseen-event stress test, all 13 held-out candidates \\
 \hline
 \end{tabular}
-\caption{Three-number dependability bound on the
+\caption{Three-number dependability bound on
 ground-truth and the held-out stress-test set. The
 post-fix operator-facing number is the \emph{primary
 headline} of this paper; the deterministic Phase~1
@@ -216,16 +216,16 @@ number is the diagnostic upper bound (the LLM never
 overrides a Phase~1 verdict in the released post-fix
 protocol); the held-out number is the
 generalization diagnostic. All five numbers are
-computed on the same architecture without re-tuning.}
+computed on same architecture without re-tuning.}
 \label{tab:headline-bound}
-\end{table}
+\end{table*}
 
 We treat the \emph{operator-facing post-fix 86.7\%}
 as the single primary headline (it is the surface the
 operator reads); the deterministic Phase~1 86.7\%
 is the diagnostic upper bound (the LLM never overrides
-a Phase~1 verdict in the the released fix post-fix protocol); the
-60.0\% held-out set held-out is the generalization diagnostic.
+a Phase~1 verdict in the the fix post-fix protocol); the
+60.0\% held-out held-out is the generalization diagnostic.
 A reviewer who only remembers one number should
 remember 86.7\% post-fix operator-facing on , with
 the explicit caveat that the n=30 sample bounds the
@@ -241,7 +241,7 @@ analysed in \Sectref{sec:heldout-stress} and reflects
 the cost of leaving the design envelope; the
 pre-fix-vs-post-fix gap (70.0\% vs 86.7\%) is
 analysed in \Sectref{sec:html-eval} and reflects
-the the released fix LLM-prompt fix.
+the the fix LLM-prompt fix.
 
 \paragraph{Contributions.}
 \begin{enumerate}
@@ -251,7 +251,7 @@ arbitration function whose caps, gates, and
 tie-breakers are observable from the cache and never
 read ground-truth labels. On the 30-event
 ground-truth the arbitration is strict-correct on
-$\frac{26}{30}$ (86.7\%); on the 13-event held-out set
+$\frac{26}{30}$ (86.7\%); on 13-event held-out
 unseen stress-test set it is 6/10 = 60.0\% on
 sufficient-data events (\Sectref{sec:heldout-stress}).
 A negative-control experiment
@@ -277,7 +277,7 @@ rule (\Sectref{sec:scoring-rule}) which is a
 \emph{scoring rule} (not a generative-model
 Bayesian posterior) with a CSS-anchored prior; a
 uniform-prior ablation shows the prior is doing
-real work without over-riding the channels.
+real work without overriding the channels.
 \item \textbf{BGP Tracer end-to-end system.} A
 two-phase analyzer whose Phase~1 is deterministic and
 cache-only, and whose Phase~2 produces structured HTML
@@ -303,9 +303,9 @@ Authorship (May~2024), generative AI tools are
 \emph{not} listed as authors and assume no
 responsibility for the content. The headline 86.7\%
 root-cause number is produced by a fully
-deterministic, no-LLM pipeline evaluated on the the released evaluator
+deterministic, no-LLM pipeline evaluated on the evaluator
 cache-only benchmark; the 70.0\% HTML pipeline
-number and the 60.0\% held-out set held-out number are
-produced by the same code on the same architecture
+number and the 60.0\% held-out held-out number are
+produced by the same code on same architecture
 without re-tuning.
 \end{enumerate}

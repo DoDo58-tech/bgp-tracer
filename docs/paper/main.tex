@@ -1,7 +1,7 @@
 % =====================================================================
 % BGP Tracer — DSN 2027 Submission
 %
-% Title (the released evaluator): "Dependable Joint Attribution of Internet Anomalies:
+% Title (the evaluator): "Dependable Joint Attribution of Internet Anomalies:
 % A Deterministic, Causal-Anchored Engine for BGP and
 % Traffic Anomaly Co-Root-Cause Analysis"
 %
@@ -40,13 +40,13 @@
 \usepackage{amssymb}
 \usepackage{booktabs}
 
-% ---------- acronyms (kept consistent with held-out set) ----------
+% ---------- acronyms (kept consistent with held-out) ----------
 \newcommand{\css}{PDM}
 % Renamed from Causal Sufficiency Score to
 % Pre/post-intervention Difference in Means, since
 % the estimator does not implement do-calculus.
 \newcommand{\pdm}{PDM}
-% PDM (Pre/post-intervention Difference-in-Means) is the the released evaluator spelling
+% PDM (Pre/post-intervention Difference-in-Means) is the the evaluator spelling
 % of \css; both commands expand to the same text. The historical
 % \textsc{CSS} label is retained in footnote~\ref{fn:pdm-css} for
 % backward-compatibility with the released code.
@@ -115,12 +115,12 @@ commit to (i)~a root-cause class ---
 (ii)~a causal direction between the two signals.
 The practical reality of BGP-anomaly monitoring is
 that \emph{the bottleneck is not detector
-sensitivity but attribution dependability}: on the
+sensitivity but attribution dependability}: on
 30-event ground-truth, raw single-signal
 detectors emit 1.18 million alert events in total
 --- a median of 5{,}286 alerts per 1.5-hour window
 and 21.6\% of them are noise from other detectors
-firing on the same window. Operators drown in
+firing on same window. Operators drown in
 unsorted alerts without an arbiter that can
 adjudicate which detector's verdict is the right
 one. Existing systems address one decision but
@@ -147,7 +147,7 @@ produces a valid output, not a crash).
 Arbitration}) runs six single-signal detectors
 and reduces them to a five-class verdict via a
 deterministic arbitration
- with explicit caps,
+function with explicit caps,
 gates, and tie-breakers. \textbf{Phase~2}
 (\emph{Causal Direction Anchoring}) feeds the
 same cache to a composite scoring rule anchored
@@ -163,9 +163,9 @@ control). The \emph{operator-facing primary
 result} is the end-to-end HTML pipeline strict-
 accuracy: $\mathbf{26/30 = 86.7\%}$
 (Wilson 95\% CI $[70.3\%, 94.7\%]$) post-fix
-(with the deterministic setting 	exttt{skip\_outage=False}
+(with the deterministic setting \t\t\texttt{skip\_outage=False}
 configuration), matching the deterministic
-Phase~1 86.7\% on the same 30 events. The
+Phase~1 86.7\% on same 30 events. The
 \emph{diagnostic numbers} are: deterministic
 Phase~1 86.7\% (cache-amortised, no LLM);
 end-to-end HTML pipeline 70.0\% pre-fix
@@ -176,21 +176,21 @@ on 13 held-out candidates 6/10 = 60.0\%
 (Wilson 95\% CI $[31.3\%, 83.2\%]$) on
 sufficient-data events, with the 13$\to$10
 reduction attributable to graceful-degradation
-for pollution in the held-out set
+for pollution in the held-out
 cache build. The \emph{detector-arbitration
 contribution} is bounded by a three-tier
 negative-control experiment: no-fixes baseline
 70.0\%, single-cap half-fixes 79.3\%, full
-ten-fix arbitration 86.7\% (each tier 7--9 pp).
-A 27-of-30 abstention rate on the \pdm{} strict-
+ten-fix arbitration 86.7\% (each tier 7--9~pp).
+A 27-of-30 abstention rate on \pdm{} strict-
 causal test is structural (Pearl's
 counterfactual on 5-minute \cf{} Radar buckets
 is sparse; \Sectref{sec:css-sparsity}); the
 \pdm{} engine commits a falsifiable direction on
 3/30 events
 (\figref{fig:css-n3}), and the composite scoring
-rule commits a direction on the rest. End-to-end
-reproduction takes one shell command on the
+rule commits a direction on rest. End-to-end
+reproduction takes one shell command on
 released artifact; all sources, scripts, and data
 are open.
 \end{abstract}
@@ -219,10 +219,10 @@ We have presented \textbf{BGP Tracer}, a two-phase
 analyzer that addresses the joint Internet anomaly
 attribution problem with a design whose priorities
 are interpretability, reproducibility, and graceful
-degradation. The motivation is operational: on the
+degradation. The motivation is operational: on
 30-event ground-truth, raw single-signal
 detectors emit 1.18 million alert events with a
-21.6\% noise rate from other detectors firing on the
+21.6\% noise rate from other detectors firing on
 same window --- an unscalable alert volume that no
 operator can arbitrate by hand. Phase~1 (Dependable
 Root-Cause Arbitration) reduces six single-signal
@@ -237,13 +237,13 @@ with bootstrap CI and permutation $p$-value
 providing a falsifiable significance claim on a
 non-empty subset of events; the composite
 scoring rule in \hcaf{} commits a calibrated
-3-way scoring-rule output on the rest.
+3-way scoring-rule output on rest.
 
-The empirical result on the 30-event ground-truth is
+The empirical result on 30-event ground-truth is
 $\frac{26}{30}$ (86.7\%) strict-correct
 ($\frac{26}{28} = 92.9\%$ excluding the negative control) on
 Phase~1 --- a $+16.7$~percentage-point absolute gain over
-the held-out set pre-optimization baseline, achieved without
+the held-out pre-optimization baseline, achieved without
 ground-truth-label leakage into the arbitration logic. The
 four remaining misses are honest, documented, and not
 algorithmic: they are detector-coverage limits, an upstream
@@ -251,7 +251,7 @@ API degradation, and a negative-control definition quirk
 that the system's degraded-mode behavior surfaces explicitly.
 
 We see three directions as the natural next step. First, a
-held-out the released fix evaluation on events unseen by any of the
+held-out the fix evaluation on events unseen by any of the
 arbitration thresholds, to confirm the fixes do not
 overfit. Second, a Bayesian model-averaging extension of
 the Phase-1 arbitration that replaces the hand-tuned
@@ -291,7 +291,7 @@ not subsequently verify. All quantitative numbers in
 the paper (Tables~\ref{tab:method-comparison} --
 \ref{tab:detector-ablation}, Figures~\ref{fig:motivation} --
 \ref{fig:ablation}) come from the actual implementation
-run on the ground-truth; the authors verified every
+run on 30-event ground-truth; the authors verified every
 number. Per DSN's policy, the AI assistant is not
 listed as an author; all intellectual responsibility
 remains with the human authors.

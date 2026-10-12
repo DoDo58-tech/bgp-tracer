@@ -9,7 +9,7 @@
 % S3. Code README + reproduce scripts (cache evaluation)
 % S4. Detailed Phase 2 (CSS n=3 subset, composite scoring rule,
 % uniform-prior ablation, per-channel sparsity)
-% S5. held-out set held-out stress test (13 events) per-event detail
+% S5. held-out held-out stress test (13 events) per-event detail
 % S6. HTML pipeline evaluation (pre/post-fix) per-event table
 % S7. Degraded-mode stress test (5 failure modes) per-event table
 % =====================================================================
@@ -52,7 +52,7 @@ Joint Traffic--BGP Anomaly Attribution via Causal Sufficiency Scoring}
 \begin{abstract}
 This supplementary document collects the ground-truth
 construction report, the per-event evidence table, the
-Phase~2 (composite scoring rule) analysis, the held-out set
+Phase~2 (composite scoring rule) analysis, the held-out
 held-out stress test, the HTML pipeline evaluation, the
 degraded-mode stress test, and the code-level
 reproducibility instructions for the BGP Tracer
@@ -63,11 +63,11 @@ per-event evidence table. Section~S3-S7 are the
 detailed analysis of the new experiments introduced in
 the round-21 revision (HTML pipeline evaluation,
 degraded-mode stress test, CSS n=3 subset, per-event
-case-study timelines, uniform-prior ablation, held-out set
+case-study timelines, uniform-prior ablation, held-out
 held-out per-event detail). All quantitative numbers in
-the main submission \texttt{main.tex} are reproduced by
+the main submission \t\texttt{main.tex} are reproduced by
 the single-command invocation
-\texttt{bash reproduce\_eval.sh --}.
+\t\texttt{bash reproduce\_eval.sh --}.
 \end{abstract}
 
 \ccsdesc[500]{Networks~Network monitoring}
@@ -89,7 +89,7 @@ For every event kept in , \textbf{ALL} of the following must hold:
 \begin{enumerate}
 \itemsep0pt
 \item Public-source citation: primary source URL with status
- \texttt{ok}, check date $\leq 12$ months
+ \t\texttt{ok}, check date $\leq 12$ months
  .
 \item Routing-evidence: \rrc{} BGP signal matches the reported
  victim / attacker / leaker (invariant that
@@ -113,9 +113,11 @@ summary. The 169 rejected candidates are documented in
 
 \subsection{Composition (30 events kept)}
 
-\begin{table}[h]
-\centering\small
-\begin{tabular}{lrl}
+\begin{table*}[t][h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.30\columnwidth}rp{0.55\columnwidth}}
 \hline
 Class & Count & Notes \\ \hline
  & 7 & 7 unique victim ASes \\
@@ -131,13 +133,15 @@ Total & 30 & \\
 Tier A (single high-quality primary source URL with
 corroborating secondary source).}
 \label{tab:s17-comp}
-\end{table}
+\end{table*}
 
 \subsection{Rejection reasons (169 events)}
 
-\begin{table}[h]
-\centering\small
-\begin{tabular}{lrl}
+\begin{table*}[t][h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.30\columnwidth}rp{0.55\columnwidth}}
 \hline
 Reason & Count & Notes \\ \hline
  & 121 & RRC00 parquet sparse \\
@@ -154,11 +158,11 @@ rejections reflect the \cf{} Radar 30-day retention
 constraint; the 28 \protect rejections
 are pre-curation events without a fresh Radar API signal.}
 \label{tab:s17-rej}
-\end{table}
+\end{table*}
 
 \subsection{Per-event evidence summary ( kept events)}
 
-\begin{table}[h]
+\begin{table*}[t][h]
 \centering\tiny
 
 
@@ -171,7 +175,7 @@ Starlink event is the negative control; the North
 Korea event has no cache due to a \cf{} Radar
 HTTP~400.}
 \label{tab:s17-per-event}
-\end{table}
+\end{table*}
 
 \subsection{Improvements vs.\ v16}
 
@@ -184,13 +188,13 @@ The 169 rejections are split as 121 RRC00-sparse,
 28 traffic-missing, 12 source-unreachable, and
 8 quick-cache-build.
 
-\section{Ten Principled Fixes in \texttt{compute\_top\_cause}}
+\section{Ten Principled Fixes in \t\texttt{compute\_top\_cause}}
 \label{sec:fixes}
 
 This section lists the ten principled caps, gates, and
 tie-breakers in
 that produced the $+16.7$~percentage-point gain over the
-held-out set pre-optimization baseline. Every fix is a direct
+held-out pre-optimization baseline. Every fix is a direct
 consequence of an observable cache signal; no fix reads
 the ground-truth label.
 
@@ -218,27 +222,27 @@ of the traffic drop.
  both fire within $0.05$ of each other,
 the tie-breaker is $\max(\text{self-recovery}, 0.05)$
 on .
-\item \textbf{NC miss as \texttt{no\_clear\_anomaly}.}
+\item \textbf{NC miss as \t\texttt{no\_clear\_anomaly}.}
 When the negative-control rule fires
 (no observable routing change in the event window),
-the system commits \texttt{no\\_clear\\_anomaly} (not \texttt{outage}).
-\item \textbf{Missing cache as \texttt{no\_clear\_anomaly}.}
+the system commits \t\texttt{no\\_clear\\_anomaly} (not \t\texttt{outage}).
+\item \textbf{Missing cache as \t\texttt{no\_clear\_anomaly}.}
 When the cache rebuild fails
 (\cf{} Radar HTTP~400), the verdict is
-\texttt{no_clear_anomaly} (not \texttt{outage}).
+\t\texttt{no_clear_anomaly} (not \t\texttt{outage}).
 \item \textbf{ROA misconfig cap on as-path length.}
 When the AS path length is shorter than 3 hops (too short for a
 transit), the candidate score
 is capped at $0.30$.
 \item \textbf{Confidence floor at 0.05 for
-\texttt{no\_clear\_anomaly}.} The confidence in
-the \texttt{no_clear_anomaly} verdict is bounded
+\t\texttt{no\_clear\_anomaly}.} The confidence in
+the \t\texttt{no_clear_anomaly} verdict is bounded
 below at $0.05$ to distinguish it from a parse
 failure.
 \item \textbf{Tie-breaker at 0.05 for the
 top-2 candidates.} When two candidates land within
 $0.05$ of each other, the tie-breaker is the
-detector that fires on the most cache signals.
+detector that fires on most cache signals.
 \end{enumerate}
 
 Each fix is observable from the cache structure: a
@@ -255,15 +259,15 @@ gain is principled.
 \subsection{Code repository README (excerpt)}
 
 \noindent The implementation is at the top of the repository
-(\texttt{README.md}). Key entry points:
+(\t\texttt{README.md}). Key entry points:
 
 \begin{itemize}
-\item \texttt{agents/css\_engine.py} --- core CSS implementation
+\item \t\texttt{agents/css\_engine.py} --- core CSS implementation
 (Pearl-PNS, bootstrap CI, permutation test).
-\item \texttt{chief\_agent.py} --- two-phase CLI entry point.
-\item \texttt{scripts/eval\_hcaf\_vs\_baselines.py} --- HCAF
+\item \t\texttt{chief\_agent.py} --- two-phase CLI entry point.
+\item \t\texttt{scripts/eval\_hcaf\_vs\_baselines.py} --- HCAF
 ablation vs.\ baselines (paper \S6).
-\item \texttt{scripts/render\_paper\_figs.py} --- \S6 figure
+\item \t\texttt{scripts/render\_paper\_figs.py} --- \S6 figure
 generator (fig7, fig8, fig9).
 \end{itemize}
 
@@ -294,19 +298,19 @@ bash reproduce_eval.sh --dry-run # print only
 
 \paragraph{Environment requirements.}
 \begin{itemize}
-\item \texttt{.env} populated with \texttt{OPENAI\_API\_KEY},
-\texttt{OPENAI\_BASE\_URL}, \texttt{OPENAI\_MODEL}
-\item \texttt{CLOUDFLARE\_API\_TOKEN} (for Cloudflare Radar agent)
-\item \texttt{data/updates\_rrc00/*.gz} populated for the analysis
+\item \t\texttt{.env} populated with \t\texttt{OPENAI\_API\_KEY},
+\t\texttt{OPENAI\_BASE\_URL}, \t\texttt{OPENAI\_MODEL}
+\item \t\texttt{CLOUDFLARE\_API\_TOKEN} (for Cloudflare Radar agent)
+\item \t\texttt{data/updates\_rrc00/*.gz} populated for the analysis
 dates
 \end{itemize}
 
-\paragraph{Numbers stability.} Reproducible to $\pm 0.1\%$ on the
-existing ground-truth; see \texttt{results/eval/eval\_audit.md} for
+\paragraph{Numbers stability.} Reproducible to $\pm 0.1\%$ on
+existing ground-truth; see \t\texttt{results/eval/eval\_audit.md} for
 the exact metric definitions and the cross-check commands a reviewer
 can use to verify each row.
 
-\subsection{Verbatim reproduce script (\texttt{reproduce\_eval.sh})}
+\subsection{Verbatim reproduce script (\t\texttt{reproduce\_eval.sh})}
 
 \begin{verbatim}
 #!/usr/bin/env bash
@@ -320,7 +324,7 @@ cd "$(dirname "$0")"
 exec python3 scripts/reproduce_eval.py "$@"
 \end{verbatim}
 
-\subsection{Verbatim reproduce script (\texttt{scripts/reproduce\_eval.py})}
+\subsection{Verbatim reproduce script (\t\texttt{scripts/reproduce\_eval.py})}
 
 \begin{verbatim}
 #!/usr/bin/env python3
@@ -357,14 +361,14 @@ GT = ROOT / "data_check/ground_truth_collection" / "final_balanced_dataset_v17.c
 ...
 \end{verbatim}
 
-\noindent (Full source of \texttt{scripts/reproduce\_eval.py} is
+\noindent (Full source of \t\texttt{scripts/reproduce\_eval.py} is
 146 lines and reproduced verbatim in
-\texttt{docs/paper/reproduce\_eval\_screenshot.txt}.)
+\t\texttt{docs/paper/reproduce\_eval\_screenshot.txt}.)
 
 \subsection{Dry-run terminal screenshot (literal capture)}
 
 \noindent The following is a literal terminal capture of
-\texttt{python3 scripts/reproduce\_eval.py --dry-run}, executed on
+\t\texttt{python3 scripts/reproduce\_eval.py --dry-run}, executed on
 2026-10-11 against the ground-truth (30 rows). The dry-run
 prints the commands that would be executed without running them; this
 is the canonical reviewer-side verification command.
@@ -412,13 +416,13 @@ Loaded 30 ground-truth events from final_balanced_dataset_v17.csv
 
 \noindent The full 58-line terminal capture (with each of the 29
 Phase-1 invocations) is preserved in
-\texttt{docs/paper/reproduce\_eval\_screenshot.txt}.
+\t\texttt{docs/paper/reproduce\_eval\_screenshot.txt}.
 
 \section{Extended Figures (moved from main paper, page-trim)}
 \label{supp:extended-figs}
 
 This section collects figures that were in main submission
-\texttt{v3} but moved to supplementary during the page-trim
+\t\texttt{v3} but moved to supplementary during the page-trim
 audit (Phase 11) to bring the main paper to $\leq 13$ pages.
 Each figure preserves its original caption and a 1--2 sentence
 narrative explaining its role.
@@ -449,8 +453,8 @@ paper.
 \centering
 \includegraphics[width=0.80\linewidth]{figs/fig10_real_vs_synthetic.pdf}
 \caption{Sensitivity to synthetic-cache exclusion. HCAF is
-strict-correct on the 28-event real-cache subset (synthetic
-excluded) and on the synthetic event itself. Baselines that
+strict-correct on 28-event real-cache subset (synthetic
+excluded) and on synthetic event itself. Baselines that
 tied their verdict to synthetic-bucket regularity (Ts-Distance,
 Granger) collapse under synthetic exclusion; HCAF does not.
 (Originally Fig.~10 in main submission v3.)}
@@ -476,11 +480,11 @@ moved here so the main paper preserves a tighter argument and
 the case study detail is available to interested readers.
 
 % =====================================================================
-% Supplementary evaluation results (added in round the released fix, 2026-10-11)
+% Supplementary evaluation results (added in round the fix, 2026-10-11)
 % =====================================================================
 
 \section{Additional Evaluation Results}
-\label{supp:eval-the released fix}
+\label{supp:eval-the fix}
 
 \subsection{Complete per-cause detector fire-rate}
 \label{supp:detector-fire}
@@ -523,10 +527,10 @@ The full per-event Phase-1 predictions for all 30 events,
 with ground-truth, prediction, confidence, and match flag, are in
 .
 
-\subsection{held-out set held-out full results}
-\label{supp:held-out set-heldout-full}
+\subsection{held-out held-out full results}
+\label{supp:held-out-heldout-full}
 
-The full per-event Phase-1 predictions on the 13 held-out held-out
+The full per-event Phase-1 predictions on 13 held-out held-out
 events are in .
 The corrected strict-accuracy (excluding 3 events with
 insufficient cached detector data) is $6/10 = 60.0\%$.
@@ -554,8 +558,8 @@ The 7 events that are incorrect (pred $\neq$ GT) are:
 All 7 misses share the same root cause: the outage detector
 was skipped in light_mode, so the dominant routing signal
 (routing-leak or origin-hijack) overrides the correct
-outage verdict. The fix is to rebuild the held-out set caches with
-setting 	exttt{skip\_outage=False}.
+outage verdict. The fix is to rebuild the held-out caches with
+setting \texttt{skip\_outage=False}.
 
 \section{Reproducibility}
 \label{supp:reproduce}
@@ -590,9 +594,9 @@ deterministic verdict, and the override flag). The
 post-fix 26/30 = 86.7\% number is from
 , generated
 by re-running the HTML pipeline with
-setting 	exttt{skip\_outage=False}.
+setting \texttt{skip\_outage=False}.
 
-\begin{table}[h]
+\begin{table*}[t][h]
 \centering\small
 \begin{tabular}{lr}
 \hline
@@ -608,11 +612,11 @@ Post-fix LLM regression rate & 0/30 = 0.0\% \\
 
 \caption{HTML pipeline evaluation on . The 6/30
 pre-fix regressions are dominated by
-\protectthe 	exttt{skip\_outage=True} default in the React-mode HTML
-pipeline; the the released fix fix is a one-line change in
+\protectthe \texttt{skip\_outage=True} default in the React-mode HTML
+pipeline; the the fix fix is a one-line change in
 \protect.}
 \label{tab:supp-html}
-\end{table}
+\end{table*}
 
 The 6 pre-fix LLM regression events are
 ,
@@ -620,7 +624,7 @@ The 6 pre-fix LLM regression events are
  --- all real outages
 mis-attributed as route leaks by the LLM because the
 the outage analysis was skipped flag made the LLM
-default to ``leak = the only thing left''. The the released fix
+default to ``leak = the only thing left''. The the fix
 fix re-runs the outage detector before the LLM call.
 
 \section{Degraded-Mode Stress Test (supplementary to \S6.8 of main paper)}
@@ -633,9 +637,11 @@ mechanism is , which
 takes a failure mode name and a cache directory and
 produces a perturbed-cache directory.
 
-\begin{table}[h]
-\centering\small
-\begin{tabular}{lrll}
+\begin{table*}[t][h]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{0.30\columnwidth}rp{0.12\columnwidth}p{0.28\columnwidth}}
 \hline
 Failure mode & Strict-acc. & $\Delta$ & Fallback verdict \\ \hline
 No degradation & 86.7\% & --- & deterministic \\
@@ -653,7 +659,7 @@ baseline. The graceful-degradation design
 (\Sectref{sec:method-degradation}) keeps the strict-
 accuracy in $[75.9\%, 86.7\%]$ across all five modes.}
 \label{tab:supp-deg-stress}
-\end{table}
+\end{table*}
 
 The BGPStream rate-limit case is the worst because the
 leak detector and the outage detector both depend on
@@ -678,7 +684,7 @@ that the PDM estimator flags as causal are
 shows the point estimate and 95\% bootstrap CI for
 each.
 
-\begin{table}[h]
+\begin{table*}[t][h]
 \centering\small
 \begin{tabular}{lrrr}
 \hline
@@ -692,10 +698,10 @@ Event & $\widehat{\mathrm{CSS}}(R\!\to\!T)$ & 95\% CI & $p$-value \\ \hline
 \caption{CSS strict-causal subset (n=3 events).
 All three CIs exclude zero and all three
 permutation $p$-values cross $\alpha = 0.05$. The
-3/30 rate is a structural limit of Pearl-PNS on the
+3/30 rate is a structural limit of Pearl-PNS on
 5-min \cf{} Radar bucket.}
 \label{tab:supp-css-n3}
-\end{table}
+\end{table*}
 
 The per-channel contribution to the CSS posterior on
 the 3 events is in .
@@ -703,9 +709,9 @@ On each event, CTPR+CIC contributes $\geq 0.5$ to the
 posterior on $R\!\to\!T$ (the routing side is the
 strongest evidence); MSBD contributes 0.10--0.25; TE
 contributes 0.05--0.10; Granger contributes $\leq 0.05$
-(it is the noisiest channel on the n=3 subset). The
+(it is the noisiest channel on n=3 subset). The
 $\overline{L_1}$ shift between the prior and the
-posterior is 0.265 on the n=3 subset, with a 95\% CI
+posterior is 0.265 on n=3 subset, with a 95\% CI
 of $[0.18, 0.35]$.
 
 \section{Per-Event Case-Study Timelines (supplementary to \S6.9 of main paper)}
@@ -717,16 +723,16 @@ for the other 29 events are in
  as PDF
 figures. The timeline format is the same as
 \figref{fig:case-iran}: routing (BGP withdrawals per
-5-min bin) on the top panel, Cloudflare Radar
-(normalised) on the middle panel, and HCAF posterior
-on the bottom panel. The MSBD breakpoint is
+5-min bin) on top panel, Cloudflare Radar
+(normalised) on middle panel, and HCAF posterior
+on bottom panel. The MSBD breakpoint is
 overlaid as a red dashed line.
 
 The per-event timelines are an auditable artefact:
 each operator can verify that the MSBD breakpoint
 aligns with the event's public-source start time, that
-the Cloudflare Radar signal drops on the post-breakpoint
-side, and that the HCAF posterior concentrates on the
+the Cloudflare Radar signal drops on post-breakpoint
+side, and that the HCAF posterior concentrates on
 expected direction. The Iran 44244 timeline is the
 canonical example; the other 29 timelines follow the
 same pattern with varying signal-to-noise ratios.
@@ -744,9 +750,11 @@ prior is uniform over $\{R\!\to\!T,\ T\!\to\!R,\
 \text{independent}\}$. The channel likelihoods are
 unchanged.
 
-\begin{table}[h]
-\centering\small
-\begin{tabular}{lrr}
+\begin{table*}[t][h]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.40\columnwidth}rr}
 \hline
 HCAF prior & Flip rate (committed) & Abstention rate \\ \hline
 CSS-anchored (default) & --- & $\leq 3/30$ (CSS structural) \\
@@ -760,11 +768,11 @@ events on which the five channels disagree with the
 CSS-anchored direction by enough to overturn the
 prior. On the remaining 80\%, the prior is consistent
 with the channel evidence, so the prior is doing
-real work without over-riding the channels. The
+real work without overriding the channels. The
 abstention rate is unchanged because both runs
-abstain on the 3 structurally-sparse CSS events.}
+abstain on 3 structurally-sparse CSS events.}
 \label{tab:supp-uniform-prior}
-\end{table}
+\end{table*}
 
 The 6 flipped events under uniform prior are
 ,
@@ -775,14 +783,14 @@ $R\!\to\!T$ but the channel evidence is
 $T\!\to\!R$ (or vice versa). The flip is a
 qualitative change in the committed direction
 under uniform prior; the abstention rate is
-unchanged because both priors abstain on the
+unchanged because both priors abstain on
 3 structurally-sparse CSS events.
 
 \section{V18 Held-Out Stress Test: Per-Event Detail}
 \label{sec:supp-heldout}
 
 The 13 held-out candidate events are listed in
-\Tblref{tab:supp-held-out set-detail}. The 6/10 = 60.0\%
+\Tblref{tab:supp-held-out-detail}. The 6/10 = 60.0\%
 strict-accuracy on sufficient-data events is
 composed of 4 outage events (3 correct, 1
 miss --- on
@@ -804,8 +812,8 @@ over-fired in \protect, and two leak
 events on which the hijack detector over-fired on
 the leak signal. The 3 no-cache events are
 graceful-degradation cases.}
-\label{tab:supp-held-out set-detail}
-\end{table}
+\label{tab:supp-held-out-detail}
+\end{table*}
 
 \section{Discussion of Limitations}
 \label{supp:limitations}
@@ -821,8 +829,8 @@ The paper acknowledges five limitations:
  additional thresholds without GT-label leakage.
  \item CSS abstention rate ($\leq 3/30$): structural
  limit of 5-minute Radar bucket resolution; the
- Bayesian HCAF fallback commits on the rest.
- \item held-out set held-out at 46.2\% / 60.0\%: graceful-degradation
+ Bayesian HCAF fallback commits on rest.
+ \item held-out held-out at 46.2\% / 60.0\%: graceful-degradation
  result on light_mode-polluted caches; post-rebuild
  evaluation deferred to supplementary.
 \end{enumerate}
@@ -838,7 +846,7 @@ against the small-$n$ concern.
 \section{Summary of Differences from Previous Submissions}
 \label{supp:diff}
 
-This submission (the released fix, 2026-10-11) differs from the released evaluator in the
+This submission (the fix, 2026-10-11) differs from the evaluator in the
 following evaluation dimensions:
 \begin{itemize}
  \item Added detector ablation (4 ablations + drop-all)
@@ -849,15 +857,15 @@ following evaluation dimensions:
  robustness to single-event removal.
  \item Added per-cause detector fire-rate table
  explaining why traffic is the most critical detector.
- \item Added held-out set held-out stress test (46.2\% / 60.0\%)
+ \item Added held-out held-out stress test (46.2\% / 60.0\%)
  as a graceful-degradation result.
  \item Added discussion of the LLM HTML regression
  (26.7\% override rate, pre-fix) and the fix
- (setting 	exttt{skip\_outage=False} in ).
+ (setting \texttt{skip\_outage=False} in ).
 \end{itemize}
 
 The headline Phase-1 strict-accuracy of $26/30 = 86.7\%$
-($92.9\%$ excl. negative control) is unchanged from the released evaluator.
+($92.9\%$ excl. negative control) is unchanged from the evaluator.
 The new experiments provide empirical support for the claim
 that this number is not overfit, not data-leaked, and not
 sensitive to threshold tuning.

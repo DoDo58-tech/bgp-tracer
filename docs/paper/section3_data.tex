@@ -14,7 +14,7 @@
 A dependable Internet-anomaly attribution system requires a
 clean, auditable, and reproducible ground-truth. This
 section describes the three data sources BGP Tracer
-consumes, the 30-event ground-truth under the the released evaluator
+consumes, the 30-event ground-truth under the the evaluator
 evaluation protocol, the six strict curation invariants,
 and the single negative-control event.
 
@@ -23,16 +23,16 @@ and the single negative-control event.
 
 \paragraph{\cf{} Radar (data plane).}
 BGP Tracer consumes the \cf{} Radar API for 5-minute
-sampled traffic aggregates on the analysis AS
+sampled traffic aggregates on analysis AS
 \cite{cloudflare-radar}. The series is filtered for
 regularity ($\mathrm{CV}<0.6$, lag-24 autocorrelation
 $>0.4$, $\geq 80\%$ non-zero samples) before being fed
 to the traffic agent. \Cf{} Radar's 30-day retention
-window is the dominant constraint on the ground-truth;
+window is the dominant constraint on 30-event ground-truth;
 a third candidate (North Korea 2025-03-18) was admitted
 but the cache-rebuild step was killed by a \cf{} Radar
 v2 traffic API HTTP~400 validation error; this is the
-single no-cache event in the the released evaluator evaluation
+single no-cache event in the the evaluator evaluation
 (\Sectref{sec:misses}, miss \#3). This is a
 graceful-degradation case: the cache-rebuild step is
 allowed to fail, and the subsequent steps (detection,
@@ -72,14 +72,14 @@ They are the \emph{dependable-filter} that defines what
 counts as a well-formed event before any detection or
 arbitration runs.
 
-\begin{table}[h]
+\begin{table*}[t][h]
 \centering
 \setlength{\tabcolsep}{3pt}
 \small
-\begin{tabular}{p{0.043\linewidth}p{0.383\linewidth}p{0.383\linewidth}}
+\begin{tabular}{p{0.08\columnwidth}p{0.36\columnwidth}p{0.48\columnwidth}}
 \hline
 \# & Invariant & Concrete test \\ \hline
-1 & Public-source citation & primary source URL with status \texttt{ok}, check date $\leq 12$ months \\
+1 & Public-source citation & primary source URL with status \t\texttt{ok}, check date $\leq 12$ months \\
 2 & Routing-evidence & \rrc{} BGP signal matches the reported victim / attacker / leaker \\
 3 & Traffic-evidence & \cf{} Radar HTTP timeseries fetched successfully \\
 4 & Regularity & $\mathrm{CV}<0.6$ + lag-24 autocorr $>0.3$ outside the event window \\
@@ -92,13 +92,13 @@ ground-truth. All 30 events satisfy all six. 169
 candidates were rejected with explicit reasons in
 \protect.}
 \label{tab:invariants}
-\end{table}
+\end{table*}
 
 \noindent 169 candidates were rejected with explicit
 reasons in ; the dominant
-rejection causes are \texttt{no\_rrc00\_parquet\_for\_date}
-(121 events), \texttt{no\_traffic\_signal} (28 events), and
-\texttt{source\_url\_unreachable} (12 events). All 30
+rejection causes are \t\texttt{no\_rrc00\_parquet\_for\_date}
+(121 events), \t\texttt{no\_traffic\_signal} (28 events), and
+\t\texttt{source\_url\_unreachable} (12 events). All 30
 events are \emph{Tier~A} (single high-quality primary
 source URL with a corroborating secondary source); no
 Tier-B events are included. The full class distribution
@@ -120,16 +120,16 @@ largest sub-types.}
 \label{fig:dataset}
 \end{figure}
 
-\begin{table}[h]
+\begin{table*}[t]
 \centering
 \small
 \begin{tabular}{lrrl}
 \hline
 Class & $n$ & Tier & Notes \\ \hline
-\texttt{origin\_hijack\_victim} & 7 & A & 7 unique victim ASes \\
-\texttt{route\_leak} & 8 & A & 8 unique leaker ASes \\
-\texttt{outage} & 14 & A & 14 unique victim ASes \\
-\texttt{outage} (NC) & 1 & A & Starlink 2025 \\
+\t\texttt{origin\_hijack\_victim} & 7 & A & 7 unique victim ASes \\
+\t\texttt{route\_leak} & 8 & A & 8 unique leaker ASes \\
+\t\texttt{outage} & 14 & A & 14 unique victim ASes \\
+\t\texttt{outage} (NC) & 1 & A & Starlink 2025 \\
 \hline
 \textbf{Total} & \textbf{30} & A & \\
 \hline
@@ -138,7 +138,7 @@ Class & $n$ & Tier & Notes \\ \hline
 \caption{ground-truth class distribution
 ($N{=}30$).}
 \label{tab:dataset-distribution}
-\end{table}
+\end{table*}
 
 \subsubsection{Root-cause sub-type distribution}
 \label{sec:dataset-subtypes}
@@ -180,7 +180,7 @@ or \emph{traffic-only anomaly}.
 \label{sec:reproducibility}
 
 A reviewer can reproduce every number in this paper with
-two shell commands on the released artifact:
+two shell commands on released artifact:
  and
 . The single
 event whose cache cannot be built automatically
@@ -193,4 +193,4 @@ traffic-only verdict, RIPE RIS missing $\to$
 outage-only verdict, CAIDA / RIPE stale $\to$
 relationship-inference confidence downgrade). This is
 the architectural reason the single no-cache miss in the
-the released evaluator evaluation is explainable rather than catastrophic.
+the evaluator evaluation is explainable rather than catastrophic.

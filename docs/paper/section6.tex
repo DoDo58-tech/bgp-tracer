@@ -1,7 +1,7 @@
 % Section 6 — Evaluation
 % DSN story:
-% - the released evaluator cache-only evaluation protocol (reproducible, deterministic)
-% - Headline: 26/30 = 86.7% (92.9% excl. NC), +16.7pp over held-out set baseline
+% - the evaluator cache-only evaluation protocol (reproducible, deterministic)
+% - Headline: 26/30 = 86.7% (92.9% excl. NC), +16.7pp over held-out baseline
 % - Per-cause breakdown (balanced)
 % - 4-miss audit (graceful-degradation angle)
 % - Channel sensitivity (Phase-2 HCAF)
@@ -11,7 +11,7 @@
 \label{sec:evaluation}
 
 We evaluate BGP Tracer's deterministic Phase~1 root-cause
-arbitration on the \textbf{30-event ground-truth}
+arbitration on \textbf{30-event ground-truth}
 (\Sectref{sec:dataset-invariants}): 7 origin-hijack,
 8 route-leak, 14 BGP-reachability-outage, plus one negative
 control (Starlink~2025 ). The
@@ -33,11 +33,12 @@ count; abstentions are misses) and \emph{review-precision}
 falsifiable of the two; the supplementary material reports
 both for completeness.
 
-\begin{table}[h]
+\begin{table*}[t]
 \centering
-\setlength{\tabcolsep}{3pt}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.05}
 \small
-\begin{tabular}{p{0.212\linewidth}p{0.578\linewidth}}
+\begin{tabular}{p{0.20\textwidth}p{0.74\textwidth}}
 \hline
 \textbf{Metric} & \textbf{Definition} \\ \hline
 \strict{} (Phase~1) & Fraction of events for which
@@ -55,7 +56,7 @@ events of a single ground-truth class. \\
 Honest-21 subset & Restriction to the 21 events on which
 all 3 detectors (routing, traffic, correlation) ran
 without cache skip, route-leak, or outage detector
-skipping --- excludes the 9 events where the held-out set cache
+skipping --- excludes the 9 events where the held-out cache
 build had skip flags enabled. \\
 Causal abstention & Fraction of events on which
 \css{} returns that the PDM estimator abstains on due to
@@ -80,14 +81,14 @@ this paper. The headline 86.7\% / 92.9\% numbers are
 metric. The supplementary material reports
 review-precision and the per-event Wilson CI.}
 \label{tab:metrics}
-\end{table}
+\end{table*}
 
 \subsection{Headline numbers}
 \label{sec:headline}
 
-\begin{table}[t]
+\begin{table*}[t][t]
 \centering
-\caption{Phase~1 strict-accuracy on the ground-truth
+\caption{Phase~1 strict-accuracy on 30-event ground-truth
 ($N{=}30$). \Strict{} is the fraction of events for which
 \protect matches the ground-truth cause label.
 For the single negative control (Starlink~2025) a correct
@@ -102,25 +103,25 @@ $[77.4\%, 98.0\%]$; 70.0\% on 30 events is
 $[52.1\%, 83.3\%]$. The 30-event sample size means
 a single event changes the headline by 3.3~pp;
 the headline-vs-held-out gap (86.7\% vs 60.0\%) is
-within the Wilson 95\% CI of the held-out set sample
+within the Wilson 95\% CI of the held-out sample
 ($[31.3\%, 83.2\%]$), so the gap is consistent with
 sample noise as well as with generalisation
 degradation (\Sectref{sec:heldout-stress}).}
 \label{tab:method-comparison}
-\begin{tabular}{lrr}
+\begin{tabular}{p{0.55\columnwidth}rr}
 \hline
 Method (or ablation) & \strict{} (all) & \strict{} (excl.\ NC) \\ \hline
-held-out set pre-optimization baseline & $21/30 = 70.0\%$ & $21/29 = 72.4\%$ \\
-\textbf{the released evaluator final (this paper)} & \textbf{$26/30 = 86.7\%$} & \textbf{$26/28 = 92.9\%$} \\
+held-out pre-optimization baseline & $21/30 = 70.0\%$ & $21/29 = 72.4\%$ \\
+\textbf{the evaluator final (this paper)} & \textbf{$26/30 = 86.7\%$} & \textbf{$26/28 = 92.9\%$} \\
 \hline
 Net improvement & $+16.7$~pp ($+5$ events) & $+20.5$~pp ($+5$ events) \\
 \hline
 \end{tabular}
 
-\end{table}
+\end{table*}
 
 \paragraph{Honest discussion.}
-The held-out set pre-optimization baseline is the cache
+The held-out pre-optimization baseline is the cache
 \emph{without} the ten principled caps, gates, and
 tie-breakers. The $+16.7$~pp gain is attributable to
 the principled fixes (\Sectref{sec:fixes}) and is
@@ -146,17 +147,18 @@ leak-vs-hijack ambiguity on Cloudflare 1.1.1.1).
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.75\linewidth]{figs/fig_percause.pdf}
-\caption{Per-cause strict-accuracy on the
+\caption{Per-cause strict-accuracy on
 ground-truth with Wilson 95\% CIs. The three cause
 classes are within 2~pp of each other, ruling out a
 class-imbalance confound.}
 \label{fig:per-cause}
 \end{figure}
 
-\begin{table}[h]
+\begin{table*}[t][h]
 \centering
 \small
-\begin{tabular}{lrrr}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.50\columnwidth}rrr}
 \hline
 Ground-truth cause label & $n$ & Phase~1 strict & Phase~1 strict-rate \\ \hline
  & 7 & 6 & 85.7\% \\
@@ -168,10 +170,10 @@ Negative control (Starlink) & 1 & 0 & (NC miss) \\
 \hline
 \end{tabular}
 
-\caption{Per-cause Phase~1 strict-accuracy on the
+\caption{Per-cause Phase~1 strict-accuracy on
 ground-truth ($N{=}30$).}
 \label{tab:per-cause}
-\end{table}
+\end{table*}
 
 \subsection{Per-event predictions and miss audit}
 \label{sec:per-event}
@@ -184,11 +186,12 @@ given in \Tblref{tab:misses}.
 \subsubsection{Four-miss audit}
 \label{sec:misses}
 
-\begin{table}[h]
+\begin{table*}[t]
 \centering
-\setlength{\tabcolsep}{3pt}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.05}
 \small
-\begin{tabular}{p{0.255\linewidth}llp{0.357\linewidth}}
+\begin{tabular}{p{0.18\textwidth}llp{0.42\textwidth}}
 \hline
 Event & GT & PRED & Why missed \\ \hline
  &
@@ -202,7 +205,7 @@ Leak over-fires on Cloudflare's internal re-announcements (self/victim ratio = 1
 \cf{} Radar v2 API HTTP~400; no cache built (graceful-degradation case). \\
  (NC) &
 /NC & 0.99 &
-NC rule requires ; system picks outage on the no-cache fallback. \\
+NC rule requires ; system picks outage on no-cache fallback. \\
 \hline
 \end{tabular}
 
@@ -211,7 +214,7 @@ limits, one upstream-API degradation, one NC definition
 quirk. None recoverable by additional thresholds
 without leaking ground-truth labels.}
 \label{tab:misses}
-\end{table}
+\end{table*}
 
 \begin{figure}[t]
 \centering
@@ -228,11 +231,11 @@ ground-truth labels.}
 \label{fig:misses}
 \end{figure}
 
-\paragraph{Why the held-out set fixes are principled.}
+\paragraph{Why the held-out fixes are principled.}
 The principle is: ``if a signal implies a
 detector-firing pattern that does not match the
 event's true root cause, the fix is to gate, cap,
-or tie-break on the signal --- not to use the
+or tie-break on signal --- not to use the
 ground-truth label as a discriminator.''
 
 \subsection{Sensitivity: threshold and channel ablation}
@@ -251,7 +254,7 @@ prior is what makes the synthesis commit. The Phase~1
 arbitration is threshold-insensitive by construction: the
 only tunable threshold is the leak-tie-breaker (0.05
 boost) and the Cantv anomaly threshold (1). Both are
-derived from observable signals; neither is tuned on the
+derived from observable signals; neither is tuned on
 ground-truth.
 
 \subsection{Detector ablation: graceful-degradation profile}
@@ -259,17 +262,18 @@ ground-truth.
 
 To verify that the Phase~1 strict-accuracy is not driven by
 any single detector, we run a leave-one-detector-out
-ablation on the 29 events with a built cache
+ablation on 29 events with a built cache
 (\Tblref{tab:detector-ablation}). Each ablation zeroes the
 named detector's scalar counts in the cache (e.g.\ for
 ``drop-leak'', the leak count and route-leak list are set to
 zero; the arbitration logic is unchanged). The
-strict-accuracy is recomputed on the same 29 events.
+strict-accuracy is recomputed on same 29 events.
 
-\begin{table}[h]
+\begin{table*}[t][h]
 \centering
 \small
-\begin{tabular}{lrr}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.60\columnwidth}rr}
 \hline
 Configuration & \strict{} (29 ev.) & $\Delta$ vs full \\
 \hline
@@ -283,7 +287,7 @@ Configuration & \strict{} (29 ev.) & $\Delta$ vs full \\
 \hline
 \end{tabular}
 
-\caption{Leave-one-detector-out ablation on the 29
+\caption{Leave-one-detector-out ablation on 29
 events with a built cache (excludes the single no-cache
 event). All four detectors contribute positively to
 the strict-accuracy; the traffic detector is the most
@@ -294,7 +298,7 @@ negative-control event plus 9/29 of the \enquote{soft}
 causes where the dominant routing signal is below the
 detector's reported threshold.}
 \label{tab:detector-ablation}
-\end{table}
+\end{table*}
 
 The profile is monotonically decreasing in the number of
 detectors available, with the largest single contribution
@@ -312,7 +316,7 @@ ensemble is non-redundant.
 
 The threshold insensitivity claim in
 \Sectref{sec:sensitivity} is also confirmed by a
-three-point sweep on the leak-truncation cap
+three-point sweep on leak-truncation cap
 (\(\hat{\tau} \in \{1000, 5000, 50000\}\)):
 strict-accuracy is \(24/29 = 82.8\%\) at \(\hat{\tau}{=}1000\),
 \(26/29 = 89.7\%\) at \(\hat{\tau}{=}5000\) (default), and
@@ -340,23 +344,21 @@ we also report the per-cause detector fire-rate
 events of a given ground-truth cause class on which
 each detector's signal is non-empty.
 
-\begin{table}[h]
+\begin{table*}[t]
 \centering
-\setlength{\tabcolsep}{3pt}
 \small
-
-
-\caption{Per-cause detector fire-rate on the
-ground-truth. The traffic detector's strongest role
-is as a \emph{negative} discriminator for hijack
-events (fires on 0/7 hijack events). The leak and
-hijack detectors each fire on 100\% of their target
-class but also on a majority of off-class events,
-which is why the multi-detector arbitration in
-\protect is necessary --- no single
-detector is a sufficient discriminator.}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{0.30\linewidth}p{0.04\linewidth}p{0.13\linewidth}p{0.13\linewidth}p{0.13\linewidth}p{0.13\linewidth}}
+\hline
+GT class & $n$ & Leak & Hijack & Outage & Traffic \\ \hline
+\t\texttt{origin\_hijack\_victim} & 7 & 85.7\% & 100.0\% & 71.4\% & 0.0\% \\
+\t\texttt{route\_leak} & 8 & 100.0\% & 75.0\% & 75.0\% & 25.0\% \\
+\t\texttt{outage} & 13 & 76.9\% & 61.5\% & 92.3\% & 92.3\% \\
+\t\texttt{outage} (NC) & 1 & 100.0\% & 100.0\% & 100.0\% & 100.0\% \\ \hline
+\end{tabular}
+\caption{Per-cause detector fire-rate on 30-event ground-truth ($N{=}30$). The traffic detector fires on 0/7 hijack events (strongest negative discriminator). Leak and hijack detectors each fire on 100\% of their target class but also on a majority of off-class events; no single detector is a sufficient discriminator, justifying the multi-detector arbitration in $\mathtt{compute\_top\_cause}$.}
 \label{tab:detector-fire}
-\end{table}
+\end{table*}
 
 The traffic detector's strongest role is as a
 \emph{negative} discriminator for hijack events: it
@@ -389,11 +391,11 @@ $86.7\%$ is not driven by any single event.}
 \label{fig:ablation}
 \end{figure}
 
-\subsection{Unseen-event stress test: held-out set candidate set (primary result)}
+\subsection{Unseen-event stress test: held-out candidate set (primary result)}
 \label{sec:heldout-stress}
 
 \textbf{This subsection is a primary result on par with
-the 86.7\% headline, not a side experiment.} The held-out set
+the 86.7\% headline, not a side experiment.} The held-out
 candidate set contains 13 events with built
 caches that are not in the evaluation
 .
@@ -405,37 +407,24 @@ which is absent for the held-out candidates). The 13 events
 reduce to 10 after excluding the 3 held-out events whose
 cached detector data was insufficient for arbitration.
 
-\begin{table}[h]
+\begin{table*}[t]
 \centering
 \small
-\begin{tabular}{lr}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.75\linewidth}r}
 \hline
-Metric & held-out set held-out \\
-\hline
-Events with cache & 13/13 \\
-Events with sufficient detector data for arbitration & 10/13 \\
-Phase~1 strict (all 13) & 6/13 = 46.2\% \\
-Phase~1 strict (10 with sufficient data) & \textbf{6/10 = 60.0\%} \\
-\hline
+Metric & Held-out \\ \hline
+Events with cache built & 13/13 \\
+Events with sufficient detector data & 10/13 \\
+Phase~1 strict-accuracy (all 13) & 6/13 = 46.2\% \\
+Phase~1 strict-accuracy (10 sufficient) & \textbf{6/10 = 60.0\%} \\ \hline
 \end{tabular}
-
-\caption{Held-out Phase~1 strict-accuracy on the 13 held-out
-candidates. The 46.2\% (6/13) is the raw number; the
-60.0\% (6/10) excludes the 3 events where the cached
-detector data was insufficient (partial cache or
-\protect pollution). \emph{Wilson 95\% CIs}:
-46.2\% on 13 events is $[23.2\%, 70.9\%]$; 60.0\% on
-10 events is $[31.3\%, 83.2\%]$. The 86.7\% headline
-falls within both CIs, so the held-out set held-out is
-consistent with the headline at the 5\% level.
-The 13$\to$10 reduction is graceful-degradation for
-\protect pollution in the held-out set cache build
-(\Sectref{sec:heldout-stress}).}
+\caption{Held-out unseen-event stress test: Phase~1 strict-accuracy on 13 held-out candidate events. The 46.2\% (6/13) is the raw number; the 60.0\% (6/10) excludes 3 events whose cached detector data was insufficient (partial cache or \t\texttt{skip\_outage} pollution). Wilson 95\% CIs: 46.2\% on 13 events $[23.2\%, 70.9\%]$; 60.0\% on 10 events $[31.3\%, 83.2\%]$.}
 \label{tab:heldout-detail}
-\end{table}
+\end{table*}
 
 The 60.0\% number is a \emph{graceful-degradation}
-result: the held-out set caches were built in
+result: the held-out caches were built in
 and recorded the outage analysis was skipped for
 6 of the 7 outage events, so the outage detector was
 not executed on those. On the 4 outage events where
@@ -456,9 +445,9 @@ public-source coverage (\figref{fig:comp-table}): 13/30
 events are from 2024--2025, 10/30 from 2023, 7/30 from
 2018--2022. 25/30 events have a Cloudflare blog or
 MANRS report as the primary source. The composition is
-biased toward well-reported events; the held-out set held-out
+biased toward well-reported events; the held-out held-out
 stress test (\Sectref{sec:heldout-stress}) is the
-empirical bound on the bias: 6/10 = 60.0\% on unseen
+empirical bound on bias: 6/10 = 60.0\% on unseen
 events that have \emph{no} public post-mortem.
 
 \begin{figure}[t]
@@ -486,7 +475,7 @@ progressively-more-structured baselines
 \begin{itemize}
 \itemsep0pt
 \item \emph{No-fixes baseline} (pick max count): \textbf{70.0\%}.
-\item \emph{Half-fixes} (single global cap on the leak detector at $\hat{\tau}=5000$): \textbf{79.3\%}.
+\item \emph{Half-fixes} (single global cap on leak detector at $\hat{\tau}=5000$): \textbf{79.3\%}.
 \item \emph{Full principled fixes} (all ten caps, gates, tie-breakers): \textbf{86.7\%}.
 \end{itemize}
 
@@ -501,7 +490,7 @@ fixes are doing real work.
 \includegraphics[width=0.75\linewidth]{figs/fig_neg_ctrl.pdf}
 \caption{Negative-control progression for the ten
 fixes. The no-fixes baseline (70.0\%) is the
-pre-optimization held-out set arbitration; the
+pre-optimization held-out arbitration; the
 single-cap half-fixes (79.3\%) add per-cause
 caps; the full ten-fix arbitration (86.7\%)
 adds the tie-breakers, gates, and the routing-
@@ -524,14 +513,14 @@ accuracy. We audit the HTML pipeline on
 \includegraphics[width=0.75\linewidth]{figs/fig_html_eval.pdf}
 \caption{Operator-facing HTML pipeline evaluation
 on . \emph{Top}: pre-fix
-(\protectthe 	exttt{skip\_outage=True} default) strict-accuracy is
+(\protectthe \texttt{skip\_outage=True} default) strict-accuracy is
 21/30 = 70.0\%; LLM override rate is 8/30 = 26.7\%;
 LLM regression rate is 6/30 = 20.0\%.
 \emph{Bottom}: post-fix
-(\protectsetting 	exttt{skip\_outage=False}) strict-accuracy is
+(\protectsetting \texttt{skip\_outage=False}) strict-accuracy is
 26/30 = 86.7\%; override rate drops to 2/30;
 regression rate is 0/30. The 16.7~pp gap is
-closed by a one-line \protectsetting 	exttt{skip\_outage=False}
+closed by a one-line \protectsetting \texttt{skip\_outage=False}
 flag. Reproduce:
 \protect.}
 \label{fig:html-eval}
@@ -548,10 +537,10 @@ detectors alone. The flag was set to
  by default in the React-mode HTML
 pipeline on 2026-08-21. The pre-fix 70.0\% number
 in this section is reproduced with
-the 	exttt{skip\_outage=True} default (the default in the
+the \texttt{skip\_outage=True} default (the default in the
 build of ). The
-the released fix fix on 2026-10-10 sets
-setting 	exttt{skip\_outage=False} for the React-mode HTML
+the fix fix on 2026-10-10 sets
+setting \texttt{skip\_outage=False} for the React-mode HTML
 pipeline. The reproduce command for the pre-fix
 number is
 ;
@@ -564,22 +553,22 @@ Both reproduce commands are documented in
 \itemsep0pt
 \item \emph{Pre-fix HTML strict-accuracy: 21/30 = 70.0\%.}
 The HTML cause-verdict matches GT on 70.0\% of
-events before the the released fix fix.
+events before the the fix fix.
 \item \emph{LLM override rate: 8/30 = 26.7\%.}
 Eight HTML reports have an LLM narrative that
 contradicts the deterministic Phase~1 or the
 CSS-anchored direction; 6 of these are regressions
 (LLM turns a correct Phase~1 into a wrong HTML).
-Root cause: the 	exttt{skip\_outage=True} default makes the LLM
+Root cause: the \texttt{skip\_outage=True} default makes the LLM
 default to ``leak = the only thing left'' on real
 outages.
 \item \emph{Post-fix HTML strict-accuracy: 26/30 = 86.7\%.}
-With setting 	exttt{skip\_outage=False} the override rate
+With setting \texttt{skip\_outage=False} the override rate
 drops to 2/30 = 6.7\% and the regression rate to 0/30.
 \end{itemize}
 
 The 70.0\% pre-fix $\to$ 86.7\% post-fix profile
-is the operator-facing dependability number. The the released fix
+is the operator-facing dependability number. The the fix
 fix is a one-line change in
  (supplementary
 \Sectref{sec:supp-html}).
@@ -649,7 +638,7 @@ ablation (\Sectref{sec:uniform-prior}) shows a
 \caption{Per-channel abstention rate on
 (n=30). CSS strict-causal is the most abstaining
 channel (90.0\%) --- a structural limit of
-Pearl-PNS on the 5-min Radar bucket. The five
+Pearl-PNS on 5-min Radar bucket. The five
 channels together commit a direction on every
 event via the \hcaf{} composite scoring
 rule.}
@@ -663,7 +652,7 @@ The Iran 2025-06-18 outage (AS44244) is a
 representative event: 5000 leak announcements and 38
 \cf{} Radar anomalies concentrate the Phase~1 verdict
 at (0.99); the \hcaf{} composite
-scoring-rule output commits $R\!\to\!T = 0.77$. \css{} reports $p{=}1.0$ on the
+scoring-rule output commits $R\!\to\!T = 0.77$. \css{} reports $p{=}1.0$ on
 raw difference-in-means (5-min Radar buckets are too
 sparse to reject the permutation null) but the
 composite scoring rule turns the noisy per-channel
@@ -716,7 +705,7 @@ the dominant cost: $4$--$12$ minutes per event on a
 single thread (361 RRC00 parquet files per 2-hour
 window). The 90-s end-to-end number is for the
 \emph{cache-amortised} path: pre-built caches are
-amortised across events on the same AS and date range,
+amortised across events on same AS and date range,
 so a NOC asking about a fresh incident pays the
 cache-build cost once and the 90-s cost per
 re-attribution. Limitations: (1)~30 events is small (169 rejected
@@ -727,6 +716,6 @@ evaluation is not affected. (3)~4 misses
 (\Sectref{sec:misses}) are honest and not algorithmic.
 (4)~\css{} strict-causal rate is $\leq 3/30$
 (structural); the Phase~2 \hcaf{} commits a direction
-on the rest. (5)~held-out set held-out is 60.0\% on
+on rest. (5)~held-out held-out is 60.0\% on
 sufficient-data events (graceful-degradation on
 -polluted caches).

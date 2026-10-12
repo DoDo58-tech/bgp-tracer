@@ -11,7 +11,7 @@
 % than a strict Pearl-PNS implementation. Pearl's PNS is defined
 % for binary X, Y and requires counterfactual identification; our
 % BGP telemetry is a sparse 0/1 series and we compute a
-% non-parametric difference-in-means on the pre/post windows. We
+% non-parametric difference-in-means on pre/post windows. We
 % retain the historical abbreviation CSS (Causal Sufficiency
 % Scoring) for backward-compatibility with the code cache
 % (agents/css_engine.py, cache filenames); the main text calls
@@ -34,7 +34,7 @@ Pre/post-intervention Difference-in-Means and does
 \emph{not} implement Pearl's do-calculus. Pearl's
 PNS~\cite{pearl1999,tian-pearl-2000} is the
 \emph{motivating} framework; the implementation computes
-a non-parametric difference-in-means on the pre/post
+a non-parametric difference-in-means on pre/post
 windows with bootstrap CI and permutation $p$-value.}
 
 % =====================================================================
@@ -77,7 +77,10 @@ computes a non-parametric difference-in-means on
 the pre/post windows, which is the
 \emph{continuous-analogue} form:
 \begin{equation}
-\mathrm{PDM}(R\!\to\!T) \;=\; \bar{T}_{\mathrm{post}} - \bar{T}_{\mathrm{pre}} \;\;\approx\;\; \mathbb{E}[T \mid \mathrm{do}(R{=}1)] - \mathbb{E}[T \mid \mathrm{do}(R{=}0)].
+\begin{aligned}
+\mathrm{PDM}(R\!\to\!T) &= \bar{T}_{\mathrm{post}} - \bar{T}_{\mathrm{pre}} \\
+&\approx \mathbb{E}[T \mid \mathrm{do}(R{=}1)] - \mathbb{E}[T \mid \mathrm{do}(R{=}0)].
+\end{aligned}
 \label{eq:css-def}
 \end{equation}
 We stress that the \emph{estimator} is a
@@ -100,7 +103,7 @@ bootstrap replicates. \figref{fig:css-illustration} shows
 the PDM computation on a representative timeline.
 
 \paragraph{Permutation $p$-value.}
-We use a permutation test on the pooled
+We use a permutation test on pooled
 $U := [T_{\mathrm{pre}}; T_{\mathrm{post}}]$:
 \begin{equation}
 p \;=\; \Pr_{b}\!\left[\, \big|\overline{U^{(b)}_{\mathrm{post}}} - \overline{U^{(b)}_{\mathrm{pre}}}\big| \;\geq\; |\widehat{\mathrm{PDM}}| \,\right].
@@ -113,7 +116,7 @@ bootstrap 95\% CI excludes zero, the raw
 $\widehat{\mathrm{PDM}}$ exceeds the alternative
 direction's CI upper bound, and $p < \alpha$ with
 default $\alpha=0.05$. Otherwise PDM returns
-\texttt{unknown}.
+\t\texttt{unknown}.
 
 \begin{figure}[t]
 \centering
@@ -136,7 +139,7 @@ zero, so PDM declares \protectthat the PDM estimator flags as causal.}
 \paragraph{What PDM commits on its strict-causal subset.}
 \label{sec:css-strict-subset}
 On the ground-truth, the PDM engine returns
-that the PDM estimator flags as causal on 3/30 events; on the remaining
+that the PDM estimator flags as causal on 3/30 events; on remaining
 27/30 it abstains (\Sectref{sec:css-sparsity}). The 3
 strict-causal events are real BGP-monitoring events on
 which the bootstrap 95\% CI on
@@ -157,14 +160,14 @@ traffic-side Granger channel contributes 0.05 to the
 scoring-rule output on each --- a 1.5$\times$ over the
 $1/30$ Traffic-only base rate. This is the evidence
 that PDM, when it does fire, produces a non-trivial
-causal commitment; the abstention on the other 27
+causal commitment; the abstention on other 27
 events is what keeps the system from over-firing.
 
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.75\linewidth]{figs/fig_css_n3.pdf}
 \caption{Point estimate and 95\% bootstrap CI for
-$\widehat{\mathrm{PDM}}(R\!\to\!T)$ on the
+$\widehat{\mathrm{PDM}}(R\!\to\!T)$ on
 3 events where PDM flags as causal. All three CIs exclude zero
 and the permutation $p$-value crosses $\alpha=0.05$.
 This is the n=3 subset on which PDM produces a
