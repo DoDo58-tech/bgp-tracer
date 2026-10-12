@@ -1,18 +1,18 @@
 % Section 1 — Introduction
 % DSN story arc (dependable systems perspective):
-%   1. Internet monitoring is mission-critical; the bottleneck is
-%      dependable joint attribution.
-%   2. Real alert platforms drown operators in false/silent alerts
-%      (motivation: from 1.18M raw alerts on 30 events to a single
-%      verdict per event).
-%   3. Existing practice chooses one of two unsatisfying paths:
-%      classify (no significance) or correlate (no arbitration).
-%   4. A dependable system must commit on both with interpretable,
-%      reproducible logic that degrades gracefully.
-%   5. We propose BGP Tracer: two-phase analyzer with deterministic
-%      Phase-1 + causal-anchored Phase-2.
-%   6. Headline: 26/30 (86.7%) on 30-event v17, +16.7 pp over v18.
-%   7. Contributions enumerated.
+% 1. Internet monitoring is mission-critical; the bottleneck is
+% dependable joint attribution.
+% 2. Real alert platforms drown operators in false/silent alerts
+% (motivation: from 1.18M raw alerts on 30 events to a single
+% verdict per event).
+% 3. Existing practice chooses one of two unsatisfying paths:
+% classify (no significance) or correlate (no arbitration).
+% 4. A dependable system must commit on both with interpretable,
+% reproducible logic that degrades gracefully.
+% 5. We propose BGP Tracer: two-phase analyzer with deterministic
+% Phase-1 + causal-anchored Phase-2.
+% 6. Headline: 26/30 (86.7%) on 30-event, +16.7 pp over held-out set.
+% 7. Contributions enumerated.
 
 \section{Introduction}
 \label{sec:intro}
@@ -39,7 +39,7 @@ valid output rather than a crash or a hallucination.
 
 The practical reality of BGP-anomaly monitoring is that
 \emph{the bottleneck is not detector sensitivity but
-attribution dependability}. On the 30-event v17
+attribution dependability}. On the 30-event
 ground-truth that motivates this paper, raw single-signal
 detectors emit \textbf{1{,}186{,}617} alert events in
 total --- a median of \textbf{5{,}286} alerts per
@@ -72,8 +72,8 @@ the three dependability properties above.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.95\linewidth]{figs/fig0_motivation.pdf}
-\caption{Alert-flood profile on the 30-event v17
+\includegraphics[width=0.75\linewidth]{figs/fig0_motivation.pdf}
+\caption{Alert-flood profile on the 30-event
 ground-truth. \emph{Left}: per-event alert volume,
 split by detector---signal (matches GT) vs noise
 (other detectors). \emph{Right}: aggregate ---
@@ -129,7 +129,7 @@ reproducibility, and graceful degradation.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.95\linewidth]{figs/fig1_workflow.pdf}
+\includegraphics[width=0.75\linewidth]{figs/fig1_workflow.pdf}
 \caption{BGP Tracer end-to-end workflow with
 degraded-mode paths. The shared cache is the single
 point of interpretability: every verdict is traceable
@@ -145,7 +145,7 @@ detector, \ctpr{} path reconstruction, \cic{}
 cascade-influence counter, Outage detector,
 Route-Leak detector, and Origin/Forge-Hijack detector
 --- emit structured signals that a single arbitration
-function (\path{agents/report_agent.py::compute_top_cause})
+function
 reduces to a five-class root-cause verdict
 (\texttt{origin\_hijack\_victim}, \texttt{route\_leak},
 \texttt{outage}, \texttt{roa\_misconfig}, or
@@ -160,7 +160,7 @@ Attribution Framework (\hcaf) anchored on Causal
 Sufficiency Scoring (\css), a directional
 causal-attribution score grounded in Pearl's
 Probability of Necessity and Sufficiency (\pns)
-\cite{pearl1999, tian-pearl-2000}: $\mathrm{CSS}(R\!\to\!T)
+\cite{pearl1999,pearl2009,tian-pearl-2000}: $\mathrm{CSS}(R\!\to\!T)
 = \mathbb{E}[T \mid \mathrm{do}(R{=}1)] - \mathbb{E}[T \mid
 \mathrm{do}(R{=}0)]$. The direction with the larger CSS,
 whose bootstrap 95\% CI excludes zero and whose
@@ -170,7 +170,7 @@ is the causal verdict. Five evidence channels (\msbd{},
 contribute likelihood ratios synthesised with
 the CSS-anchored prior (\Sectref{sec:scoring-rule}). When
 the CSS strict-causal flag abstains (which happens on
-$\geq 27/30$ of v17 events due to the 5-minute Radar
+$\geq 27/30$ of events due to the 5-minute Radar
 bucket resolution limit ---
 \Sectref{sec:css-sparsity}), the composite scoring-rule
 fallback commits a direction with a calibrated
@@ -179,9 +179,9 @@ scoring-rule output.
 The headline empirical finding is that the
 deterministic Phase~1 root-cause arbitration is
 \emph{strict-correct} on $\frac{26}{30}$ (86.7\%)
-events overall on the v19 cache-only evaluation. This
+events overall on the the released evaluator cache-only evaluation. This
 is a $+16.7$~percentage-point absolute gain (5 events)
-over the v18 pre-optimization baseline of
+over the held-out set pre-optimization baseline of
 $\frac{21}{30}$ (70.0\%). The 4 remaining misses are
 honest, documented, and not algorithmic
 (\Sectref{sec:misses}): two are detector-coverage
@@ -192,7 +192,7 @@ is what makes the single no-cache miss explainable
 rather than catastrophic.
 
 The dependability story is captured by a
-\emph{three-number bound} on the v17 ground-truth,
+\emph{three-number bound} on the ground-truth,
 each measuring a different surface of the system:
 
 \begin{table}[h]
@@ -202,19 +202,19 @@ each measuring a different surface of the system:
 \textbf{Number} & \textbf{Value} & \textbf{Wilson 95\% CI} & \textbf{What it measures} \\
 \hline
 Operator-facing post-fix & $26/30 = 86.7\%$ & $[70.3\%, 94.7\%]$ & end-to-end HTML pipeline (what the operator reads) \\
-Operator-facing pre-fix  & $21/30 = 70.0\%$ & $[52.1\%, 83.3\%]$ & end-to-end HTML pipeline, pre-v20 fix \\
-Deterministic Phase 1    & $26/30 = 86.7\%$ & $[70.3\%, 94.7\%]$ & no-LLM cache-only arbitration \\
-v18 held-out (sufficient data) & $6/10 = 60.0\%$ & $[31.3\%, 83.2\%]$ & unseen-event stress test \\
-v18 held-out (raw) & $6/13 = 46.2\%$ & $[23.2\%, 70.9\%]$ & unseen-event stress test, all 13 v18 candidates \\
+Operator-facing pre-fix & $21/30 = 70.0\%$ & $[52.1\%, 83.3\%]$ & end-to-end HTML pipeline, pre-release \\
+Deterministic Phase 1 & $26/30 = 86.7\%$ & $[70.3\%, 94.7\%]$ & no-LLM cache-only arbitration \\
+Held-out (sufficient data) & $6/10 = 60.0\%$ & $[31.3\%, 83.2\%]$ & unseen-event stress test \\
+Held-out (raw) & $6/13 = 46.2\%$ & $[23.2\%, 70.9\%]$ & unseen-event stress test, all 13 held-out candidates \\
 \hline
 \end{tabular}
-\caption{Three-number dependability bound on the v17
-ground-truth and the v18 held-out stress-test set. The
+\caption{Three-number dependability bound on the
+ground-truth and the held-out stress-test set. The
 post-fix operator-facing number is the \emph{primary
 headline} of this paper; the deterministic Phase~1
 number is the diagnostic upper bound (the LLM never
-overrides a Phase~1 verdict in the v20 post-fix
-protocol); the v18 held-out number is the
+overrides a Phase~1 verdict in the released post-fix
+protocol); the held-out number is the
 generalization diagnostic. All five numbers are
 computed on the same architecture without re-tuning.}
 \label{tab:headline-bound}
@@ -224,24 +224,24 @@ We treat the \emph{operator-facing post-fix 86.7\%}
 as the single primary headline (it is the surface the
 operator reads); the deterministic Phase~1 86.7\%
 is the diagnostic upper bound (the LLM never overrides
-a Phase~1 verdict in the v20 post-fix protocol); the
-60.0\% v18 held-out is the generalization diagnostic.
+a Phase~1 verdict in the the released fix post-fix protocol); the
+60.0\% held-out set held-out is the generalization diagnostic.
 A reviewer who only remembers one number should
-remember 86.7\% post-fix operator-facing on v17, with
+remember 86.7\% post-fix operator-facing on , with
 the explicit caveat that the n=30 sample bounds the
-CI to $[70.3\%, 94.7\%]$ (Wilson 95\%).  The
+CI to $[70.3\%, 94.7\%]$ (Wilson 95\%). The
 honest claim is therefore \emph{``the system achieves
 operator-facing strict-accuracy in $[70\%, 95\%]$ on
-v17, with the 86.7\% point estimate as the best
+, with the 86.7\% point estimate as the best
 single summary''} --- not \emph{``the system achieves
 exactly 86.7\%''}, which the sample size does not
-support.  The headline-vs-held-out gap (86.7\% vs
+support. The headline-vs-held-out gap (86.7\% vs
 60.0\%) is
-analysed in \Sectref{sec:v18-heldout} and reflects
-the cost of leaving the v17 design envelope; the
+analysed in \Sectref{sec:heldout-stress} and reflects
+the cost of leaving the design envelope; the
 pre-fix-vs-post-fix gap (70.0\% vs 86.7\%) is
 analysed in \Sectref{sec:html-eval} and reflects
-the v20 LLM-prompt fix.
+the the released fix LLM-prompt fix.
 
 \paragraph{Contributions.}
 \begin{enumerate}
@@ -249,11 +249,11 @@ the v20 LLM-prompt fix.
 (Phase~1).} Six signal detectors feed a single
 arbitration function whose caps, gates, and
 tie-breakers are observable from the cache and never
-read ground-truth labels. On the 30-event v17
+read ground-truth labels. On the 30-event
 ground-truth the arbitration is strict-correct on
-$\frac{26}{30}$ (86.7\%); on the 13-event v18
+$\frac{26}{30}$ (86.7\%); on the 13-event held-out set
 unseen stress-test set it is 6/10 = 60.0\% on
-sufficient-data events (\Sectref{sec:v18-heldout}).
+sufficient-data events (\Sectref{sec:heldout-stress}).
 A negative-control experiment
 (\Sectref{sec:neg-ctrl-fixes}) bounds the
 ``principled fixes'' claim: the no-fixes baseline is
@@ -263,7 +263,7 @@ A negative-control experiment
 evaluation.} The deterministic Phase~1 verdict is
 the input to the end-to-end HTML pipeline, not the
 operator-facing accuracy. We audit the HTML
-pipeline on v17 (\Sectref{sec:html-eval}) and report
+pipeline on (\Sectref{sec:html-eval}) and report
 70.0\% pre-fix strict-accuracy, 26.7\% LLM
 override rate, 20.0\% LLM regression rate, and
 86.7\% post-fix strict-accuracy.
@@ -271,7 +271,7 @@ override rate, 20.0\% LLM regression rate, and
 (Phase~2).} A Pearl-PNS-\emph{motivated} directional
 score with bootstrap CI and permutation $p$-value
 (\Sectref{sec:css}). CSS is strict-causal on 3/30
-v17 events (\figref{fig:css-n3}); the remaining 27
+events (\figref{fig:css-n3}); the remaining 27
 are routed through the \hcaf{} composite scoring
 rule (\Sectref{sec:scoring-rule}) which is a
 \emph{scoring rule} (not a generative-model
@@ -286,7 +286,7 @@ degraded-mode design is stress-tested against five
 operational failure modes (\Sectref{sec:deg-stress})
 and the worst-case strict-accuracy is 75.9\% (vs
 86.7\% baseline).
-\item \textbf{A 30-event v17 reproducible
+\item \textbf{A 30-event reproducible
 ground-truth.} Balanced across hijack, leak, and
 outage labels with a negative control; six strict
 invariants per event; 169 rejected candidates logged
@@ -303,9 +303,9 @@ Authorship (May~2024), generative AI tools are
 \emph{not} listed as authors and assume no
 responsibility for the content. The headline 86.7\%
 root-cause number is produced by a fully
-deterministic, no-LLM pipeline evaluated on the v19
+deterministic, no-LLM pipeline evaluated on the the released evaluator
 cache-only benchmark; the 70.0\% HTML pipeline
-number and the 60.0\% v18 held-out number are
+number and the 60.0\% held-out set held-out number are
 produced by the same code on the same architecture
 without re-tuning.
 \end{enumerate}

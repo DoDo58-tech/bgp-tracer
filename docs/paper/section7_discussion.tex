@@ -1,10 +1,10 @@
 % Section 7 — Discussion and Threats to Validity
 % DSN story (concise):
-%   - Where Phase-1 wins (principled fixes, +16.7pp)
-%   - Where Phase-1 loses, and how the system degrades gracefully
-%   - CSS as the second layer (sample size and sparsity)
-%   - Threats to validity (4 categories)
-%   - Reproducibility as a first-class design property
+% - Where Phase-1 wins (principled fixes, +16.7pp)
+% - Where Phase-1 loses, and how the system degrades gracefully
+% - CSS as the second layer (sample size and sparsity)
+% - Threats to validity (4 categories)
+% - Reproducibility as a first-class design property
 
 \section{Discussion and Threats to Validity}
 \label{sec:discussion}
@@ -13,7 +13,7 @@
 \label{sec:discussion-operational}
 
 The motivation in \Sectref{sec:motivation} is operational:
-on the 30-event v17 ground-truth, raw single-signal
+on the 30-event ground-truth, raw single-signal
 detectors emit 1.18M alert events with a 21.6\% noise
 rate. BGP Tracer's deterministic Phase~1 arbitration
 reduces this to a single auditable verdict per event,
@@ -26,7 +26,7 @@ design treats each input source as a first-class
 degraded mode (\cf{} Radar HTTP~400 $\to$ traffic-only,
 RIPE RIS missing $\to$ outage-only, CAIDA stale $\to$
 relationship-inference confidence downgrade). On the
-v17 evaluation, 1 of 30 events triggers the no-cache
+ evaluation, 1 of 30 events triggers the no-cache
 degraded mode; the algorithmic evaluation is not
 affected.
 
@@ -35,8 +35,8 @@ affected.
 
 The deterministic Phase~1 arbitration is strict-correct on
 $\frac{26}{30}$ (86.7\%) overall (\Sectref{sec:headline}).
-The $+16.7$~percentage points over the v18 baseline is
-principled: every threshold in \path{compute_top_cause} is
+The $+16.7$~percentage points over the held-out set baseline is
+principled: every threshold in is
 observable from the cache signals, no ground-truth label
 enters the arbitration logic. The negative-control
 experiment (\Sectref{sec:neg-ctrl-fixes}) bounds the
@@ -56,14 +56,14 @@ system does not crash on any of them.
 The two operator-facing numbers that bound the
 dependability story (\Sectref{sec:headline}) are reported
 alongside the 86.7\%: the \emph{end-to-end HTML pipeline}
-(70.0\% pre-fix, 86.7\% post-fix) and the \emph{v18
+(70.0\% pre-fix, 86.7\% post-fix) and the \emph{held-out set
 unseen-event stress test} (6/10 = 60.0\% on
 sufficient-data events). The 70.0\% pre-fix HTML number
-is the gap that drove the v20 LLM-override fix; the
-60.0\% v18 number is the gap between the v17 curated
+is the gap that drove the the released fix LLM-override fix; the
+60.0\% held-out set number is the gap between the curated
 ground-truth and the unseen-event operational surface.
 Both gaps are honest and both are closed or bounded by
-the v20 fixes and the degraded-mode stress test
+the the released fix fixes and the degraded-mode stress test
 (\Sectref{sec:deg-stress}).
 
 \subsection{CSS as the second layer}
@@ -104,24 +104,24 @@ We organise the reviewer-objection surface into five
 explicit threat categories.
 
 \paragraph{T1. Dataset construction bias and
-composition.} The 30-event v17 set was selected by a
+composition.} The 30-event set was selected by a
 six-invariant curation pipeline
 (\Sectref{sec:dataset-invariants}); 169 candidates were
 rejected with explicit reasons. The curation invariants
 are not arbitration-specific: every invariant is satisfied
 \emph{before} the arbitration is run; the curation pipeline
-does not see Phase~1 outputs. All 30 v17 events are
+does not see Phase~1 outputs. All 30 events are
 Tier~A. The composition is reported in
 \Sectref{sec:composition}: 13/30 events are from
 2024--2025, 25/30 have a Cloudflare blog or MANRS report
 as the primary source. \emph{Residual risk:} the dataset
 is operator-cited, biased toward well-reported events; the
-v18 held-out stress test (\Sectref{sec:v18-heldout}) is
+held-out stress test (\Sectref{sec:heldout-stress}) is
 the empirical bound on the bias --- 6/10 = 60.0\% on
 unseen events that have \emph{no} public post-mortem.
 
 \paragraph{T2. Fixes as over-fitting.} The ten fixes
-in \path{compute_top_cause} (\Sectref{sec:fixes}) add
+in (\Sectref{sec:fixes}) add
 ten thresholds to a deterministic decision tree. The
 negative-control experiment (\Sectref{sec:neg-ctrl-fixes})
 bounds the principled-fix claim: the no-fixes baseline
@@ -130,12 +130,12 @@ is 70.0\%, the half-fixes is 79.3\%, the full fixes is
 half-fixes run uses a single global cap on the leak
 detector; the full-fixes run adds the nine additional
 principled rules. \emph{Residual risk:} the fixes
-were developed on the v17 ground-truth; a held-out v20
+were developed on the ground-truth; a held-out the released fix
 set is the natural next step.
 
 \paragraph{T3. Phase~2 vs.\ Phase~1 mixing and
-CSS sparsity.} The v19 evaluation scores only the
-Phase~1 \path{top_cause} against the ground-truth cause
+CSS sparsity.} The the released evaluator evaluation scores only the
+Phase~1 against the ground-truth cause
 label; the CSS prior is not invoked. The Phase~1
 arbitration is fully deterministic and does not depend
 on the CSS prior or the Phase~2 synthesis. The CSS
@@ -151,23 +151,23 @@ aggregate.
 
 \paragraph{T4. Operator-facing gaps.}
 We commit to a single primary headline (\Tblref{tab:headline-bound}):
-the \emph{post-fix operator-facing 86.7\%} on v17 is the
+the \emph{post-fix operator-facing 86.7\%} on is the
 number a reader should remember; the deterministic
 Phase~1 86.7\% is the diagnostic upper bound (the LLM
-never overrides a Phase~1 verdict in the v20 post-fix
-protocol); the v18 unseen-event stress test is
+never overrides a Phase~1 verdict in the the released fix post-fix
+protocol); the held-out set unseen-event stress test is
 6/10 = 60.0\% on sufficient-data events
-(\Sectref{sec:v18-heldout}). The 70.0\% pre-fix number
+(\Sectref{sec:heldout-stress}). The 70.0\% pre-fix number
 in \Sectref{sec:html-eval} is the LLM-prompt audit
-baseline; the v20 fix is a one-line change to
-\path{skip_outage=False} (\Sectref{sec:supp-html}
+baseline; the the released fix fix is a one-line change to
+setting 	exttt{skip\_outage=False} (\Sectref{sec:supp-html}
 in supplementary). \emph{Residual risk:} the 60.0\%
 held-out number is the realistic operational accuracy
-when leaving the v17 design envelope; we report it as
+when leaving the design envelope; we report it as
 a \emph{generalization diagnostic}, not as the
 headline.
 
-\paragraph{T5. Generalization.} The v17 set spans 3
+\paragraph{T5. Generalization.} The set spans 3
 cause labels + 1 NC and 20 distinct sub-types
 (\Sectref{sec:dataset-subtypes}); the per-cause
 strict-accuracy is balanced across hijack / leak /
@@ -180,7 +180,7 @@ degraded-mode stress test
 (\Sectref{sec:deg-stress}) shows the strict-accuracy in
 $[75.9\%, 86.7\%]$ under operational failure modes.
 \emph{Residual risk:} 30 events is small; the next-step
-reproduction on a held-out v20 set is documented as the
+reproduction on a held-out the released fix set is documented as the
 natural extension in \Sectref{sec:conclusion}.
 
 \subsection{Reproducibility as a first-class design property}
@@ -188,8 +188,8 @@ natural extension in \Sectref{sec:conclusion}.
 
 Reproducibility is the third dependability property named
 in the abstract. It is realised in five concrete
-artefacts: (i)~the v17 ground-truth CSV is released with
-its 169 rejection reasons; (ii)~the v19 evaluation script
+artefacts: (i)~the ground-truth CSV is released with
+its 169 rejection reasons; (ii)~the the released evaluator evaluation script
 is a single shell command and produces the 26/30 numbers
 by reading the cache and comparing against the
 ground-truth; (iii)~the full pipeline (Phase~1 + Phase~2)

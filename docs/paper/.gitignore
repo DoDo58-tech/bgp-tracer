@@ -1,0 +1,26 @@
+# LaTeX build artifacts (Overleaf writes these; never commit them)
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.lot
+*.lof
+*.nav
+*.out
+*.pdf
+*.run.xml
+*.synctex.gz
+*.toc
+*.vrb
+*.xdv
+*.fls
+*.fdb_latexmk
+*.synctex.gz(busy)
+*.listing
+main.pdf
+
+# Don't commit overleaf git bridge data
+.projectile

@@ -1,17 +1,17 @@
 % Section 5 — Pre/post-intervention Difference-in-Means (PDM / CSS) — Summary
 % DSN story (minimal in main paper, full math in supplementary):
-%   - Pearl-PNS-motivated; falsifiable significance claim.
-%   - Bootstrap CI + permutation p-value, both derived.
-%   - PDM abstains on most events due to data sparsity limit
-%     (this is structural, not algorithmic).
-%   - The Bayesian synthesis in HCAF is the principled fallback.
+% - Pearl-PNS-motivated; falsifiable significance claim.
+% - Bootstrap CI + permutation p-value, both derived.
+% - PDM abstains on most events due to data sparsity limit
+% (this is structural, not algorithmic).
+% - The Bayesian synthesis in HCAF is the principled fallback.
 %
 % W5 (Fresh-Eyes) fix: the estimator is more accurately described
 % as a "Pre/post-intervention Difference-in-Means" (PDM) rather
-% than a strict Pearl-PNS implementation.  Pearl's PNS is defined
+% than a strict Pearl-PNS implementation. Pearl's PNS is defined
 % for binary X, Y and requires counterfactual identification; our
 % BGP telemetry is a sparse 0/1 series and we compute a
-% non-parametric difference-in-means on the pre/post windows.  We
+% non-parametric difference-in-means on the pre/post windows. We
 % retain the historical abbreviation CSS (Causal Sufficiency
 % Scoring) for backward-compatibility with the code cache
 % (agents/css_engine.py, cache filenames); the main text calls
@@ -24,12 +24,23 @@
 % the equations and the decision rule, to keep the main paper
 % within 11 pages.
 
-\section{Pre/post-intervention Difference-in-Means (\pdm{} Summary)\footnote{\label{fn:pdm-css}The historical abbreviation \textsc{CSS} (Causal Sufficiency Scoring) is retained for backward-compatibility with the released code (\path{agents/css\_engine.py}, cache filenames).  The estimator is more accurately described as a Pre/post-intervention Difference-in-Means and does \emph{not} implement Pearl's do-calculus.  Pearl's PNS~\cite{pearl1999,tian-pearl-2000} is the \emph{motivating} framework; the implementation computes a non-parametric difference-in-means on the pre/post windows with bootstrap CI and permutation $p$-value.}}
-\label{sec:css}
+\section{Pre/post-intervention Difference-in-Means (\pdm{} Summary)}\label{sec:css}
+\footnote{\label{fn:pdm-css}The historical abbreviation \textsc{CSS}
+(Causal Sufficiency Scoring) is retained for
+backward-compatibility with the released code
+(\protect, cache filenames).
+The estimator is more accurately described as a
+Pre/post-intervention Difference-in-Means and does
+\emph{not} implement Pearl's do-calculus. Pearl's
+PNS~\cite{pearl1999,tian-pearl-2000} is the
+\emph{motivating} framework; the implementation computes
+a non-parametric difference-in-means on the pre/post
+windows with bootstrap CI and permutation $p$-value.}
 
+% =====================================================================
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.95\linewidth]{figs/fig2_method_overview.pdf}
+\includegraphics[width=0.75\linewidth]{figs/fig2_method_overview.pdf}
 \caption{PDM (originally \textsc{CSS}) + \hcaf{} pipeline overview. Two
 aligned timelines (routing, traffic) feed the
 \pdm{} engine (Pearl-PNS-\emph{motivated} pre/post
@@ -49,7 +60,7 @@ without corroboration'' principle).}
 
 The full derivation of the Pre/post-intervention
 Difference-in-Means (\pdm, originally CSS) --- including
-the bootstrap-CI and permutation-$p$-value machinery ---
+the bootstrap-CI and permutation-$p$-value machinery \cite{efron94} ---
 is in the supplementary material. We give here the
 equations and the decision rule that are necessary to
 understand the Phase~2 architecture.
@@ -106,7 +117,7 @@ default $\alpha=0.05$. Otherwise PDM returns
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.95\linewidth]{figs/fig6_css_illustration.pdf}
+\includegraphics[width=0.75\linewidth]{figs/fig6_css_illustration.pdf}
 \caption{PDM (originally \textsc{CSS}) computation
 illustrated on a representative timeline.
 \emph{Top}: the routing $R(t)$ and traffic $T(t)$
@@ -118,15 +129,14 @@ $\widehat{\mathrm{PDM}}(R\!\to\!T) = \bar{T}_{\mathrm{post}}
 - \bar{T}_{\mathrm{pre}} = 2.5$.
 \emph{Bottom}: the bootstrap distribution of the
 difference; the 95\% CI $[1.11, 3.87]$ excludes
-zero, so PDM declares \path{is_causal = True}.}
+zero, so PDM declares \protectthat the PDM estimator flags as causal.}
 \label{fig:css-illustration}
 \end{figure}
 
-
 \paragraph{What PDM commits on its strict-causal subset.}
 \label{sec:css-strict-subset}
-On the v17 ground-truth, the PDM engine returns
-\path{is_causal = True} on 3/30 events; on the remaining
+On the ground-truth, the PDM engine returns
+that the PDM estimator flags as causal on 3/30 events; on the remaining
 27/30 it abstains (\Sectref{sec:css-sparsity}). The 3
 strict-causal events are real BGP-monitoring events on
 which the bootstrap 95\% CI on
@@ -152,14 +162,13 @@ events is what keeps the system from over-firing.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.85\linewidth]{figs/fig_css_n3.pdf}
+\includegraphics[width=0.75\linewidth]{figs/fig_css_n3.pdf}
 \caption{Point estimate and 95\% bootstrap CI for
 $\widehat{\mathrm{PDM}}(R\!\to\!T)$ on the
-3 v17 events where PDM returns
-\path{is\_causal = True}. All three CIs exclude zero
+3 events where PDM flags as causal. All three CIs exclude zero
 and the permutation $p$-value crosses $\alpha=0.05$.
 This is the n=3 subset on which PDM produces a
-falsifiable causal commitment; the remaining 27 v17
+falsifiable causal commitment; the remaining 27
 events are routed through the \hcaf{} composite
 scoring rule (\Sectref{sec:scoring-rule}).}
 \label{fig:css-n3}
@@ -167,7 +176,7 @@ scoring rule (\Sectref{sec:scoring-rule}).}
 
 \paragraph{Why PDM abstains on most events.}
 \label{sec:css-sparsity}
-On the v17 ground-truth ($N{=}30$ events) PDM is
+On the ground-truth ($N{=}30$ events) PDM is
 strict-causal ($p<0.05$) on only $\frac{\le 3}{30}$
 events ($\leq 10.0\%$). The abstention is structural:
 The pre/post-intervention windows are short
@@ -191,7 +200,6 @@ onset must precede the traffic intervention onset by at
 least one bucket; the gate is
 $\Delta T \geq 1$ (and $\leq -1$ for the reverse
 direction). The \css{} engine is implemented in
-\path{agents/css_engine.py} and exposes
-\path{css_score(routing_timeline, traffic_timeline, n_bootstrap=1000)}
-returning
-\path{{css_r2t, css_t2r, direction, confidence, p_value, ci_lower, ci_upper, is_causal: bool}}.
+ and exposes
+css_score(routing_timeline, traffic_timeline, n_bootstrap=1000)
+returning a tuple of direction scores, confidence, CI bounds, and causal flag.

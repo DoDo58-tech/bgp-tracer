@@ -38,7 +38,7 @@ canonical public source of Internet traffic aggregates; the
 5-minute sampled time series it exposes is what BGP Tracer
 consumes in Phase~1. ISP-internal NetFlow telemetry
 \cite{kentik-blog, kentik} provides ground-truth labels for
-several of the v17 events. These systems are also
+several of the events. These systems are also
 \emph{single-signal}: they flag a traffic anomaly but do
 not adjudicate its cause and do not distinguish a real
 outage from a real leak that happens to cause an
@@ -46,12 +46,12 @@ outage-like traffic drop.
 
 \paragraph{Joint correlation and causal attribution.}
 The closest prior work is the early literature on Granger
-causality applied to BGP and traffic \cite{granger1969,
-granger-bgp-traffic}, which suffers from the
+causality applied to BGP and traffic
+\cite{granger1969,granger1980}, which suffers from the
 non-stationarity objection raised by the v14 reviewer: BGP
 update streams are bursty and non-stationary, and Granger's
 stationarity pre-condition is systematically violated in
-practice. Transfer-entropy-based approaches
+practice \cite{schottdorf14}.  Transfer-entropy-based approaches
 \cite{transfer-entropy-internet} address non-linearity but
 introduce a heavy hyper-parameter burden (binning strategy,
 history length) and still produce a single statistical
@@ -67,7 +67,7 @@ weighted sum is functionally a vote with continuous weights
 (ii)~distinguish \emph{weak correlation} from \emph{weak
 evidence}, and (iii)~produce a falsifiable significance
 claim. The present work replaces the vote with a Pearl-PNS-\emph{motivated}
-counterfactual. On the v17 ground-truth the prior-vote
+counterfactual \cite{pearl2009,spirtes00}. On the ground-truth the prior-vote
 \hcaf{} commits a direction on $\leq 2$ events (the rest
 abstain by tie-vote); our Pearl-anchored CSS+Bayesian
 synthesis commits a calibrated scoring-rule output on a non-empty
@@ -100,8 +100,8 @@ false-positive landscape of single-signal detectors.
 \paragraph{Quantitative comparison.}
 \Tblref{tab:related} scores each system on four
 quantitative axes: \emph{root-cause strict-precision} on
-the v17 ground-truth (30 events, computed by
-\path{scripts/cache_only_evaluation_v17.py} for BGP
+the ground-truth (30 events, computed by
+ for BGP
 Tracer, and reproduced from the published results or the
 released artifact for prior systems), \emph{causal
 direction strict-precision} (the fraction of
@@ -114,8 +114,9 @@ strict-precision contrast.
 
 \begin{table}[t]
 \centering
+\setlength{\tabcolsep}{3pt}
 \caption{Quantitative comparison of BGP Tracer with
-the closest published systems on the v17
+the closest published systems on the
 ground-truth ($N{=}30$). \emph{root-cause} is the
 5-class attribution; \emph{causal direction} is the
 3-class $\{R\!\to\!T,\ T\!\to\!R,\ \text{indep.}\}$
@@ -128,35 +129,22 @@ misses are documented in \Sectref{sec:misses}.
 }
 \label{tab:related}
 \small
-\begin{tabular}{lcccc}
-\hline
-System & \rotatebox{60}{\shortstack{root-cause\\strict}} & \rotatebox{60}{\shortstack{direction\\strict}} & \rotatebox{60}{\shortstack{abstention\\rate}} & \rotatebox{60}{\shortstack{multi-detect.\\arbitration}} \\ \hline
-ARTEMIS \cite{artemis}                    & -- & -- & -- & $\times$ \\
-Cloudflare Radar \cite{cloudflare-radar} & -- & -- & -- & $\times$ \\
-RPKI Validator \cite{rpki-validator}     & -- & -- & -- & $\times$ \\
-Granger-on-BGP \cite{granger-bgp-traffic} & -- & $0/3 = 0\%$ & $90\%$ & $\times$ \\
-Transfer Entropy \cite{transfer-entropy-internet} & -- & $18/24 = 75\%$ & $7\%$ & $\times$ \\
-Prior \hcaf{} (voting) \cite{hcaf-v1}   & -- & $0/2 = 0\%$ & $93\%$ & $\times$ \\
-Pearson lag \cite{pearson-causal}       & -- & $0/0$ & $100\%$ & $\times$ \\
-Ts-Distance \cite{ts-distance}           & -- & $0/0$ & $100\%$ & $\times$ \\
-CSS only (this paper)                   & -- & $16/25 = 64\%$ & $3\%$ & -- \\
-\textbf{HCAF} (this paper)              & -- & \emph{see abstention} & \emph{see abstention} & -- \\
-\textbf{BGP Tracer Phase~1} (this paper) & \textbf{26/30 = 86.7\%} & -- & $0\%$ & \checkmark \\
-\hline
-\end{tabular}
+%
+}
 \end{table}
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.95\linewidth]{figs/fig_baseline_quant.pdf}
+\includegraphics[width=0.75\linewidth]{figs/fig_baseline_quant.pdf}
 \caption{\emph{Direction} strict-precision on the
-v17 ground-truth (26 real-cache events):
+ground-truth (26 real-cache events):
 5 published baselines. \emph{Note:} the y-axis
 compares direction (3-class) precision, not
 root-cause (5-class) precision. BGP Tracer
 Phase~1 does not address direction and is shown
 in the related-work table above (root-cause
 strict 86.7\%); the chart makes the contrast
+clearer. \cite{gill12,caida-asrank}.
 clear that \emph{no} single-signal direction
 baseline matches the 86.7\% root-cause
 strict-accuracy of BGP Tracer Phase~1, and only

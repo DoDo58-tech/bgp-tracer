@@ -1,9 +1,9 @@
 % =====================================================================
 % BGP Tracer — DSN 2027 Submission
 %
-% Title (v19): "Dependable Joint Attribution of Internet Anomalies:
-%              A Deterministic, Causal-Anchored Engine for BGP and
-%              Traffic Anomaly Co-Root-Cause Analysis"
+% Title (the released evaluator): "Dependable Joint Attribution of Internet Anomalies:
+% A Deterministic, Causal-Anchored Engine for BGP and
+% Traffic Anomaly Co-Root-Cause Analysis"
 %
 % Target venue: DSN 2027 (Berlin, 22-25 June 2027)
 % Page limit: 11 pages + unlimited references (text/figures count)
@@ -11,23 +11,23 @@
 % Double-blind: anonymized, no self-citation, no acknowledgments.
 %
 % IMPORTANT for anonymous submission:
-%   - No author list, no affiliations, no email
-%   - All self-references rewritten as third-person
-%   - No "Acknowledgment" section
-%   - URLs / GitHub links redacted to "released artifact"
+% - No author list, no affiliations, no email
+% - All self-references rewritten as third-person
+% - No "Acknowledgment" section
+% - URLs / GitHub links redacted to "released artifact"
 %
 % Compile on Overleaf:
-%   - Upload main.tex, sections/, refs.bib, figs/
-%   - Set Compiler = pdfLaTeX (IEEEtran handles two-column)
-%   - First compile: references appear as "??", second compile
-%     resolves them via bibtex.
+% - Upload main.tex, sections/, refs.bib, figs/
+% - Set Compiler = pdfLaTeX (IEEEtran handles two-column)
+% - First compile: references appear as "??", second compile
+% resolves them via bibtex.
 % =====================================================================
 
 \documentclass[conference,compsoc,10pt]{IEEEtran}
 % IEEE options:
-%   conference  -- two-column, 10pt, ~10in text height
-%   compsoc     -- IEEE Computer Society variant
-%   10pt        -- 10pt body, 12pt leading
+% conference -- two-column, 10pt, ~10in text height
+% compsoc -- IEEE Computer Society variant
+% 10pt -- 10pt body, 12pt leading
 
 \usepackage{graphicx}
 \usepackage{textcomp}
@@ -40,11 +40,16 @@
 \usepackage{amssymb}
 \usepackage{booktabs}
 
-% ---------- acronyms (kept consistent with v18) ----------
+% ---------- acronyms (kept consistent with held-out set) ----------
 \newcommand{\css}{PDM}
 % Renamed from Causal Sufficiency Score to
 % Pre/post-intervention Difference in Means, since
 % the estimator does not implement do-calculus.
+\newcommand{\pdm}{PDM}
+% PDM (Pre/post-intervention Difference-in-Means) is the the released evaluator spelling
+% of \css; both commands expand to the same text. The historical
+% \textsc{CSS} label is retained in footnote~\ref{fn:pdm-css} for
+% backward-compatibility with the released code.
 \newcommand{\hcaf}{HCAF}
 \newcommand{\pns}{PNS}
 \newcommand{\msbd}{MSBD}
@@ -52,6 +57,11 @@
 \newcommand{\cic}{CIC}
 \newcommand{\rrc}{RRC00}
 \newcommand{\cf}{CF}
+\newcommand{\Cf}{Cloudflare}
+% \Css: capitalised form used in prose (section7); expands same as \css
+\newcommand{\Css}{PDM}
+% \Strict: capitalised form used in prose (section6 captions)
+\newcommand{\Strict}{strict-accuracy}
 \newcommand{\rfc}{RFC}
 \newcommand{\strict}{strict-accuracy}
 \newcommand{\figref}[1]{Fig.~\ref{#1}}
@@ -77,19 +87,19 @@
 % Title (anonymized)
 % =====================================================================
 \title{Dependable Joint Attribution of Internet Anomalies: \\
-       A Deterministic, Multi-Detector Arbitration Engine for BGP and \\
-       Traffic Anomaly Co-Root-Cause Analysis}
+ A Deterministic, Multi-Detector Arbitration Engine for BGP and \\
+ Traffic Anomaly Co-Root-Cause Analysis}
 
 \author{Anonymous Authors \\
-        Anonymous Institution \\
-        Anonymous, XX 00000 \\
-        {\tt\small anon@example.invalid}}
+ Anonymous Institution \\
+ Anonymous, XX 00000 \\
+ {\tt\small anon@example.invalid}}
 
 % Note for camera-ready:
-%   Replace with: \IEEEauthorblockN{First Author} \IEEEauthorblockA{...}
-%   \IEEEcompsocitemizethanks
-%   \IEEEcompsocthanksitem Authors are listed alphabetically.
-%   ... (or whatever DSN asks)
+% Replace with: \IEEEauthorblockN{First Author} \IEEEauthorblockA{...}
+% \IEEEcompsocitemizethanks
+% \IEEEcompsocthanksitem Authors are listed alphabetically.
+% ... (or whatever DSN asks)
 
 \maketitle
 
@@ -106,7 +116,7 @@ commit to (i)~a root-cause class ---
 The practical reality of BGP-anomaly monitoring is
 that \emph{the bottleneck is not detector
 sensitivity but attribution dependability}: on the
-30-event v17 ground-truth, raw single-signal
+30-event ground-truth, raw single-signal
 detectors emit 1.18 million alert events in total
 --- a median of 5{,}286 alerts per 1.5-hour window
 and 21.6\% of them are noise from other detectors
@@ -137,7 +147,7 @@ produces a valid output, not a crash).
 Arbitration}) runs six single-signal detectors
 and reduces them to a five-class verdict via a
 deterministic arbitration
-(\path{compute_top_cause}) with explicit caps,
+ with explicit caps,
 gates, and tie-breakers. \textbf{Phase~2}
 (\emph{Causal Direction Anchoring}) feeds the
 same cache to a composite scoring rule anchored
@@ -146,14 +156,14 @@ test (\css{}) with bootstrap CI and permutation
 $p$-value, and synthesises five evidence channels
 into a calibrated 3-way direction commitment.
 
-We evaluate BGP Tracer on a curated 30-event v17
+We evaluate BGP Tracer on a curated 30-event
 ground-truth (7 origin-hijack, 8 route-leak, 14
 BGP-reachability-outage plus one negative
 control). The \emph{operator-facing primary
 result} is the end-to-end HTML pipeline strict-
 accuracy: $\mathbf{26/30 = 86.7\%}$
 (Wilson 95\% CI $[70.3\%, 94.7\%]$) post-fix
-(with the deterministic \path{skip_outage=False}
+(with the deterministic setting 	exttt{skip\_outage=False}
 configuration), matching the deterministic
 Phase~1 86.7\% on the same 30 events. The
 \emph{diagnostic numbers} are: deterministic
@@ -162,11 +172,11 @@ end-to-end HTML pipeline 70.0\% pre-fix
 (Wilson 95\% CI $[52.1\%, 83.3\%]$) and
 86.7\% post-fix (the 16.7~pp gap is closed by a
 one-line flag change); unseen-event stress test
-on 13 v18 candidates 6/10 = 60.0\%
+on 13 held-out candidates 6/10 = 60.0\%
 (Wilson 95\% CI $[31.3\%, 83.2\%]$) on
 sufficient-data events, with the 13$\to$10
 reduction attributable to graceful-degradation
-for \path{light_mode} pollution in the v18
+for pollution in the held-out set
 cache build. The \emph{detector-arbitration
 contribution} is bounded by a three-tier
 negative-control experiment: no-fixes baseline
@@ -177,7 +187,7 @@ causal test is structural (Pearl's
 counterfactual on 5-minute \cf{} Radar buckets
 is sparse; \Sectref{sec:css-sparsity}); the
 \pdm{} engine commits a falsifiable direction on
-3/30 v17 events
+3/30 events
 (\figref{fig:css-n3}), and the composite scoring
 rule commits a direction on the rest. End-to-end
 reproduction takes one shell command on the
@@ -210,7 +220,7 @@ analyzer that addresses the joint Internet anomaly
 attribution problem with a design whose priorities
 are interpretability, reproducibility, and graceful
 degradation. The motivation is operational: on the
-30-event v17 ground-truth, raw single-signal
+30-event ground-truth, raw single-signal
 detectors emit 1.18 million alert events with a
 21.6\% noise rate from other detectors firing on the
 same window --- an unscalable alert volume that no
@@ -229,11 +239,11 @@ non-empty subset of events; the composite
 scoring rule in \hcaf{} commits a calibrated
 3-way scoring-rule output on the rest.
 
-The empirical result on the 30-event v17 ground-truth is
+The empirical result on the 30-event ground-truth is
 $\frac{26}{30}$ (86.7\%) strict-correct
 ($\frac{26}{28} = 92.9\%$ excluding the negative control) on
 Phase~1 --- a $+16.7$~percentage-point absolute gain over
-the v18 pre-optimization baseline, achieved without
+the held-out set pre-optimization baseline, achieved without
 ground-truth-label leakage into the arbitration logic. The
 four remaining misses are honest, documented, and not
 algorithmic: they are detector-coverage limits, an upstream
@@ -241,7 +251,7 @@ API degradation, and a negative-control definition quirk
 that the system's degraded-mode behavior surfaces explicitly.
 
 We see three directions as the natural next step. First, a
-held-out v20 evaluation on events unseen by any of the
+held-out the released fix evaluation on events unseen by any of the
 arbitration thresholds, to confirm the fixes do not
 overfit. Second, a Bayesian model-averaging extension of
 the Phase-1 arbitration that replaces the hand-tuned
@@ -263,7 +273,7 @@ We used an AI assistant (Cursor / Claude, model
 versions documented in the released artifact) to assist
 with the following parts of the paper:
 (i)~initial drafting of the implementation scripts
-in the \path{scripts/} directory, including the
+in the directory, including the
 detector ablations, threshold sensitivity sweeps,
 leave-one-event-out analysis, and per-cause
 detector fire-rate computation;
@@ -281,7 +291,7 @@ not subsequently verify. All quantitative numbers in
 the paper (Tables~\ref{tab:method-comparison} --
 \ref{tab:detector-ablation}, Figures~\ref{fig:motivation} --
 \ref{fig:ablation}) come from the actual implementation
-run on the v17 ground-truth; the authors verified every
+run on the ground-truth; the authors verified every
 number. Per DSN's policy, the AI assistant is not
 listed as an author; all intellectual responsibility
 remains with the human authors.

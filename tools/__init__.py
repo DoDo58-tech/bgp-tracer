@@ -29,7 +29,6 @@ from tools import tool_implementations  # noqa: F401
 
 # Import additional enhanced tools (each self-registers on import)
 from tools import rpki_validation   # noqa: F401
-from tools import ip_geolocation    # noqa: F401
 from tools import as_topology      # noqa: F401
 from tools import long_term_baseline  # noqa: F401
 from tools import as_business_profile  # noqa: F401
