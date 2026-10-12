@@ -1630,7 +1630,7 @@ def build_quick_summary(traffic: dict, routing: dict, correlation: dict) -> dict
     # strength is exactly 0 we still surface the temporal-proximity
     # string as an advisory floor (mapped to the same buckets the
     # renderer uses), so the verdict logic below keeps working.
-    def _bucket_from_strength(s: float) -> str:
+    def _bucket_from_strength(score: float) -> str:
         if s >= 0.65:
             return "high"
         if s >= 0.35:
@@ -1639,7 +1639,7 @@ def build_quick_summary(traffic: dict, routing: dict, correlation: dict) -> dict
             return "low"
         return "none"
 
-    def _bucket_from_temporal(t: str) -> str:
+    def _bucket_from_temporal(label: str) -> str:
         if t in ("strong", "moderate", "high", "medium"):
             return "high"
         if t == "weak":
@@ -2058,7 +2058,7 @@ async def _deep_only_pipeline(
         end_time=end_time,
     )
 
-def load_quick_cache(cache_path: str) -> Optional[dict]:
+def load_quick_cache(cache_path_str: str) -> Optional[dict]:
     """Load a Phase-1 result from disk for a Phase-2 follow-up."""
     p = Path(cache_path)
     if not p.exists():

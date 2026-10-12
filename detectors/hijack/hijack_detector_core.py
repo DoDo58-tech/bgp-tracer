@@ -479,7 +479,7 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
         return [str(lo)]
 
     def make_alert(r: dict, htype: str) -> dict:
-        lo = _lo_for(r)
+        lo = _lo_for(rec)
         if htype == "origin_hijacked":
             return {
                 "hijack_type": "origin_hijacked",

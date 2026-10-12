@@ -35,7 +35,7 @@ def _strip_asn(asn) -> str:
     return s
 
 
-def _cache_path(asn: str) -> str:
+def _cache_path(asn_id: str) -> str:
     return os.path.join(_CACHE_DIR, f"ipv6_prefixes_AS{asn}.json")
 
 

@@ -495,26 +495,13 @@ register_tool(
 
 # ══════════════════════════════════════════════════════════════════════════════
 async def _check_correlation(tool_input: dict, session) -> dict:
+    """Three-card joint-evidence analysis for routing and traffic signals.
+
+    Card 1: temporal alignment with decay scoring. Card 2: blast radius
+    (prefix-level AS-path shift + victim AS traffic). Card 3: falsification
+    tree (which alternative explanations are excluded). Returns a C1/C2/C3
+    tier for the LLM to calibrate causal confidence.
     """
- Three-card joint-evidence analysis for routing and traffic signals.
-
- Builds:
- Card 1 - temporal alignment : matched event pairs with decay scoring
- Card 2 - blast radius : prefix-level AS-path shift + victim AS traffic
- Card 3 - falsification tree : which alternative explanations are excluded
-
- Returns a C1/C2/C3 tier so the LLM can calibrate its causal confidence
- without making an unsupported causal claim.
-
- Required params:
- asn (str)
- start_time (str)
- end_time (str)
- Optional:
- traffic_result, routing_result, prefix_traffic, victim_traffic,
- confounders, causal_evidence
- All optional fields fall back to session.evidence when not provided.
- """
     from detectors.traffic.joint_evidence import analyse_joint_evidence
 
     # Fall back to run_context / session evidence when caller omits asn/start/end.
@@ -1311,8 +1298,8 @@ def _json_serial(obj):
     return str(obj)
 
 
-def _parse_json(raw: str) -> dict:
-    raw = raw.strip()
+def _parse_json(raw_text: str) -> dict:
+    raw = raw_text.strip()
     for fence in ["```json\n", "```json", "```\n", "```"]:
         if raw.startswith(fence):
             raw = raw[len(fence):]
@@ -1380,22 +1367,12 @@ def _inject_traffic_plot_into_file(html_path: str, traffic_plot_base64: str) -> 
         pass
 
 async def _generate_report(tool_input: dict, session) -> dict:
+    """Generate the final LLM-driven HTML report from all collected evidence.
+
+    Params come from `tool_input` (priority) or `session.evidence` (fallback),
+    so the report always has data even when the LLM omits the ASN. Plots are
+    embedded as base64.
     """
- Generate the final LLM-driven HTML report from all collected evidence.
-
- Params can come from two sources (in priority order):
- 1. tool_input - passed explicitly by the LLM caller
- 2. session.evidence - fallback so report always has data even when LLM
- only passes asn / start_time / end_time
-
- Key improvements:
- - ASN is extracted from the first tool's input stored in session.evidence
- (since the LLM often omits asn from generate_report's tool_input).
- - traffic_plot_path is extracted from traffic results and the PNG is
- embedded as base64 so the report always shows a chart.
- - The full payload (with traffic_plot_path + traffic_plot_base64) is
- passed to the LLM so it can generate a Traffic Visualization section.
- """
     import base64 as _b64
     import pathlib
 
@@ -1764,10 +1741,10 @@ async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
         "normal_samples": 0, "hijack_samples": 0,
     } for p in prefix_set}
 
-    def parse_as_path(raw: str) -> list:
-        if not raw:
+    def parse_as_path(raw_text: str) -> list:
+        if not raw_text:
             return []
-        return [x.strip() for x in str(raw).split() if x.strip()]
+        return [x.strip() for x in str(raw_text).split() if x.strip()]
 
     def in_window(ts_str: str, w_start, w_end) -> bool:
         # Bug fix 2026-09-13 (BUG-R61): the original nested
@@ -1924,7 +1901,7 @@ def _prefix_traffic_verdict(effectiveness: str, path_delta: float, origin_change
         return "WEAK: limited evidence of traffic impact"
 
 
-def _summarize_verdicts(results: dict) -> str:
+def _summarize_verdicts(items: dict) -> str:
     verdicts = [r["verdict"].split(":")[0] for r in results.values()]
     strong = verdicts.count("STRONG")
     moderate = verdicts.count("MODERATE")
@@ -2061,7 +2038,7 @@ Return ONLY valid JSON:
                 "observation": f"Classification failed: {e}"}
 
 
-def _slim_traffic(traffic: dict) -> dict:
+def _slim_traffic(payload: dict) -> dict:
     """Extract only the essential fields from traffic result for LLM prompt."""
     if isinstance(traffic, dict) and "asn" in traffic:
         return {
@@ -2074,7 +2051,7 @@ def _slim_traffic(traffic: dict) -> dict:
     return traffic if isinstance(traffic, dict) else {}
 
 
-def _slim_routing(routing: dict) -> dict:
+def _slim_routing(payload: dict) -> dict:
     """Extract only the essential fields from routing result for LLM prompt."""
     if not routing or not isinstance(routing, dict):
         return {}
@@ -2088,7 +2065,7 @@ def _slim_routing(routing: dict) -> dict:
     }
 
 
-def _slim_asn_info(asn_info: dict) -> dict:
+def _slim_asn_info(payload: dict) -> dict:
     """Extract essential AS info for LLM prompt."""
     if not isinstance(asn_info, dict):
         return {}
@@ -2114,25 +2091,13 @@ register_tool(
 
 # ══════════════════════════════════════════════════════════════════════════════
 async def _compute_traffic_routing_correlation_score(tool_input: dict, session) -> dict:
+    """Quantify traffic-routing correlation as a 0-100 score.
+
+    Sum of 5 dimensions (20 each): temporal overlap, direction consistency,
+    magnitude alignment, victim verification, prefix-path delta.
+    Required: traffic_result, routing_result. Optional: victim_traffic,
+    prefix_traffic.
     """
- Quantify the correlation between traffic anomalies and routing events.
-
- Computes a 0-100 score from 5 dimensions:
- 1. Temporal overlap (overlap ratio of traffic anomalies vs routing event window)
- 2. Direction consistency (attacker traffic up + victim traffic down during hijack)
- 3. Magnitude alignment (traffic % change vs routing event severity)
- 4. Victim verification (do victim ASes also show traffic anomalies?)
- 5. Prefix-path delta (from analyze_prefix_traffic if available)
-
- Each dimension contributes up to 20 points, totalling 0-100.
-
- Required params:
- traffic_result (dict): output of analyze_traffic
- routing_result (dict): output of analyze_routing
- Optional params:
- victim_traffic (dict): victim AS traffic results
- prefix_traffic (dict): prefix traffic results from analyze_prefix_traffic
- """
     ev = getattr(session, "evidence", {}) or {}
 
     # ── Resolve inputs ────────────────────────────────────────────────────────
@@ -2404,30 +2369,13 @@ register_tool(
 
 # ══════════════════════════════════════════════════════════════════════════════
 async def _analyze_as_path_delta(tool_input: dict, session) -> dict:
+    """Analyze AS-path structural changes during a hijack window.
+
+    Past events: skip traceroute, use BGP archival data. Recent events
+    (end_time >= now - 24h): also traceroute to verify current path.
+    Reports path-length delta, structural changes, AS-relationship
+    inference, and traceroute verification (recent only).
     """
- Analyze AS-path structural changes during a hijack window and optionally
- perform live traceroute for recent events.
-
- IMPORTANT - Time check:
- - If event is in the PAST (end_time < now - 24h): skip traceroute.
- Historical events cannot be probed; only BGP archival data is used.
- - If event is RECENT (end_time >= now - 24h): attempt traceroute to
- verify current routing path and confirm whether the hijack is still active.
-
- Analysis dimensions:
- - AS-path length delta (/)
- - Path structural changes ( AS )
- - AS relationship inference (attacker victim )
- - Traceroute verification (recent events only)
-
- Required params:
- routing_result (dict): output of analyze_routing
- start_time (str): hijack window start
- end_time (str): hijack window end
- Optional params:
- normal_start (str): baseline period start (default: 2h before hijack)
- normal_end (str): baseline period end (default: hijack start)
- """
     routing = tool_input.get("routing_result", {})
     if isinstance(routing, str):
         try:
@@ -2713,7 +2661,7 @@ def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
     lost_asns = list(normal_as_set - hijack_as_set)
 
     # Detect AS-path loops (consecutive duplicate AS)
-    def has_loop(path: list) -> bool:
+    def has_loop(path_list: list) -> bool:
         return any(path[i] == path[i+1] for i in range(len(path)-1))
 
     hijack_loops = sum(1 for p in hijack_paths if has_loop(p))
@@ -2816,28 +2764,12 @@ register_tool(
 
 # ══════════════════════════════════════════════════════════════════════════════
 async def _analyze_as_relationships(tool_input: dict, session) -> dict:
+    """Analyze AS-level relationship between attacker and victim.
+
+    Uses CAIDA as-rel (priority 1), then AS-path structure (priority 2),
+    then unknown. Returns provider/peer/customer relationship, blast
+    radius, and proportion of victim traffic through the attacker.
     """
- Analyze the AS-level business relationship between attacker and victim,
- and estimate the blast radius and financial impact of the hijack.
-
- Uses CAIDA AS Relationship data to determine:
- - Is attacker a provider/peer/customer of the victim?
- - What proportion of the victim's traffic goes through the attacker?
- - What other ASes are affected if the attacker intercepts traffic?
-
- Relationship inference (ordered by priority):
- 1. CAIDA as-rel data: direct lookup
- 2. BGP AS-path structure: infer from position in AS_PATH
- 3. Unknown: insufficient data
-
- Required params:
- attacker_asn (str): AS number that performed the hijack
- victim_asn (str): AS number that was hijacked
- start_time (str): ISO format (used to select correct as-rel data)
- Optional params:
- routing_result (dict): routing result for inferring from AS-path
- asn_info (dict): AS info for both parties
- """
     attacker_asn = str(tool_input.get("attacker_asn", "") or tool_input.get("hijacker_asn", ""))
     victim_asn = str(tool_input.get("victim_asn", ""))
     start = tool_input.get("start_time", "")
@@ -2919,7 +2851,7 @@ async def _analyze_as_relationships(tool_input: dict, session) -> dict:
     }
 
 
-def _load_asrel_json(filepath: str) -> dict:
+def _load_asrel_json(filepath_str: str) -> dict:
     """Load and parse CAIDA AS Relationship JSON file.
 
  Bug fix 2026-09-13 (BUG-R50): previously the bare ``open(filepath, "r")``
@@ -3450,26 +3382,12 @@ register_tool(
 
 # ══════════════════════════════════════════════════════════════════════════════
 async def _validate_roa_status(tool_input: dict, session) -> dict:
+    """Validate hijacked prefix+origin pairs against RPKI ROA.
+
+    Sources: Cloudflare RPKI API (live, 5-min cache), RIPE NCC archive
+    (historical). Per-prefix status: VALID / INVALID / NOT_FOUND /
+    EXPIRED. INVALID is strong hijack evidence.
     """
- Validate prefix hijacks against RPKI ROA (Route Origin Attestation) data.
-
- Checks each hijacked prefix+origin pair against:
- 1. Cloudflare RPKI Validator API (realtime, cached 5 min)
- 2. RIPE NCC RPKI Archive (historical validation)
-
- Returns per-prefix ROV status:
- - VALID: valid ROA exists and origin matches
- - INVALID: ROA exists but origin does NOT match (strong hijack evidence)
- - NOT_FOUND: no ROA for this prefix (cannot determine)
- - EXPIRED: ROA has expired
-
- Required params:
- announcements (list[dict]): list of {prefix, origin_asn, timestamp}
- Optional params:
- routing_result (dict): auto-extract announcements from origin_hijacked events
- start_time (str): analysis window start (for historical validation)
- end_time (str): analysis window end (for historical validation)
- """
     announcements = tool_input.get("announcements", [])
     routing = tool_input.get("routing_result", {})
     start = tool_input.get("start_time", "")
@@ -3682,8 +3600,8 @@ def _check_roa_single(roa_data: dict, prefix: str, origin_asn: str) -> tuple:
     return "NOT_FOUND", None
 
 
-def _ip_to_int(ip: str) -> int:
-    parts = ip.split(".")
+def _ip_to_int(ip_str: str) -> int:
+    parts = ip_str.split(".")
     return (int(parts[0]) << 24) | (int(parts[1]) << 16) | (int(parts[2]) << 8) | int(parts[3])
 
 
@@ -3807,14 +3725,14 @@ async def _lookup_as_threat_intel(tool_input: dict, session) -> dict:
     }
 
 
-async def _bgpview_as_info(asn: str) -> dict:
+async def _bgpview_as_info(asn_id: str) -> dict:
     data = await _async_get_json(f"https://api.bgpview.io/asn/{asn}/info")
     if isinstance(data, dict) and data.get("status") == "ok":
         return data.get("data", {}) or {}
     return {}
 
 
-async def _bgpview_prefixes(asn: str) -> dict:
+async def _bgpview_prefixes(asn_id: str) -> dict:
     data = await _async_get_json(f"https://api.bgpview.io/asn/{asn}/prefixes")
     if isinstance(data, dict) and data.get("status") == "ok":
         prefixes_data = data.get("data", {}) or {}
@@ -3827,7 +3745,7 @@ async def _bgpview_prefixes(asn: str) -> dict:
     return {}
 
 
-async def _bgpview_neighbors(asn: str) -> dict:
+async def _bgpview_neighbors(asn_id: str) -> dict:
     data = await _async_get_json(f"https://api.bgpview.io/asn/{asn}/neighbours")
     if isinstance(data, dict) and data.get("status") == "ok":
         neighbors = data.get("data", {}).get("neighbours", []) or []
@@ -3839,7 +3757,7 @@ async def _bgpview_neighbors(asn: str) -> dict:
     return {}
 
 
-async def _bgpview_contacts(asn: str) -> dict:
+async def _bgpview_contacts(asn_id: str) -> dict:
     data = await _async_get_json(f"https://api.bgpview.io/asn/{asn}/contacts")
     if isinstance(data, dict) and data.get("status") == "ok":
         return data.get("data", {}) or {}

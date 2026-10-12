@@ -70,7 +70,7 @@ def _categorize(domains: List[str]) -> Dict[str, List[str]]:
     return {k: v for k, v in categories.items() if v}
 
 
-def _is_high_value(domain: str) -> bool:
+def _is_high_value(domain_name: str) -> bool:
     d = domain.lower()
     high_value = ["bank", "gov", "pay", "wallet", "mail", "auth", "login",
                   "admin", "vpn", "api", "cdn", "dns", "smtp", "mx"]
@@ -189,7 +189,7 @@ async def _as_business_profile(tool_input: dict, session) -> dict:
 
 # ── API helpers ─────────────────────────────────────────────────────────────
 
-async def _fetch_rdap_whois(asn: str) -> dict:
+async def _fetch_rdap_whois(asn_id: str) -> dict:
     """Fetch AS WHOIS via RDAP (no auth, global)."""
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
@@ -240,7 +240,7 @@ async def _fetch_rdap_whois(asn: str) -> dict:
         return {}
 
 
-async def _fetch_bgpview_prefixes(asn: str) -> dict:
+async def _fetch_bgpview_prefixes(asn_id: str) -> dict:
     """Fetch announced prefixes via BGPView.io."""
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -268,7 +268,7 @@ async def _fetch_bgpview_prefixes(asn: str) -> dict:
         return {}
 
 
-async def _fetch_passive_dns(asn: str) -> List[str]:
+async def _fetch_passive_dns(asn_id: str) -> List[str]:
     """
     Fetch passive DNS from CIRCL for all IP ranges of the AS.
     CIRCL API: GET https://www.circl.lu/pdns/query/<IP_OR_DOMAIN>
@@ -280,7 +280,7 @@ async def _fetch_passive_dns(asn: str) -> List[str]:
     bgp_data = await _fetch_bgpview_prefixes(asn)
     prefixes = bgp_data.get("prefixes", [])[:20]  # limit to avoid rate limits
 
-    async def query_prefix(prefix: str) -> List[str]:
+    async def query_prefix(prefix_str: str) -> List[str]:
         url = f"{CIRCL_PDNS_URL}/{prefix}"
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:

@@ -32,11 +32,11 @@ def get_available_dates():
         return []
 
 
-def get_asrel_url(target_time):
-    target_date = target_time.strftime("%Y%m%d")
+def get_asrel_url(at_time):
+    target_date = at_time.strftime("%Y%m%d")
     available_dates = get_available_dates()
     available_dates = sorted([int(date) for date in available_dates])
-    
+
     idx = np.searchsorted(available_dates, int(target_date), "right")
     if idx == 0:
         idx = 1  # Take the earliest available file if target is before all files

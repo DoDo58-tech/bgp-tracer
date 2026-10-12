@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 GT = ROOT / "data_check/ground_truth_collection" / "final_balanced_dataset_v17.csv"
 
 
-def announce(step: str) -> None:
+def announce(stage: str) -> None:
     print(f"\n==> {step}")
 
 

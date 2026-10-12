@@ -79,14 +79,14 @@ AVAILABLE_TOOLS = {
 _SHARED_EVIDENCE: Dict[str, Dict[str, Any]] = {}
 
 
-def shared_evidence(run_id: str) -> Dict[str, Any]:
+def shared_evidence(session_id: str) -> Dict[str, Any]:
     """Get or create the per-run shared evidence bucket."""
     if run_id not in _SHARED_EVIDENCE:
         _SHARED_EVIDENCE[run_id] = {}
     return _SHARED_EVIDENCE[run_id]
 
 
-def clear_shared_evidence(run_id: str) -> None:
+def clear_shared_evidence(session_id: str) -> None:
     """Drop the per-run bucket after agent.run() finishes."""
     _SHARED_EVIDENCE.pop(run_id, None)
 
@@ -108,7 +108,7 @@ def _finalize_run(result: "ReactResult") -> "ReactResult":
     return result
 
 
-def valid_llm_html_report(report_path: str) -> bool:
+def valid_llm_html_report(filepath: str) -> bool:
     """Return True only for a saved, complete, non-fallback LLM HTML report.
 
  Checks:

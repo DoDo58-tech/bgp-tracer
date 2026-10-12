@@ -1,33 +1,8 @@
-"""
-InvestigationSupervisor - Intelligent Tool Trigger Engine
-=======================================================
+"""Rule-based tool trigger engine: decides which auxiliary tools to run.
 
-The core architectural innovation: a rule-based pattern detector that decides
-WHICH auxiliary tools to run, instead of relying on the LLM to "decide."
-This is what makes the agent more human-like - like a senior analyst who
-automatically knows "when I see X, I always check Y and Z."
-
-Design principles:
-1. Deterministic - rules are explicit, not probabilistic
-2. Fast - tools in same "batch" run in parallel
-3. Comprehensive - triggers multiple tools for complex patterns
-4. Transparent - LLM sees exactly what was triggered and why
-
-Architecture:
- PatternDetector → detects evidence patterns from routing + traffic data
- ToolTriggerEngine → maps patterns to specific tools
- ToolOrchestrator → executes triggered tools (parallel within batches)
- EvidenceEnricher → injects enriched evidence into LLM reasoning
-
-Usage:
- supervisor = InvestigationSupervisor()
- enriched = await supervisor.enrich(
- routing_data=routing_result,
- traffic_data=traffic_result,
- asn_info=org_info,
- context={"suspected_type": "origin_hijack", "asn": "43927"}
- )
- # Then pass `enriched` to LLMReasoner
+Picks evidence-collecting tools from routing+traffic patterns, runs them in
+parallel batches, and injects the results into LLM reasoning. Deterministic;
+no LLM in the loop.
 """
 
 from __future__ import annotations
@@ -523,7 +498,7 @@ class EvidenceEnricher:
         return enriched
 
     @staticmethod
-    def build_narrative(enrichment: dict) -> str:
+    def build_narrative(enrichment_data: dict) -> str:
         """Build a human-readable narrative of all enrichment results."""
         sections = []
 

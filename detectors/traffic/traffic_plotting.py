@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import logger
 
 
-def _parse_iso_safe(ts: str):
+def _parse_iso_safe(ts_str: str):
     """Parse ISO-8601 / space-separated timestamps, always stripping microseconds and Z."""
     ts = ts.replace("Z", "+00:00").replace("z", "+00:00").rstrip("Z").rstrip("z").rstrip("+00:00").rstrip("+00").rstrip("-").strip()
     ts = ts.split(".")[0]
@@ -93,7 +93,7 @@ def plot_traffic_comparison_beautiful(
         timestamps = timestamps[:n_points]
         current_values = current_values[:n_points]
 
-        def _parse_ts_for_plot(ts: str):
+        def _parse_ts_for_plot(ts_str: str):
             dt = _parse_iso_safe(ts)
             if dt is None:
                 return ts

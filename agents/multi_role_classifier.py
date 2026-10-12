@@ -191,7 +191,7 @@ def check_temporal_overlap(
     if not events_a or not events_b:
         return False
 
-    def parse_ts(ev: dict) -> Optional[datetime]:
+    def parse_ts(event: dict) -> Optional[datetime]:
         for f in ["timestamp", "time", "start_time", "date"]:
             v = ev.get(f, "")
             if v:

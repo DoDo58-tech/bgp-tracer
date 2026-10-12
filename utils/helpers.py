@@ -34,26 +34,22 @@ def make_json_safe(value, _seen=None):
         return str(value)
 
 
-def extract_json_object(text: str) -> Optional[str]:
-    """Return the first balanced ``{...}`` substring from ``text`` or ``None``.
+def extract_json_object(content: str) -> Optional[str]:
+    """Return the first balanced ``{...}`` substring from ``content`` or ``None``.
 
-    Walks ``text`` from the first ``{`` it sees and tracks brace depth, so a
-    nested ``{...}`` inside a string value or comment cannot trick the parser
-    into truncating the JSON early. ``rfind('}') + 1`` would do exactly that:
-    a value like ``"{not} yet"`` would close the brace walk at ``} yet"``
-    instead of at the JSON's real terminator.
-
-    Returns ``None`` when no balanced object is found.
+    Walks ``content`` from the first ``{`` it sees and tracks brace depth, so
+    a nested ``{...}`` inside a string value or comment cannot trick the parser
+    into truncating the JSON early.
     """
-    if not text:
+    if not content:
         return None
-    start = text.find("{")
+    start = content.find("{")
     while start != -1:
         depth = 0
         in_str = False
         escape = False
-        for i in range(start, len(text)):
-            ch = text[i]
+        for i in range(start, len(content)):
+            ch = content[i]
             if in_str:
                 if escape:
                     escape = False
@@ -70,8 +66,8 @@ def extract_json_object(text: str) -> Optional[str]:
             elif ch == "}":
                 depth -= 1
                 if depth == 0:
-                    return text[start:i + 1]
-        start = text.find("{", start + 1)
+                    return content[start:i + 1]
+        start = content.find("{", start + 1)
     return None
 
 

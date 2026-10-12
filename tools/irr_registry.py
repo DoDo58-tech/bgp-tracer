@@ -55,7 +55,7 @@ IRR_SERVERS = {
 DEFAULT_SERVERS = ["RADB", "RIPE", "APNIC"]
 
 
-def _clean_whois(text: str) -> str:
+def _clean_whois(content: str) -> str:
     """Remove WHOIS server banners and empty lines."""
     lines = []
     for line in text.splitlines():
@@ -65,7 +65,7 @@ def _clean_whois(text: str) -> str:
     return "\n".join(lines)
 
 
-def _parse_aut_num(text: str) -> dict[str, Any]:
+def _parse_aut_num(content: str) -> dict[str, Any]:
     """Parse aut-num (AS registration) object from IRR."""
     result = {
         "asn": None,
@@ -97,7 +97,7 @@ def _parse_aut_num(text: str) -> dict[str, Any]:
     return result
 
 
-def _parse_route_objects(text: str) -> list[dict]:
+def _parse_route_objects(content: str) -> list[dict]:
     """Parse route/route6 objects from IRR."""
     objects = []
     current = {}
@@ -368,7 +368,7 @@ async def _irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
     }
 
 
-async def lookup_prefix_origin_async(prefix: str) -> dict[str, Any]:
+async def lookup_prefix_origin_async(prefix_str: str) -> dict[str, Any]:
     """Convenience wrapper for probe_executor: query IRR for a prefix.
 
     Returns a dict with at least:

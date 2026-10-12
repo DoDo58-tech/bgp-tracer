@@ -12,7 +12,7 @@ from agents.impl.traffic_impl import (
 from agents.core import Agent, AgentState, TaskResult
 
 
-def _to_canonical_severity(anomalies: list) -> str:
+def _to_canonical_severity(items: list) -> str:
     """Return the worst severity label across all anomalies.
 
     Handles three severity representations seen in the detector output:

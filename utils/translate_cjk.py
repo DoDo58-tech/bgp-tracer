@@ -57,26 +57,26 @@ IDEOR_RE = re.compile(r"[\u4e00-\u9fff]+")
 WS_RE = re.compile(r"  +")
 
 
-def _clean(text: str) -> str:
-    out = PUNCT_RE.sub(lambda m: PUNCT[m.group(0)], text)
+def _clean(content: str) -> str:
+    out = PUNCT_RE.sub(lambda m: PUNCT[m.group(0)], content)
     out = IDEOR_RE.sub("", out)
     out = WS_RE.sub(" ", out)
     return out
 
 
-def _process_docstring(text: str) -> str:
-    """Find every triple-quoted string in text and strip CJK within it."""
+def _process_docstring(content: str) -> str:
+    """Find every triple-quoted string in `content` and strip CJK within it."""
     # We process one triple at a time using a simple state machine to avoid
     # touching string literals in code (which may be load-bearing data).
     out = []
     i = 0
-    n = len(text)
+    n = len(content)
     triple_dq = '"""'
     triple_sq = "'''"
     while i < n:
-        if text[i:i + 3] == triple_dq:
+        if content[i:i + 3] == triple_dq:
             # Find the matching closing triple.
-            j = text.find(triple_dq, i + 3)
+            j = content.find(triple_dq, i + 3)
             if j < 0:
                 out.append(text[i:])
                 break
@@ -90,19 +90,19 @@ def _process_docstring(text: str) -> str:
                 out.append(chunk)
             i = j + 3
             continue
-        if text[i:i + 3] == triple_sq:
-            j = text.find(triple_sq, i + 3)
+        if content[i:i + 3] == triple_sq:
+            j = content.find(triple_sq, i + 3)
             if j < 0:
-                out.append(text[i:])
+                out.append(content[i:])
                 break
-            chunk = text[i:j + 3]
+            chunk = content[i:j + 3]
             if IDEOR_RE.search(chunk) or PUNCT_RE.search(chunk):
                 out.append(_clean(chunk))
             else:
                 out.append(chunk)
             i = j + 3
             continue
-        out.append(text[i])
+        out.append(content[i])
         i += 1
     return "".join(out)
 

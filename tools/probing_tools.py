@@ -361,7 +361,7 @@ class TracerouteProbe:
         return "\n".join(lines)
 
 
-def _parse_system_traceroute(output: str) -> List[Dict[str, Any]]:
+def _parse_system_traceroute(output_text: str) -> List[Dict[str, Any]]:
     """Parse system traceroute output into structured hop data."""
     import re
     hops = []

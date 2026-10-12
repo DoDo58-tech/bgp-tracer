@@ -61,7 +61,7 @@ _TS_FORMATS = (
 )
 
 
-def _looks_timestampy(value: str) -> bool:
+def _looks_timestampy(value_text: str) -> bool:
     """True for strings that are clearly datetimes, not ASNs.
 
  Used only to produce a *better error message* when the AS slot received a

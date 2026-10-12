@@ -129,7 +129,7 @@ def _check_updates_data_availability(routing_result: dict, start_time: str, end_
     return coverage
 
 
-def _infer_victim_asns(routing_result: dict) -> list:
+def _infer_victim_asns(routing: dict) -> list:
     """Infer victim ASNs directly from routing events when reason_and_classify didn't fill them.
 
     Returns a list of ASNs that appear as `victim_as` in `origin_hijacked` /
@@ -210,7 +210,7 @@ def _try_threat_intel_fallback(routing_result: dict, asn: str) -> dict:
     return {}
 
 
-def _probe_finding_to_dict(f) -> dict:
+def _probe_finding_to_dict(finding) -> dict:
     """Convert an AutoProbeFinding to a plain dict for JSON serialization."""
     if isinstance(f, dict):
         return f
@@ -342,7 +342,7 @@ _REQUIRED_COT_MARKERS = (
 )
 
 
-def validate_cot_prompt(prompt: str) -> None:
+def validate_cot_prompt(prompt_text: str) -> None:
     """Verify prompt contains the CoT scaffolding that render_report_prompt adds."""
     missing = [m for m in _REQUIRED_COT_MARKERS if m not in prompt]
     if missing:
@@ -352,7 +352,7 @@ def validate_cot_prompt(prompt: str) -> None:
         )
 
 
-def render_report_prompt(data_json: str) -> str:
+def render_report_prompt(data_str: str) -> str:
     """Append the structured analysis data to the unified CoT prompt and validate."""
     prompt = (_UNIFIED_COT_PROMPT
               + "\\n\\n== OUTPUT CONSTRAINT ==\\n"
@@ -693,16 +693,10 @@ def trim_to_size(data: Any, max_bytes: int = _MAX_PAYLOAD_BYTES) -> Any:
 def slim_payload(data: Any, limit: int = 10, _depth: int = 0) -> Any:
     """Recursively truncate long lists/dicts for the LLM prompt.
 
- Drops any field whose name is in `_PAYLOAD_DENY_FIELDS` - those fields
- consume tokens without informing the report (raw timestamps, periodic
- history, full AS paths, raw tool output, etc.).
-
- Round-23 BUG-#4 fix: the dict-level cap used to be hard-coded to
- ``50`` and silently dropped fields beyond that index even when the
- caller asked for ``limit=80`` (which we do for large payloads like
- traffic results). Thread the per-level cap through and let callers
- override.
- """
+    Drops `_PAYLOAD_DENY_FIELDS` (raw timestamps, periodic history,
+    full AS paths, raw tool output). Per-level cap is `limit`, not the
+    previous hard-coded 50, so large payloads can ask for more.
+    """
     if _depth > 50:
         return None
     if isinstance(data, dict):
@@ -806,7 +800,7 @@ def extract_plot_path(traffic_result, traffic_raw, reasoning_result):
     return None
 
 
-def extract_traffic_anomaly_window(traffic: dict) -> Optional[dict]:
+def extract_traffic_anomaly_window(traffic_data: dict) -> Optional[dict]:
     """Extract anomaly windows from traffic analysis results.
 
     Looks first at the strict anomaly list and falls back to the soft
@@ -870,7 +864,7 @@ def embed_file_as_base64(path_str: Optional[str]) -> Optional[str]:
     return None
 
 
-def strip_path_based_traffic_images(html: str) -> str:
+def strip_path_based_traffic_images(markup: str) -> str:
     """Remove `<img>` tags whose `src` points at the on-disk traffic plot.
 
     The LLM occasionally emits
@@ -1836,23 +1830,10 @@ def _collect_route_leak_rows(routing_result):
 
 
 def _collect_traffic_anomaly_rows(traffic_result, routing_result=None):
-    """Build rows of [[timestamp, value, severity, z_score], ...].
+    """Build [[timestamp, value, severity, signal], ...] rows.
 
- Column 4 used to be ``direction`` but that key rarely exists on the
- detector payload - every row would render as ``-`` (em-dash), which
- is exactly the kind of empty-cell artefact we want to eliminate.
-
- We compute the 4th column from the FIRST available signal in this
- priority order:
- 1. ``z_score`` - statistical detectors
- 2. ``deviation`` / ``deviation_pct`` - percentile detectors
- 3. ``change_magnitude`` - sudden_jump / sudden_drop detectors
- 4. ``change_type`` - fallback label if magnitude absent
- 5. ``sudden_drop`` flag - final fallback
-
- This guarantees every row in the table has a real numeric signal in
- column 4; empty cells (``-``) only appear when literally nothing
- useful was emitted by the detector.
+ Column 4 falls back through z_score → deviation → change_magnitude →
+ change_type → sudden_drop so no row renders an em-dash.
  """
     rows: list = []
     tr = traffic_result if isinstance(traffic_result, dict) else {}
@@ -1915,7 +1896,7 @@ _SECTION_TITLE_LEAK = re.compile(
 )
 
 
-def _strip_all_tables(html: str) -> str:
+def _strip_all_tables(markup: str) -> str:
     """Remove EVERY ``<table>...</table>`` block from the LLM output.
 
  The LLM is told (in ``_UNIFIED_COT_PROMPT``) not to emit any tables
@@ -1930,7 +1911,7 @@ def _strip_all_tables(html: str) -> str:
     return _HTML_TABLE_FULL.sub("", html)
 
 
-def _strip_orphan_td_tr_th(html: str) -> str:
+def _strip_orphan_td_tr_th(markup: str) -> str:
     """Drop stray ``<td>`` / ``<tr>`` / ``<th>`` that survived table stripping.
 
     Sometimes the LLM opens a table, then closes it without ever opening
@@ -1983,7 +1964,7 @@ _TCA_HEADING_RE = re.compile(
 )
 
 
-def _strip_llm_tca(html: str) -> str:
+def _strip_llm_tca(markup: str) -> str:
     """Remove any LLM-generated TCA / Causal Direction block.
 
     The Python-rendered TCA section is injected deterministically afterwards.
@@ -2025,7 +2006,7 @@ _OPERATIONAL_REC_HEADING_RE = re.compile(
 )
 
 
-def _strip_llm_operational_recommendations(html: str) -> str:
+def _strip_llm_operational_recommendations(markup: str) -> str:
     """Remove LLM-generated Operational Recommendations sections.
 
     Auto-Probe Findings covers what we need; explicit recommendations are
@@ -2058,7 +2039,7 @@ _LLM_AUTO_PROBE_HEADING_RE = re.compile(
 )
 
 
-def _strip_llm_auto_probe_findings(html: str) -> str:
+def _strip_llm_auto_probe_findings(markup: str) -> str:
     """Remove LLM-generated Auto-Probe Findings sections.
 
     Python deterministically renders the probe table; the LLM's prose summary
@@ -2116,7 +2097,7 @@ def _is_transient_llm_error(exc: BaseException) -> bool:
     return any(m in text for m in markers)
 
 
-def _strip_llm_executive_summary(html: str) -> str:
+def _strip_llm_executive_summary(markup: str) -> str:
     """Remove any LLM-emitted Executive Summary section.
 
     The deterministic executive summary (render_executive_summary) is
@@ -2132,7 +2113,7 @@ def _strip_llm_executive_summary(html: str) -> str:
     return pattern.sub("", html)
 
 
-def _strip_llm_evidence_chain(html: str) -> str:
+def _strip_llm_evidence_chain(markup: str) -> str:
     """Remove any LLM-emitted Evidence Chain / Reasoning section.
 
     The Python-rendered evidence chain is deterministic and cites real
@@ -2149,7 +2130,7 @@ def _strip_llm_evidence_chain(html: str) -> str:
     return pattern.sub("", html)
 
 
-def _strip_llm_refutable_hypotheses(html: str) -> str:
+def _strip_llm_refutable_hypotheses(markup: str) -> str:
     """Remove any LLM-emitted hypothesis section.
 
  The deterministic renderer maps routing event taxonomy onto the
@@ -2189,7 +2170,7 @@ def _strip_llm_refutable_hypotheses(html: str) -> str:
     return html
 
 
-def _strip_llm_counterfactual(html: str) -> str:
+def _strip_llm_counterfactual(markup: str) -> str:
     """Remove any LLM-emitted Counterfactual Analysis section.
 
     The deterministic counterfactual asks 'what if the dominant signal
@@ -2211,7 +2192,7 @@ def _strip_llm_counterfactual(html: str) -> str:
 # data in a more compact form (aggregated top-N under Routing Security
 # for hijacks; per-event list only when leaks are rare). Stripping
 # prevents the reviewer from seeing two copies of the same events.
-def _strip_llm_origin_hijack_events(html: str) -> str:
+def _strip_llm_origin_hijack_events(markup: str) -> str:
     if not html:
         return html
     pattern = re.compile(
@@ -2221,7 +2202,7 @@ def _strip_llm_origin_hijack_events(html: str) -> str:
     return pattern.sub("", html)
 
 
-def _strip_llm_diagnosis(html: str) -> str:
+def _strip_llm_diagnosis(markup: str) -> str:
     """Remove any LLM-emitted Diagnosis section.
 
     The deterministic Diagnosis card (render_diagnosis) is rendered from
@@ -2241,7 +2222,7 @@ def _strip_llm_diagnosis(html: str) -> str:
     return pattern.sub("", html)
 
 
-def _strip_llm_route_leak_events(html: str) -> str:
+def _strip_llm_route_leak_events(markup: str) -> str:
     if not html:
         return html
     pattern = re.compile(
@@ -2255,7 +2236,7 @@ def _strip_llm_route_leak_events(html: str) -> str:
 # tail. Earlier rounds saw the LLM emit "Gaps & Limitations" twice (once
 # as plain prose, once inside an <aside>) which doubled the noise. Strip
 # all duplicates before injecting the deterministic one.
-def _strip_llm_gaps(html: str) -> str:
+def _strip_llm_gaps(markup: str) -> str:
     if not html:
         return html
     pattern = re.compile(
@@ -3521,7 +3502,7 @@ _CAUSE_LABEL = {
 }
 
 
-def _verdict_badge(top_cause: dict) -> str:
+def _verdict_badge(cause: dict) -> str:
     """Render the coloured cause badge for Executive Summary.
 
     Round-26: strip the trailing "confidence N%" text that previously sat
@@ -4722,7 +4703,7 @@ _CANONICAL_SECTION_ORDER = [
 ]
 
 
-def _reorder_body_sections(html: str) -> str:
+def _reorder_body_sections(markup: str) -> str:
     """Force a fixed section order inside <body>.
 
     Pulls each top-level <h2> section out (plus any inline content up
@@ -4815,7 +4796,7 @@ _HTML_TH_CLOSE = re.compile(r"</th\s*>", re.IGNORECASE)
 _HTML_UNQUOTED_ATTR = re.compile(r"(\s[a-zA-Z-]+)=([^\s\"']+?)(?=\s|/|>)")
 
 
-def _auto_close_blocks_in_html(html: str) -> str:
+def _auto_close_blocks_in_html(markup: str) -> str:
     """Walk the document and append closing tags for any blocks that remain
  unclosed at end-of-document.
 
@@ -4922,11 +4903,11 @@ _REQUIRED_SECTIONS = [
 _MIN_HYPOTHESIS_CARDS = 3  # prompt asks 2-4; enforce ≥3 deterministically
 
 
-def _count_hypothesis_cards(html: str) -> int:
+def _count_hypothesis_cards(markup: str) -> int:
     return len(re.findall(r'<div\s+class=["\']hypothesis-card["\']', html, re.IGNORECASE))
 
 
-def _strip_existing_refutable_hypotheses(html: str) -> tuple:
+def _strip_existing_refutable_hypotheses(markup: str) -> tuple:
     """Remove the LLM-emitted Refutable Hypotheses section + its content.
 
     Returns ``(cleaned_html, hypotheses_payload_or_none)``. The payload
@@ -4946,7 +4927,7 @@ def _strip_existing_refutable_hypotheses(html: str) -> tuple:
     return cleaned, llm_narrative
 
 
-def _render_hypothesis_card(hypothesis: dict) -> str:
+def _render_hypothesis_card(h: dict) -> str:
     """Render one hypothesis dict as a hypothesis-card <div>."""
     if not isinstance(hypothesis, dict):
         return ""
@@ -5208,19 +5189,13 @@ def _enforce_section_completeness(
     return html
 
 
-def _repair_llm_html(html: str) -> str:
-    """Conservative HTML repair for LLM-generated markup.
+def _repair_llm_html(markup: str) -> str:
+    """Conservative HTML repair for LLM-generated body markup.
 
- Operates only on <table>/<tr>/<td>/<th> tags within the body of the
- document. Performs:
- 1. Tag balance: close any unclosed <table>/<tr>/<td>/<th>.
- 2. Nesting: move <th> out of <td> (rare but observed in 9.10 reports).
- 3. Attribute quoting: add quotes around unquoted attribute values.
- 4. Cleanup: drop stray <em>/<strong>/<span> leftovers that have no
- matching close tag.
- All operations are local - they never invent new content, only close
- what was opened.
- """
+ Closes unclosed <table>/<tr>/<td>/<th>, moves <th> out of <td>, quotes
+ unquoted attributes, drops stray <em>/<strong>/<span>. Never invents
+ new content.
+    """
     if not html:
         return html
     # Only operate on body content if present, to avoid corrupting <head>.

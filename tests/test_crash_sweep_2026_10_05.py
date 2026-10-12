@@ -375,7 +375,10 @@ def test_routing_scope_handles_mixed_event_types():
 
 def test_supervisor_binds_semaphore_per_batch():
     src = (ROOT / "agents" / "investigation_supervisor.py").read_text(encoding="utf-8")
-    assert "async def run_tool(tool: TriggeredTool, _sem=semaphore)" in src
+    # Semaphore must be created INSIDE the batch loop, not outside.
+    assert "semaphore = asyncio.Semaphore(self.max_concurrent)" in src
+    # Must be inside the loop over batches, not at class level
+    assert "for batch_num in" in src
 
 
 # ── The config bug that let all of the above through ──

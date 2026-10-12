@@ -98,7 +98,7 @@ def _row(label: str, value: Any, *, mono: bool = False) -> str:
     )
 
 
-def _kv_table(rows_html: str) -> str:
+def _kv_table(rows: str) -> str:
     return f'<table class="kv-table"><tbody>{rows_html}</tbody></table>'
 
 

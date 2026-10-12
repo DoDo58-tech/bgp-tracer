@@ -411,7 +411,7 @@ def purge_decoded_txt(
     }
 
 
-def _ensure_underlying_source(stamp: str) -> Optional[Path]:
+def _ensure_underlying_source(stamp_str: str) -> Optional[Path]:
     """Make sure at least one of (decoded txt, raw gz) exists for `stamp`.
 
     Search order:

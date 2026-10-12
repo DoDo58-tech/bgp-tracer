@@ -25,7 +25,7 @@ JSONL = ROOT / "results" / "eval" / "hcaf_vs_baselines_v36.jsonl"
 FIG_DIR = ROOT / "docs" / "paper" / "figs"
 
 
-def load_event(event_id: str) -> dict:
+def load_event(eid: str) -> dict:
     for line in JSONL.open():
         r = json.loads(line)
         if r["event_id"] == event_id:

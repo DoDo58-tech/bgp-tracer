@@ -12,7 +12,7 @@ from pathlib import Path
 from utils.logger import logger
 
 
-def load_json(path):
+def load_json(filepath):
     try:
         with open(path, 'r', encoding='utf-8') as f:
             return json.load(f)

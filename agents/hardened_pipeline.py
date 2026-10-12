@@ -41,7 +41,7 @@ _SECTION_NAMES = [
 
 # ── Splitter ──────────────────────────────────────────────────────────────
 
-def _split_llm_prose_blocks(html: str) -> Dict[str, str]:
+def _split_llm_prose_blocks(markup: str) -> Dict[str, str]:
     """Split LLM-authored HTML into per-section prose blocks.
 
     For each known section heading (in either "Foo" or "Foo &amp;" form), grab
@@ -224,7 +224,7 @@ def deterministic_postprocess(
 
 import re as _re  # local alias
 
-def _scrub_pathological_fragments(html: str) -> str:
+def _scrub_pathological_fragments(markup: str) -> str:
     """Remove any remaining known-bad fragments that escaped earlier stripping.
 
     This is a defense-in-depth pass. The deterministic renderers already
@@ -293,7 +293,7 @@ def _scrub_pathological_fragments(html: str) -> str:
     return html
 
 
-def assert_no_known_issues(html: str) -> Tuple[bool, List[str]]:
+def assert_no_known_issues(markup: str) -> Tuple[bool, List[str]]:
     """Return (passed, problems). The list of problems is empty when passed."""
     problems: List[str] = []
     # No TCA mechanism hallucination

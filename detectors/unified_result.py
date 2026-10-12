@@ -431,7 +431,7 @@ class DetectionResultConverter:
  """
     
     @staticmethod
-    def hijack_to_unified(hijack_result: dict) -> UnifiedDetectionResult:
+    def hijack_to_unified(payload: dict) -> UnifiedDetectionResult:
         """ hijack """
         anomalies = []
         
@@ -512,7 +512,7 @@ class DetectionResultConverter:
         )
 
     @staticmethod
-    def leak_to_unified(leak_result: dict) -> UnifiedDetectionResult:
+    def leak_to_unified(payload: dict) -> UnifiedDetectionResult:
         """ leak """
         anomalies = []
 
@@ -543,7 +543,7 @@ class DetectionResultConverter:
         )
 
     @staticmethod
-    def outage_to_unified(outage_result: dict) -> UnifiedDetectionResult:
+    def outage_to_unified(payload: dict) -> UnifiedDetectionResult:
         """ outage """
         anomalies = []
 
@@ -571,7 +571,7 @@ class DetectionResultConverter:
         )
 
     @staticmethod
-    def traffic_to_unified(traffic_result: dict) -> UnifiedDetectionResult:
+    def traffic_to_unified(payload: dict) -> UnifiedDetectionResult:
         """ traffic """
         anomalies = []
 

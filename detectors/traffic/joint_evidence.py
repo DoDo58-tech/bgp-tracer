@@ -237,7 +237,7 @@ def _card_falsification(
     }
 
 
-def _tier_from_score(avg_score: float) -> str:
+def _tier_from_score(score: float) -> str:
     """Map an average 0–1 score to a tier label."""
     if avg_score >= _TIER_THRESHOLDS[0]:
         return "C3"

@@ -814,7 +814,7 @@ class AutoProbeExecutor:
 
 
 # ----------  ----------
-def extract_as_numbers(text: str) -> List[str]:
+def extract_as_numbers(content: str) -> List[str]:
     """ "victim ASes: 20119, 34927, 207564" AS """
     import re
     matches = re.findall(r"\b(?:AS)?(\d{2,6})\b", text or "")
@@ -827,7 +827,7 @@ def extract_as_numbers(text: str) -> List[str]:
     return result
 
 
-def extract_prefixes(text: str) -> List[str]:
+def extract_prefixes(content: str) -> List[str]:
     """ ``"prefixes: 90.174.144.0/20, ..."`` . 
 
  Bug fix 2026-09-13 (BUG-R123, two improvements):
@@ -877,19 +877,19 @@ def extract_prefixes(text: str) -> List[str]:
     return out
 
 
-def extract_first_as(text: str) -> str:
-    """ AS """
-    nums = extract_as_numbers(text)
+def extract_first_as(content: str) -> str:
+    """First AS number found in `content`, or empty string."""
+    nums = extract_as_numbers(content)
     return nums[0] if nums else ""
 
 
-def format_findings_for_html(findings: List[AutoProbeFinding]) -> str:
-    """ HTML()"""
-    if not findings:
-        return "<p class='probe-empty'>（）</p>"
+def format_findings_for_html(items: List[AutoProbeFinding]) -> str:
+    """Render the auto-probe findings list as an HTML table."""
+    if not items:
+        return "<p class='probe-empty'>No probe findings.</p>"
 
     rows = []
-    for f in findings:
+    for f in items:
         status_icon = "✅" if f.success else "⚠️"
         rows.append(f"""
  <tr class="probe-row {'probe-ok' if f.success else 'probe-fail'}">

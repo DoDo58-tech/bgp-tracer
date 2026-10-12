@@ -32,7 +32,7 @@ def get_available_dates():
         return []
 
 
-def get_asorg_url(target_time):
+def get_asorg_url(at_time):
     target_date = int(target_time.strftime("%Y%m%d"))
     available_dates = get_available_dates()
     if not available_dates:
@@ -49,12 +49,12 @@ def get_asorg_url(target_time):
     logger.info(f"Selected ASORG archive date: {selected_key}")
     return target_url, selected_key
 
-def parse_asorg_file(txt_path):
+def parse_asorg_file(filepath):
     asn_to_org_id: dict[str, str] = {}
     asn_to_name: dict[str, str] = {}
     org_id_to_info: dict[str, dict] = {}
 
-    if not txt_path.exists():
+    if not filepath.exists():
         return {
             "asn_to_org_id": asn_to_org_id,
             "asn_to_name": asn_to_name,
@@ -63,7 +63,7 @@ def parse_asorg_file(txt_path):
 
     mode = None  # "aut" or "org"
     try:
-        with open(txt_path, "r", encoding="utf-8") as f:
+        with open(filepath, "r", encoding="utf-8") as f:
             for raw in f:
                 line = raw.strip()
                 if not line:
@@ -111,7 +111,7 @@ def parse_asorg_file(txt_path):
             "org_id_to_info": org_id_to_info,
         }
     except Exception as e:
-        logger.error(f"Failed to parse ASORG file {txt_path}: {e}")
+        logger.error(f"Failed to parse ASORG file {filepath}: {e}")
         return {
             "asn_to_org_id": asn_to_org_id,
             "asn_to_name": asn_to_name,

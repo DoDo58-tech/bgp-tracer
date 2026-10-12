@@ -61,7 +61,7 @@ def _merge_extra_body(caller_eb: dict | None) -> dict | None:
     merged = {**disable, **caller_eb}
     return merged
 
-def _extract_message_text(message) -> str:
+def _extract_message_text(msg) -> str:
     """Extract the visible assistant output from a chat completion message.
 
     Some vendors (GLM-5, Kimi thinking mode) place reasoning output in
@@ -77,7 +77,7 @@ def _extract_message_text(message) -> str:
     return ""
 
 
-def _extract_delta_text(delta) -> str:
+def _extract_delta_text(delta_obj) -> str:
     """Extract visible assistant output from a streamed choice delta.
 
     Always returns only the ``content`` field — the visible answer.
@@ -734,7 +734,7 @@ class OpenAICompatibleLLM(LLM):
             )
 
     @staticmethod
-    def _extract_json(text: str):
+    def _extract_json(content: str):
         """Extract first JSON object from text. Supports:
         1. ```json ... ``` markdown code blocks (most reliable)
         2. ``` ... ``` any fenced code block

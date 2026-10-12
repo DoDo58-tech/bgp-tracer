@@ -34,20 +34,20 @@ _REPAIR_COMMENT_OPEN = re.compile(r"(?<!<)(!--(?:[^-]|-(?!-))*?-->)")
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
-def _repair_missing_lt(html: str) -> str:
+def _repair_missing_lt(markup: str) -> str:
     """Restore ``<`` characters the LLM dropped before known HTML tags.
 
     Also restores ``<!-- ... -->`` HTML comment markers whose leading
     ``<`` was dropped (Qwen/GLM bug observed in production).
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
 
-    doctype_match = _DOCTYPE_RE.search(html)
-    doctype_masked = html
+    doctype_match = _DOCTYPE_RE.search(markup)
+    doctype_masked = markup
     if doctype_match:
         token = "\x00DOCTYPE\x00"
-        doctype_masked = html[:doctype_match.start()] + token + html[doctype_match.end():]
+        doctype_masked = markup[:doctype_match.start()] + token + markup[doctype_match.end():]
 
     comment_matches = list(_COMMENT_RE.finditer(doctype_masked))
     comment_map = []
@@ -76,7 +76,7 @@ def _repair_missing_lt(html: str) -> str:
     return repaired
 
 
-def validate_html_balance(html: str) -> "tuple[bool, list[str]]":
+def validate_html_balance(markup: str) -> "tuple[bool, list[str]]":
     """Return ``(ok, problems)`` for a candidate HTML body.
 
     ``ok`` is True when the document has no unclosed tags and no
@@ -86,7 +86,7 @@ def validate_html_balance(html: str) -> "tuple[bool, list[str]]":
     auto-closes unclosed ancestors on ``</body>``, which hides the very
     class of bug we want to detect.
     """
-    if not html:
+    if not markup:
         return False, ["empty html"]
     problems = []
     stack = []
@@ -127,7 +127,7 @@ def validate_html_balance(html: str) -> "tuple[bool, list[str]]":
     _STRIP_CODE_RE = re.compile(
         r"<code\b[^>]*>.*?</code\s*>", re.DOTALL | re.IGNORECASE,
     )
-    html_for_scan = _STRIP_BASE64_RE.sub("[traffic chart placeholder]", html)
+    html_for_scan = _STRIP_BASE64_RE.sub("[traffic chart placeholder]", markup)
     html_for_scan = _STRIP_RAW_TEXT_RE.sub("[raw-text-block]", html_for_scan)
     html_for_scan = _STRIP_TITLE_RE.sub("<title></title>", html_for_scan)
     html_for_scan = _STRIP_SVG_RE.sub("[svg-block]", html_for_scan)
@@ -174,17 +174,15 @@ def validate_html_balance(html: str) -> "tuple[bool, list[str]]":
     return (len(problems) == 0), problems
 
 
-def _auto_close_unbalanced_html(html: str) -> str:
+def _auto_close_unbalanced_html(markup: str) -> str:
     """Insert closing tags for any unclosed elements at document end.
 
     The LLM often leaves ``<li>`` / ``<ul>`` / ``<ol>`` / headings open
-    when it runs out of tokens.  Browsers tolerate this (the next
-    block-level element implicitly closes them) but the balance
-    validator sees it as unbalanced and used to trigger the
-    deterministic-fallback path.
+    when it runs out of tokens. Browsers tolerate this; the balance
+    validator does not, so close them before re-scanning.
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
     void_tags = {
         "area", "base", "br", "col", "embed", "hr", "img", "input",
         "link", "meta", "param", "source", "track", "wbr",
@@ -214,7 +212,7 @@ def _auto_close_unbalanced_html(html: str) -> str:
     _STRIP_CODE_RE = re.compile(
         r"<code\b[^>]*>.*?</code\s*>", re.DOTALL | re.IGNORECASE,
     )
-    html_for_scan = _STRIP_RAW_TEXT_RE.sub("[raw-text-block]", html)
+    html_for_scan = _STRIP_RAW_TEXT_RE.sub("[raw-text-block]", markup)
     html_for_scan = _STRIP_SVG_RE.sub("[svg-block]", html_for_scan)
     html_for_scan = _STRIP_PRE_RE.sub("[pre-block]", html_for_scan)
     html_for_scan = _STRIP_CODE_RE.sub("[code-block]", html_for_scan)
@@ -240,12 +238,12 @@ def _auto_close_unbalanced_html(html: str) -> str:
             continue
         closers.append(tag)
     if not closers:
-        return html
+        return markup
     closer_html = "".join(f"</{t}>" for t in reversed(closers))
     body_close_re = re.compile(r"</body\s*>", re.IGNORECASE)
-    m = body_close_re.search(html)
+    m = body_close_re.search(markup)
     if m:
-        return html[:m.start()] + closer_html + html[m.start():]
+        return markup[:m.start()] + closer_html + markup[m.start():]
     html_close_re = re.compile(r"</html\s*>", re.IGNORECASE)
     m = html_close_re.search(html)
     if m:

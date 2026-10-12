@@ -80,7 +80,7 @@ async def _fetch_bgpview_events(asn: str, days: int = 365) -> list[dict]:
     return []
 
 
-async def _fetch_ripestat_incidents(asn: str) -> list[dict]:
+async def _fetch_ripestat_incidents(asn_id: str) -> list[dict]:
     """Fetch RIPE RIS incident history for an AS."""
     params = {"resource": f"AS{asn}"}
     try:

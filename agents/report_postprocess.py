@@ -29,9 +29,9 @@ _CJK_CHAR = re.compile(r"[\u4e00-\u9fff]")
 _EMPTY_TD = re.compile(r"<td[^>]*>\s*(?:&nbsp;|\s)*\s*</td>", re.IGNORECASE)
 
 
-def _cell_has_nodata(cell_html: str) -> bool:
+def _cell_has_nodata(cell: str) -> bool:
     """True if every visible token in the cell is one of the (no data) variants."""
-    text = re.sub(r"<[^>]+>", "", cell_html).strip()
+    text = re.sub(r"<[^>]+>", "", cell).strip()
     if not text:
         return True
     for pat in _NO_DATA_PATTERNS:
@@ -39,17 +39,17 @@ def _cell_has_nodata(cell_html: str) -> bool:
     return not text
 
 
-def _strip_table_nodata_rows(table_html: str) -> str:
+def _strip_table_nodata_rows(table: str) -> str:
     """Drop <tr> rows where every cell is a (no data)/(N/A) placeholder,
     AND drop rows whose *first data* cell (typically Value column) is a
     no-data placeholder even if other columns have real values.
 
-    `table_html` is the *inner* HTML between <table ...> and </table>.
+    `table` is the *inner* HTML between <table ...> and </table>.
     """
     out_chunks = []
     pos = 0
-    for tr_match in re.finditer(r"<tr\b[^>]*>(.*?)</tr>", table_html, flags=re.DOTALL | re.IGNORECASE):
-        out_chunks.append(table_html[pos:tr_match.start()])
+    for tr_match in re.finditer(r"<tr\b[^>]*>(.*?)</tr>", table, flags=re.DOTALL | re.IGNORECASE):
+        out_chunks.append(table[pos:tr_match.start()])
         pos = tr_match.end()
         tr_inner = tr_match.group(1)
         if re.search(r"<th\b", tr_inner, flags=re.IGNORECASE):
@@ -77,7 +77,7 @@ def _strip_table_nodata_rows(table_html: str) -> str:
 
         new_tr = re.sub(r"<td\b([^>]*)>(.*?)</td>", _sub_one, tr_match.group(0), flags=re.DOTALL | re.IGNORECASE)
         out_chunks.append(new_tr)
-    out_chunks.append(table_html[pos:])
+    out_chunks.append(table[pos:])
     return "".join(out_chunks)
 
 
@@ -111,22 +111,22 @@ def _substitute_field_references(
             if ek not in payload_root and ev is not None:
                 payload_root[ek] = ev
 
-    def _tokenise(path: str):
+    def _tokenise(filepath: str):
         tokens: list = []
         buf = ""
         i = 0
-        while i < len(path):
-            ch = path[i]
+        while i < len(filepath):
+            ch = filepath[i]
             if ch == ".":
                 if buf:
                     tokens.append(buf); buf = ""
             elif ch == "[":
                 if buf:
                     tokens.append(buf); buf = ""
-                j = path.find("]", i)
+                j = filepath.find("]", i)
                 if j < 0:
                     return None
-                idx_str = path[i + 1:j].strip()
+                idx_str = filepath[i + 1:j].strip()
                 if not idx_str.isdigit():
                     return None
                 tokens.append(int(idx_str))
@@ -177,8 +177,8 @@ def _substitute_field_references(
             return f"{{{preview}}} ({n} keys)"
         return str(value)
 
-    def _resolve_path(path: str):
-        tokens = _tokenise(path)
+    def _resolve_path(filepath: str):
+        tokens = _tokenise(filepath)
         if not tokens:
             return None
 

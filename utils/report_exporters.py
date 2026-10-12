@@ -409,7 +409,7 @@ def _assess_as_severity(result: Dict[str, Any]) -> str:
         return "unknown"
 
 
-def _generate_as_section_html(asn, result: Dict[str, Any], template: str) -> str:
+def _generate_as_section_html(asn_id, result: Dict[str, Any], template: str) -> str:
     """Generate HTML section for individual AS in batch report."""
     try:
         routing_anomalies = len(result.get("routing_anomalies", []))

@@ -91,7 +91,7 @@ def preview_name(asn: str, start_time: str = "", end_time: str = "") -> str:
     return f"AS{asn_part}_{start_part}.html"
 
 
-def window_from_artifact_name(stem: str) -> tuple:
+def window_from_artifact_name(artifact_stem: str) -> tuple:
     """Recover ``(start, end)`` from an artifact filename.
 
     Run artifacts are named ``traffic_outage_analysis_<asn>_<window>.json``
@@ -401,7 +401,7 @@ def normalize_routing(routing_result: Any) -> dict:
     }
 
 
-def hijack_rows(routing_norm: dict) -> list:
+def hijack_rows(routing: dict) -> list:
     """Per-event hijack rows with only fields the detector actually set."""
     rows = []
     for ev in routing_norm.get("origin_hijacked", []) + routing_norm.get("origin_hijacking", []):
@@ -425,7 +425,7 @@ def hijack_rows(routing_norm: dict) -> list:
     return rows
 
 
-def leak_rows(routing_norm: dict) -> list:
+def leak_rows(routing: dict) -> list:
     """Route-leak rows.
 
     A leak event frequently lacks a dedicated ``leaked_by`` field, in which
@@ -458,7 +458,7 @@ def leak_rows(routing_norm: dict) -> list:
     return rows
 
 
-def traffic_anomaly_rows(traffic_norm: dict) -> list:
+def traffic_anomaly_rows(traffic: dict) -> list:
     """Traffic anomaly rows using only signals the detector emitted."""
     rows = []
     for a in (traffic_norm.get("anomalies") or [])[:50]:
@@ -598,7 +598,7 @@ def _best_sibling_for_window(recorded: Path, asn: str, window_hint: str) -> Opti
     return None
 
 
-def _normalise_window_hint(value: str) -> str:
+def _normalise_window_hint(hint: str) -> str:
     """Reduce a timestamp to the ``YYYY-MM-DD HH:MM`` prefix used in filenames.
 
     Plot files are named ``AS<asn>_<start>_to_<end>.png`` with ``:`` replaced
@@ -900,7 +900,7 @@ def _traffic_prose(traffic: dict, routing_norm: dict) -> str:
     return " ".join(parts)
 
 
-def _routing_prose(routing_norm: dict) -> str:
+def _routing_prose(routing: dict) -> str:
     hijacked = len(routing_norm.get("origin_hijacked", []))
     hijacking = len(routing_norm.get("origin_hijacking", []))
     leaks = len(routing_norm.get("route_leaks", []))
@@ -1024,7 +1024,7 @@ _REFUTE_HINTS = {
 }
 
 
-def _counterfactuals(cause: dict) -> list:
+def _counterfactuals(cause_data: dict) -> list:
     key = cause.get("cause", "")
     table = {
         "origin_hijack_victim": (
@@ -1081,7 +1081,7 @@ def _gaps(routing_norm: dict, traffic: dict, plot_missing: bool) -> list:
     return gaps
 
 
-def _routing_counts(routing_norm: dict) -> list:
+def _routing_counts(routing: dict) -> list:
     hijacked = len(routing_norm.get("origin_hijacked", []))
     hijacking = len(routing_norm.get("origin_hijacking", []))
     leaks = len(routing_norm.get("route_leaks", []))
@@ -1122,7 +1122,7 @@ def _env() -> Environment:
     return _ENV
 
 
-def _cause(cause: dict) -> dict:
+def _cause(cause_data: dict) -> dict:
     key = cause.get("cause", "no_clear_anomaly")
     return {
         "cause": key,
@@ -1450,7 +1450,7 @@ def render_report(
     return html
 
 
-def _chain_from_llm(llm_chain: dict) -> list:
+def _chain_from_llm(chain: dict) -> list:
     """Map the reasoning agent's evidence chain onto the template's steps."""
     steps = []
     for stage in ("observe", "infer", "link", "conclude", "cite"):

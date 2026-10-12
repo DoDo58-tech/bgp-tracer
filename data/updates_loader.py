@@ -22,15 +22,15 @@ SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 BGPDUMP_BIN = "/usr/bin/bgpdump"
 
 
-def is_valid_gz_file(file_path: Path, min_size = GZ_MIN_SIZE):
-    if not isinstance(file_path, Path):
-        file_path = Path(file_path)
-    if not file_path.exists():
+def is_valid_gz_file(filepath: Path, min_size = GZ_MIN_SIZE):
+    if not isinstance(filepath, Path):
+        filepath = Path(filepath)
+    if not filepath.exists():
         return False
-    if file_path.stat().st_size < min_size:
+    if filepath.stat().st_size < min_size:
         return False
     try:
-        with gzip.open(file_path, 'rb') as f:
+        with gzip.open(filepath, 'rb') as f:
             f.read(1)
         return True
     except Exception:
@@ -87,8 +87,8 @@ def decode_gz_to_txt(gz_path: Path, txt_path: Path):
         return False
 
 
-def pull_list(ym):
-    target_url = urljoin(RIPE_RIS_URL, f"{ym}/")
+def pull_list(year_month):
+    target_url = urljoin(RIPE_RIS_URL, f"{year_month}/")
     res = subprocess.check_output(["curl", "-s", target_url]).decode()
     archive_list = re.findall(
         r'\<a href="(updates\.(\d{4})(\d{2})(\d{2})\.(\d{4})\.gz)"\>', res
@@ -96,20 +96,20 @@ def pull_list(ym):
     return target_url, archive_list
 
 
-def get_archive_list(start_time, end_time):
-    start_ym = start_time.strftime("%Y.%m")
-    end_ym = end_time.strftime("%Y.%m")
+def get_archive_list(start, end):
+    start_ym = start.strftime("%Y.%m")
+    end_ym = end.strftime("%Y.%m")
     target_url1, archive_list1 = pull_list(start_ym)
     target_url2, archive_list2 = pull_list(end_ym)
-    
+
     if not archive_list1 or not archive_list2:
-        logger.error(f"Unable to get data list: {start_time} {end_time}")
+        logger.error(f"Unable to get data list: {start} {end}")
         return []
-    
+
     time_list1 = ["".join(i[1:]) for i in archive_list1]
     time_list2 = ["".join(i[1:]) for i in archive_list2]
-    t1 = start_time.strftime("%Y%m%d%H%M")
-    t2 = end_time.strftime("%Y%m%d%H%M")
+    t1 = start.strftime("%Y%m%d%H%M")
+    t2 = end.strftime("%Y%m%d%H%M")
     idx1 = max(0, np.searchsorted(time_list1, t1, side="left") - 1)
     idx2 = np.searchsorted(time_list2, t2, side="right")
     
@@ -118,10 +118,10 @@ def get_archive_list(start_time, end_time):
         data = [urljoin(target_url1, i[0]) for i in archive_list1[idx1:idx2]]
     else:
         data = [urljoin(target_url1, i[0]) for i in archive_list1[idx1:]]
-        current_month = datetime(start_time.year, start_time.month, 1)
+        current_month = datetime(start.year, start.month, 1)
         current_month += relativedelta(months=1)
-        upper_bound = datetime(end_time.year, end_time.month, 1)
-        
+        upper_bound = datetime(end.year, end.month, 1)
+
         while current_month < upper_bound:
             cur_ym = current_month.strftime("%Y.%m")
             cur_target_url, cur_archive_list = pull_list(cur_ym)
@@ -216,13 +216,13 @@ def _disk_busy(threshold = 80, sample_seconds = 0.2):
 #  (500MB)，
 LARGE_FILE_THRESHOLD = 500 * 1024 * 1024  # 500MB
 
-def read_updates_file(file_path, columns):
+def read_updates_file(filepath, columns):
     """
     Read a BGP update file into a Polars DataFrame.
 
     Uses pl.read_csv() with explicit column count to avoid predicate-pushdown
     column pruning that breaks files with fewer columns than expected.
-    
+
     For large files (>500MB), uses chunked reading to prevent OOM.
     Falls back to manual line parsing if read fails.
     """
@@ -441,10 +441,10 @@ def _to_utc_naive(dt):
     return dt
 
 
-def _bucket_start_from_path(path) -> datetime:
+def _bucket_start_from_path(filepath) -> datetime:
     """Parse updates.YYYYMMDD.HHMM.{txt,gz} -> datetime at bucket start (UTC)."""
     from datetime import datetime as _dt
-    name = Path(path).name
+    name = Path(filepath).name
     stem = name.rsplit(".", 1)[0]              # updates.YYYYMMDD.HHMM
     parts = stem.split(".")
     return _dt.strptime(f"{parts[1]}{parts[2]}", "%Y%m%d%H%M")

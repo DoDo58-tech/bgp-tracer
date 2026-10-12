@@ -133,7 +133,7 @@ async def _check_bgpview_threat_feeds() -> dict[str, Any]:
     return {}
 
 
-async def _query_cymru_bogon(asn_or_prefix: str) -> dict[str, Any]:
+async def _query_cymru_bogon(asn_or_prefix_str: str) -> dict[str, Any]:
     """
     Query Team Cymru WHOIS for bogon/AS info.
     Command: whois -h whois.cymru.com " -v <AS_or_IP>"

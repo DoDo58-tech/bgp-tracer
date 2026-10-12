@@ -43,7 +43,7 @@ def _ripe_auth_headers() -> dict:
     return {"Accept": "application/json"}
 
 
-def _ripe_url(path: str) -> str:
+def _ripe_url(path_str: str) -> str:
     """
     Build RIPE Whois DB URL.
 
@@ -182,7 +182,7 @@ async def _as_topology(tool_input: dict, session) -> dict:
 
 # ── RIPEstat API helpers ──────────────────────────────────────────────────────
 
-async def _fetch_ripe_atlas_whois(asn: str) -> dict:
+async def _fetch_ripe_atlas_whois(asn_id: str) -> dict:
     """
     Fetch AS WHOIS data from RIPE Whois Database REST API.
 
@@ -258,7 +258,7 @@ async def _fetch_ripe_atlas_whois(asn: str) -> dict:
     return await _fetch_bgpview_whois(asn)
 
 
-async def _fetch_bgpview_whois(asn: str) -> dict:
+async def _fetch_bgpview_whois(asn_id: str) -> dict:
     """Fallback: BGPView WHOIS lookup."""
     url = f"https://api.bgpview.io/asn/{asn}/info"
     try:
@@ -279,7 +279,7 @@ async def _fetch_bgpview_whois(asn: str) -> dict:
     return {}
 
 
-async def _fetch_ripe_atlas_neighbours(asn: str) -> dict:
+async def _fetch_ripe_atlas_neighbours(asn_id: str) -> dict:
     """
     Fetch AS neighbours (providers/customers/peers) and announced prefixes.
 
@@ -310,7 +310,7 @@ async def _fetch_ripe_atlas_neighbours(asn: str) -> dict:
     return {"data": {"providers": [], "customers": [], "peers": [], "_announced_prefixes": []}}
 
 
-async def _fetch_bgpview_neighbours(asn: str) -> dict:
+async def _fetch_bgpview_neighbours(asn_id: str) -> dict:
     """Fallback: BGPView neighbour lookup."""
     url = f"https://api.bgpview.io/asn/{asn}/contacts"
     neighbours = {"providers": [], "customers": [], "peers": []}
@@ -374,7 +374,7 @@ def _infer_relationships(asn: str, paths: List[list]) -> dict:
     }
 
 
-async def _fetch_peeringdb(asn: str) -> dict:
+async def _fetch_peeringdb(asn_id: str) -> dict:
     """Fetch PeeringDB info for an ASN (no auth needed)."""
     # PeeringDB has a free JSON API
     url = f"https://www.peeringdb.com/api/net?asn={asn}"
