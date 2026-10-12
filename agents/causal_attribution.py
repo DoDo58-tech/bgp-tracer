@@ -200,6 +200,8 @@ def msbd_fallback(routing_series, traffic_series):
 
 
 def reconstruct_transmission_path(routing, traffic, topology, target_asn):
+    routing_events = routing
+    traffic_events = traffic
     if not routing_events or not traffic_events:
         return ctpr_empty()
     sources = ctpr_identify_source(routing_events)

@@ -877,15 +877,15 @@ def strip_path_based_traffic_images(markup: str) -> str:
     Only path-based refs are removed; embedded base64 data URLs are kept
     (and protected by the `data:image/png;base64,` guard below).
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
 
     # Strip <img src="/abs/path/...png" ... /> (with or without quotes, with
     pattern = re.compile(
         r'<img\b[^>]*?\bsrc\s*=\s*(?:"[^"]*traffic_plots[^"]*"|\'[^\']*traffic_plots[^\']*\'|[^\s>]+traffic_plots[^\s>]*)[^>]*?>',
         re.IGNORECASE,
     )
-    cleaned = pattern.sub("", html)
+    cleaned = pattern.sub("", markup)
 
     # Tidy any orphan whitespace left where the <img> used to be.
     cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
@@ -1906,9 +1906,9 @@ def _strip_all_tables(markup: str) -> str:
  report. We keep the surrounding text intact - only the table tags
  and their contents are removed.
  """
-    if not html or "<table" not in html.lower():
-        return html
-    return _HTML_TABLE_FULL.sub("", html)
+    if not markup or "<table" not in markup.lower():
+        return markup
+    return _HTML_TABLE_FULL.sub("", markup)
 
 
 def _strip_orphan_td_tr_th(markup: str) -> str:
@@ -1925,13 +1925,13 @@ def _strip_orphan_td_tr_th(markup: str) -> str:
     regions that have no children (true orphans), and (b) ``<td>`` /
     ``<th>`` / ``<tr>`` chunks that float outside any table.
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
     orphan_table = re.compile(
         r"<table\b[^>]*>\s*</table\s*>",
         re.IGNORECASE,
     )
-    cleaned = orphan_table.sub("", html)
+    cleaned = orphan_table.sub("", markup)
     empty_table = re.compile(
         r"<table\b[^>]*>\s*<thead\s*>\s*</thead\s*>\s*<tbody\s*>\s*</tbody\s*>\s*</table\s*>",
         re.IGNORECASE,
@@ -1969,28 +1969,28 @@ def _strip_llm_tca(markup: str) -> str:
 
     The Python-rendered TCA section is injected deterministically afterwards.
     """
-    if not html:
-        return html
-    if not _TCA_HEADING_RE.search(html):
-        return html
+    if not markup:
+        return markup
+    if not _TCA_HEADING_RE.search(markup):
+        return markup
 
     # Walk through the document; whenever we see the TCA heading,
     # consume all subsequent siblings until the next <h2>/<h3>/</body>.
     parts = []
     last = 0
-    for m in _TCA_HEADING_RE.finditer(html):
-        parts.append(html[last:m.start()])
+    for m in _TCA_HEADING_RE.finditer(markup):
+        parts.append(markup[last:m.start()])
         # Find the next <h1>/<h2>/<h3> heading (any level) or </body>
         end_search = re.search(
             r'<h[1-3][^>]*>|</body\s*>',
-            html[m.end():],
+            markup[m.end():],
             re.IGNORECASE,
         )
         if end_search:
             last = m.end() + end_search.start()
         else:
-            last = len(html)
-    parts.append(html[last:])
+            last = len(markup)
+    parts.append(markup[last:])
     return "".join(parts)
 
 
@@ -2012,22 +2012,22 @@ def _strip_llm_operational_recommendations(markup: str) -> str:
     Auto-Probe Findings covers what we need; explicit recommendations are
     user-requested to be removed entirely.
     """
-    if not html or not _OPERATIONAL_REC_HEADING_RE.search(html):
-        return html
+    if not markup or not _OPERATIONAL_REC_HEADING_RE.search(markup):
+        return markup
     parts = []
     last = 0
-    for m in _OPERATIONAL_REC_HEADING_RE.finditer(html):
-        parts.append(html[last:m.start()])
+    for m in _OPERATIONAL_REC_HEADING_RE.finditer(markup):
+        parts.append(markup[last:m.start()])
         end_search = re.search(
             r'<h[1-3][^>]*>|</body\s*>',
-            html[m.end():],
+            markup[m.end():],
             re.IGNORECASE,
         )
         if end_search:
             last = m.end() + end_search.start()
         else:
-            last = len(html)
-    parts.append(html[last:])
+            last = len(markup)
+    parts.append(markup[last:])
     return "".join(parts)
 
 
@@ -2045,22 +2045,22 @@ def _strip_llm_auto_probe_findings(markup: str) -> str:
     Python deterministically renders the probe table; the LLM's prose summary
     is left intact in the parent Executive Summary / Findings section.
     """
-    if not html or not _LLM_AUTO_PROBE_HEADING_RE.search(html):
-        return html
+    if not markup or not _LLM_AUTO_PROBE_HEADING_RE.search(markup):
+        return markup
     parts = []
     last = 0
-    for m in _LLM_AUTO_PROBE_HEADING_RE.finditer(html):
-        parts.append(html[last:m.start()])
+    for m in _LLM_AUTO_PROBE_HEADING_RE.finditer(markup):
+        parts.append(markup[last:m.start()])
         end_search = re.search(
             r'<h[1-3][^>]*>|</body\s*>',
-            html[m.end():],
+            markup[m.end():],
             re.IGNORECASE,
         )
         if end_search:
             last = m.end() + end_search.start()
         else:
-            last = len(html)
-    parts.append(html[last:])
+            last = len(markup)
+    parts.append(markup[last:])
     return "".join(parts)
 
 
@@ -2104,13 +2104,13 @@ def _strip_llm_executive_summary(markup: str) -> str:
     injected right after <h1> later in the pipeline. The LLM prose is
     discarded so the reviewer sees exactly one source of truth.
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
     pattern = re.compile(
         r'<h2[^>]*>\s*Executive Summary\s*</h2>(.*?)(?=<h2\b|</body\s*>)',
         re.IGNORECASE | re.DOTALL,
     )
-    return pattern.sub("", html)
+    return pattern.sub("", markup)
 
 
 def _strip_llm_evidence_chain(markup: str) -> str:
@@ -2121,13 +2121,13 @@ def _strip_llm_evidence_chain(markup: str) -> str:
     the model can't synthesize the OBSERVE/INFER/LINK/CONCLUDE/CITE
     scaffolding on demand.
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
     pattern = re.compile(
         r'<h2[^>]*>\s*Evidence Chain\s*/\s*Reasoning\s*</h2>(.*?)(?=<h2\b|</body\s*>)',
         re.IGNORECASE | re.DOTALL,
     )
-    return pattern.sub("", html)
+    return pattern.sub("", markup)
 
 
 def _strip_llm_refutable_hypotheses(markup: str) -> str:
@@ -2146,8 +2146,8 @@ def _strip_llm_refutable_hypotheses(markup: str) -> str:
  starts with "Hypothes" (plus a few known aliases), and also handle
  headingless runs of `.hypothesis-card` divs.
  """
-    if not html:
-        return html
+    if not markup:
+        return markup
     # 1) Any heading whose text starts with "Hypothes" or is one of the
     #    known aliases, through to the next TOP-LEVEL (h1/h2) heading or
     #    </body>. h3/h4 are treated as body content, not terminators, so
@@ -2159,15 +2159,15 @@ def _strip_llm_refutable_hypotheses(markup: str) -> str:
         r'</h[1-4]>(?:(?!<h[12]\b|</body\s*>).)*',
         re.IGNORECASE | re.DOTALL,
     )
-    html = pattern.sub("", html)
+    markup = pattern.sub("", markup)
     # 2) Headingless leftover cards — the LLM sometimes drops the heading
     #    and emits only a run of hypothesis-card divs.
     orphan_cards = re.compile(
         r'(?:<div[^>]*class=["\'][^"\']*hypothesis-card[^"\']*["\'][^>]*>.*?</div>\s*)+',
         re.IGNORECASE | re.DOTALL,
     )
-    html = orphan_cards.sub("", html)
-    return html
+    markup = orphan_cards.sub("", markup)
+    return markup
 
 
 def _strip_llm_counterfactual(markup: str) -> str:
@@ -2178,13 +2178,13 @@ def _strip_llm_counterfactual(markup: str) -> str:
     'if all attacker alerts had ROA coverage, conclusion flips'). LLM
     counterfactuals were generic and didn't tie to the actual cause.
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
     pattern = re.compile(
         r'<h2[^>]*>\s*Counterfactual Analysis\s*</h2>(.*?)(?=<h2\b|</body\s*>)',
         re.IGNORECASE | re.DOTALL,
     )
-    return pattern.sub("", html)
+    return pattern.sub("", markup)
 
 
 # Round-24: strip LLM-emitted "Origin Hijacking Events" and "Route Leak
@@ -2193,13 +2193,13 @@ def _strip_llm_counterfactual(markup: str) -> str:
 # for hijacks; per-event list only when leaks are rare). Stripping
 # prevents the reviewer from seeing two copies of the same events.
 def _strip_llm_origin_hijack_events(markup: str) -> str:
-    if not html:
-        return html
+    if not markup:
+        return markup
     pattern = re.compile(
         r'<h[1-3][^>]*>\s*Origin\s+Hijack(?:ing)?\s+Events?\s*</h[1-3]>(.*?)(?=<h[1-3]\b|</body\s*>)',
         re.IGNORECASE | re.DOTALL,
     )
-    return pattern.sub("", html)
+    return pattern.sub("", markup)
 
 
 def _strip_llm_diagnosis(markup: str) -> str:
@@ -2213,23 +2213,23 @@ def _strip_llm_diagnosis(markup: str) -> str:
     as origin hijack). Strip to prevent the reviewer from seeing two
     conflicting verdicts.
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
     pattern = re.compile(
         r'<h[1-3][^>]*>\s*Diagnosis\s*</h[1-3]>(.*?)(?=<h[1-3]\b|</body\s*>)',
         re.IGNORECASE | re.DOTALL,
     )
-    return pattern.sub("", html)
+    return pattern.sub("", markup)
 
 
 def _strip_llm_route_leak_events(markup: str) -> str:
-    if not html:
-        return html
+    if not markup:
+        return markup
     pattern = re.compile(
         r'<h[1-3][^>]*>\s*Route\s+Leak\s+Events?\s*</h[1-3]>(.*?)(?=<h[1-3]\b|</body\s*>)',
         re.IGNORECASE | re.DOTALL,
     )
-    return pattern.sub("", html)
+    return pattern.sub("", markup)
 
 
 # Round-24: keep a single, deterministic "Gaps & Limitations" block at the
@@ -2237,13 +2237,13 @@ def _strip_llm_route_leak_events(markup: str) -> str:
 # as plain prose, once inside an <aside>) which doubled the noise. Strip
 # all duplicates before injecting the deterministic one.
 def _strip_llm_gaps(markup: str) -> str:
-    if not html:
-        return html
+    if not markup:
+        return markup
     pattern = re.compile(
         r'<h[1-3][^>]*>\s*Gaps\s*&\s*(?:amp;)?\s*Limitations?\s*</h[1-3]>(.*?)(?=<h[1-3]\b|</body\s*>)',
         re.IGNORECASE | re.DOTALL,
     )
-    return pattern.sub("", html)
+    return pattern.sub("", markup)
 
 
 def _render_routing_alerts_aggregate(routing_norm: dict, top_n: int = 8) -> str:
@@ -4711,17 +4711,17 @@ def _reorder_body_sections(markup: str) -> str:
     are appended at the end in their original order. The <h1> header,
     any pre-header <p>, and the body wrapper itself are preserved.
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
     # Match the FIRST <body> open and FIRST </body> close, even if
     # subsequent injected sections accidentally strayed outside the
     # body block. Use a non-greedy capture so injected content that
     # landed before </body> still gets reordered; content after </body>
     # is preserved as-is (it's usually diagnostic / leftover HTML).
     body_re = re.compile(r"(<body\b[^>]*>)(.*?)(</body\s*>)", re.DOTALL | re.IGNORECASE)
-    m = body_re.search(html)
+    m = body_re.search(markup)
     if not m:
-        return html
+        return markup
     body_open, body_inner, body_close = m.group(1), m.group(2), m.group(3)
 
     # Split body_inner into pre-h2 preamble + list of (heading, content)
@@ -4779,7 +4779,7 @@ def _reorder_body_sections(markup: str) -> str:
         new_body_inner_parts.append(chunk)
 
     new_body_inner = "".join(new_body_inner_parts)
-    return html[:m.start()] + body_open + new_body_inner + body_close + html[m.end():]
+    return markup[:m.start()] + body_open + new_body_inner + body_close + markup[m.end():]
 
 
 # ── Generic HTML repair for LLM-generated tables ────────────────────────────────
@@ -4808,19 +4808,19 @@ def _auto_close_blocks_in_html(markup: str) -> str:
  This function:
  1. Scans the document with the same tag regex as the validator.
  2. Tracks open tags (skipping void and structural tags).
- 3. If the document does NOT end with ``</html>``, appends closing
- tags in LIFO order, then ``</body></html>``.
- 4. If the document DOES end with ``</html>`` but has unclosed
+ 3. If the document does NOT end with ``</markup>``, appends closing
+ tags in LIFO order, then ``</body></markup>``.
+ 4. If the document DOES end with ``</markup>`` but has unclosed
  non-structural tags, inserts closing tags before ``</body>``.
  """
-    if not html:
-        return html
+    if not markup:
+        return markup
 
     void_tags = {
         "area", "base", "br", "col", "embed", "hr", "img", "input",
         "link", "meta", "param", "source", "track", "wbr",
     }
-    _STRUCTURAL = {"html", "body", "head"}
+    _STRUCTURAL = {"markup", "body", "head"}
 
     tag_re = re.compile(
         r"<!--.*?-->|<!DOCTYPE[^>]*>|"
@@ -4845,7 +4845,7 @@ def _auto_close_blocks_in_html(markup: str) -> str:
         r"<code\b[^>]*>.*?</code\s*>",
         re.DOTALL | re.IGNORECASE,
     )
-    html_for_scan = _STRIP_RAW_TEXT_RE.sub("[raw-text-block]", html)
+    html_for_scan = _STRIP_RAW_TEXT_RE.sub("[raw-text-block]", markup)
     html_for_scan = _STRIP_SVG_RE.sub("[svg-block]", html_for_scan)
     html_for_scan = _STRIP_PRE_RE.sub("[pre-block]", html_for_scan)
     html_for_scan = _STRIP_CODE_RE.sub("[code-block]", html_for_scan)
@@ -4875,18 +4875,18 @@ def _auto_close_blocks_in_html(markup: str) -> str:
             stack.append((tag, m.start()))
 
     if not stack:
-        return html  # already balanced
+        return markup  # already balanced
 
     # Build closing tags for the remaining open elements (LIFO).
     closers = "".join(f"</{tag}>" for tag, _ in reversed(stack))
 
     # Decide insertion point. Browsers tolerate extra closers anywhere,
-    body_close = re.search(r"</body\s*>", html, re.IGNORECASE)
+    body_close = re.search(r"</body\s*>", markup, re.IGNORECASE)
     if body_close:
         insert_at = body_close.start()
-        return html[:insert_at] + closers + html[insert_at:]
+        return markup[:insert_at] + closers + markup[insert_at:]
     else:
-        return html.rstrip() + closers + "\n</body></html>"
+        return markup.rstrip() + closers + "\n</body></markup>"
 
 
 # ── Section completeness enforcement ────────────────────────────────────────
@@ -4903,7 +4903,7 @@ _MIN_HYPOTHESIS_CARDS = 3  # prompt asks 2-4; enforce ≥3 deterministically
 
 
 def _count_hypothesis_cards(markup: str) -> int:
-    return len(re.findall(r'<div\s+class=["\']hypothesis-card["\']', html, re.IGNORECASE))
+    return len(re.findall(r'<div\s+class=["\']hypothesis-card["\']', markup, re.IGNORECASE))
 
 
 def _strip_existing_refutable_hypotheses(markup: str) -> tuple:
@@ -4916,25 +4916,25 @@ def _strip_existing_refutable_hypotheses(markup: str) -> tuple:
         r'<h2[^>]*>\s*Refutable Hypotheses\s*</h2>(.*?)(?=<h2\b|</body\s*>)',
         re.IGNORECASE | re.DOTALL,
     )
-    match = pattern.search(html)
+    match = pattern.search(markup)
     if not match:
-        return html, None
+        return markup, None
     # Capture LLM's narrative so we can append it BEFORE our cards for
     # backward-compatibility (a reviewer sees prose + 4 cards).
     llm_narrative = match.group(1).strip()
-    cleaned = html[:match.start()] + html[match.end():]
+    cleaned = markup[:match.start()] + markup[match.end():]
     return cleaned, llm_narrative
 
 
 def _render_hypothesis_card(h: dict) -> str:
     """Render one hypothesis dict as a hypothesis-card <div>."""
-    if not isinstance(hypothesis, dict):
+    if not isinstance(h, dict):
         return ""
-    rank = str(hypothesis.get("rank") or hypothesis.get("id") or "?").strip()
-    causal_type = str(hypothesis.get("causal_type") or "unknown").strip()
-    confidence = hypothesis.get("confidence_base")
+    rank = str(h.get("rank") or h.get("id") or "?").strip()
+    causal_type = str(h.get("causal_type") or "unknown").strip()
+    confidence = h.get("confidence_base")
     confidence_str = f"{confidence:.2f}" if isinstance(confidence, (int, float)) else "n/a"
-    statement = str(hypothesis.get("statement") or "").strip()
+    statement = str(h.get("statement") or "").strip()
     if not statement:
         return ""
     return (
@@ -5195,13 +5195,13 @@ def _repair_llm_html(markup: str) -> str:
  unquoted attributes, drops stray <em>/<strong>/<span>. Never invents
  new content.
     """
-    if not html:
-        return html
+    if not markup:
+        return markup
     # Only operate on body content if present, to avoid corrupting <head>.
     body_re = re.compile(r"(<body\b[^>]*>)(.*)(</body\s*>)", re.DOTALL | re.IGNORECASE)
-    m = body_re.search(html)
+    m = body_re.search(markup)
     if not m:
-        return html
+        return markup
     head_open, body, body_close = m.group(1), m.group(2), m.group(3)
 
     # 1) Quote unquoted attributes inside <td>/<th>/<tr>/<table>
@@ -5284,7 +5284,7 @@ def _repair_llm_html(markup: str) -> str:
 
     fixed_body = "".join(out)
 
-    return html[:m.start()] + head_open + fixed_body + body_close + html[m.end():]
+    return markup[:m.start()] + head_open + fixed_body + body_close + markup[m.end():]
 
 
 # Strip CJK from any legacy data values that survived the ASCII migration.
