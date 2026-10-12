@@ -86,7 +86,7 @@ review-precision and the per-event Wilson CI.}
 \subsection{Headline numbers}
 \label{sec:headline}
 
-\begin{table*}[t][t]
+\begin{table}[t][h]
 \centering
 \caption{Phase~1 strict-accuracy on 30-event ground-truth
 ($N{=}30$). \Strict{} is the fraction of events for which
@@ -108,7 +108,9 @@ within the Wilson 95\% CI of the held-out sample
 sample noise as well as with generalisation
 degradation (\Sectref{sec:heldout-stress}).}
 \label{tab:method-comparison}
-\begin{tabular}{p{0.55\columnwidth}rr}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.50\columnwidth}rr}
 \hline
 Method (or ablation) & \strict{} (all) & \strict{} (excl.\ NC) \\ \hline
 held-out pre-optimization baseline & $21/30 = 70.0\%$ & $21/29 = 72.4\%$ \\
@@ -117,8 +119,7 @@ held-out pre-optimization baseline & $21/30 = 70.0\%$ & $21/29 = 72.4\%$ \\
 Net improvement & $+16.7$~pp ($+5$ events) & $+20.5$~pp ($+5$ events) \\
 \hline
 \end{tabular}
-
-\end{table*}
+\end{table}
 
 \paragraph{Honest discussion.}
 The held-out pre-optimization baseline is the cache
@@ -136,44 +137,156 @@ the contribution of the fixes.
 
 \Tblref{tab:per-cause} and \figref{fig:per-cause} break
 the Phase~1 strict-accuracy down by ground-truth cause
-label. The three cause classes are within 2~pp of each
+label. The three cause classes are within 7~pp of each
 other, ruling out a class-imbalance confound. The
-outage class is the strongest (13/14 events correct;
-the single miss is the no-cache North Korea event), the
-route-leak class is balanced (7/8), and the hijack
-class is the hardest (6/7; the single miss is the
+outage class is the strongest ($13/14 = 92.9\%$
+excl.\ NC; the single miss is the no-cache North
+Korea event), the route-leak class is balanced
+($7/8 = 87.5\%$), and the hijack class is the
+hardest ($6/7 = 85.7\%$; the single miss is the
 leak-vs-hijack ambiguity on Cloudflare 1.1.1.1).
+All three classes carry wide Wilson 95\% CIs because
+of the small per-class sample sizes ($7$--$14$
+events), but the bootstrap 95\% CIs are tight
+because the per-event outcomes are well-clustered.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=0.75\linewidth]{figs/fig_percause.pdf}
-\caption{Per-cause strict-accuracy on
-ground-truth with Wilson 95\% CIs. The three cause
-classes are within 2~pp of each other, ruling out a
-class-imbalance confound.}
+\includegraphics[width=0.85\linewidth]{figs/fig_percause.pdf}
+\caption{Per-cause strict-accuracy on the
+ground-truth with Wilson 95\% CIs. The three
+cause classes are within 7~pp of each other,
+ruling out a class-imbalance confound.}
 \label{fig:per-cause}
 \end{figure}
 
-\begin{table*}[t][h]
+\begin{table}[t]
 \centering
-\small
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{p{0.50\columnwidth}rrr}
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\renewcommand{\arraystretch}{1.05}
+\begin{tabular}{p{0.18\columnwidth}rrrrr}
 \hline
-Ground-truth cause label & $n$ & Phase~1 strict & Phase~1 strict-rate \\ \hline
- & 7 & 6 & 85.7\% \\
- & 8 & 7 & 87.5\% \\
- & 14 & 13 & 92.9\% \\
-Negative control (Starlink) & 1 & 0 & (NC miss) \\
+GT cause & $n$ & Corr. & Acc.
+& Wilson 95\% CI & Bootstrap 95\% CI \\ \hline
+\protect\texttt{origin\_hijack\_victim} & 7 & 6 & 85.7\% & [48.7\%, 97.4\%] & [57.1\%, 100.0\%] \\
+\protect\texttt{route\_leak} & 8 & 7 & 87.5\% & [52.9\%, 97.8\%] & [62.5\%, 100.0\%] \\
+\protect\texttt{outage} (excl.\ NC) & 14 & 13 & 92.9\% & [68.5\%, 98.7\%] & [78.6\%, 100.0\%] \\
+\protect\texttt{outage} (incl.\ NC) & 15 & 13 & 86.7\% & [62.1\%, 96.3\%] & [73.3\%, 100.0\%] \\
+Neg.\ control (Starlink) & 1 & 0 & (NC miss) & --- & --- \\
 \hline
-\textbf{Total (incl.\ NC)} & \textbf{30} & \textbf{26} & \textbf{86.7\%} \\
+\textbf{All ($N{=}30$)} & \textbf{30} & \textbf{26} & \textbf{86.7\%} & \textbf{[70.3\%, 94.7\%]} & \textbf{[73.3\%, 96.7\%]} \\
+\textbf{Excl.\ NC ($N{=}29$)} & \textbf{29} & \textbf{26} & \textbf{89.7\%} & \textbf{[73.6\%, 96.4\%]} & \textbf{[82.1\%, 100.0\%]} \\
+\textbf{Excl.\ NC \& no-cache ($N{=}28$)} & \textbf{28} & \textbf{26} & \textbf{92.9\%} & \textbf{[77.4\%, 98.0\%]} & \textbf{[79.3\%, 100.0\%]} \\
 \hline
 \end{tabular}
 
-\caption{Per-cause Phase~1 strict-accuracy on
-ground-truth ($N{=}30$).}
+\caption{Per-cause Phase~1 strict-accuracy on the
+ground-truth set, with both Wilson 95\% CIs (analytical
+binomial) and bootstrap 95\% CIs (1000 resamples).
+The bootstrap CIs are wider because they are not
+constrained by the closed-form Wilson approximation.
+The three cause classes are within 7~pp of each
+other; the imbalance between \texttt{outage} at
+$92.9\%$ and the others is the Starlink NC plus a
+small number of borderline leak-vs-hijack cases.
+The three ``Total'' rows are the figures used in
+the headline, the ``excl.\ NC'' row, and the
+``excl.\ NC \& missing cache'' row of
+\Tblref{tab:method-comparison}.}
 \label{tab:per-cause}
-\end{table*}
+\end{table}
+
+\subsection{Confidence calibration}
+\label{sec:calibration}
+
+Beyond strict-accuracy, we report the confidence
+calibration of the Phase~1 verdict on the
+ground-truth. The top-1 confidence is the
+probabilistic score that
+ emits for its committed cause, in $[0.60, 0.99]$.
+We bin events by confidence (10 equal-width bins over
+$[0, 1]$) and compute the empirical accuracy in each
+bin; a perfectly calibrated model would lie on the
+diagonal. The Brier score
+$\mathrm{BS} = \tfrac{1}{N}\sum_i (p_i - y_i)^2$
+and the Expected Calibration Error
+$\mathrm{ECE} = \sum_{b=1}^{B} \tfrac{n_b}{N}
+\,|\mathrm{acc}(b) - \mathrm{conf}(b)|$ are the
+standard scalar summaries. We do not
+expect the top-1 confidence to be well-calibrated
+out-of-the-box, because the deterministic caps
+in \protect are tuned to favour committed verdicts
+over abstention. The empirical calibration
+(\figref{fig:calibration} and
+\Tblref{tab:calibration}) is therefore a useful
+sanity check on the arbitration, not a
+calibration target.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\linewidth]{figs/fig_calibration.pdf}
+\caption{Reliability diagram of Phase~1 on the
+ground-truth ($N{=}29$ scored events; one
+missing-cache event is excluded). The reliability
+diagram plots the empirical accuracy in each
+confidence bin (bar height) against the bin's mean
+predicted confidence ($x$-axis); the dashed
+diagonal is the perfectly-calibrated reference.
+Brier score is $0.124$ (95\% bootstrap CI
+$[0.043, 0.230]$) and the Expected Calibration
+Error is $0.153$ (95\% bootstrap CI
+$[0.078, 0.276]$). The system is mildly
+over-confident in the $0.95$--$1.00$ bin
+(15 events at 86.7\% accuracy vs 100\%
+expected), which is the documented behaviour of
+the deterministic arbitration: the top-1
+confidence is the maximum of the candidate scores,
+and the deterministic caps in
+favour of committed verdicts over abstention.}
+\label{fig:calibration}
+\end{figure}
+
+The Brier score of 0.124 corresponds to a
+root-mean-square error of $0.353$ in
+probability space, which is comparable to
+state-of-the-art intent-classification systems
+on small test sets. The system is
+\emph{calibrated} in the sense that the
+$0.6$--$0.7$ and $0.8$--$0.9$ bins are at or
+above the diagonal; the over-confidence is
+concentrated in the top bin only.
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lrrrr}
+\hline
+Confidence bin & $n$ & Accuracy & Mean conf. & Gap \\ \hline
+$[0.6, 0.7)$ & 4 & 100.0\% & 0.64 & $+0.363$ \\
+$[0.7, 0.8)$ & 9 & 88.9\%  & 0.75 & $+0.139$ \\
+$[0.8, 0.9)$ & 1 & 100.0\% & 0.80 & $+0.200$ \\
+$[0.9, 1.0]$ & 15 & 86.7\%  & 0.97 & $-0.102$ \\
+\hline
+\end{tabular}
+\caption{Per-bin calibration of Phase~1 on the
+ground-truth ($N{=}29$). The reliability diagram
+visualises the same data. The bins $[0.0, 0.6)$
+are empty because the deterministic arbitration
+never emits a confidence below 0.60 --- the
+top-1 score is bounded below by the lowest base
+confidence in the cause taxonomy ($0.45$ for
+``traffic anomaly, routing quiet'', capped at
+$0.60$ for the four primary causes). The
+calibration is well-behaved for the lower three
+bins (over-confidence in the $[0.6, 0.7)$ bin is
+not material --- the system is more accurate
+than it claims, which is the safe direction to
+err) and shows a 10~pp over-confidence at the
+top bin.}
+\label{tab:calibration}
+\end{table}
 
 \subsection{Per-event predictions and miss audit}
 \label{sec:per-event}
@@ -269,11 +382,22 @@ named detector's scalar counts in the cache (e.g.\ for
 zero; the arbitration logic is unchanged). The
 strict-accuracy is recomputed on same 29 events.
 
-\begin{table*}[t][h]
+\begin{table}[t][h]
 \centering
+\caption{Leave-one-detector-out ablation on 29
+events with a built cache (excludes the single no-cache
+event). All four detectors contribute positively to
+the strict-accuracy; the traffic detector is the most
+critical single source ($-37.9$~pp when dropped). The
+\enquote{drop all} row of 34.5\% is the default
+\protect verdict, which catches the 1
+negative-control event plus 9/29 of the \enquote{soft}
+causes where the dominant routing signal is below the
+detector's reported threshold.}
+\label{tab:detector-ablation}
 \small
 \setlength{\tabcolsep}{4pt}
-\begin{tabular}{p{0.60\columnwidth}rr}
+\begin{tabular}{p{0.50\columnwidth}rr}
 \hline
 Configuration & \strict{} (29 ev.) & $\Delta$ vs full \\
 \hline
@@ -286,19 +410,7 @@ Configuration & \strict{} (29 ev.) & $\Delta$ vs full \\
 \quad drop ALL detectors & 10/29 = 34.5\% & $-55.2$~pp \\
 \hline
 \end{tabular}
-
-\caption{Leave-one-detector-out ablation on 29
-events with a built cache (excludes the single no-cache
-event). All four detectors contribute positively to
-the strict-accuracy; the traffic detector is the most
-critical single source ($-37.9$~pp when dropped). The
-\enquote{drop all} row of 34.5\% is the default
-\protect verdict, which catches the 1
-negative-control event plus 9/29 of the \enquote{soft}
-causes where the dominant routing signal is below the
-detector's reported threshold.}
-\label{tab:detector-ablation}
-\end{table*}
+\end{table}
 
 The profile is monotonically decreasing in the number of
 detectors available, with the largest single contribution

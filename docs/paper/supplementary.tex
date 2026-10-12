@@ -113,8 +113,12 @@ summary. The 169 rejected candidates are documented in
 
 \subsection{Composition (30 events kept)}
 
-\begin{table*}[t][h]
+\begin{table}[t][h]
 \centering
+\caption{ kept-event composition. All 30 events are
+Tier A (single high-quality primary source URL with
+corroborating secondary source).}
+\label{tab:s17-comp}
 \small
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{p{0.30\columnwidth}rp{0.55\columnwidth}}
@@ -128,17 +132,17 @@ Class & Count & Notes \\ \hline
 Total & 30 & \\
 \hline
 \end{tabular}
-
-\caption{ kept-event composition. All 30 events are
-Tier A (single high-quality primary source URL with
-corroborating secondary source).}
-\label{tab:s17-comp}
-\end{table*}
+\end{table}
 
 \subsection{Rejection reasons (169 events)}
 
-\begin{table*}[t][h]
+\begin{table}[t][h]
 \centering
+\caption{ rejection breakdown. The 121 \protect
+rejections reflect the \cf{} Radar 30-day retention
+constraint; the 28 \protect rejections
+are pre-curation events without a fresh Radar API signal.}
+\label{tab:s17-rej}
 \small
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{p{0.30\columnwidth}rp{0.55\columnwidth}}
@@ -152,13 +156,7 @@ Reason & Count & Notes \\ \hline
 Total & 169 & \\
 \hline
 \end{tabular}
-
-\caption{ rejection breakdown. The 121 \protect
-rejections reflect the \cf{} Radar 30-day retention
-constraint; the 28 \protect rejections
-are pre-curation events without a fresh Radar API signal.}
-\label{tab:s17-rej}
-\end{table*}
+\end{table}
 
 \subsection{Per-event evidence summary ( kept events)}
 
@@ -596,7 +594,7 @@ post-fix 26/30 = 86.7\% number is from
 by re-running the HTML pipeline with
 setting \texttt{skip\_outage=False}.
 
-\begin{table*}[t][h]
+\begin{table}[t][h]
 \centering\small
 \begin{tabular}{lr}
 \hline
@@ -609,14 +607,13 @@ Post-fix LLM override rate & 2/30 = 6.7\% \\
 Post-fix LLM regression rate & 0/30 = 0.0\% \\
 \hline
 \end{tabular}
-
 \caption{HTML pipeline evaluation on . The 6/30
 pre-fix regressions are dominated by
 \protectthe \texttt{skip\_outage=True} default in the React-mode HTML
 pipeline; the the fix fix is a one-line change in
 \protect.}
 \label{tab:supp-html}
-\end{table*}
+\end{table}
 
 The 6 pre-fix LLM regression events are
 ,
@@ -637,8 +634,15 @@ mechanism is , which
 takes a failure mode name and a cache directory and
 produces a perturbed-cache directory.
 
-\begin{table*}[t][h]
+\begin{table}[t][h]
 \centering
+\caption{Degraded-mode strict-accuracy on . The
+worst-case mode is BGPStream rate-limit at 75.9\%,
+which is a 10.8~pp drop from the no-degradation
+baseline. The graceful-degradation design
+(\Sectref{sec:method-degradation}) keeps the strict-
+accuracy in $[75.9\%, 86.7\%]$ across all five modes.}
+\label{tab:supp-deg-stress}
 \small
 \setlength{\tabcolsep}{3pt}
 \begin{tabular}{p{0.30\columnwidth}rp{0.12\columnwidth}p{0.28\columnwidth}}
@@ -651,15 +655,7 @@ RIPE RIS lag 5min & 79.3\% & $-7.4$~pp & routing-only \\
 \cf{} Radar regional & 82.8\% & $-3.9$~pp & routing-only \\
 \hline
 \end{tabular}
-
-\caption{Degraded-mode strict-accuracy on . The
-worst-case mode is BGPStream rate-limit at 75.9\%,
-which is a 10.8~pp drop from the no-degradation
-baseline. The graceful-degradation design
-(\Sectref{sec:method-degradation}) keeps the strict-
-accuracy in $[75.9\%, 86.7\%]$ across all five modes.}
-\label{tab:supp-deg-stress}
-\end{table*}
+\end{table}
 
 The BGPStream rate-limit case is the worst because the
 leak detector and the outage detector both depend on
@@ -684,8 +680,15 @@ that the PDM estimator flags as causal are
 shows the point estimate and 95\% bootstrap CI for
 each.
 
-\begin{table*}[t][h]
-\centering\small
+\begin{table}[t][h]
+\centering
+\caption{CSS strict-causal subset (n=3 events).
+All three CIs exclude zero and all three
+permutation $p$-values cross $\alpha = 0.05$. The
+3/30 rate is a structural limit of Pearl-PNS on
+5-min \cf{} Radar bucket.}
+\label{tab:supp-css-n3}
+\small
 \begin{tabular}{lrrr}
 \hline
 Event & $\widehat{\mathrm{CSS}}(R\!\to\!T)$ & 95\% CI & $p$-value \\ \hline
@@ -694,14 +697,7 @@ Event & $\widehat{\mathrm{CSS}}(R\!\to\!T)$ & 95\% CI & $p$-value \\ \hline
  & 1.95 & [0.85, 3.05] & $0.031$ \\
 \hline
 \end{tabular}
-
-\caption{CSS strict-causal subset (n=3 events).
-All three CIs exclude zero and all three
-permutation $p$-values cross $\alpha = 0.05$. The
-3/30 rate is a structural limit of Pearl-PNS on
-5-min \cf{} Radar bucket.}
-\label{tab:supp-css-n3}
-\end{table*}
+\end{table}
 
 The per-channel contribution to the CSS posterior on
 the 3 events is in .
@@ -750,18 +746,8 @@ prior is uniform over $\{R\!\to\!T,\ T\!\to\!R,\
 \text{independent}\}$. The channel likelihoods are
 unchanged.
 
-\begin{table*}[t][h]
+\begin{table}[t][h]
 \centering
-\small
-\setlength{\tabcolsep}{4pt}
-\begin{tabular}{p{0.40\columnwidth}rr}
-\hline
-HCAF prior & Flip rate (committed) & Abstention rate \\ \hline
-CSS-anchored (default) & --- & $\leq 3/30$ (CSS structural) \\
-Uniform & 6/30 = 20.0\% & $\leq 3/30$ (CSS structural) \\
-\hline
-\end{tabular}
-
 \caption{Uniform-prior ablation on . The 20.0\%
 flip rate on committed directions is the share of
 events on which the five channels disagree with the
@@ -772,7 +758,16 @@ real work without overriding the channels. The
 abstention rate is unchanged because both runs
 abstain on 3 structurally-sparse CSS events.}
 \label{tab:supp-uniform-prior}
-\end{table*}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{0.40\columnwidth}rr}
+\hline
+HCAF prior & Flip rate (committed) & Abstention rate \\ \hline
+CSS-anchored (default) & --- & $\leq 3/30$ (CSS structural) \\
+Uniform & 6/30 = 20.0\% & $\leq 3/30$ (CSS structural) \\
+\hline
+\end{tabular}
+\end{table}
 
 The 6 flipped events under uniform prior are
 ,
@@ -813,7 +808,7 @@ events on which the hijack detector over-fired on
 the leak signal. The 3 no-cache events are
 graceful-degradation cases.}
 \label{tab:supp-held-out-detail}
-\end{table*}
+\end{table}
 
 \section{Discussion of Limitations}
 \label{supp:limitations}

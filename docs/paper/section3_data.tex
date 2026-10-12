@@ -72,11 +72,16 @@ They are the \emph{dependable-filter} that defines what
 counts as a well-formed event before any detection or
 arbitration runs.
 
-\begin{table*}[t][h]
+\begin{table}[t][h]
 \centering
+\caption{The six strict curation invariants for the
+ground-truth. All 30 events satisfy all six. 169
+candidates were rejected with explicit reasons in
+\protect.}
+\label{tab:invariants}
 \setlength{\tabcolsep}{3pt}
 \small
-\begin{tabular}{p{0.08\columnwidth}p{0.36\columnwidth}p{0.48\columnwidth}}
+\begin{tabular}{p{0.06\columnwidth}p{0.30\columnwidth}p{0.58\columnwidth}}
 \hline
 \# & Invariant & Concrete test \\ \hline
 1 & Public-source citation & primary source URL with status \texttt{ok}, check date $\leq 12$ months \\
@@ -87,12 +92,7 @@ arbitration runs.
 6 & Balance & 7 hijack + 8 leak + 14 outage + 1 NC = 30 events \\
 \hline
 \end{tabular}
-\caption{The six strict curation invariants for the
-ground-truth. All 30 events satisfy all six. 169
-candidates were rejected with explicit reasons in
-\protect.}
-\label{tab:invariants}
-\end{table*}
+\end{table}
 
 \noindent 169 candidates were rejected with explicit
 reasons in ; the dominant
@@ -120,8 +120,11 @@ largest sub-types.}
 \label{fig:dataset}
 \end{figure}
 
-\begin{table*}[t]
+\begin{table}[t]
 \centering
+\caption{ground-truth class distribution
+($N{=}30$).}
+\label{tab:dataset-distribution}
 \small
 \begin{tabular}{lrrl}
 \hline
@@ -134,11 +137,7 @@ Class & $n$ & Tier & Notes \\ \hline
 \textbf{Total} & \textbf{30} & A & \\
 \hline
 \end{tabular}
-
-\caption{ground-truth class distribution
-($N{=}30$).}
-\label{tab:dataset-distribution}
-\end{table*}
+\end{table}
 
 \subsubsection{Root-cause sub-type distribution}
 \label{sec:dataset-subtypes}

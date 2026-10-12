@@ -34,6 +34,10 @@ WIDE_TABLES = {
     "tab:s17-comp": "table",
     "tab:s17-rej": "table",
     "tab:supp-html": "table",
+    "tab:detector-fire": "table*",  # 6 columns, needs double-column
+    "tab:heldout-detail": "table*",  # multi-column breakdown
+    "tab:related": "table*",  # 6-column system comparison
+    "tab:s17-per-event": "table*",  # long per-event evidence table
 }
 
 
