@@ -176,7 +176,11 @@ class TrafficAgent(Agent):
                     "anomalies_detected": result.get("anomalies_detected", False),
                     "plot_path": result.get("plot_path"),
                 },
-                confidence=0.8 if result.get("anomalies_detected") else 0.55,
+                confidence=_extract_confidence(
+                    result,
+                    default_high=0.8,
+                    default_low=0.55,
+                ),
                 tags=["traffic"],
                 window={"start": str(start_time), "end": str(end_time)},
             )

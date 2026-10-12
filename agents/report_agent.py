@@ -2916,7 +2916,6 @@ def _normalize_traffic(traffic_result) -> dict:
         anomaly_count = 0
     pct = inner.get("percent_change")
     drop = inner.get("peak_trough_drop_pct")
-    severity = inner.get("percent_change")
     return {
         "anomaly_count": anomaly_count,
         "percent_change": pct,
