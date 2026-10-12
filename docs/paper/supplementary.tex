@@ -65,9 +65,9 @@ the round-21 revision (HTML pipeline evaluation,
 degraded-mode stress test, CSS n=3 subset, per-event
 case-study timelines, uniform-prior ablation, held-out
 held-out per-event detail). All quantitative numbers in
-the main submission \t\texttt{main.tex} are reproduced by
+the main submission \texttt{main.tex} are reproduced by
 the single-command invocation
-\t\texttt{bash reproduce\_eval.sh --}.
+\texttt{bash reproduce\_eval.sh --}.
 \end{abstract}
 
 \ccsdesc[500]{Networks~Network monitoring}
@@ -89,7 +89,7 @@ For every event kept in , \textbf{ALL} of the following must hold:
 \begin{enumerate}
 \itemsep0pt
 \item Public-source citation: primary source URL with status
- \t\texttt{ok}, check date $\leq 12$ months
+ \texttt{ok}, check date $\leq 12$ months
  .
 \item Routing-evidence: \rrc{} BGP signal matches the reported
  victim / attacker / leaker (invariant that
@@ -188,7 +188,7 @@ The 169 rejections are split as 121 RRC00-sparse,
 28 traffic-missing, 12 source-unreachable, and
 8 quick-cache-build.
 
-\section{Ten Principled Fixes in \t\texttt{compute\_top\_cause}}
+\section{Ten Principled Fixes in \texttt{compute\_top\_cause}}
 \label{sec:fixes}
 
 This section lists the ten principled caps, gates, and
@@ -222,21 +222,21 @@ of the traffic drop.
  both fire within $0.05$ of each other,
 the tie-breaker is $\max(\text{self-recovery}, 0.05)$
 on .
-\item \textbf{NC miss as \t\texttt{no\_clear\_anomaly}.}
+\item \textbf{NC miss as \texttt{no\_clear\_anomaly}.}
 When the negative-control rule fires
 (no observable routing change in the event window),
-the system commits \t\texttt{no\\_clear\\_anomaly} (not \t\texttt{outage}).
-\item \textbf{Missing cache as \t\texttt{no\_clear\_anomaly}.}
+the system commits \texttt{no\\_clear\\_anomaly} (not \texttt{outage}).
+\item \textbf{Missing cache as \texttt{no\_clear\_anomaly}.}
 When the cache rebuild fails
 (\cf{} Radar HTTP~400), the verdict is
-\t\texttt{no_clear_anomaly} (not \t\texttt{outage}).
+\texttt{no_clear_anomaly} (not \texttt{outage}).
 \item \textbf{ROA misconfig cap on as-path length.}
 When the AS path length is shorter than 3 hops (too short for a
 transit), the candidate score
 is capped at $0.30$.
 \item \textbf{Confidence floor at 0.05 for
-\t\texttt{no\_clear\_anomaly}.} The confidence in
-the \t\texttt{no_clear_anomaly} verdict is bounded
+\texttt{no\_clear\_anomaly}.} The confidence in
+the \texttt{no_clear_anomaly} verdict is bounded
 below at $0.05$ to distinguish it from a parse
 failure.
 \item \textbf{Tie-breaker at 0.05 for the
@@ -259,15 +259,15 @@ gain is principled.
 \subsection{Code repository README (excerpt)}
 
 \noindent The implementation is at the top of the repository
-(\t\texttt{README.md}). Key entry points:
+(\texttt{README.md}). Key entry points:
 
 \begin{itemize}
-\item \t\texttt{agents/css\_engine.py} --- core CSS implementation
+\item \texttt{agents/css\_engine.py} --- core CSS implementation
 (Pearl-PNS, bootstrap CI, permutation test).
-\item \t\texttt{chief\_agent.py} --- two-phase CLI entry point.
-\item \t\texttt{scripts/eval\_hcaf\_vs\_baselines.py} --- HCAF
+\item \texttt{chief\_agent.py} --- two-phase CLI entry point.
+\item \texttt{scripts/eval\_hcaf\_vs\_baselines.py} --- HCAF
 ablation vs.\ baselines (paper \S6).
-\item \t\texttt{scripts/render\_paper\_figs.py} --- \S6 figure
+\item \texttt{scripts/render\_paper\_figs.py} --- \S6 figure
 generator (fig7, fig8, fig9).
 \end{itemize}
 
@@ -298,19 +298,19 @@ bash reproduce_eval.sh --dry-run # print only
 
 \paragraph{Environment requirements.}
 \begin{itemize}
-\item \t\texttt{.env} populated with \t\texttt{OPENAI\_API\_KEY},
-\t\texttt{OPENAI\_BASE\_URL}, \t\texttt{OPENAI\_MODEL}
-\item \t\texttt{CLOUDFLARE\_API\_TOKEN} (for Cloudflare Radar agent)
-\item \t\texttt{data/updates\_rrc00/*.gz} populated for the analysis
+\item \texttt{.env} populated with \texttt{OPENAI\_API\_KEY},
+\texttt{OPENAI\_BASE\_URL}, \texttt{OPENAI\_MODEL}
+\item \texttt{CLOUDFLARE\_API\_TOKEN} (for Cloudflare Radar agent)
+\item \texttt{data/updates\_rrc00/*.gz} populated for the analysis
 dates
 \end{itemize}
 
 \paragraph{Numbers stability.} Reproducible to $\pm 0.1\%$ on
-existing ground-truth; see \t\texttt{results/eval/eval\_audit.md} for
+existing ground-truth; see \texttt{results/eval/eval\_audit.md} for
 the exact metric definitions and the cross-check commands a reviewer
 can use to verify each row.
 
-\subsection{Verbatim reproduce script (\t\texttt{reproduce\_eval.sh})}
+\subsection{Verbatim reproduce script (\texttt{reproduce\_eval.sh})}
 
 \begin{verbatim}
 #!/usr/bin/env bash
@@ -324,7 +324,7 @@ cd "$(dirname "$0")"
 exec python3 scripts/reproduce_eval.py "$@"
 \end{verbatim}
 
-\subsection{Verbatim reproduce script (\t\texttt{scripts/reproduce\_eval.py})}
+\subsection{Verbatim reproduce script (\texttt{scripts/reproduce\_eval.py})}
 
 \begin{verbatim}
 #!/usr/bin/env python3
@@ -361,14 +361,14 @@ GT = ROOT / "data_check/ground_truth_collection" / "final_balanced_dataset_v17.c
 ...
 \end{verbatim}
 
-\noindent (Full source of \t\texttt{scripts/reproduce\_eval.py} is
+\noindent (Full source of \texttt{scripts/reproduce\_eval.py} is
 146 lines and reproduced verbatim in
-\t\texttt{docs/paper/reproduce\_eval\_screenshot.txt}.)
+\texttt{docs/paper/reproduce\_eval\_screenshot.txt}.)
 
 \subsection{Dry-run terminal screenshot (literal capture)}
 
 \noindent The following is a literal terminal capture of
-\t\texttt{python3 scripts/reproduce\_eval.py --dry-run}, executed on
+\texttt{python3 scripts/reproduce\_eval.py --dry-run}, executed on
 2026-10-11 against the ground-truth (30 rows). The dry-run
 prints the commands that would be executed without running them; this
 is the canonical reviewer-side verification command.
@@ -416,13 +416,13 @@ Loaded 30 ground-truth events from final_balanced_dataset_v17.csv
 
 \noindent The full 58-line terminal capture (with each of the 29
 Phase-1 invocations) is preserved in
-\t\texttt{docs/paper/reproduce\_eval\_screenshot.txt}.
+\texttt{docs/paper/reproduce\_eval\_screenshot.txt}.
 
 \section{Extended Figures (moved from main paper, page-trim)}
 \label{supp:extended-figs}
 
 This section collects figures that were in main submission
-\t\texttt{v3} but moved to supplementary during the page-trim
+\texttt{v3} but moved to supplementary during the page-trim
 audit (Phase 11) to bring the main paper to $\leq 13$ pages.
 Each figure preserves its original caption and a 1--2 sentence
 narrative explaining its role.

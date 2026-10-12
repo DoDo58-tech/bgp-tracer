@@ -79,7 +79,7 @@ arbitration runs.
 \begin{tabular}{p{0.08\columnwidth}p{0.36\columnwidth}p{0.48\columnwidth}}
 \hline
 \# & Invariant & Concrete test \\ \hline
-1 & Public-source citation & primary source URL with status \t\texttt{ok}, check date $\leq 12$ months \\
+1 & Public-source citation & primary source URL with status \texttt{ok}, check date $\leq 12$ months \\
 2 & Routing-evidence & \rrc{} BGP signal matches the reported victim / attacker / leaker \\
 3 & Traffic-evidence & \cf{} Radar HTTP timeseries fetched successfully \\
 4 & Regularity & $\mathrm{CV}<0.6$ + lag-24 autocorr $>0.3$ outside the event window \\
@@ -96,9 +96,9 @@ candidates were rejected with explicit reasons in
 
 \noindent 169 candidates were rejected with explicit
 reasons in ; the dominant
-rejection causes are \t\texttt{no\_rrc00\_parquet\_for\_date}
-(121 events), \t\texttt{no\_traffic\_signal} (28 events), and
-\t\texttt{source\_url\_unreachable} (12 events). All 30
+rejection causes are \texttt{no\_rrc00\_parquet\_for\_date}
+(121 events), \texttt{no\_traffic\_signal} (28 events), and
+\texttt{source\_url\_unreachable} (12 events). All 30
 events are \emph{Tier~A} (single high-quality primary
 source URL with a corroborating secondary source); no
 Tier-B events are included. The full class distribution
@@ -126,10 +126,10 @@ largest sub-types.}
 \begin{tabular}{lrrl}
 \hline
 Class & $n$ & Tier & Notes \\ \hline
-\t\texttt{origin\_hijack\_victim} & 7 & A & 7 unique victim ASes \\
-\t\texttt{route\_leak} & 8 & A & 8 unique leaker ASes \\
-\t\texttt{outage} & 14 & A & 14 unique victim ASes \\
-\t\texttt{outage} (NC) & 1 & A & Starlink 2025 \\
+\texttt{origin\_hijack\_victim} & 7 & A & 7 unique victim ASes \\
+\texttt{route\_leak} & 8 & A & 8 unique leaker ASes \\
+\texttt{outage} & 14 & A & 14 unique victim ASes \\
+\texttt{outage} (NC) & 1 & A & Starlink 2025 \\
 \hline
 \textbf{Total} & \textbf{30} & A & \\
 \hline

@@ -64,7 +64,7 @@ property is the key: every Phase~1 verdict is traceable
 to a detector output, and the arbitration is auditable
 by reading .
 
-\subsection{Phase-1 arbitration: \t\texttt{compute\_top\_cause}}
+\subsection{Phase-1 arbitration: \texttt{compute\_top\_cause}}
 \label{sec:arbitration}
 
 The arbitration function reduces the six detector outputs
@@ -92,7 +92,7 @@ candidates land within $0.05$ of each other.
 The output is one of five classes:
 , or
 . The fifth class is the only
-one that triggers a Phase~1 \t\texttt{unknown}; the other
+one that triggers a Phase~1 \texttt{unknown}; the other
 four commit a label with a calibrated confidence in
 $[0, 1]$.
 
@@ -131,7 +131,7 @@ a \emph{composite scoring rule} with a CSS-anchored
 prior, and emits a calibrated 3-way scoring-rule
 output over three
 hypotheses: $R\!\to\!T$, $T\!\to\!R$,
-\t\texttt{independent}), and the ReportAgent (renders a
+\texttt{independent}), and the ReportAgent (renders a
 structured HTML report with deterministic tables and
 LLM-written prose; the LLM is forbidden from overriding
 the CSS-anchored direction). The
@@ -219,7 +219,7 @@ heuristics refine, do not override, a Pearl-anchored
 direction.
 
 \paragraph{Abstention threshold.}
-\hcaf{} declares \t\texttt{unknown} when the dominant
+\hcaf{} declares \texttt{unknown} when the dominant
 scoring-rule output mass falls below a one-third plurality
 threshold:
 \begin{equation}
@@ -363,12 +363,12 @@ as a first-class degraded mode
 (\Sectref{sec:reproducibility}). The two phases degrade
 independently: Phase~1 always produces a verdict from the
 available detectors (missing traffic data reduces the
-verdict to \t\texttt{traffic\_anomaly\_only}, missing
+verdict to \texttt{traffic\_anomaly\_only}, missing
 routing data reduces it to the outage detector only);
 Phase~2 gracefully reduces the 5-channel scoring-rule output to
 the channels whose data is available. This is the
 architectural reason the single no-cache miss in the the evaluator
 evaluation is explainable: the cache-rebuild failed, the
-detector pipeline emitted \t\texttt{traffic\_anomaly\_only},
+detector pipeline emitted \texttt{traffic\_anomaly\_only},
 and the arbitration recorded the degradation in the
 cache.

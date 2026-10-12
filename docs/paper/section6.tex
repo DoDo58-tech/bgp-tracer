@@ -351,10 +351,10 @@ each detector's signal is non-empty.
 \begin{tabular}{p{0.30\linewidth}p{0.04\linewidth}p{0.13\linewidth}p{0.13\linewidth}p{0.13\linewidth}p{0.13\linewidth}}
 \hline
 GT class & $n$ & Leak & Hijack & Outage & Traffic \\ \hline
-\t\texttt{origin\_hijack\_victim} & 7 & 85.7\% & 100.0\% & 71.4\% & 0.0\% \\
-\t\texttt{route\_leak} & 8 & 100.0\% & 75.0\% & 75.0\% & 25.0\% \\
-\t\texttt{outage} & 13 & 76.9\% & 61.5\% & 92.3\% & 92.3\% \\
-\t\texttt{outage} (NC) & 1 & 100.0\% & 100.0\% & 100.0\% & 100.0\% \\ \hline
+\texttt{origin\_hijack\_victim} & 7 & 85.7\% & 100.0\% & 71.4\% & 0.0\% \\
+\texttt{route\_leak} & 8 & 100.0\% & 75.0\% & 75.0\% & 25.0\% \\
+\texttt{outage} & 13 & 76.9\% & 61.5\% & 92.3\% & 92.3\% \\
+\texttt{outage} (NC) & 1 & 100.0\% & 100.0\% & 100.0\% & 100.0\% \\ \hline
 \end{tabular}
 \caption{Per-cause detector fire-rate on 30-event ground-truth ($N{=}30$). The traffic detector fires on 0/7 hijack events (strongest negative discriminator). Leak and hijack detectors each fire on 100\% of their target class but also on a majority of off-class events; no single detector is a sufficient discriminator, justifying the multi-detector arbitration in $\mathtt{compute\_top\_cause}$.}
 \label{tab:detector-fire}
@@ -419,7 +419,7 @@ Events with sufficient detector data & 10/13 \\
 Phase~1 strict-accuracy (all 13) & 6/13 = 46.2\% \\
 Phase~1 strict-accuracy (10 sufficient) & \textbf{6/10 = 60.0\%} \\ \hline
 \end{tabular}
-\caption{Held-out unseen-event stress test: Phase~1 strict-accuracy on 13 held-out candidate events. The 46.2\% (6/13) is the raw number; the 60.0\% (6/10) excludes 3 events whose cached detector data was insufficient (partial cache or \t\texttt{skip\_outage} pollution). Wilson 95\% CIs: 46.2\% on 13 events $[23.2\%, 70.9\%]$; 60.0\% on 10 events $[31.3\%, 83.2\%]$.}
+\caption{Held-out unseen-event stress test: Phase~1 strict-accuracy on 13 held-out candidate events. The 46.2\% (6/13) is the raw number; the 60.0\% (6/10) excludes 3 events whose cached detector data was insufficient (partial cache or \texttt{skip\_outage} pollution). Wilson 95\% CIs: 46.2\% on 13 events $[23.2\%, 70.9\%]$; 60.0\% on 10 events $[31.3\%, 83.2\%]$.}
 \label{tab:heldout-detail}
 \end{table*}
 
