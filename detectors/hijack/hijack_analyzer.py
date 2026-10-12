@@ -2,7 +2,6 @@ import sys
 import os
 import json
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
 from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -221,6 +220,58 @@ def assess_alert_severity(alerts):
     except Exception as e:
         logger.error(f"Error assessing alert severity: {e}")
         return "unknown"
+
+
+def _generate_hijack_recommendations(summary):
+    """Actionable next steps derived from the aggregated alert summary."""
+    recommendations = []
+    total = summary.get('total_alerts', 0)
+    prefixes = summary.get('affected_prefixes', []) or []
+
+    if not total:
+        return ["No hijack alerts in this window; no action required."]
+
+    recommendations.append(
+        f"Validate RPKI/ROA state for {len(prefixes)} affected prefix(es) "
+        f"against the authoritative RIR and IRR records."
+    )
+    if summary.get('severity_levels', {}).get('critical'):
+        recommendations.append(
+            "Critical-confidence alerts present: escalate to the upstream "
+            "provider and prepare a BGP filtering / RT blackhole plan."
+        )
+    recommendations.append(
+        "Collect route collector views (RouteViews/RIS) for the window to "
+        "confirm the hijacking AS-PATH independently of alert sources."
+    )
+    if summary.get('alert_types', {}).get('origin'):
+        recommendations.append(
+            "For origin hijacks, publish a TA/ROA withdrawal request with the "
+            "affected origin AS before re-announcing legitimate routes."
+        )
+    return recommendations
+
+
+def _assess_hijack_risk(summary):
+    """Structured risk verdict for the aggregated alert summary."""
+    total = summary.get('total_alerts', 0)
+    levels = summary.get('severity_levels', {}) or {}
+    high_conf = levels.get('high', 0)
+    if high_conf >= 5 or total >= 10:
+        severity = 'critical'
+    elif high_conf >= 2 or total >= 5:
+        severity = 'high'
+    elif high_conf >= 1 or total >= 2:
+        severity = 'medium'
+    else:
+        severity = 'low'
+    return {
+        'severity': severity,
+        'total_alerts': total,
+        'high_confidence_alerts': high_conf,
+        'affected_prefix_count': len(summary.get('affected_prefixes', []) or []),
+        'requires_escalation': bool(high_conf) or total >= 5,
+    }
 
 
 def generate_hijack_report(target_as, alerts,

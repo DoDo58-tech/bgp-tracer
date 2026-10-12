@@ -24,16 +24,14 @@ Fixes applied:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import traceback
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, is_dataclass
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Callable, Optional, TypeVar
+from typing import Callable
 from functools import wraps
-import time
 from time import perf_counter
 
 from utils.helpers import make_json_safe
@@ -590,7 +588,6 @@ class WorkflowEngine:
         from agents.traffic_agent import (
             parse_traffic_outage_input,
             parse_multiple_as_input,
-            parse_country_region_input,
         )
         from agents.coordination_utils import normalize_time
         
@@ -881,8 +878,8 @@ class WorkflowEngine:
                         # Normalise event to dict (it may be AnomalyDetail dataclass).
                         if isinstance(event, dict):
                             event_copy = dict(event)
-                        elif dataclasses.is_dataclass(event):
-                            event_copy = dataclasses.asdict(event)
+                        elif is_dataclass(event):
+                            event_copy = asdict(event)
                         else:
                             event_copy = dict(getattr(event, "__dict__", {}) or {})
                         event_copy["event_type"] = (key
@@ -901,8 +898,8 @@ class WorkflowEngine:
                     # Normalise event to dict (it may be AnomalyDetail dataclass).
                     if isinstance(event, dict):
                         event_copy = dict(event)
-                    elif dataclasses.is_dataclass(event):
-                        event_copy = dataclasses.asdict(event)
+                    elif is_dataclass(event):
+                        event_copy = asdict(event)
                     else:
                         event_copy = dict(getattr(event, "__dict__", {}) or {})
                     event_copy["event_type"] = "leak"
@@ -925,8 +922,8 @@ class WorkflowEngine:
                     # Use asdict() for dataclasses so all fields are extracted.
                     if isinstance(anomaly, dict):
                         anomaly_copy = dict(anomaly)
-                    elif dataclasses.is_dataclass(anomaly):
-                        anomaly_copy = dataclasses.asdict(anomaly)
+                    elif is_dataclass(anomaly):
+                        anomaly_copy = asdict(anomaly)
                     else:
                         anomaly_copy = dict(getattr(anomaly, "__dict__", {}) or {})
                     if "timestamp" not in anomaly_copy:
@@ -1855,8 +1852,6 @@ class WorkflowEngine:
         """
         from agents.traffic_agent import run_traffic_agent
         try:
-            from tools.tool_implementations import _lookup_as_threat_intel
-
             start = context.start_time
             end = context.end_time
             victim_asns = [
@@ -1974,6 +1969,15 @@ class WorkflowEngine:
 
         # Use shared Blackboard in enhanced mode
         bb = Blackboard()  # enhanced shared_blackboard deleted 2026-09-29
+
+        # Bug fix: seed the report Blackboard with config (asn, start_time,
+        # end_time). Without these, ReportAgent returns "Missing asn in
+        # blackboard" and the deterministic fallback also fails. The
+        # traffic/routing handlers write their own copies; this report-side
+        # seed keeps the report path self-contained.
+        await bb.write("config", "asn", context.asn)
+        await bb.write("config", "start_time", context.start_time)
+        await bb.write("config", "end_time", context.end_time)
 
         # Propagate validated joint-analysis artifacts so every report path has
         # access to the same evidence contract.
@@ -2134,7 +2138,7 @@ class WorkflowEngine:
 
         # ── Deterministic fallback (uses real data, not hardcoded prose) ──
         try:
-            from agents.report_agent import render_fallback_html_for_agent
+            from agents.report_agent import ReportAgent
             traffic_result = await bb.read("traffic", "result") if bb else None
             routing_result = await bb.read("routing", "result") if bb else None
             reasoning_result = await bb.read("reasoning", "result") if bb else None
@@ -2144,7 +2148,8 @@ class WorkflowEngine:
                 routing_result = await routing_result
             if hasattr(reasoning_result, "__await__"):
                 reasoning_result = await reasoning_result
-            fallback_html = render_fallback_html_for_agent(
+            fallback_html = ReportAgent._render_fallback_html(
+                None,
                 asn=str(getattr(context, "asn", "?")),
                 start_time=str(getattr(context, "start_time", "")),
                 end_time=str(getattr(context, "end_time", "")),
@@ -2259,7 +2264,6 @@ async def run_workflow(
     asn = None,
     start_time = None,
     end_time = None,
-    parallel = True,
     max_retries = 3,
     analysis_mode = "traffic_first",
     enable_mitm = False,
@@ -2283,7 +2287,6 @@ async def run_workflow(
         asn: AS number to analyze
         start_time: Start time in ISO format
         end_time: End time in ISO format
-        parallel: Enable parallel execution of agents (deprecated, use analysis_mode)
         max_retries: Maximum retry attempts for failed operations
         analysis_mode: Analysis mode selection
             - "traffic_first": Traffic first, routing on demand (RECOMMENDED, default)
@@ -2419,7 +2422,7 @@ def extract_anomaly_windows(anomalies, buffer_hours = 2):
     Buffer is applied HERE — each cluster gets ±buffer_hours padding.
     union_anomaly_windows should NOT apply buffer again.
     """
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     if not anomalies:
         return []
     try:
@@ -2467,7 +2470,6 @@ def union_anomaly_windows(windows, buffer_hours = 2):
     Returns:
         A single {"start": "...", "end": "..."} covering all windows
     """
-    from datetime import datetime, timedelta
     if not windows:
         return None
     

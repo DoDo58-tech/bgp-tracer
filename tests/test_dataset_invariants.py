@@ -40,12 +40,17 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 COLLECT = ROOT / "data_check" / "ground_truth_collection"
 DATASET_VERSION_RE = re.compile(r"^final_(?:balanced_dataset_v\d+|public_dataset)\.csv$")
+AUXILIARY_SUFFIXES = ("_input.csv", "_rejected.csv")
 
 
 def _csv_files() -> list[Path]:
     if not COLLECT.is_dir():
         return []
-    return sorted(p for p in COLLECT.glob("*.csv") if DATASET_VERSION_RE.match(p.name))
+    return sorted(
+        p for p in COLLECT.glob("*.csv")
+        if DATASET_VERSION_RE.match(p.name)
+        and not any(p.name.endswith(s) for s in AUXILIARY_SUFFIXES)
+    )
 
 
 def _all_consumers() -> list[Path]:
@@ -89,8 +94,8 @@ def test_every_consumer_points_at_the_same_dataset():
             text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        refs = set(re.findall(r"final_(?:balanced_dataset_v\d+|public_dataset)\.csv", text))
-        stale = {r for r in refs if r != canonical}
+        refs = set(re.findall(r"final_(?:balanced_dataset_v\d+|public_dataset)(?:_input|_rejected)?\.csv", text))
+        stale = {r for r in refs if not r.startswith(canonical.removesuffix(".csv")) and r != canonical}
         if stale:
             offenders[str(path.relative_to(ROOT))] = stale
 
@@ -307,13 +312,15 @@ def test_dataset_is_rebuildable_from_the_seed_list():
     )
 
 
-def test_every_tier_b_class_is_represented():
-    """Tier B must still describe a real, non-trivial slice of the dataset.
+def test_no_tier_b_rows_in_canonical_dataset():
+    """The canonical dataset must contain only public-report (Tier A) rows.
 
-    v15 removed all 19 of v13's tier-B events without replacing them, which
-    collapsed the hijack class from 10 to 1 and silently turned the benchmark
-    into a media-report-only evaluation. Labelling the tier is the fix; this
-    test stops the tier from being emptied again.
+    Per the user's directive (2026-10): "alert-platform-only events
+    (BGPStream, etc.) are forbidden in the ground-truth dataset" — v17
+    enforces a Tier-A-only policy.
+
+    Tier-B rows that the project still tracks belong in the rejected log,
+    not the active dataset.
     """
     found = _csv_files()
     if not found:
@@ -322,22 +329,12 @@ def test_every_tier_b_class_is_represented():
         rows = list(csv.DictReader(fh))
 
     tier_b = [r for r in rows if r.get("evidence_tier") == "B"]
-    assert len(tier_b) >= 15, (
-        f"only {len(tier_b)} tier-B rows remain. v15 dropped the whole tier and "
-        "the hijack class fell from 10 to 1; restoring the label but not the "
-        "rows would repeat that."
+    assert not tier_b, (
+        f"{len(tier_b)} tier-B rows remain in the canonical dataset: "
+        f"{[r['event_id'] for r in tier_b]}. Per the 2026-10 directive, "
+        "BGPStream / alert-platform-only events are forbidden; move them "
+        "to the rejected log."
     )
-
-    by_class: dict[str, int] = {}
-    for row in tier_b:
-        label = row.get("ground_truth_cause_label", "")
-        by_class[label] = by_class.get(label, 0) + 1
-
-    for label in ("origin_hijack_victim", "route_leak"):
-        assert by_class.get(label, 0) >= 5, (
-            f"tier B has only {by_class.get(label, 0)} {label} events, which "
-            "is too few to evaluate a detector on automated detections alone"
-        )
 
 
 def test_builder_reproduces_derived_columns():

@@ -6,9 +6,7 @@ Core logic extracted from original routing_agent.py.
 import os
 import sys
 import json
-import gc
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from detectors.hijack.hijack_detector import detect_hijacks
@@ -16,7 +14,7 @@ from detectors.leak.leak_detector import analyze_leak_surface
 from utils.logger import logger
 from utils.helpers import extract_json_object as _extract_json_object
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REASONING
-from config import BASE_URL, API_KEY, MODEL, MAX_WORKERS, IO_BUSY_THRESHOLD
+from config import BASE_URL, API_KEY, MODEL
 
 
 def get_outage_detector():

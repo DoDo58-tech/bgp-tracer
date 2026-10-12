@@ -9,7 +9,7 @@ from agents.impl.traffic_impl import (
     parse_multiple_as_input,
     parse_country_region_input,
 )
-from agents.core import Agent, AgentState, TaskResult, MsgType
+from agents.core import Agent, AgentState, TaskResult
 
 
 def _to_canonical_severity(anomalies: list) -> str:

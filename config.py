@@ -70,18 +70,25 @@ WORKFLOW_MIN_HCAF_SCORE = float(os.environ.get("WORKFLOW_MIN_HCAF_SCORE", "0.5")
 WORKFLOW_TOTAL_TIMEOUT_S = float(os.environ.get("BGP_TRACER_WORKFLOW_TIMEOUT_S", "2400.0"))
 BUFFER_HOURS = float(os.environ.get("BUFFER_HOURS", "2.0"))
 
-REACT_MAX_ROUNDS = int(os.environ.get("REACT_MAX_ROUNDS", "8"))
+REACT_MAX_ROUNDS = int(os.environ.get("REACT_MAX_ROUNDS", "6"))
 REACT_STREAMING_ENABLED = os.environ.get("REACT_STREAMING_ENABLED", "true").lower() == "true"
 REACT_LLM_TEMPERATURE = float(os.environ.get("REACT_LLM_TEMPERATURE", "0.1"))
 
 # ── Report LLM call ────────────────────────────────────────────────────────
 REPORT_LLM_TIMEOUT_S = float(os.environ.get("REPORT_LLM_TIMEOUT_S", "1500.0"))
-REPORT_LLM_RETRIES = int(os.environ.get("REPORT_LLM_RETRIES", "3"))
+# Bug fix 2026-10-07 (r17-batch-llm-retry): bumped outer retry budget from
+# 3 to 4 attempts — the inner ``_generate_report_html`` already has its
+# own per-stream retry loop (max_retries=5 after the r17 fix); this is
+# the cross-stream retry. With 4 outer * 5 inner = up to 20 calls before
+# falling back to deterministic HTML. The total per-event budget still
+# stays under the batch run timeout because most calls succeed on
+# attempt 1.
+REPORT_LLM_RETRIES = int(os.environ.get("REPORT_LLM_RETRIES", "4"))
 REPORT_LLM_RETRY_BACKOFF_S = float(os.environ.get("REPORT_LLM_RETRY_BACKOFF_S", "20.0"))
 REPORT_MAX_TOKENS = int(os.environ.get("REPORT_MAX_TOKENS", "4000"))
 REPORT_REQUIRE_LLM = os.environ.get("REPORT_REQUIRE_LLM", "0").strip().lower() in ("1", "true", "yes")
 REPORT_USE_DETERMINISTIC = os.environ.get("REPORT_USE_DETERMINISTIC", "1").strip().lower() in ("1", "true", "yes")
-REPORT_PAYLOAD_MAX_CHARS = int(os.environ.get("REPORT_PAYLOAD_MAX_CHARS", "60000"))
+REPORT_PAYLOAD_MAX_CHARS = int(os.environ.get("REPORT_PAYLOAD_MAX_CHARS", "30000"))
 
 # ── HCAF causal attribution weights ────────────────────────────────────────
 HCAF_WEIGHTS_MSBD = float(os.environ.get("BGP_TRACER_HCAF_W_MSBD", "0.40"))
@@ -104,7 +111,7 @@ HCAF_MAJORITY_THRESHOLD = int(os.environ.get("BGP_TRACER_HCAF_MAJORITY", "2"))
 # honest and strictly scores better. Raise the floor to force a direction only
 # when the evidence supports one.
 HCAF_MIN_DIRECTION_CONFIDENCE = float(
-    os.environ.get("BGP_TRACER_HCAF_MIN_DIRECTION_CONF", "0.10")
+    os.environ.get("BGP_TRACER_HCAF_MIN_DIRECTION_CONF", "0.55")
 )
 
 # ── Detector thresholds ────────────────────────────────────────────────────

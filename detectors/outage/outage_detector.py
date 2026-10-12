@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from pathlib import Path
 from collections import OrderedDict
-from typing import Dict, List, Tuple
+from typing import List
 
 try:
     from bgp_tracer.detectors.outage.extract_event_features import (
         extract_timeseries_for_as,
         find_update_files,
-        detect_anomalies_timeseries,
         detect_anomalies_timeseries_periodic,
     )
 except ImportError:
@@ -21,7 +19,6 @@ except ImportError:
     from detectors.outage.extract_event_features import (
         extract_timeseries_for_as,
         find_update_files,
-        detect_anomalies_timeseries,
         detect_anomalies_timeseries_periodic,
     )
 try:
@@ -548,7 +545,7 @@ class RouteOutageDetector:
                     "min_path_length": 0,
                 },
                 "baseline_features": {},
-                "error": error if 'error' in locals() else "No decoded BGP update files found",
+                "error": "No decoded BGP update files found",
                 "note": (
                     "Outage detection requires decoded BGP update files in "
                     "detectors/outage/data/updates_rrc00/decoded/ directory. "

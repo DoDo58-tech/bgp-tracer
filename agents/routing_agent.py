@@ -153,7 +153,6 @@ def _normalize_event(ev):
 
 
 def prepare_routing_payload(result, partial_error=None):
-    from datetime import datetime
     origin_hijacked = result.get("origin_hijacked", []) or []
     forge_hijacked = result.get("forge_hijacked", []) or []
     origin_hijacking = result.get("origin_hijacking", []) or []
@@ -237,13 +236,15 @@ def routing_scope(hijacks, leaks, outages):
     prefixes = set()
     for event in hijacks + leaks:
         # `event` may be a plain dict (legacy hijack detector output) or an
-        def _event_get(key, default=None):
-            if hasattr(event, "get") and callable(getattr(event, "get")):
+        # AnomalyDetail dataclass. Bind it as a default arg so the helper
+        # cannot pick up a later loop value.
+        def _event_get(key, default=None, _event=event):
+            if hasattr(_event, "get") and callable(getattr(_event, "get")):
                 try:
-                    return event.get(key, default)
+                    return _event.get(key, default)
                 except TypeError:
-                    return getattr(event, key, default)
-            return getattr(event, key, default)
+                    return getattr(_event, key, default)
+            return getattr(_event, key, default)
 
         for key in ("prefix", "prefixes", "affected_prefix", "victim_prefix"):
             value = _event_get(key)

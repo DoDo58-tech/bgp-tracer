@@ -1,16 +1,15 @@
 import sys
 import os
-import re
 import json
 import ipaddress
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Dict
 
 import polars as pl
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import logger
-from detectors.hijack.hijack_utils import check_fake_connections_single_row, build_as_pair_set
+from detectors.hijack.hijack_utils import build_as_pair_set
 from config import DEFAULT_FORGE_THRESHOLD
 
 
@@ -796,7 +795,6 @@ def _batch_connection_frequency_polars(conn_keys, full_day_data):
 
     try:
         # ── Real batched path ──────────────────────────────────────────
-        import re as _re_batch
         as_path_col = pl.col('as-path').cast(pl.Utf8, strict=False).fill_null("")
 
         total_updates = full_day_data.height
@@ -1095,19 +1093,6 @@ def _batch_check_connection_frequency_legacy(updates_df, as_relationships,
             logger.info(f"Marked {len(suspicious_indices)} updates as suspicious based on connection frequency")
 
         return df
-
-    except Exception as e:
-        logger.error(f"Error in batch connection frequency check: {e}")
-        import traceback
-        traceback.print_exc()
-        # Return with default values
-        if isinstance(updates_df, pl.DataFrame):
-            return updates_df.with_columns([
-                pl.lit(False).alias('connection_frequency_suspicious'),
-                pl.lit(False).alias('has_fake_connect'),
-                pl.lit('[]').alias('fake_connections')
-            ])
-        return updates_df
 
 
 def calculate_adaptive_threshold(updates_df, fake_connection, date_str):

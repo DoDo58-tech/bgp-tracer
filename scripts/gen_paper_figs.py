@@ -314,7 +314,7 @@ def fig4_timing():
 # Figure 5: Dataset distribution
 # ─────────────────────────────────────────────────────────────────
 def fig5_dataset():
-    csv_path = ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v13.csv"
+    csv_path = ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v17.csv"
     rows = list(csv.DictReader(open(csv_path)))
     counts = {}
     for r in rows:
@@ -343,7 +343,7 @@ def fig5_dataset():
         ax.text(b.get_x() + b.get_width() / 2, v + 0.3, str(v), ha="center", fontsize=10, fontweight="bold")
 
     # Add rejection info
-    rej_csv = ROOT / "data_check/ground_truth_collection/v13_rejected_events.csv"
+    rej_csv = ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v17_rejected.csv"
     if rej_csv.exists():
         rej = list(csv.DictReader(open(rej_csv)))
         ax.text(0.02, 0.95, f"+ {len(rej)} rejected candidates (each with explicit reason)",

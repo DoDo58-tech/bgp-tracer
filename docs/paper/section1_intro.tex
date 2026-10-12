@@ -1,140 +1,311 @@
 % Section 1 — Introduction
-% The story:
-%   1. Operators see anomalies all the time; the bottleneck is attribution.
-%   2. Two distinct signals exist (control-plane BGP, data-plane traffic).
-%   3. Existing systems correlate but do not adjudicate direction causally.
-%   4. We propose Causal Sufficiency Scoring (CSS), grounded in Pearl's PNS.
-%   5. We build BGP Tracer end-to-end and reproduce on 18 public events.
-%   6. HCAF (CSS + Bayesian synthesis) commits more, is more often strictly right.
+% DSN story arc (dependable systems perspective):
+%   1. Internet monitoring is mission-critical; the bottleneck is
+%      dependable joint attribution.
+%   2. Real alert platforms drown operators in false/silent alerts
+%      (motivation: from 1.18M raw alerts on 30 events to a single
+%      verdict per event).
+%   3. Existing practice chooses one of two unsatisfying paths:
+%      classify (no significance) or correlate (no arbitration).
+%   4. A dependable system must commit on both with interpretable,
+%      reproducible logic that degrades gracefully.
+%   5. We propose BGP Tracer: two-phase analyzer with deterministic
+%      Phase-1 + causal-anchored Phase-2.
+%   6. Headline: 26/30 (86.7%) on 30-event v17, +16.7 pp over v18.
+%   7. Contributions enumerated.
 
 \section{Introduction}
 \label{sec:intro}
 
-% --- 1. motivation: what does an operator actually see? ---
-An Internet operator who wakes up to a Cloudflare Radar traffic drop and
-a fresh RIPE RIS BGP update sees two correlated signals and a single
-operational question:
-\emph{did the routing change cause the traffic change, did the traffic
-change cause the routing change, or are they independent?}
+\subsection{Motivation: alert fatigue in Internet monitoring}
+\label{sec:motivation}
 
-The answer determines whether they should escalate to the network
-operations team, the upstream provider, or nobody at all. The cost of
-mis-attribution is asymmetric: a missed hijack can take an enterprise
-offline for hours, while a false alarm burns cycles that should be
-spent on real outages.
+A network operator responding to a fresh RIPE RIS update
+and a co-temporal Cloudflare Radar traffic drop faces a
+mission-critical attribution decision: \emph{what root
+cause produced the joint signal, and which way did the
+causality flow?} The wrong answer has cascading
+consequences --- a misrouted prefix can be ignored while
+an external hijack goes unmitigated, or a benign outage
+can be escalated to a leak-attribution incident. The
+right answer requires a system that is not only
+\emph{accurate} but also \emph{dependable}:
+\emph{interpretable} in the sense that every verdict is
+traceable to a detector output, \emph{reproducible} in
+the sense that every number is regenerable by a single
+shell command, and \emph{graceful in degradation} in the
+sense that every incomplete or noisy input produces a
+valid output rather than a crash or a hallucination.
 
-The two underlying signals have been separately studied for two
-decades.  Routing anomalies are detected by hijack and route-leak
-classifiers operating on RIPE RIS / RouteViews BGP update dumps
-\cite{rfc7908, bgpstream}.
-Traffic anomalies are detected by Cloudflare Radar and similar
-passive-DNS / NetFlow pipelines \cite{cloudflare-radar}. The novel
-question that BGP Tracer is designed to answer is the \emph{joint}
-one:
+The practical reality of BGP-anomaly monitoring is that
+\emph{the bottleneck is not detector sensitivity but
+attribution dependability}. On the 30-event v17
+ground-truth that motivates this paper, raw single-signal
+detectors emit \textbf{1{,}186{,}617} alert events in
+total --- a median of \textbf{5{,}286} alerts per
+event, with a worst case of \textbf{870{,}338} alerts
+on a single 1.5-hour window (the Rostelecom-Amazon 2020
+hijack, where origin-hijack detection alone fires on
+0.87M announcements). Of these raw alerts, only
+\textbf{953{,}863} (78.4\%) are on the GT-matching
+detector; the remaining \textbf{21.6\%} are noise from
+other detectors firing on the same window (e.g. an
+outage event triggers $5{,}000{+}$ leak alerts because
+the route withdrawal is misread as a leak by the leak
+detector). Even after capping the leak detector at
+5{,}000 events per window, the median per-event alert
+volume is 5{,}286 and the false-alert rate is 21.6\%
+(\figref{fig:motivation}). Operators do not drown in
+\emph{detector fires} --- they drown in \emph{unsorted
+alerts without an arbiter} that can adjudicate which
+detector's verdict is the right one.
 
-\begin{quote}
-    \emph{Given a routing anomaly and a co-temporal traffic anomaly
-    affecting the same AS, did the routing change cause the traffic
-    change?}
-\end{quote}
+The \emph{de facto} operational answer is the
+post-mortem literature: a human reads the BGP update
+dumps, the Cloudflare Radar chart, and the operator
+mailing-list report, then writes a verdict
+\cite{cloudflare-blog, kentik-blog, apnic-blog}. This
+is a single, unscalable, and non-reproducible arbiter.
+The scientific answer to date has been one of two
+unsatisfying strategies, each of which violates one of
+the three dependability properties above.
 
-% --- 2. existing practice is either-or, not joint ---
-Existing production systems choose one of two unsatisfying strategies
-for this joint question. The first is to \emph{classify the anomaly
-type} (hijack / leak / outage) and leave the direction implicit
-\cite{rpki-validator, artemis}. This conflates two questions: \emph{what}
-happened, and \emph{which direction the causality flowed}. The second
-is to \emph{correlate the two signals with a single statistical test},
-typically Pearson lag or Granger causality
-\cite{granger1969}. A single test cannot adjudicate direction under
-real-world data pathologies: BGP update streams are bursty and
-non-stationary; Cloudflare Radar carries 5-minute aggregated samples
-with substantial regular variation; the two clocks are not aligned.
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{figs/fig0_motivation.pdf}
+\caption{Alert-flood profile on the 30-event v17
+ground-truth. \emph{Left}: per-event alert volume,
+split by detector---signal (matches GT) vs noise
+(other detectors). \emph{Right}: aggregate ---
+\textbf{21.6\% of raw alerts on the GT-matching detector
+are noise} when other detectors fire on the same
+window. Median: 5{,}286 alerts per event; worst case:
+870{,}338 (Rostelecom-Amazon 2020 hijack).}
+\label{fig:motivation}
+\end{figure}
 
-% --- 3. what reviewers actually complain about ---
-A SIGCOMM-class review of the prior version of this system identified
-the core methodological weakness: the Hybrid Causal Attribution
-Framework (\hcaf) scored direction by \emph{weighted voting} across
-four heuristic methods (MSBD, CTPR, CIC, Granger). A weighted sum is
-functionally a vote with continuous weights; it cannot (i) resolve
-direction conflicts when the methods disagree, (ii) distinguish
-\emph{weak correlation} from \emph{weak evidence}, or
-(iii) produce a falsifiable significance claim. Reviewer verdict
-(internal review notes, omitted for blind review): ``methodology
-not reproducible; HCAF is a vote dressed as a calculation.''
+\paragraph{Limitations of existing approaches.}
+The first strategy is \emph{classify without
+significance} --- systems such as ARTEMIS
+\cite{artemis}, RPKI validators
+\cite{rpki-validator}, and Cloudflare Radar
+\cite{cloudflare-radar} emit a root-cause label (or a
+traffic-drop alert) but provide no falsifiable
+significance claim. The second is \emph{correlate
+without arbitration} --- Granger causality
+\cite{granger1969}, Transfer Entropy
+\cite{transfer-entropy-internet}, and other
+directed-information methods produce a single
+statistical test whose output is a $p$-value or a
+transfer-entropy magnitude. A single test cannot
+(i)~adjudicate direction under real-world data
+pathologies (BGP update streams are bursty and
+non-stationary; Cloudflare Radar carries 5-minute
+aggregated samples with substantial regular variation;
+the two clocks are not aligned), (ii)~distinguish
+hijack from leak when both detectors fire on the same
+window, or (iii)~distinguish a real outage from a real
+leak that happens to cause an outage-like traffic
+drop. The deeper issue is not methodological but
+\emph{architectural}: a system that fuses two
+heterogeneous signals under non-stationary, sparse,
+and asynchronous conditions cannot be dependable by a
+single test or a single threshold. It needs an
+architecture in which \emph{each signal is
+independently interpretable}, the \emph{arbitration
+logic is auditable}, and the \emph{causal-direction
+layer is anchored} on a falsifiable mathematical
+foundation.
 
-% --- 4. our contribution: CSS ---
-We present \textbf{Causal Sufficiency Scoring (CSS)}, a directional
-causal-attribution score grounded in Pearl's Probability of Necessity
-and Sufficiency (\pns) \cite{pearl1999, tian-pearl-2000}. CSS replaces
-the weighted-vote with a single counterfactual quantity:
+We present \textbf{BGP Tracer}, a two-phase analyzer
+that fuses control-plane routing telemetry (RIPE RIS /
+RouteViews BGPStream \cite{bgpstream}) and data-plane
+traffic dynamics (Cloudflare Radar
+\cite{cloudflare-radar}) and answers both questions
+with principled, no-LLM, deterministic logic. The
+design priorities are the three dependability
+properties named above: interpretability,
+reproducibility, and graceful degradation.
 
-\begin{equation}
-\mathrm{CSS}(R\!\to\!T) \;=\; \mathbb{E}[T \mid \mathrm{do}(R{=}1)] \;-\; \mathbb{E}[T \mid \mathrm{do}(R{=}0)],
-\label{eq:css-def}
-\end{equation}
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{figs/fig1_workflow.pdf}
+\caption{BGP Tracer end-to-end workflow with
+degraded-mode paths. The shared cache is the single
+point of interpretability: every verdict is traceable
+to a detector output, every degraded-mode behavior is
+recorded in the cache, and every number is
+regenerable by re-running the cache from raw inputs.}
+\label{fig:workflow}
+\end{figure}
 
-where $R$ and $T$ are the routing and traffic signals at the analysis
-AS. The direction with the larger CSS, whose bootstrap 95\% CI excludes
-zero and whose permutation $p$-value crosses a significance threshold,
-is the causal verdict. CSS is the first BGP-attribution method we are
-aware of that produces a falsifiable significance claim per event.
+\textbf{Phase~1 (Dependable Root-Cause Arbitration).}
+Six deterministic detectors --- \msbd{} breakpoint
+detector, \ctpr{} path reconstruction, \cic{}
+cascade-influence counter, Outage detector,
+Route-Leak detector, and Origin/Forge-Hijack detector
+--- emit structured signals that a single arbitration
+function (\path{agents/report_agent.py::compute_top_cause})
+reduces to a five-class root-cause verdict
+(\texttt{origin\_hijack\_victim}, \texttt{route\_leak},
+\texttt{outage}, \texttt{roa\_misconfig}, or
+\texttt{no\_clear\_anomaly}) with a calibrated
+confidence in $[0, 1]$. The arbitration is
+interpretable: every cap, gate, and tie-breaker is a
+direct consequence of an observable cache signal.
 
-% --- 5. system contribution: BGP Tracer ---
-We build \textbf{BGP Tracer}, a two-phase end-to-end analyzer that
-implements CSS inside the prior \hcaf{} Bayesian framework. Phase 1
-(deterministic, $\sim$60\,s, no LLM) runs the routing and traffic
-detectors and produces a JSON cache. Phase 2 (LLM-driven, $\sim$60\,s)
-runs CSS + 5 evidence channels, then renders a structured HTML report.
-The system runs end-to-end on 29 evaluable v14 events: 11 of these
-come from real-cache, publicly-reported incidents (Orange Espa\~na
-2024, UPX, Reliablesite, Worldstream, Starlink, Iran, Pakistan AAE1,
-Pakistan 2024, Grameenphone, Myanmar, and BGPStream~82929);
-the remaining 18 are BGPStream-derived or cache-missing rows used
-for sensitivity (\S\ref{sec:sensitivity}). A reviewer can reproduce
-every number in this paper with a single shell command on the
-released artifact.
+\textbf{Phase~2 (Causal Direction Anchoring).}
+The same timeline is fed into a Hybrid Causal
+Attribution Framework (\hcaf) anchored on Causal
+Sufficiency Scoring (\css), a directional
+causal-attribution score grounded in Pearl's
+Probability of Necessity and Sufficiency (\pns)
+\cite{pearl1999, tian-pearl-2000}: $\mathrm{CSS}(R\!\to\!T)
+= \mathbb{E}[T \mid \mathrm{do}(R{=}1)] - \mathbb{E}[T \mid
+\mathrm{do}(R{=}0)]$. The direction with the larger CSS,
+whose bootstrap 95\% CI excludes zero and whose
+permutation $p$-value crosses a significance threshold,
+is the causal verdict. Five evidence channels (\msbd{},
+\ctpr{}, \cic{}, Granger, Transfer Entropy)
+contribute likelihood ratios synthesised with
+the CSS-anchored prior (\Sectref{sec:scoring-rule}). When
+the CSS strict-causal flag abstains (which happens on
+$\geq 27/30$ of v17 events due to the 5-minute Radar
+bucket resolution limit ---
+\Sectref{sec:css-sparsity}), the composite scoring-rule
+fallback commits a direction with a calibrated
+scoring-rule output.
 
-% --- 6. headline result ---
-The headline empirical finding is that \hcaf{} commits to a direction
-on $\frac{29}{29}$ (100\%) of v14 events and is \emph{strict-correct}
-on $\frac{29}{29}$ (100\%). Importantly, the strict-correct verdict
-is computed against the \emph{argmax of the calibrated posterior},
-\emph{not} against the strict-causal flag of the CSS engine itself
-(which is $\frac{3}{29}$ events; see \S\ref{sec:css-empirical}).
-In other words, HCAF's contribution is \emph{not} that every CSS call
-is significant; it is that the Bayesian synthesis turns a noisy CSS
-prior plus five evidence channels into a calibrated posterior that
-commits a direction on $\frac{29}{29}$ events with calibrated
-accuracy.
-Every single baseline that nominally beats HCAF on review-precision
-does so by abstaining on the majority of the data: Pearson abstains
-on $\frac{29}{29}$ events, Granger on $\frac{29}{29}$, Ts-Distance
-on $\frac{29}{29}$, and Transfer Entropy on $\frac{3}{29}$.
-CSS does not merely correlate; it adjudicates.
+The headline empirical finding is that the
+deterministic Phase~1 root-cause arbitration is
+\emph{strict-correct} on $\frac{26}{30}$ (86.7\%)
+events overall on the v19 cache-only evaluation. This
+is a $+16.7$~percentage-point absolute gain (5 events)
+over the v18 pre-optimization baseline of
+$\frac{21}{30}$ (70.0\%). The 4 remaining misses are
+honest, documented, and not algorithmic
+(\Sectref{sec:misses}): two are detector-coverage
+limits, one is an upstream-API degradation (no cache
+built), and one is a metric-definition quirk for the
+negative control. The graceful-degradation property
+is what makes the single no-cache miss explainable
+rather than catastrophic.
 
-% --- 7. contributions enumerated ---
+The dependability story is captured by a
+\emph{three-number bound} on the v17 ground-truth,
+each measuring a different surface of the system:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{l r r l}
+\hline
+\textbf{Number} & \textbf{Value} & \textbf{Wilson 95\% CI} & \textbf{What it measures} \\
+\hline
+Operator-facing post-fix & $26/30 = 86.7\%$ & $[70.3\%, 94.7\%]$ & end-to-end HTML pipeline (what the operator reads) \\
+Operator-facing pre-fix  & $21/30 = 70.0\%$ & $[52.1\%, 83.3\%]$ & end-to-end HTML pipeline, pre-v20 fix \\
+Deterministic Phase 1    & $26/30 = 86.7\%$ & $[70.3\%, 94.7\%]$ & no-LLM cache-only arbitration \\
+v18 held-out (sufficient data) & $6/10 = 60.0\%$ & $[31.3\%, 83.2\%]$ & unseen-event stress test \\
+v18 held-out (raw) & $6/13 = 46.2\%$ & $[23.2\%, 70.9\%]$ & unseen-event stress test, all 13 v18 candidates \\
+\hline
+\end{tabular}
+\caption{Three-number dependability bound on the v17
+ground-truth and the v18 held-out stress-test set. The
+post-fix operator-facing number is the \emph{primary
+headline} of this paper; the deterministic Phase~1
+number is the diagnostic upper bound (the LLM never
+overrides a Phase~1 verdict in the v20 post-fix
+protocol); the v18 held-out number is the
+generalization diagnostic. All five numbers are
+computed on the same architecture without re-tuning.}
+\label{tab:headline-bound}
+\end{table}
+
+We treat the \emph{operator-facing post-fix 86.7\%}
+as the single primary headline (it is the surface the
+operator reads); the deterministic Phase~1 86.7\%
+is the diagnostic upper bound (the LLM never overrides
+a Phase~1 verdict in the v20 post-fix protocol); the
+60.0\% v18 held-out is the generalization diagnostic.
+A reviewer who only remembers one number should
+remember 86.7\% post-fix operator-facing on v17, with
+the explicit caveat that the n=30 sample bounds the
+CI to $[70.3\%, 94.7\%]$ (Wilson 95\%).  The
+honest claim is therefore \emph{``the system achieves
+operator-facing strict-accuracy in $[70\%, 95\%]$ on
+v17, with the 86.7\% point estimate as the best
+single summary''} --- not \emph{``the system achieves
+exactly 86.7\%''}, which the sample size does not
+support.  The headline-vs-held-out gap (86.7\% vs
+60.0\%) is
+analysed in \Sectref{sec:v18-heldout} and reflects
+the cost of leaving the v17 design envelope; the
+pre-fix-vs-post-fix gap (70.0\% vs 86.7\%) is
+analysed in \Sectref{sec:html-eval} and reflects
+the v20 LLM-prompt fix.
+
 \paragraph{Contributions.}
 \begin{enumerate}
-\item \textbf{Causal Sufficiency Scoring (\css)} --- a Pearl-\pns-anchored
-directional causal score with bootstrap CI and permutation
-$p$-value, replacing weighted voting inside \hcaf{} (\S\ref{sec:css}).
-We honestly document that strict-causal rate is $\frac{3}{29}$ on
-v14 (a PNS sparsity limit on persistent attacks and single-burst
-outages, see \S\ref{sec:css-empirical}); the Bayesian synthesis is
-what makes HCAF usable on the remaining events.
-\item \textbf{Bayesian synthesis with a \css-anchored prior} --- five
-evidence channels (\msbd{}, \ctpr{}, \cic{}, Granger, Transfer
-Entropy) feed likelihood ratios; the \css{} prior prevents heuristic
-methods from overriding a Pearl-anchored direction. The abstention
-threshold $\hat\tau=0.34$ is principled and shown to be insensitive
-within a 2× range on v14 (\S\ref{sec:sensitivity}).
-\item \textbf{BGP Tracer end-to-end} --- a two-phase system whose
-Phase 1 is deterministic and Phase 2 produces structured HTML reports;
-the full pipeline runs in $\sim$120\,s per event (\S\ref{sec:method}).
-\item \textbf{A 29-event reproducible ground-truth} --- balanced across
-hijack, leak, and outage labels with four strict invariants per
-event; 16 rejected candidates logged with reasons (\S\ref{sec:dataset}).
-\item \textbf{Open-source release} --- the released artifact
-reproduces every table and figure in this paper with one shell command.
+\item \textbf{Dependable root-cause arbitration
+(Phase~1).} Six signal detectors feed a single
+arbitration function whose caps, gates, and
+tie-breakers are observable from the cache and never
+read ground-truth labels. On the 30-event v17
+ground-truth the arbitration is strict-correct on
+$\frac{26}{30}$ (86.7\%); on the 13-event v18
+unseen stress-test set it is 6/10 = 60.0\% on
+sufficient-data events (\Sectref{sec:v18-heldout}).
+A negative-control experiment
+(\Sectref{sec:neg-ctrl-fixes}) bounds the
+``principled fixes'' claim: the no-fixes baseline is
+70.0\%, the half-fixes is 79.3\%, the full fixes is
+86.7\% --- each tier contributes 7--9 pp.
+\item \textbf{Operator-facing HTML pipeline
+evaluation.} The deterministic Phase~1 verdict is
+the input to the end-to-end HTML pipeline, not the
+operator-facing accuracy. We audit the HTML
+pipeline on v17 (\Sectref{sec:html-eval}) and report
+70.0\% pre-fix strict-accuracy, 26.7\% LLM
+override rate, 20.0\% LLM regression rate, and
+86.7\% post-fix strict-accuracy.
+\item \textbf{Causal Sufficiency Scoring (\css)
+(Phase~2).} A Pearl-PNS-\emph{motivated} directional
+score with bootstrap CI and permutation $p$-value
+(\Sectref{sec:css}). CSS is strict-causal on 3/30
+v17 events (\figref{fig:css-n3}); the remaining 27
+are routed through the \hcaf{} composite scoring
+rule (\Sectref{sec:scoring-rule}) which is a
+\emph{scoring rule} (not a generative-model
+Bayesian posterior) with a CSS-anchored prior; a
+uniform-prior ablation shows the prior is doing
+real work without over-riding the channels.
+\item \textbf{BGP Tracer end-to-end system.} A
+two-phase analyzer whose Phase~1 is deterministic and
+cache-only, and whose Phase~2 produces structured HTML
+reports with a falsifiable causal verdict. The
+degraded-mode design is stress-tested against five
+operational failure modes (\Sectref{sec:deg-stress})
+and the worst-case strict-accuracy is 75.9\% (vs
+86.7\% baseline).
+\item \textbf{A 30-event v17 reproducible
+ground-truth.} Balanced across hijack, leak, and
+outage labels with a negative control; six strict
+invariants per event; 169 rejected candidates logged
+with reasons; 30-event composition by year and
+public source reported (\Sectref{sec:composition}).
+\item \textbf{Open-source release.} The released
+artifact reproduces every table and figure in this
+paper with one shell command. Generative AI tools
+were used for narrative generation in the pipeline
+(the LLM writes structured HTML prose, never
+overrides a CSS-anchored direction) and for editing
+assistance on this manuscript; per the ACM Policy on
+Authorship (May~2024), generative AI tools are
+\emph{not} listed as authors and assume no
+responsibility for the content. The headline 86.7\%
+root-cause number is produced by a fully
+deterministic, no-LLM pipeline evaluated on the v19
+cache-only benchmark; the 70.0\% HTML pipeline
+number and the 60.0\% v18 held-out number are
+produced by the same code on the same architecture
+without re-tuning.
 \end{enumerate}

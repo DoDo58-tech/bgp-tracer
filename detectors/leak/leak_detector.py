@@ -3,8 +3,7 @@ import sys
 import gc
 import pandas as pd
 import polars as pl
-from typing import Any, Dict, List, Optional, Tuple
-from sortedcontainers import SortedDict
+from typing import List
 from pathlib import Path
 from datetime import datetime
 
@@ -12,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import logger
 from config import PROJECT_ROOT, PATHPROB_SEARCH_PATHS, PATHPROB_AE_ROOT, DEFAULT_LEAK_THRESHOLD, MAX_WORKERS, IO_BUSY_THRESHOLD
 from detectors.unified_result import wrap, DetectionType
+from detectors.input_validation import InputValidationError, validate_detection_request
 
 def _parse_time_window(value):
     if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
@@ -205,10 +205,6 @@ def detect_route_leaks_in_announcements_slow(
             leaks.append(leak_event)
 
     return leaks
-
-
-def detect_route_leaks_in_announcements(announcements_df, asrelprob, threshold):
-    return detect_route_leaks_vectorized(announcements_df, asrelprob, threshold)
 
 
 def detect_route_leaks_vectorized(
@@ -440,8 +436,31 @@ def analyze_leak_surface(
     """
     from data.updates_loader import get_updates_streaming
     
-    asn_clean = str(asn).replace('AS', '').replace('as', '')
-    
+    # Validate the request BEFORE doing any work. Without this, swapped
+    # arguments (asn passed in a time slot) surface as a confusing
+    # "invalid time format" for the ASN value, and an inverted window is
+    # accepted and scans nothing. Reject both explicitly.
+    try:
+        asn_clean, start_dt, end_dt = validate_detection_request(
+            asn, start_time, end_time, asn_label="asn"
+        )
+    except InputValidationError as exc:
+        logger.error(f"[leak] rejected request: {exc}")
+        return wrap(DetectionType.LEAK, {
+            "success": False,
+            "asn": str(asn),
+            "analysis_period": f"{start_time} to {end_time}",
+            "error": str(exc),
+            "route_leaks": [],
+            "leak_count": 0,
+            "total_detected": 0,
+            "data_available": False,
+            "no_data_reason": "invalid_request",
+            "invalid_request": True,
+            "anomalies_detected": False,
+            "anomaly_count": 0,
+        }, asn=str(asn)).to_dict()
+
     # Normalize target ASNs
     if target_asns is None:
         target_asns = [asn_clean]
@@ -449,9 +468,9 @@ def analyze_leak_surface(
         target_asns = [str(a).replace('AS', '').replace('as', '') for a in target_asns]
         if asn_clean not in target_asns:
             target_asns.append(asn_clean)
-    
+
     logger.info(f"Route leak detection: filtering for AS paths containing: {target_asns}")
-    
+
     try:
         start_dt = _parse_time_window(start_time)
         end_dt = _parse_time_window(end_time)
@@ -510,78 +529,10 @@ def analyze_leak_surface(
     all_leaks = []
     
     # ========== ES，CSV ==========
-    if False:
-        logger.info("[ES] Attempting ES query for leak detection (fast path)")
-        
-        # ASES
-        es_all_records = []
-        for target_asn in target_asns:
-            records = get_leak_candidates_es(target_asn, start_dt, end_dt)
-            if records:
-                es_all_records.extend(records)
-                logger.info(f"[ES] Retrieved {len(records)} records for AS{target_asn}")
-        
-        if es_all_records:
-            # （AS）
-            seen = set()
-            unique_records = []
-            for rec in es_all_records:
-                key = (rec.get('as_path', ''), rec.get('prefix', ''), rec.get('timestamp', ''))
-                if key not in seen:
-                    seen.add(key)
-                    unique_records.append(rec)
-            
-            logger.info(f"[ES] Total unique records: {len(unique_records)}")
-            
-            # DataFrame
-            df_es = convert_es_records_to_dataframe(unique_records)
-            total_announcements = len(df_es)
-            filtered_announcements = total_announcements
-            
-            if not df_es.is_empty():
-                # 
-                chunk_leaks = detect_route_leaks_vectorized(df_es, asrelprob, threshold, max_leaks=max_leaks)
-                all_leaks.extend(chunk_leaks)
-
-                logger.info(f"[ES] Leak detection complete: {len(chunk_leaks)} leaks from {total_announcements} records")
-
-                # Same truncation honesty as the CSV path: `leak_count` is the
-                # cap, not a measurement. Publish the flag so downstream does
-                # not present a truncated count as a real one.
-                es_truncated = bool(max_leaks > 0 and len(chunk_leaks) >= max_leaks)
-                if es_truncated:
-                    logger.warning(
-                        f"[ES] leak results TRUNCATED at max_leaks={max_leaks}; "
-                        "the true count is higher and is not reported here."
-                    )
-
-                return wrap(DetectionType.LEAK, {
-                    "success": True,
-                    "asn": asn_clean,
-                    "analysis_period": f"{start_time} to {end_time}",
-                    "pathprob_file": pathprob_file,
-                    "threshold": threshold,
-                    "target_asns": target_asns,
-                    "asrel_count": len(asrelprob),
-                    "route_leaks": all_leaks,
-                    "leak_count": len(all_leaks),
-                    "total_detected": len(all_leaks),
-                    "truncated": es_truncated,
-                    "truncation_limit": max_leaks if es_truncated else None,
-                    "total_announcements": total_announcements,
-                    "filtered_announcements": filtered_announcements,
-                    "data_source": "elasticsearch",
-                    "analysis_timestamp": datetime.now().isoformat(),
-                    # Unified schema fields
-                    "data_available": True,
-                    "no_data_reason": "",
-                    "anomalies_detected": len(all_leaks) > 0,
-                    "anomaly_count": len(all_leaks),
-                }, asn=asn_clean).to_dict()
-        
-        logger.warning("[ES] ES query returned no results, falling back to CSV streaming")
-    
-        # ========== CSV（）==========
+    # The Elasticsearch fast path was removed 2026-10-05: it called
+    # get_leak_candidates_es / convert_es_records_to_dataframe, neither of
+    # which exists in this module, so the block could only ever raise
+    # NameError if re-enabled. Detection reads the CSV stream below.
     logger.info(f"Using CSV streaming for leak detection (max_leaks={max_leaks})")
 
     # target AS

@@ -137,6 +137,89 @@ def get_global_token_counter() -> int:
     return total
 
 
+def _extract_usage_from_response(response) -> tuple[int, int]:
+    """Best-effort extraction of (prompt_tokens, completion_tokens) from a
+    raw OpenAI / OpenAI-compatible response object.
+
+    OpenAI-compatible APIs always populate ``response.usage`` on
+    non-streaming chat/completion calls. The OpenAI SDK exposes this as
+    either:
+      - response.usage.prompt_tokens / completion_tokens
+      - response.usage.input_tokens / output_tokens (newer schema)
+      - response.usage.total_tokens (fallback, minus completion)
+    Returns (0, 0) when the field is missing or unreadable.
+    """
+    if response is None:
+        return 0, 0
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return 0, 0
+    # Newer OpenAI schema (input/output tokens).
+    try:
+        pt = int(getattr(usage, "input_tokens", 0) or 0)
+        ct = int(getattr(usage, "output_tokens", 0) or 0)
+        if pt or ct:
+            return pt, ct
+    except Exception:
+        pass
+    # Standard schema (prompt/completion tokens).
+    try:
+        pt = int(getattr(usage, "prompt_tokens", 0) or 0)
+        ct = int(getattr(usage, "completion_tokens", 0) or 0)
+        if pt or ct:
+            return pt, ct
+    except Exception:
+        pass
+    # Fallback: total_tokens - completion when only totals reported.
+    try:
+        total = int(getattr(usage, "total_tokens", 0) or 0)
+        ct = int(getattr(usage, "completion_tokens", 0) or 0)
+        if total and ct:
+            return total - ct, ct
+    except Exception:
+        pass
+    return 0, 0
+
+
+def _record_token_usage_to_budget(response, agent_name: str = "OpenAICompatibleLLM") -> None:
+    """Record (prompt_tokens, completion_tokens) into every TokenBudget
+    instance in ``_GLOBAL_TOKEN_HANDLERS``.
+
+    The OpenAI client returns ``response.usage`` but LlamaIndex's
+    TokenCountingHandler callbacks never fire for our ``chat``/
+    ``complete`` wrappers because we go straight to ``self.client.``
+    bypassing the callback pipeline. This function is the
+    reconciliation step that keeps the global counter in sync.
+    """
+    pt, ct = _extract_usage_from_response(response)
+    if not (pt or ct):
+        return
+    for h in list(_GLOBAL_TOKEN_HANDLERS):
+        try:
+            # TokenCountingEvent requires (prompt, completion) strings
+            # plus (prompt_token_count, completion_token_count) ints.
+            from llama_index.core.callbacks.token_counting import (
+                TokenCountingEvent,
+            )
+            # Synthesize strings from token counts so the dataclass
+            # accepts them; the token-count fields are what the handler
+            # sums via ``total_llm_token_count``.
+            event = TokenCountingEvent(
+                prompt=" " * pt,
+                completion=" " * ct,
+                prompt_token_count=pt,
+                completion_token_count=ct,
+                total_token_count=pt + ct,
+            )
+            # The handler exposes ``llm_token_counts`` (a list) and
+            # ``prompt_llm_token_count`` / ``completion_llm_token_count``
+            # / ``total_llm_token_count`` properties that sum the list.
+            if hasattr(h, "llm_token_counts"):
+                h.llm_token_counts.append(event)
+        except Exception:
+            continue
+
+
 def reset_global_token_counter() -> None:
     """Reset every registered handler's counter."""
     for h in list(_GLOBAL_TOKEN_HANDLERS):
@@ -766,6 +849,14 @@ class OpenAICompatibleLLM(LLM):
                 )
                 text = _extract_message_text(response.choices[0].message)
 
+                # Bug fix 2026-10-08 (TokenCount-not-firing): feed the
+                # usage back into the global handler because we bypassed
+                # LlamaIndex's callback pipeline.
+                try:
+                    _record_token_usage_to_budget(response, agent_name="llm.complete")
+                except Exception:
+                    pass
+
                 if not json_mode:
                     return CompletionResponse(
                         text=text,
@@ -936,6 +1027,14 @@ class OpenAICompatibleLLM(LLM):
                 extra_body=_merge_extra_body(kwargs.get("extra_body")),
             )
             msg_content = _extract_message_text(response.choices[0].message)
+            # Bug fix 2026-10-08 (TokenCount-not-firing): the OpenAI
+            # wrapper bypasses LlamaIndex's callback pipeline so
+            # TokenCountingHandler never sees the response. Feed the
+            # usage back into the handler explicitly.
+            try:
+                _record_token_usage_to_budget(response, agent_name="llm.chat")
+            except Exception:
+                pass
             return ChatResponse(
                 message=ChatMessage(
                     role=MessageRole.ASSISTANT,
@@ -1057,7 +1156,7 @@ def create_llm(
             max_retries=max_retries,
         )
 
-    if any(x in model_lower for x in ["deepseek", "qwq", "qwen", "gpt", "claude", "s1", "glm"]):
+    if any(x in model_lower for x in ["deepseek", "qwq", "qwen", "gpt", "claude", "s1", "glm", "glm-4", "glm-5", "kimi"]):
         return OpenAICompatibleLLM(
             model=model,
             api_key=api_key,

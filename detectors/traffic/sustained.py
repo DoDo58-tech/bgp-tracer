@@ -1,5 +1,4 @@
 import numpy as np
-from utils.logger import logger
 
 
 def detect_anomalies_sustained_outage(current_values, historical_means, historical_stds,

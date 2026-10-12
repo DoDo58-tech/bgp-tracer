@@ -128,9 +128,7 @@ def generate_comprehensive_report(
     output_dir=None,
     org_name=None,
     asn=None,
-    fallback_report_func=None,
     user_input_time_range=None,
-    no_anomalies=False,
     traffic_plot_path: str=None,
     victim_traffic_results: Dict[str, Any]=None,
     victim_asns: list=None,
@@ -160,9 +158,7 @@ def generate_comprehensive_report(
         output_dir: Output directory
         org_name: Organization name
         asn: AS number
-        fallback_report_func: (unused, kept for API compat)
         user_input_time_range: Explicit time range string
-        no_anomalies: Whether to force a no-anomalies report
         traffic_plot_path: Path to traffic plot image
         victim_traffic_results: Victim AS traffic analysis
         victim_asns: List of victim AS numbers

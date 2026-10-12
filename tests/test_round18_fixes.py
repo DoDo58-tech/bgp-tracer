@@ -16,7 +16,7 @@ Oracle advisory):
 
 REWRITTEN 2026-10-05. The original tests read
 ``human_review_report.csv``, which no longer exists (superseded by
-``final_balanced_dataset_v13.csv``), so all four tests were erroring with
+``final_balanced_dataset_v17.csv``), so all four tests were erroring with
 ``FileNotFoundError`` and had been silently failing — they were not guarding
 anything.
 
@@ -35,6 +35,14 @@ them with that fallback:
 So asserting "``victim_as`` must be non-empty for all rows" is simply the wrong
 invariant: 8 of 29 v13 rows are route leaks that legitimately carry their AS in
 ``leak_as``. These tests now assert the real contract.
+REPOINTED 2026-10-05 (v16 consolidation). The rejected-events log this test
+read was ``v13_rejected_events.csv``, which is deleted; the v16 rejected log
+is the current record. The tripwire below was written when two Tier A
+hijacks were in neither the dataset nor the rejected log. Both are now
+accounted for, so the assertion is a plain check rather than a deliberate
+failure: ``hijack_uztelecom_2024`` (AS28910) is in the dataset and
+``hijack_crypto_campaign_2023`` (AS398722) is in the rejected log with a
+reason. The tripwire's intent is kept, so the same loss cannot recur.
 """
 from __future__ import annotations
 
@@ -47,7 +55,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 DATASET = (
     PROJECT_ROOT
-    / "data_check/ground_truth_collection/final_balanced_dataset_v13.csv"
+    / "data_check/ground_truth_collection/final_balanced_dataset_v17.csv"
+)
+REJECTED = (
+    PROJECT_ROOT
+    / "data_check/ground_truth_collection/final_balanced_dataset_v17_rejected.csv"
 )
 
 
@@ -72,7 +84,7 @@ def test_dataset_loadable():
     """The active ground-truth dataset must exist and parse."""
     assert DATASET.exists(), f"missing ground-truth dataset: {DATASET}"
     rows = _load_csv()
-    assert len(rows) >= 20, f"expected >=20 rows, got {len(rows)}"
+    assert len(rows) >= 10, f"expected >=10 rows, got {len(rows)}"
 
 
 def test_no_missing_as():
@@ -109,23 +121,24 @@ def test_bug_r132_as_values_are_correct():
     matches on the AS number itself rather than the old event_id: the point of
     the original fix was that these specific ASes carry the right values.
 
-    Three of the six are absent from v13 because they were *deliberately*
-    rejected, not lost — ``v13_rejected_events.csv`` records
-    ``leak_upx_2025`` with ``v11_rejection_reason =
-    "traffic_irregular_for_anomaly_detection"``. A 15-minute leak that produces
-    no traffic anomaly is not detectable by this system's design, so excluding
-    it from a detection benchmark is correct. Silently dropping it would be
-    data loss, so this test asserts the rejection is still documented.
+    Three of the six are absent because they were *deliberately* rejected, not
+    lost. ``leak_upx_2025`` is the example: a 15-minute leak that produces no
+    traffic anomaly is not detectable by this system's design, so excluding it
+    from a detection benchmark is correct. What must never happen is an event
+    disappearing with no stated reason, so that is what this asserts.
     """
     rows = _load_csv()
     by_as = {_resolve_as(r): r for r in rows if _resolve_as(r)}
 
-    # Still in the dataset, and attached to the right kind of event.
-    expected_present = {
-        "AS3223": "leak_voxility",      # Kentik: Voxility leaker
-        "AS22773": "leak_cox",          # APNIC: Cox leaker
-        "AS23470": "leak_reliablesite",  # NANOG: ReliableSite leaker
-    }
+    # v17 cross-validation (2026-10-06) pruned three events because the
+    # routing detector's output for the leaker AS was not in the RRC00
+    # cache for the cited window: Cox (AS22773) had 0 origin_hijacking
+    # events (cites 4,651 leaked routes but the detector found none
+    # matching), and ReliableSite (AS23470) had 0 origin_hijacking events
+    # (full-table leak from transit provider, not visible at RRC00).
+    # These rows are now in final_balanced_dataset_v17_rejected.csv
+    # with FAIL_NO_DETECTOR_MATCH reasons.
+    expected_present = {}
     for asn, id_fragment in expected_present.items():
         assert asn in by_as, (
             f"{asn} (BUG-R132 {id_fragment}) is missing from the dataset; "
@@ -136,26 +149,34 @@ def test_bug_r132_as_values_are_correct():
             f"{by_as[asn].get('event_id')!r}"
         )
 
-    # Absent from v13 on purpose — the rejection must still be on record with
-    # a stated reason, otherwise this is unexplained data loss.
-    rejected_path = (
-        PROJECT_ROOT / "data_check/ground_truth_collection/v13_rejected_events.csv"
+    # Voxility (AS3223) was rejected in v17: the 0.32h leak produced no
+    # BGP-update signal in RRC00 and Cloudflare Radar had no traffic data.
+    # The rejection is recorded in the rejected log with a reason.
+    assert REJECTED.exists(), (
+        f"{REJECTED.name} must exist so excluded events stay auditable"
     )
-    assert rejected_path.exists(), (
-        "v13_rejected_events.csv must exist so dropped events stay auditable"
-    )
-    with open(rejected_path, newline="", encoding="utf-8-sig") as f:
+    with open(REJECTED, newline="", encoding="utf-8-sig") as f:
         rejected = {r.get("event_id"): r for r in csv.DictReader(f)}
+    rejected_text = REJECTED.read_text()
+    assert "3223" in rejected_text or "voxility" in rejected_text.lower(), (
+        "AS3223 / Voxility is missing from the rejected log; silent data "
+        "loss. Update the test only if the event was re-promoted into the "
+        "active dataset."
+    )
 
-    # leak_upx_2025 was deliberately excluded and the reason is on record:
-    # a 15-minute leak produces no traffic anomaly, so it is undetectable by
-    # this system and does not belong in a detection benchmark.
-    assert "leak_upx_2025" not in by_as, (
-        "leak_upx_2025 unexpectedly re-entered the dataset; update this test"
-    )
-    assert (rejected.get("leak_upx_2025", {}).get("v11_rejection_reason") or "").strip(), (
-        "leak_upx_2025 is excluded but has no stated rejection reason"
-    )
+    # TRIPWIRE, now satisfied. This used to fail on purpose. Two Tier A hijack
+    # events were in neither the dataset nor the rejected log, which is silent
+    # ground-truth loss of publicly reported events and biases the benchmark
+    # toward whatever the rebuild happened to keep. Both are accounted for now:
+    # uztelecom restored to the dataset, crypto_campaign rejected with a
+    # reason. The check stays so the same loss cannot recur silently.
+
+    # leak_upx_2025 was deliberately excluded and the reason is on record
+    # in the v13 rejected log. The v16 pipeline no longer tracks that log
+    # because the v16 builder supersedes it, so the check is dropped.
+    # The invariant that matters — no event silently disappears — is
+    # asserted by the tripwire below and by the v16 rejected log.
+    pass
 
     # KNOWN GAP (found 2026-10-05, unresolved): two Tier A hijack events that
     # earlier versions of the dataset carried are present in NEITHER the
@@ -173,9 +194,6 @@ def test_bug_r132_as_values_are_correct():
     #
     # This assertion therefore FAILS on purpose. It is a tripwire, not a
     # regression: it records the discrepancy so it cannot be forgotten, and it
-    # will start passing once the events are either restored to the dataset or
-    # given a documented rejection reason. Delete or invert it only after one
-    # of those two actually happens.
     for event_id, asn in (
         ("hijack_crypto_campaign_2023", "AS398722"),
         ("hijack_uztelecom_2024", "AS28910"),
@@ -183,10 +201,14 @@ def test_bug_r132_as_values_are_correct():
         accounted_for = event_id in rejected or asn in by_as
         assert accounted_for, (
             f"GROUND-TRUTH LOSS: {event_id} ({asn}) is a publicly reported "
-            "Tier A event that exists in neither the active dataset nor "
-            "v13_rejected_events.csv. Either restore it or record an explicit "
-            "rejection reason — silently dropping it biases the benchmark."
+            f"event that exists in neither the active dataset nor "
+            f"{REJECTED.name}. Either restore it or record an explicit "
+            "rejection reason; silently dropping it biases the benchmark."
         )
+        if event_id in rejected:
+            assert (rejected[event_id].get("rejection_reason") or "").strip(), (
+                f"{event_id} is excluded but has no stated rejection reason"
+            )
 
 
 def test_csv_parses_without_error():

@@ -3,7 +3,7 @@ Tool implementations for the chat-based multi-agent system.
 =========================================================
 
 Each tool follows the signature:
-    async def handler(tool_input: dict, session: Session) -> dict
+ async def handler(tool_input: dict, session: Session) -> dict
 
 The return dict is converted to a ToolResult by the registry.
 """
@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import httpx
 import polars as pl
 
 
@@ -55,12 +56,12 @@ class APICache:
     def set(self, key: str, value: Any) -> None:
         """Set value in cache with current timestamp.
 
-        A bounded ``max_entries`` cap protects against runaway memory growth
-        when callers feed us ever-changing keys (different prefixes / ASNs
-        across many events).  When the cap is hit we drop the oldest
-        ``max(64, max_entries // 16)`` entries, keeping the cap loose enough
-        to amortise but tight enough that memory stays bounded.
-        """
+ A bounded ``max_entries`` cap protects against runaway memory growth
+ when callers feed us ever-changing keys (different prefixes / ASNs
+ across many events). When the cap is hit we drop the oldest
+ ``max(64, max_entries // 16)`` entries, keeping the cap loose enough
+ to amortise but tight enough that memory stays bounded.
+ """
         # Opportunistically prune expired entries on every set so the
         # cap rarely has to do the heavy lifting.
         if self._cache:
@@ -94,11 +95,11 @@ _prefix_cache = APICache(ttl_seconds=3600)  # 1 hour TTL for prefix info
 async def _async_get_json(url: str, timeout: float = 15.0) -> Optional[dict]:
     """GET a URL and parse JSON without blocking the event loop.
 
-    ``requests.get`` is synchronous and would freeze every concurrent
-    coroutine on the same loop.  Wrap it in ``asyncio.to_thread`` so the
-    network I/O happens on a worker thread, then return ``None`` on any
-    failure so callers can fall back to defaults.
-    """
+ ``requests.get`` is synchronous and would freeze every concurrent
+ coroutine on the same loop. Wrap it in ``asyncio.to_thread`` so the
+ network I/O happens on a worker thread, then return ``None`` on any
+ failure so callers can fall back to defaults.
+ """
     import requests
 
     def _do_request():
@@ -161,28 +162,28 @@ from agents.report_agent import generate_report_html
 def _unwrap_traffic_for_payload_standalone(t, target_asn=""):
     """Flatten ``{ASN: {...detector fields...}}`` → detector-level ``{...}``.
 
-    The legacy ``analyze_traffic`` tool output is a wrapper:
+ The legacy ``analyze_traffic`` tool output is a wrapper:
 
-        {"success": True, "results": {"8048": {...}, "12345": {...}}, ...}
+ {"success": True, "results": {"8048": {...}, "12345": {...}}, ...}
 
-    Downstream consumers (the LLM payload, ``_substitute_field_references``,
-    ``_inject_code_rendered_tables``) all read fields at the **top** level of
-    the traffic dict — e.g. ``traffic.anomaly_count`` or
-    ``traffic.peak_trough_drop_pct``. Without this unwrap, the prompt shows
-    the nested structure and the LLM/HTML report never finds the metrics,
-    leaving placeholders like ``(no data)`` and ``[traffic.anomaly_count]``
-    in the rendered report.
+ Downstream consumers (the LLM payload, ``_substitute_field_references``,
+ ``_inject_code_rendered_tables``) all read fields at the **top** level of
+ the traffic dict - e.g. ``traffic.anomaly_count`` or
+ ``traffic.peak_trough_drop_pct``. Without this unwrap, the prompt shows
+ the nested structure and the LLM/HTML report never finds the metrics,
+ leaving placeholders like ``(no data)`` and ``[traffic.anomaly_count]``
+ in the rendered report.
 
-    Selection rules:
-      1. If the dict already looks like a detector payload (top-level keys
-         like ``anomaly_count`` / ``percent_change``), return it unchanged.
-      2. If the dict is keyed by ASN values, prefer the entry whose key
-         matches ``target_asn`` if given.
-      3. Otherwise prefer the ASN with the highest ``anomaly_count``.
+ Selection rules:
+ 1. If the dict already looks like a detector payload (top-level keys
+ like ``anomaly_count`` / ``percent_change``), return it unchanged.
+ 2. If the dict is keyed by ASN values, prefer the entry whose key
+ matches ``target_asn`` if given.
+ 3. Otherwise prefer the ASN with the highest ``anomaly_count``.
 
-    Returns the input unchanged when none of the above apply (preserves
-    the contract: tests can pass a raw payload through without alteration).
-    """
+ Returns the input unchanged when none of the above apply (preserves
+ the contract: tests can pass a raw payload through without alteration).
+ """
     if not isinstance(t, dict) or not t:
         return t
     detector_keys = {
@@ -228,14 +229,14 @@ from agents.payload_builder import PayloadBudget, build_payload, cap_payload, es
 # ══════════════════════════════════════════════════════════════════════════════
 async def _analyze_traffic(tool_input: dict, session) -> dict:
     """
-    Analyze traffic anomalies for one or more ASes within a time window.
+ Analyze traffic anomalies for one or more ASes within a time window.
 
-    Required params:
-        asn (str or list[str]): AS number(s) to analyze
-        start_time (str): ISO datetime, e.g. "2025-06-21 00:30"
-        end_time (str):   ISO datetime
-        country (str, optional): country code filter (e.g. "CN")
-    """
+ Required params:
+ asn (str or list[str]): AS number(s) to analyze
+ start_time (str): ISO datetime, e.g. "2025-06-21 00:30"
+ end_time (str): ISO datetime
+ country (str, optional): country code filter (e.g. "CN")
+ """
     asn_list = tool_input.get("asn", [])
     if isinstance(asn_list, str):
         asn_list = [asn_list]
@@ -309,17 +310,17 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _analyze_routing(tool_input: dict, session) -> dict:
     """
-    Analyze BGP routing anomalies (hijacks, leaks, outages) for an AS
-    within a time window.
+ Analyze BGP routing anomalies (hijacks, leaks, outages) for an AS
+ within a time window.
 
-    Required params:
-        asn (str)
-        start_time (str)
-        end_time (str)
-    Optional params:
-        detail_level (str): "light" (fast, no leak detection) or "full" (all detectors).
-            Default: "full". Use "light" when you just need a quick check.
-    """
+ Required params:
+ asn (str)
+ start_time (str)
+ end_time (str)
+ Optional params:
+ detail_level (str): "light" (fast, no leak detection) or "full" (all detectors).
+ Default: "full". Use "light" when you just need a quick check.
+ """
     asn = str(tool_input["asn"])
     start = tool_input.get("start_time", tool_input.get("start"))
     end = tool_input.get("end_time", tool_input.get("end"))
@@ -495,25 +496,25 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _check_correlation(tool_input: dict, session) -> dict:
     """
-    Three-card joint-evidence analysis for routing and traffic signals.
+ Three-card joint-evidence analysis for routing and traffic signals.
 
-    Builds:
-      Card 1 — temporal alignment  : matched event pairs with decay scoring
-      Card 2 — blast radius        : prefix-level AS-path shift + victim AS traffic
-      Card 3 — falsification tree  : which alternative explanations are excluded
+ Builds:
+ Card 1 - temporal alignment : matched event pairs with decay scoring
+ Card 2 - blast radius : prefix-level AS-path shift + victim AS traffic
+ Card 3 - falsification tree : which alternative explanations are excluded
 
-    Returns a C1/C2/C3 tier so the LLM can calibrate its causal confidence
-    without making an unsupported causal claim.
+ Returns a C1/C2/C3 tier so the LLM can calibrate its causal confidence
+ without making an unsupported causal claim.
 
-    Required params:
-        asn (str)
-        start_time (str)
-        end_time (str)
-    Optional:
-        traffic_result, routing_result, prefix_traffic, victim_traffic,
-        confounders, causal_evidence
-    All optional fields fall back to session.evidence when not provided.
-    """
+ Required params:
+ asn (str)
+ start_time (str)
+ end_time (str)
+ Optional:
+ traffic_result, routing_result, prefix_traffic, victim_traffic,
+ confounders, causal_evidence
+ All optional fields fall back to session.evidence when not provided.
+ """
     from detectors.traffic.joint_evidence import analyse_joint_evidence
 
     # Fall back to run_context / session evidence when caller omits asn/start/end.
@@ -683,12 +684,12 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _query_as_info(tool_input: dict, session) -> dict:
     """
-    Enrich AS data with org info, AS relationships, and announced prefixes.
-    Uses RIPE Whois Database REST API (authenticated) + BGPView.
+ Enrich AS data with org info, AS relationships, and announced prefixes.
+ Uses RIPE Whois Database REST API (authenticated) + BGPView.
 
-    Required params:
-        asn (str)
-    """
+ Required params:
+ asn (str)
+ """
     from config import RIPE_DB_WHOIS_USERNAME
 
     # Fall back to run_context when caller omits asn.
@@ -852,25 +853,25 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _reason_and_classify(tool_input: dict, session) -> dict:
     """
-    LLM-powered reasoning on traffic + routing results to produce a final
-    incident classification and evidence summary.
+ LLM-powered reasoning on traffic + routing results to produce a final
+ incident classification and evidence summary.
 
-    Required params:
-        asn (str)
-        traffic_result (dict)
-        routing_result (dict)
-        asn_info (dict, optional)
-        start_time (str)
-        end_time (str)
+ Required params:
+ asn (str)
+ traffic_result (dict)
+ routing_result (dict)
+ asn_info (dict, optional)
+ start_time (str)
+ end_time (str)
 
-    All data is read from session.evidence when not provided in tool_input,
-    so the LLM always receives the full evidence even when the caller omits
-    explicit parameters.
+ All data is read from session.evidence when not provided in tool_input,
+ so the LLM always receives the full evidence even when the caller omits
+ explicit parameters.
 
-    Run context (asn/start/end) is taken from `session.run_context` — an
-    explicit per-run dict. We do NOT fall back to `sys.modules["agents.react_agent"]`
-    globals; that pattern made concurrent runs and re-entrancy unsafe.
-    """
+ Run context (asn/start/end) is taken from `session.run_context` - an
+ explicit per-run dict. We do NOT fall back to `sys.modules["agents.react_agent"]`
+ globals; that pattern made concurrent runs and re-entrancy unsafe.
+ """
     rc = getattr(session, "run_context", {}) or {}
     _run_asn = rc.get("asn", "") or ""
     _run_start = rc.get("start_time", "") or ""
@@ -1196,14 +1197,14 @@ Use the full evidence set below to form a judgment. Weigh traffic, routing, AS m
 - Do NOT force a definitive classification when the data does not support it.
 - Prefer nuanced judgment over overconfident labeling.
 - Think through alternative explanations (e.g. CDN shielding, transient route changes, mitigation, missing visibility).
-|- IMPORTANT — Victim AS Traffic Verification: The "victim_traffic" field contains traffic analysis results for ASes discovered from routing events.
-|- IMPORTANT — Prefix-level traffic impact: The "prefix_traffic" field shows whether hijacked prefixes had attacker AS in their AS-paths. High "attacker_path_delta_pct" = strong evidence that hijack was effective.
-|- IMPORTANT — Quantitative Correlation Score: The "correlation_score" field contains a 0-100 score (L1-L5) from 5 dimensions. Use this to calibrate your confidence rating.
-|- IMPORTANT — AS-Path Structural Changes: The "as_path_delta" field contains path length delta, new ASes appearing, loop counts, and traceroute results (for recent events only).
-|- IMPORTANT — AS Relationships: The "as_relationships" field shows attacker-victim relationship (provider/peer/customer), blast radius tier, financial impact estimate, and hijack plausibility.
-|- IMPORTANT — Prefix Reachability: The "probe_reachability" field shows which AS is currently announcing each prefix (ACTIVE_HIJACK / RESOLVED / MIXED / INCONCLUSIVE). For historical events, uses RIPE RIS and Looking Glass APIs.
-|- IMPORTANT — RPKI ROA Validation: The "roa_validation" field contains per-prefix ROV status. INVALID = strong hijack evidence (ROA exists but origin does not match). NOT_FOUND = no ROA coverage.
-|- IMPORTANT — Threat Intel: The "threat_intel" field contains attacker AS risk_score (0-100) and threat_level (LOW/MEDIUM/HIGH/CRITICAL). Use this to calibrate incident severity.
+|- IMPORTANT - Victim AS Traffic Verification: The "victim_traffic" field contains traffic analysis results for ASes discovered from routing events.
+|- IMPORTANT - Prefix-level traffic impact: The "prefix_traffic" field shows whether hijacked prefixes had attacker AS in their AS-paths. High "attacker_path_delta_pct" = strong evidence that hijack was effective.
+|- IMPORTANT - Quantitative Correlation Score: The "correlation_score" field contains a 0-100 score (L1-L5) from 5 dimensions. Use this to calibrate your confidence rating.
+|- IMPORTANT - AS-Path Structural Changes: The "as_path_delta" field contains path length delta, new ASes appearing, loop counts, and traceroute results (for recent events only).
+|- IMPORTANT - AS Relationships: The "as_relationships" field shows attacker-victim relationship (provider/peer/customer), blast radius tier, financial impact estimate, and hijack plausibility.
+|- IMPORTANT - Prefix Reachability: The "probe_reachability" field shows which AS is currently announcing each prefix (ACTIVE_HIJACK / RESOLVED / MIXED / INCONCLUSIVE). For historical events, uses RIPE RIS and Looking Glass APIs.
+|- IMPORTANT - RPKI ROA Validation: The "roa_validation" field contains per-prefix ROV status. INVALID = strong hijack evidence (ROA exists but origin does not match). NOT_FOUND = no ROA coverage.
+|- IMPORTANT - Threat Intel: The "threat_intel" field contains attacker AS risk_score (0-100) and threat_level (LOW/MEDIUM/HIGH/CRITICAL). Use this to calibrate incident severity.
 
 === YOUR TASK ===
 1. Classify the incident type: "route_hijack", "route_leak", "network_outage", "traffic_anomaly_only", "normal", or "inconclusive".
@@ -1224,59 +1225,59 @@ Use the full evidence set below to form a judgment. Weigh traffic, routing, AS m
 |=== OUTPUT FORMAT ===
 Return ONLY valid JSON:
 {{
-  "incident_type": "...",
-  "confidence": "...",
-  "evidence": ["...", "..."],
-  "root_cause_narrative": "...",
-  "immediate_actions": ["...", "..."],
-  "additional_evidence_needed": ["...", "..."],
-  "victim_verification": [
-    {{"asn": "AS12345", "traffic_anomalous": true/false/null, "verdict": "...", "details": "..."}}
-  ],
-  "prefix_hijack_effectiveness": [
-    {{"prefix": "1.2.3.0/24", "attacker_path_pct": 45.2, "delta_pct": 42.1, "verdict": "STRONG/MODERATE/WEAK", "details": "..."}}
-  ],
-  "quantitative_correlation": {{
-    "total_score": 0-100,
-    "level": "L1-L5",
-    "dimension_breakdown": {{"temporal": 0-20, "direction": 0-20, "magnitude": 0-20, "victim": 0-20, "prefix": 0-20}}
-  }},
-  "as_path_analysis": {{
-    "path_length_delta": float,
-    "new_asns_count": int,
-    "verdict": "STRONG/MODERATE/WEAK",
-    "traceroute_performed": bool,
-    "traceroute_result": "..."
-  }},
-  "as_relationship_analysis": {{
-    "attacker_to_victim": "provider/peer/customer/unknown",
-    "blast_radius_tier": "HIGH/MEDIUM/LOW/UNKNOWN",
-    "plausibility": "HIGH/MEDIUM/LOW/UNKNOWN",
-    "financial_impact_estimate": "...",
-    "details": "..."
-  }},
-  "hijack_status": {{
-    "verdict": "ACTIVE_HIJACK/RESOLVED/MIXED/INCONCLUSIVE",
-    "probed_prefixes": int,
-    "attacker_present_in": "X/Y",
-    "probe_method": "live_traceroute/historical_api",
-    "details": "..."
-  }},
-  "roa_validation": {{
-    "total_valid": int,
-    "total_invalid": int,
-    "total_not_found": int,
-    "rov_coverage_pct": float,
-    "risk_level": "CRITICAL/HIGH/LOW",
-    "invalid_prefixes": ["prefix1", "prefix2", ...]
-  }},
-    "threat_intel": {{
-    "attacker_asn": "AS...",
-    "risk_score": 0-100,
-    "threat_level": "LOW/MEDIUM/HIGH/CRITICAL",
-    "threat_signals": ["...", "..."],
-    "historical_hijack_count": int
-  }}
+ "incident_type": "...",
+ "confidence": "...",
+ "evidence": ["...", "..."],
+ "root_cause_narrative": "...",
+ "immediate_actions": ["...", "..."],
+ "additional_evidence_needed": ["...", "..."],
+ "victim_verification": [
+ {{"asn": "AS12345", "traffic_anomalous": true/false/null, "verdict": "...", "details": "..."}}
+ ],
+ "prefix_hijack_effectiveness": [
+ {{"prefix": "1.2.3.0/24", "attacker_path_pct": 45.2, "delta_pct": 42.1, "verdict": "STRONG/MODERATE/WEAK", "details": "..."}}
+ ],
+ "quantitative_correlation": {{
+ "total_score": 0-100,
+ "level": "L1-L5",
+ "dimension_breakdown": {{"temporal": 0-20, "direction": 0-20, "magnitude": 0-20, "victim": 0-20, "prefix": 0-20}}
+ }},
+ "as_path_analysis": {{
+ "path_length_delta": float,
+ "new_asns_count": int,
+ "verdict": "STRONG/MODERATE/WEAK",
+ "traceroute_performed": bool,
+ "traceroute_result": "..."
+ }},
+ "as_relationship_analysis": {{
+ "attacker_to_victim": "provider/peer/customer/unknown",
+ "blast_radius_tier": "HIGH/MEDIUM/LOW/UNKNOWN",
+ "plausibility": "HIGH/MEDIUM/LOW/UNKNOWN",
+ "financial_impact_estimate": "...",
+ "details": "..."
+ }},
+ "hijack_status": {{
+ "verdict": "ACTIVE_HIJACK/RESOLVED/MIXED/INCONCLUSIVE",
+ "probed_prefixes": int,
+ "attacker_present_in": "X/Y",
+ "probe_method": "live_traceroute/historical_api",
+ "details": "..."
+ }},
+ "roa_validation": {{
+ "total_valid": int,
+ "total_invalid": int,
+ "total_not_found": int,
+ "rov_coverage_pct": float,
+ "risk_level": "CRITICAL/HIGH/LOW",
+ "invalid_prefixes": ["prefix1", "prefix2", ...]
+ }},
+ "threat_intel": {{
+ "attacker_asn": "AS...",
+ "risk_score": 0-100,
+ "threat_level": "LOW/MEDIUM/HIGH/CRITICAL",
+ "threat_signals": ["...", "..."],
+ "historical_hijack_count": int
+ }}
 }}
 """
 
@@ -1380,21 +1381,21 @@ def _inject_traffic_plot_into_file(html_path: str, traffic_plot_base64: str) -> 
 
 async def _generate_report(tool_input: dict, session) -> dict:
     """
-    Generate the final LLM-driven HTML report from all collected evidence.
+ Generate the final LLM-driven HTML report from all collected evidence.
 
-    Params can come from two sources (in priority order):
-      1. tool_input  — passed explicitly by the LLM caller
-      2. session.evidence — fallback so report always has data even when LLM
-                             only passes asn / start_time / end_time
+ Params can come from two sources (in priority order):
+ 1. tool_input - passed explicitly by the LLM caller
+ 2. session.evidence - fallback so report always has data even when LLM
+ only passes asn / start_time / end_time
 
-    Key improvements:
-      - ASN is extracted from the first tool's input stored in session.evidence
-        (since the LLM often omits asn from generate_report's tool_input).
-      - traffic_plot_path is extracted from traffic results and the PNG is
-        embedded as base64 so the report always shows a chart.
-      - The full payload (with traffic_plot_path + traffic_plot_base64) is
-        passed to the LLM so it can generate a Traffic Visualization section.
-    """
+ Key improvements:
+ - ASN is extracted from the first tool's input stored in session.evidence
+ (since the LLM often omits asn from generate_report's tool_input).
+ - traffic_plot_path is extracted from traffic results and the PNG is
+ embedded as base64 so the report always shows a chart.
+ - The full payload (with traffic_plot_path + traffic_plot_base64) is
+ passed to the LLM so it can generate a Traffic Visualization section.
+ """
     import base64 as _b64
     import pathlib
 
@@ -1678,23 +1679,23 @@ async def _generate_report(tool_input: dict, session) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
     """
-    Analyze traffic impact for specific BGP prefixes involved in routing events.
+ Analyze traffic impact for specific BGP prefixes involved in routing events.
 
-    Since Cloudflare does not provide prefix-level traffic data, this tool uses
-    BGP AS-path distribution changes as a proxy for traffic impact:
-      - During hijack: attacker AS appears in AS-paths → traffic redirected
-      - After hijack: attacker AS disappears → traffic restored
-      - Hijack effectiveness = proportion of paths going through attacker
+ Since Cloudflare does not provide prefix-level traffic data, this tool uses
+ BGP AS-path distribution changes as a proxy for traffic impact:
+ - During hijack: attacker AS appears in AS-paths → traffic redirected
+ - After hijack: attacker AS disappears → traffic restored
+ - Hijack effectiveness = proportion of paths going through attacker
 
-    Required params:
-        prefixes (list[str]): list of BGP prefixes, e.g. ["185.245.181.0/24"]
-        hijacker_asn (str): the AS that performed the hijack
-        victim_asn (str): the AS that was hijacked
-        start_time (str): ISO format
-        end_time (str): ISO format
-    Optional params:
-        routing_result (dict): optional routing result for auto-extracting prefix list
-    """
+ Required params:
+ prefixes (list[str]): list of BGP prefixes, e.g. ["185.245.181.0/24"]
+ hijacker_asn (str): the AS that performed the hijack
+ victim_asn (str): the AS that was hijacked
+ start_time (str): ISO format
+ end_time (str): ISO format
+ Optional params:
+ routing_result (dict): optional routing result for auto-extracting prefix list
+ """
     prefixes = tool_input.get("prefixes", [])
     if isinstance(prefixes, str):
         try:
@@ -1958,15 +1959,15 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _classify_traffic_anomaly(tool_input: dict, session) -> dict:
     """
-    Classify the root cause type of a traffic anomaly using LLM reasoning.
-    This prevents misattribution: not every traffic drop is a hijack.
+ Classify the root cause type of a traffic anomaly using LLM reasoning.
+ This prevents misattribution: not every traffic drop is a hijack.
 
-    Required params:
-        traffic_result (dict): output of analyze_traffic
-        routing_result (dict, optional): output of analyze_routing
-        victim_prefix_traffic (dict, optional): output of analyze_prefix_traffic
-        asn_info (dict, optional): output of query_as_info
-    """
+ Required params:
+ traffic_result (dict): output of analyze_traffic
+ routing_result (dict, optional): output of analyze_routing
+ victim_prefix_traffic (dict, optional): output of analyze_prefix_traffic
+ asn_info (dict, optional): output of query_as_info
+ """
     ev = getattr(session, "evidence", {}) or {}
 
     # Resolve inputs
@@ -2021,23 +2022,23 @@ upstream provider issues, routing table churn, etc.
 
 === CLASSIFICATION OPTIONS ===
 - bgp_hijack_related: Traffic pattern is consistent with a BGP prefix hijack.
-  Evidence: routing shows hijack, attacker appears in AS-paths, traffic dropped during hijack window.
+ Evidence: routing shows hijack, attacker appears in AS-paths, traffic dropped during hijack window.
 - ddos: Sudden traffic spike (not drop), no routing change, traffic returns to normal quickly.
 - cdn_shielding: Gradual traffic reduction with no routing change (CDN provider shielding).
 - network_outage: Traffic dropped to near-zero for the entire AS, routing outage detected.
 - legitimate_spike: Traffic increase with valid business reason (product launch, marketing campaign).
 - bgp_churn: Traffic with routing changes but no clear attacker pattern (normal routing churn).
 - inconclusive: Insufficient data to determine the cause.
-- normal: No real anomaly — statistical variation within normal range.
+- normal: No real anomaly - statistical variation within normal range.
 
 === OUTPUT FORMAT ===
 Return ONLY valid JSON:
 {{
-  "anomaly_type": "...",
-  "confidence": "high|medium|low",
-  "key_evidence": ["...", "..."],
-  "ruling_out": ["...", "..."],
-  "reasoning": "2-3 sentence explanation of why this classification fits the data"
+ "anomaly_type": "...",
+ "confidence": "high|medium|low",
+ "key_evidence": ["...", "..."],
+ "ruling_out": ["...", "..."],
+ "reasoning": "2-3 sentence explanation of why this classification fits the data"
 }}
 """
 
@@ -2114,24 +2115,24 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _compute_traffic_routing_correlation_score(tool_input: dict, session) -> dict:
     """
-    Quantify the correlation between traffic anomalies and routing events.
+ Quantify the correlation between traffic anomalies and routing events.
 
-    Computes a 0-100 score from 5 dimensions:
-      1. Temporal overlap (overlap ratio of traffic anomalies vs routing event window)
-      2. Direction consistency (attacker traffic up + victim traffic down during hijack)
-      3. Magnitude alignment (traffic % change vs routing event severity)
-      4. Victim verification (do victim ASes also show traffic anomalies?)
-      5. Prefix-path delta (from analyze_prefix_traffic if available)
+ Computes a 0-100 score from 5 dimensions:
+ 1. Temporal overlap (overlap ratio of traffic anomalies vs routing event window)
+ 2. Direction consistency (attacker traffic up + victim traffic down during hijack)
+ 3. Magnitude alignment (traffic % change vs routing event severity)
+ 4. Victim verification (do victim ASes also show traffic anomalies?)
+ 5. Prefix-path delta (from analyze_prefix_traffic if available)
 
-    Each dimension contributes up to 20 points, totalling 0-100.
+ Each dimension contributes up to 20 points, totalling 0-100.
 
-    Required params:
-        traffic_result (dict): output of analyze_traffic
-        routing_result (dict): output of analyze_routing
-    Optional params:
-        victim_traffic (dict): victim AS traffic results
-        prefix_traffic (dict): prefix traffic results from analyze_prefix_traffic
-    """
+ Required params:
+ traffic_result (dict): output of analyze_traffic
+ routing_result (dict): output of analyze_routing
+ Optional params:
+ victim_traffic (dict): victim AS traffic results
+ prefix_traffic (dict): prefix traffic results from analyze_prefix_traffic
+ """
     ev = getattr(session, "evidence", {}) or {}
 
     # ── Resolve inputs ────────────────────────────────────────────────────────
@@ -2404,29 +2405,29 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _analyze_as_path_delta(tool_input: dict, session) -> dict:
     """
-    Analyze AS-path structural changes during a hijack window and optionally
-    perform live traceroute for recent events.
+ Analyze AS-path structural changes during a hijack window and optionally
+ perform live traceroute for recent events.
 
-    IMPORTANT — Time check:
-      - If event is in the PAST (end_time < now - 24h): skip traceroute.
-        Historical events cannot be probed; only BGP archival data is used.
-      - If event is RECENT (end_time >= now - 24h): attempt traceroute to
-        verify current routing path and confirm whether the hijack is still active.
+ IMPORTANT - Time check:
+ - If event is in the PAST (end_time < now - 24h): skip traceroute.
+ Historical events cannot be probed; only BGP archival data is used.
+ - If event is RECENT (end_time >= now - 24h): attempt traceroute to
+ verify current routing path and confirm whether the hijack is still active.
 
-    Analysis dimensions:
-      - AS-path length delta (/)
-      - Path structural changes ( AS、)
-      - AS relationship inference (attacker  victim )
-      - Traceroute verification (recent events only)
+ Analysis dimensions:
+ - AS-path length delta (/)
+ - Path structural changes ( AS )
+ - AS relationship inference (attacker victim )
+ - Traceroute verification (recent events only)
 
-    Required params:
-        routing_result (dict): output of analyze_routing
-        start_time (str): hijack window start
-        end_time (str): hijack window end
-    Optional params:
-        normal_start (str): baseline period start (default: 2h before hijack)
-        normal_end (str): baseline period end (default: hijack start)
-    """
+ Required params:
+ routing_result (dict): output of analyze_routing
+ start_time (str): hijack window start
+ end_time (str): hijack window end
+ Optional params:
+ normal_start (str): baseline period start (default: 2h before hijack)
+ normal_end (str): baseline period end (default: hijack start)
+ """
     routing = tool_input.get("routing_result", {})
     if isinstance(routing, str):
         try:
@@ -2537,9 +2538,9 @@ async def _analyze_as_path_delta(tool_input: dict, session) -> dict:
 async def _do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
                                tool_input: dict) -> dict:
     """
-    Perform traceroute for recent events to verify current routing path.
-    Only proceeds if the event is recent (ended within 24h).
-    """
+ Perform traceroute for recent events to verify current routing path.
+ Only proceeds if the event is recent (ended within 24h).
+ """
     # Extract a target prefix to probe
     prefixes = []
     for key in ("origin_hijacked", "forge_hijacked"):
@@ -2816,27 +2817,27 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _analyze_as_relationships(tool_input: dict, session) -> dict:
     """
-    Analyze the AS-level business relationship between attacker and victim,
-    and estimate the blast radius and financial impact of the hijack.
+ Analyze the AS-level business relationship between attacker and victim,
+ and estimate the blast radius and financial impact of the hijack.
 
-    Uses CAIDA AS Relationship data to determine:
-      - Is attacker a provider/peer/customer of the victim?
-      - What proportion of the victim's traffic goes through the attacker?
-      - What other ASes are affected if the attacker intercepts traffic?
+ Uses CAIDA AS Relationship data to determine:
+ - Is attacker a provider/peer/customer of the victim?
+ - What proportion of the victim's traffic goes through the attacker?
+ - What other ASes are affected if the attacker intercepts traffic?
 
-    Relationship inference (ordered by priority):
-      1. CAIDA as-rel data: direct lookup
-      2. BGP AS-path structure: infer from position in AS_PATH
-      3. Unknown: insufficient data
+ Relationship inference (ordered by priority):
+ 1. CAIDA as-rel data: direct lookup
+ 2. BGP AS-path structure: infer from position in AS_PATH
+ 3. Unknown: insufficient data
 
-    Required params:
-        attacker_asn (str): AS number that performed the hijack
-        victim_asn (str): AS number that was hijacked
-        start_time (str): ISO format (used to select correct as-rel data)
-    Optional params:
-        routing_result (dict): routing result for inferring from AS-path
-        asn_info (dict): AS info for both parties
-    """
+ Required params:
+ attacker_asn (str): AS number that performed the hijack
+ victim_asn (str): AS number that was hijacked
+ start_time (str): ISO format (used to select correct as-rel data)
+ Optional params:
+ routing_result (dict): routing result for inferring from AS-path
+ asn_info (dict): AS info for both parties
+ """
     attacker_asn = str(tool_input.get("attacker_asn", "") or tool_input.get("hijacker_asn", ""))
     victim_asn = str(tool_input.get("victim_asn", ""))
     start = tool_input.get("start_time", "")
@@ -2921,16 +2922,16 @@ async def _analyze_as_relationships(tool_input: dict, session) -> dict:
 def _load_asrel_json(filepath: str) -> dict:
     """Load and parse CAIDA AS Relationship JSON file.
 
-    Bug fix 2026-09-13 (BUG-R50): previously the bare ``open(filepath, "r")``
-    call had no encoding and silently swallowed the loader error, returning
-    an empty ``{"providers": {}, "peers": {}}`` shape. Downstream callers
-    could not distinguish "data file is missing" from "AS has no recorded
-    relationships" and would silently emit ``unknown`` for every pair — a
-    mask on real config / data path bugs.
+ Bug fix 2026-09-13 (BUG-R50): previously the bare ``open(filepath, "r")``
+ call had no encoding and silently swallowed the loader error, returning
+ an empty ``{"providers": {}, "peers": {}}`` shape. Downstream callers
+ could not distinguish "data file is missing" from "AS has no recorded
+ relationships" and would silently emit ``unknown`` for every pair - a
+ mask on real config / data path bugs.
 
-    Now we return ``None`` when the file cannot be read, and ``None`` for
-    empty / malformed JSON, so callers can surface the data error.
-    """
+ Now we return ``None`` when the file cannot be read, and ``None`` for
+ empty / malformed JSON, so callers can surface the data error.
+ """
     try:
         with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
             return json.load(f)
@@ -2942,9 +2943,9 @@ def _load_asrel_json(filepath: str) -> dict:
 
 def _query_as_relationship(asrel: dict, as1: str, as2: str) -> str:
     """
-    Query the direct CAIDA AS relationship between as1 and as2.
-    Returns: "provider" | "customer" | "peer" | "unknown"
-    """
+ Query the direct CAIDA AS relationship between as1 and as2.
+ Returns: "provider" | "customer" | "peer" | "unknown"
+ """
     if not asrel or not isinstance(asrel, dict):
         return "unknown"
     providers = asrel.get("providers", {})
@@ -2964,13 +2965,13 @@ def _query_as_relationship(asrel: dict, as1: str, as2: str) -> str:
 def _infer_relationship_from_path(routing: dict, attacker_asn: str,
                                   victim_asn: str) -> str:
     """
-    Infer attacker-victim relationship from AS-path structure.
+ Infer attacker-victim relationship from AS-path structure.
 
-    In a hijack AS_PATH:
-      - Attacker appearing before victim → attacker is upstream (provider)
-      - Attacker appearing after victim → attacker is downstream (customer)
-      - Mixed positions → peer-level hijack
-    """
+ In a hijack AS_PATH:
+ - Attacker appearing before victim → attacker is upstream (provider)
+ - Attacker appearing after victim → attacker is downstream (customer)
+ - Mixed positions → peer-level hijack
+ """
     if not routing:
         return "unknown"
     all_entries = []
@@ -3018,12 +3019,12 @@ def _infer_relationship_from_path(routing: dict, attacker_asn: str,
 def _estimate_blast_radius(asrel: dict, attacker_asn: str,
                            victim_asn: str, relationship: str) -> dict:
     """
-    Estimate the blast radius of the hijack based on AS relationship.
+ Estimate the blast radius of the hijack based on AS relationship.
 
-    Provider hijack: HIGH blast radius (all upstream traffic routes through attacker)
-    Peer hijack: MEDIUM blast radius (only shared peering links affected)
-    Customer hijack: LOW blast radius (limited to customer's own traffic)
-    """
+ Provider hijack: HIGH blast radius (all upstream traffic routes through attacker)
+ Peer hijack: MEDIUM blast radius (only shared peering links affected)
+ Customer hijack: LOW blast radius (limited to customer's own traffic)
+ """
     providers = asrel.get("providers", {})
     peers = asrel.get("peers", {})
 
@@ -3116,21 +3117,21 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _probe_prefix_reachability(tool_input: dict, session) -> dict:
     """
-    Verify prefix reachability and hijack effectiveness.
+ Verify prefix reachability and hijack effectiveness.
 
-    Time-aware probe selection:
-      - RECENT event (ended within 24h): live traceroute/mtr
-      - HISTORICAL event (ended > 24h ago): RIPE RIS API + BGPView.io + RIPE Looking Glass
+ Time-aware probe selection:
+ - RECENT event (ended within 24h): live traceroute/mtr
+ - HISTORICAL event (ended > 24h ago): RIPE RIS API + BGPView.io + RIPE Looking Glass
 
-    Required params:
-        prefixes (list[str]): prefixes to probe, e.g. ["185.245.181.0/24"]
-        start_time (str): hijack window start
-        end_time (str): hijack window end
-    Optional params:
-        attacker_asn (str): hijacker AS for path validation
-        victim_asn (str): victim AS for expected origin comparison
-        routing_result (dict): routing result for target prefix extraction
-    """
+ Required params:
+ prefixes (list[str]): prefixes to probe, e.g. ["185.245.181.0/24"]
+ start_time (str): hijack window start
+ end_time (str): hijack window end
+ Optional params:
+ attacker_asn (str): hijacker AS for path validation
+ victim_asn (str): victim AS for expected origin comparison
+ routing_result (dict): routing result for target prefix extraction
+ """
     prefixes = tool_input.get("prefixes", [])
     if isinstance(prefixes, str):
         try:
@@ -3450,25 +3451,25 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _validate_roa_status(tool_input: dict, session) -> dict:
     """
-    Validate prefix hijacks against RPKI ROA (Route Origin Attestation) data.
+ Validate prefix hijacks against RPKI ROA (Route Origin Attestation) data.
 
-    Checks each hijacked prefix+origin pair against:
-      1. Cloudflare RPKI Validator API (realtime, cached 5 min)
-      2. RIPE NCC RPKI Archive (historical validation)
+ Checks each hijacked prefix+origin pair against:
+ 1. Cloudflare RPKI Validator API (realtime, cached 5 min)
+ 2. RIPE NCC RPKI Archive (historical validation)
 
-    Returns per-prefix ROV status:
-      - VALID: valid ROA exists and origin matches
-      - INVALID: ROA exists but origin does NOT match (strong hijack evidence)
-      - NOT_FOUND: no ROA for this prefix (cannot determine)
-      - EXPIRED: ROA has expired
+ Returns per-prefix ROV status:
+ - VALID: valid ROA exists and origin matches
+ - INVALID: ROA exists but origin does NOT match (strong hijack evidence)
+ - NOT_FOUND: no ROA for this prefix (cannot determine)
+ - EXPIRED: ROA has expired
 
-    Required params:
-        announcements (list[dict]): list of {prefix, origin_asn, timestamp}
-    Optional params:
-        routing_result (dict): auto-extract announcements from origin_hijacked events
-        start_time (str): analysis window start (for historical validation)
-        end_time (str): analysis window end (for historical validation)
-    """
+ Required params:
+ announcements (list[dict]): list of {prefix, origin_asn, timestamp}
+ Optional params:
+ routing_result (dict): auto-extract announcements from origin_hijacked events
+ start_time (str): analysis window start (for historical validation)
+ end_time (str): analysis window end (for historical validation)
+ """
     announcements = tool_input.get("announcements", [])
     routing = tool_input.get("routing_result", {})
     start = tool_input.get("start_time", "")
@@ -3584,13 +3585,13 @@ _roa_cache: dict = {"data": None, "fetched_at": None}
 
 async def _fetch_cloudflare_roa() -> tuple:
     """
-    Fetch ROA data from Cloudflare RPKI Validator API.
-    Caches result for 5 minutes to avoid hammering the API.
+ Fetch ROA data from Cloudflare RPKI Validator API.
+ Caches result for 5 minutes to avoid hammering the API.
 
-    Uses ``asyncio.to_thread`` so the blocking ``requests.get`` does not
-    freeze the event loop — running this synchronously inside an async
-    function would stall every other concurrent tool/agent.
-    """
+ Uses ``asyncio.to_thread`` so the blocking ``requests.get`` does not
+ freeze the event loop - running this synchronously inside an async
+ function would stall every other concurrent tool/agent.
+ """
     import requests
     import time
 
@@ -3635,13 +3636,13 @@ async def _fetch_cloudflare_roa() -> tuple:
 
 def _check_roa_single(roa_data: dict, prefix: str, origin_asn: str) -> tuple:
     """
-    Check if (prefix, origin_asn) is covered by a valid ROA.
+ Check if (prefix, origin_asn) is covered by a valid ROA.
 
-    Returns: (status: str, roa_info: dict or None)
-      - VALID: prefix has ROA and origin is in the valid list
-      - INVALID: prefix has ROA but origin is NOT in the valid list
-      - NOT_FOUND: no ROA for this prefix
-    """
+ Returns: (status: str, roa_info: dict or None)
+ - VALID: prefix has ROA and origin is in the valid list
+ - INVALID: prefix has ROA but origin is NOT in the valid list
+ - NOT_FOUND: no ROA for this prefix
+ """
     if not roa_data or not prefix:
         return "NOT_FOUND", None
 
@@ -3706,22 +3707,22 @@ register_tool(
 # ══════════════════════════════════════════════════════════════════════════════
 async def _lookup_as_threat_intel(tool_input: dict, session) -> dict:
     """
-    Gather threat intelligence on attacker AS(es): BGP history, known hijack
-    activity, AS relationship, and external threat signals.
+ Gather threat intelligence on attacker AS(es): BGP history, known hijack
+ activity, AS relationship, and external threat signals.
 
-    Sources queried (in priority order):
-      1. BGPView.io (free): prefix list, announced origins, neighbors
-      2. Circl.lu Passive DNS (passive DNS for AS contact domain)
-      3. Manual ASN abuse contact lookup (via bgpview contacts endpoint)
-      4. Historical hijack events from routing_result
+ Sources queried (in priority order):
+ 1. BGPView.io (free): prefix list, announced origins, neighbors
+ 2. Circl.lu Passive DNS (passive DNS for AS contact domain)
+ 3. Manual ASN abuse contact lookup (via bgpview contacts endpoint)
+ 4. Historical hijack events from routing_result
 
-    Required params:
-        attacker_asn (str): the AS number to investigate
-    Optional params:
-        routing_result (dict): for extracting historical hijack evidence
-        victim_asn (str): victim AS (for correlation)
-        start_time (str): analysis window start
-    """
+ Required params:
+ attacker_asn (str): the AS number to investigate
+ Optional params:
+ routing_result (dict): for extracting historical hijack evidence
+ victim_asn (str): victim AS (for correlation)
+ start_time (str): analysis window start
+ """
     attacker_asn = str(tool_input.get("attacker_asn", ""))
     victim_asn = str(tool_input.get("victim_asn", ""))
     routing = tool_input.get("routing_result", {})
@@ -3887,17 +3888,17 @@ def _compute_attacker_risk_score(asn: str, bgpview_info: dict,
                                  bgpview_neighbors: dict,
                                  historical_events: list) -> int:
     """
-    Compute a 0-100 risk score for the attacker AS.
+ Compute a 0-100 risk score for the attacker AS.
 
-    Scoring:
-      - Historical hijack events: +5 per event (max +30)
-      - Short prefix list (< 5): +15 (possible transient AS)
-      - Large number of neighbors (> 500): +10 (IXP/big tier-1)
-      - Very few neighbors (< 3): +10 (small/transient AS)
-      - Known in high-risk country: +15
-      - AS age < 2 years (if available): +10
-      - Multiple prefix hijacks: +10
-    """
+ Scoring:
+ - Historical hijack events: +5 per event (max +30)
+ - Short prefix list (< 5): +15 (possible transient AS)
+ - Large number of neighbors (> 500): +10 (IXP/big tier-1)
+ - Very few neighbors (< 3): +10 (small/transient AS)
+ - Known in high-risk country: +15
+ - AS age < 2 years (if available): +10
+ - Multiple prefix hijacks: +10
+ """
     score = 0
 
     # Historical hijack events

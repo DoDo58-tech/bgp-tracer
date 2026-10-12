@@ -23,7 +23,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GT_CSV = ROOT / "data_check" / "ground_truth_collection" / "final_balanced_dataset_v13.csv"
+GT_CSV = ROOT / "data_check" / "ground_truth_collection" / "final_balanced_dataset_v17.csv"
 JSON_DIR = ROOT / "results" / "json"
 LOGS = [
     ROOT / "logs" / "4mode_batch_20261002_095908",

@@ -1,16 +1,17 @@
 {
-  "review_precision": 0.896551724137931,
-  "review_correct": 26,
-  "review_total": 29,
-  "strict_precision": 0.5,
-  "strict_correct": 3,
-  "strict_total": 6,
+  "review_precision": 0.9333333333333333,
+  "review_correct": 28,
+  "review_total": 30,
+  "strict_precision": 0.0,
+  "strict_correct": 0,
+  "strict_total": 2,
   "skipped_derived": 0,
   "verdicts": [
     {
-      "event_id": "bgpstream_hijack_89315",
-      "cause_label": "origin_hijack_victim",
+      "event_id": "leak_worldstream_ovhcloud_2024",
+      "cause_label": "route_leak",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -18,64 +19,13 @@
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.06248752466547518
-    },
-    {
-      "event_id": "bgpstream_hijack_93669",
-      "cause_label": "origin_hijack_victim",
-      "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "unknown",
-      "expected_set": [
-        "routing_to_traffic",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.06999999999999999
-    },
-    {
-      "event_id": "bgpstream_hijack_95561",
-      "cause_label": "origin_hijack_victim",
-      "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "unknown",
-      "expected_set": [
-        "routing_to_traffic",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.07083668253515257
-    },
-    {
-      "event_id": "hijack_hetzner_virtualizor_2026",
-      "cause_label": "origin_hijack_victim",
-      "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "unknown",
-      "expected_set": [
-        "routing_to_traffic",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.07286846115676346
-    },
-    {
-      "event_id": "outage_bangladesh_grameenphone_2024",
-      "cause_label": "outage",
-      "withdrawal_count": 138,
-      "is_derived": false,
-      "hcaf_direction": "unknown",
-      "expected_set": [
-        "routing_to_traffic",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.06310744985048326
+      "confidence": 0.0
     },
     {
       "event_id": "outage_pakistan_2024",
       "cause_label": "outage",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -83,12 +33,13 @@
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.21691000000000002
+      "confidence": 0.0659761958700711
     },
     {
-      "event_id": "outage_pakistan_aae1_2025",
+      "event_id": "outage_rogers_canada_2022",
       "cause_label": "outage",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -96,51 +47,97 @@
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.06951719258711211
-    },
-    {
-      "event_id": "outage_myanmar_2025",
-      "cause_label": "outage",
-      "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "unknown",
-      "expected_set": [
-        "traffic_to_routing",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.062211502647577105
-    },
-    {
-      "event_id": "outage_iran_2025",
-      "cause_label": "outage",
-      "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "unknown",
-      "expected_set": [
-        "traffic_to_routing",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.07191456986725783
+      "confidence": 0.48146
     },
     {
       "event_id": "outage_starlink_2025",
       "cause_label": "outage",
-      "withdrawal_count": 2,
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
-        "routing_to_traffic",
+        "traffic_to_routing",
         "unknown"
       ],
       "is_correct": true,
       "confidence": 0.08911241472367709
     },
     {
-      "event_id": "hijack_orange_spain_2024",
-      "cause_label": "roa_misconfig",
+      "event_id": "outage_russia_isp_2025_01_14",
+      "cause_label": "outage",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "traffic_to_routing",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.28224
+    },
+    {
+      "event_id": "outage_haiti_digicel_2025_01_15",
+      "cause_label": "outage",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "traffic_to_routing",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.0
+    },
+    {
+      "event_id": "outage_sri_lanka_2025_02_09",
+      "cause_label": "outage",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "traffic_to_routing",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.38
+    },
+    {
+      "event_id": "outage_syria_damascus_homs_2025",
+      "cause_label": "outage",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "traffic_to_routing",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.0
+    },
+    {
+      "event_id": "hijack_cloudflare_1.1.1.0_jul2025",
+      "cause_label": "origin_hijack_victim",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "routing_to_traffic",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.21
+    },
+    {
+      "event_id": "hijack_cloudflare_1.1.1.1_2024",
+      "cause_label": "origin_hijack_victim",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -151,9 +148,24 @@
       "confidence": 0.06999999999999999
     },
     {
-      "event_id": "leak_worldstream_ovhcloud_2024",
-      "cause_label": "route_leak",
+      "event_id": "hijack_orange_spain_rpki_2024",
+      "cause_label": "origin_hijack_victim",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "routing_to_traffic",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.27999999999999997
+    },
+    {
+      "event_id": "origin_hijack_myetherwallet_2018",
+      "cause_label": "origin_hijack_victim",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -164,35 +176,10 @@
       "confidence": 0.06999999999999999
     },
     {
-      "event_id": "bgpstream_leak_253069",
+      "event_id": "route_leak_cloudflare_internal_2022",
       "cause_label": "route_leak",
       "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "unknown",
-      "expected_set": [
-        "routing_to_traffic",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.07345826957193399
-    },
-    {
-      "event_id": "bgpstream_leak_284935",
-      "cause_label": "route_leak",
-      "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "unknown",
-      "expected_set": [
-        "routing_to_traffic",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.07147213540903637
-    },
-    {
-      "event_id": "bgpstream_leak_284944",
-      "cause_label": "route_leak",
-      "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -203,9 +190,10 @@
       "confidence": 0.06999999999999999
     },
     {
-      "event_id": "leak_cox_communications_2025",
+      "event_id": "route_leak_telstra_2020",
       "cause_label": "route_leak",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -213,25 +201,13 @@
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.2
+      "confidence": 0.5356099999999999
     },
     {
-      "event_id": "bgpstream_hijack_v13_82500",
+      "event_id": "hijack_twnic_quad101_2019",
       "cause_label": "origin_hijack_victim",
       "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "routing_to_traffic",
-      "expected_set": [
-        "routing_to_traffic",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.6616530118883568
-    },
-    {
-      "event_id": "bgpstream_hijack_v13_82644",
-      "cause_label": "origin_hijack_victim",
-      "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -239,12 +215,13 @@
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.07319047850552203
+      "confidence": 0.40739999999999993
     },
     {
-      "event_id": "bgpstream_hijack_v13_82929",
+      "event_id": "hijack_celer_bridge_2022",
       "cause_label": "origin_hijack_victim",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -252,12 +229,41 @@
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.07517987731646242
+      "confidence": 0.06999999999999999
     },
     {
-      "event_id": "bgpstream_hijack_v13_84017",
+      "event_id": "hijack_rostelecom_amazon_2020",
       "cause_label": "origin_hijack_victim",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "routing_to_traffic",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.48999999999999994
+    },
+    {
+      "event_id": "leak_mainone_cloudflare_2018",
+      "cause_label": "route_leak",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "routing_to_traffic",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.0
+    },
+    {
+      "event_id": "leak_safhost_chinatecom_2019",
+      "cause_label": "route_leak",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "traffic_to_routing",
       "expected_set": [
@@ -265,25 +271,13 @@
         "unknown"
       ],
       "is_correct": false,
-      "confidence": 0.21084836329809867
+      "confidence": 0.6649999999999999
     },
     {
-      "event_id": "bgpstream_hijack_v13_84078",
-      "cause_label": "origin_hijack_victim",
+      "event_id": "leak_allegheny_verizon_2019",
+      "cause_label": "route_leak",
       "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "unknown",
-      "expected_set": [
-        "routing_to_traffic",
-        "unknown"
-      ],
-      "is_correct": true,
-      "confidence": 0.04358671776704009
-    },
-    {
-      "event_id": "bgpstream_hijack_v13_84350",
-      "cause_label": "origin_hijack_victim",
-      "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "traffic_to_routing",
       "expected_set": [
@@ -291,12 +285,13 @@
         "unknown"
       ],
       "is_correct": false,
-      "confidence": 0.16403229998664537
+      "confidence": 0.59888
     },
     {
-      "event_id": "bgpstream_leak_v13_253089",
+      "event_id": "leak_angola_cables_2023",
       "cause_label": "route_leak",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -304,38 +299,69 @@
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.06978972021591777
+      "confidence": 0.0
     },
     {
-      "event_id": "bgpstream_leak_v13_253301",
-      "cause_label": "route_leak",
+      "event_id": "outage_moov_africa_tchad_2024",
+      "cause_label": "outage",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
-      "hcaf_direction": "routing_to_traffic",
+      "hcaf_direction": "unknown",
       "expected_set": [
-        "routing_to_traffic",
+        "traffic_to_routing",
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.6613854977262784
+      "confidence": 0.0
     },
     {
-      "event_id": "bgpstream_leak_v13_253501",
-      "cause_label": "route_leak",
+      "event_id": "outage_mtn_rwanda_2024",
+      "cause_label": "outage",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
-      "hcaf_direction": "routing_to_traffic",
+      "hcaf_direction": "unknown",
       "expected_set": [
-        "routing_to_traffic",
+        "traffic_to_routing",
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.6576804977262785
+      "confidence": 0.06999999999999999
     },
     {
-      "event_id": "bgpstream_leak_v13_283077",
+      "event_id": "outage_grameenphone_2024_07_17",
+      "cause_label": "outage",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "traffic_to_routing",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.06999999999999999
+    },
+    {
+      "event_id": "outage_cantv_venezuela_2024_08_01",
+      "cause_label": "outage",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "traffic_to_routing",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.07
+    },
+    {
+      "event_id": "leak_cox_communications_2025_05_01",
       "cause_label": "route_leak",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
@@ -343,46 +369,63 @@
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.07100752211895107
+      "confidence": 0.07136137124419592
     },
     {
-      "event_id": "bgpstream_leak_v13_284137",
-      "cause_label": "route_leak",
+      "event_id": "outage_north_korea_star_2025_03_18",
+      "cause_label": "outage",
       "withdrawal_count": 0,
-      "is_derived": false,
-      "hcaf_direction": "traffic_to_routing",
-      "expected_set": [
-        "routing_to_traffic",
-        "unknown"
-      ],
-      "is_correct": false,
-      "confidence": 0.32106476497487973
-    },
-    {
-      "event_id": "leak_reliablesite_2025",
-      "cause_label": "route_leak",
-      "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
-        "routing_to_traffic",
+        "traffic_to_routing",
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.07182179484668981
+      "confidence": 0.0
     },
     {
-      "event_id": "leak_voxility_ddos_mitigation_2025",
-      "cause_label": "route_leak",
+      "event_id": "outage_9121_20240212_x15",
+      "cause_label": "outage",
       "withdrawal_count": 0,
+      "routing_event_in_window": "",
       "is_derived": false,
       "hcaf_direction": "unknown",
       "expected_set": [
-        "routing_to_traffic",
+        "traffic_to_routing",
         "unknown"
       ],
       "is_correct": true,
-      "confidence": 0.05732540785318102
+      "confidence": 0.38
+    },
+    {
+      "event_id": "outage_44244_20250622_x17",
+      "cause_label": "outage",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "traffic_to_routing",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.07000000000000002
+    },
+    {
+      "event_id": "outage_16509_20250810_x18",
+      "cause_label": "outage",
+      "withdrawal_count": 0,
+      "routing_event_in_window": "",
+      "is_derived": false,
+      "hcaf_direction": "unknown",
+      "expected_set": [
+        "traffic_to_routing",
+        "unknown"
+      ],
+      "is_correct": true,
+      "confidence": 0.07330293357586298
     }
   ]
 }

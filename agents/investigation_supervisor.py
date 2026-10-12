@@ -1,33 +1,33 @@
 """
-InvestigationSupervisor — Intelligent Tool Trigger Engine
+InvestigationSupervisor - Intelligent Tool Trigger Engine
 =======================================================
 
 The core architectural innovation: a rule-based pattern detector that decides
 WHICH auxiliary tools to run, instead of relying on the LLM to "decide."
-This is what makes the agent more human-like — like a senior analyst who
+This is what makes the agent more human-like - like a senior analyst who
 automatically knows "when I see X, I always check Y and Z."
 
 Design principles:
-1. Deterministic — rules are explicit, not probabilistic
-2. Fast — tools in same "batch" run in parallel
-3. Comprehensive — triggers multiple tools for complex patterns
-4. Transparent — LLM sees exactly what was triggered and why
+1. Deterministic - rules are explicit, not probabilistic
+2. Fast - tools in same "batch" run in parallel
+3. Comprehensive - triggers multiple tools for complex patterns
+4. Transparent - LLM sees exactly what was triggered and why
 
 Architecture:
-  PatternDetector → detects evidence patterns from routing + traffic data
-  ToolTriggerEngine → maps patterns to specific tools
-  ToolOrchestrator → executes triggered tools (parallel within batches)
-  EvidenceEnricher → injects enriched evidence into LLM reasoning
+ PatternDetector → detects evidence patterns from routing + traffic data
+ ToolTriggerEngine → maps patterns to specific tools
+ ToolOrchestrator → executes triggered tools (parallel within batches)
+ EvidenceEnricher → injects enriched evidence into LLM reasoning
 
 Usage:
-  supervisor = InvestigationSupervisor()
-  enriched = await supervisor.enrich(
-      routing_data=routing_result,
-      traffic_data=traffic_result,
-      asn_info=org_info,
-      context={"suspected_type": "origin_hijack", "asn": "43927"}
-  )
-  # Then pass `enriched` to LLMReasoner
+ supervisor = InvestigationSupervisor()
+ enriched = await supervisor.enrich(
+ routing_data=routing_result,
+ traffic_data=traffic_result,
+ asn_info=org_info,
+ context={"suspected_type": "origin_hijack", "asn": "43927"}
+ )
+ # Then pass `enriched` to LLMReasoner
 """
 
 from __future__ import annotations
@@ -215,16 +215,16 @@ class EvidencePattern:
 
 class PatternDetector:
     """
-    Analyzes routing + traffic data to detect evidence patterns.
-    These patterns determine which tools get triggered.
-    """
+ Analyzes routing + traffic data to detect evidence patterns.
+ These patterns determine which tools get triggered.
+ """
 
     def detect(self, routing_data: dict, traffic_data: dict, context: dict) -> EvidencePattern:
         """Detect patterns from routing and traffic evidence.
 
-         P0-#2： annotation_package  {hijack:{...}, leak: {...}, outage:{...}}。
-         origin_hijacked，annotation_package ，pattern 。
-        """
+ P0-#2: annotation_package {hijack:{...}, leak: {...}, outage:{...}}. 
+ origin_hijacked, annotation_package , pattern . 
+ """
         pattern = EvidencePattern()
 
         # Routing patterns —  flat  annotation_package 
@@ -302,9 +302,9 @@ class PatternDetector:
 
 class ToolTriggerEngine:
     """
-    Maps detected patterns to specific tool invocations.
-    This is the "senior analyst's checklist" — deterministic, fast.
-    """
+ Maps detected patterns to specific tool invocations.
+ This is the "senior analyst's checklist" - deterministic, fast.
+ """
 
     def __init__(self, rules: list[TriggerRule] | None = None):
         self.rules = rules or TOOL_TRIGGER_RULES
@@ -465,18 +465,18 @@ class ToolOrchestrator:
 
 class EvidenceEnricher:
     """
-    Collects tool results and formats them for injection into LLM reasoning.
-    This is what the LLM actually sees.
-    """
+ Collects tool results and formats them for injection into LLM reasoning.
+ This is what the LLM actually sees.
+ """
 
     @staticmethod
     def read_safely(result, key, default=None):
         """Robust reader: handles ToolResult, dict, or any object with .data.
 
-        Returns `default` when the key is absent, the object has no usable
-        lookup API, or reading raises any exception. Keeps the narrative
-        builder resilient to handler-return-type drift.
-        """
+ Returns `default` when the key is absent, the object has no usable
+ lookup API, or reading raises any exception. Keeps the narrative
+ builder resilient to handler-return-type drift.
+ """
         if result is None:
             return default
         if hasattr(result, "get") and callable(getattr(result, "get", None)):
@@ -636,18 +636,18 @@ class EvidenceEnricher:
 
 class InvestigationSupervisor:
     """
-    Main entry point for the auxiliary enrichment system.
+ Main entry point for the auxiliary enrichment system.
 
-    Usage:
-        supervisor = InvestigationSupervisor()
-        enriched = await supervisor.enrich(
-            routing_data=...,  # from RoutingAgent
-            traffic_data=...,  # from TrafficAgent
-            asn="43927",
-            context={"suspected_type": "origin_hijack", ...}
-        )
-        # Pass `enriched` to LLMReasoner for final reasoning
-    """
+ Usage:
+ supervisor = InvestigationSupervisor()
+ enriched = await supervisor.enrich(
+ routing_data=..., # from RoutingAgent
+ traffic_data=..., # from TrafficAgent
+ asn="43927",
+ context={"suspected_type": "origin_hijack", ...}
+ )
+ # Pass `enriched` to LLMReasoner for final reasoning
+ """
 
     def __init__(
         self,
@@ -670,24 +670,24 @@ class InvestigationSupervisor:
         skip_pattern: str | None = None,  # "no_anomaly" to skip enrichment
     ) -> dict:
         """
-        Run the full enrichment pipeline.
+ Run the full enrichment pipeline.
 
-        Args:
-            routing_data: output from RoutingAgent
-            traffic_data: output from TrafficAgent
-            asn: AS number
-            asn_info: optional pre-fetched AS info
-            context: additional context (suspected_type, etc.)
-            session: tool session for execution
-            skip_pattern: skip if pattern matches this (e.g. "no_anomaly")
+ Args:
+ routing_data: output from RoutingAgent
+ traffic_data: output from TrafficAgent
+ asn: AS number
+ asn_info: optional pre-fetched AS info
+ context: additional context (suspected_type, etc.)
+ session: tool session for execution
+ skip_pattern: skip if pattern matches this (e.g. "no_anomaly")
 
-        Returns:
-            Enriched context dict with:
-                - auxiliary_enrichment: per-tool results
-                - auxiliary_narrative: LLM-readable summary
-                - total_confidence_boost: cumulative boost from enrichment
-                - triggered_tools: list of TriggeredTool objects
-        """
+ Returns:
+ Enriched context dict with:
+ - auxiliary_enrichment: per-tool results
+ - auxiliary_narrative: LLM-readable summary
+ - total_confidence_boost: cumulative boost from enrichment
+ - triggered_tools: list of TriggeredTool objects
+ """
         context = context or {}
         context.update({
             "routing_data": routing_data,
@@ -781,9 +781,9 @@ async def enrich_case(
     asn_info: dict | None = None,
 ) -> dict:
     """
-    One-shot enrichment for a routing + traffic result pair.
-    Use this from ReasoningAgent or workflow engine.
-    """
+ One-shot enrichment for a routing + traffic result pair.
+ Use this from ReasoningAgent or workflow engine.
+ """
     supervisor = InvestigationSupervisor()
     return await supervisor.enrich(
         routing_data=routing_data,

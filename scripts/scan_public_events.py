@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-DATASET = ROOT / "data_check" / "ground_truth_collection" / "final_balanced_dataset_v13.csv"
+DATASET = ROOT / "data_check" / "ground_truth_collection" / "final_balanced_dataset_v17.csv"
 TRAFFIC_DIR = ROOT / "data" / "traffic"
 
 

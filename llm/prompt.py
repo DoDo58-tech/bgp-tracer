@@ -430,7 +430,6 @@ Analyze BGP routing security for AS{asn} from {start_time} to {end_time}.
 
 Begin the analysis now.
 """
-    return PromptTemplate(text)
 
 
 def build_react_coordinator_prompt():

@@ -13,8 +13,7 @@ def _parse_ts(ts_str):
 
 
 def cluster_and_expand_anomaly_windows(anomalies, timestamps, current_values, historical_means,
-                                       historical_stds=None, gap_minutes=30, expansion_hours=2,
-                                       min_cluster_size=1):
+                                       historical_stds=None, gap_minutes=30, expansion_hours=2):
     if not anomalies or not timestamps:
         return []
     indices = sorted({int(anom["index"]) for anom in anomalies if isinstance(anom.get("index"), (int, float))})
@@ -66,7 +65,7 @@ def cluster_and_expand_anomaly_windows(anomalies, timestamps, current_values, hi
 
 def expand_anomaly_boundaries(anomalies, timestamps, current_values, historical_means, expansion_hours=2):
     wins = cluster_and_expand_anomaly_windows(anomalies, timestamps, current_values, historical_means,
-                                             expansion_hours=expansion_hours, min_cluster_size=1)
+                                             expansion_hours=expansion_hours)
     return (wins[0]["start"], wins[0]["end"]) if wins else (None, None)
 
 

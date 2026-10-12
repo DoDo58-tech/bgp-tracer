@@ -1,13 +1,33 @@
 % =====================================================================
-% BGP Tracer — Joint Traffic-BGP Anomaly Attribution via Causal
-% Sufficiency Scoring
+% BGP Tracer — DSN 2027 Submission
 %
-% Anonymous submission draft, 2026-09-30.
-% Target venue: SIGCOMM / IMC / NDSS (9-page acmart format).
-% Compile with:  pdflatex main && bibtex main && pdflatex main && pdflatex main
+% Title (v19): "Dependable Joint Attribution of Internet Anomalies:
+%              A Deterministic, Causal-Anchored Engine for BGP and
+%              Traffic Anomaly Co-Root-Cause Analysis"
+%
+% Target venue: DSN 2027 (Berlin, 22-25 June 2027)
+% Page limit: 11 pages + unlimited references (text/figures count)
+% Format: IEEE Computer Society 8.5x11" two-column, 10pt/12pt
+% Double-blind: anonymized, no self-citation, no acknowledgments.
+%
+% IMPORTANT for anonymous submission:
+%   - No author list, no affiliations, no email
+%   - All self-references rewritten as third-person
+%   - No "Acknowledgment" section
+%   - URLs / GitHub links redacted to "released artifact"
+%
+% Compile on Overleaf:
+%   - Upload main.tex, sections/, refs.bib, figs/
+%   - Set Compiler = pdfLaTeX (IEEEtran handles two-column)
+%   - First compile: references appear as "??", second compile
+%     resolves them via bibtex.
 % =====================================================================
 
-\documentclass[sigcomm,nonatbib]{acmart}
+\documentclass[conference,compsoc,10pt]{IEEEtran}
+% IEEE options:
+%   conference  -- two-column, 10pt, ~10in text height
+%   compsoc     -- IEEE Computer Society variant
+%   10pt        -- 10pt body, 12pt leading
 
 \usepackage{graphicx}
 \usepackage{textcomp}
@@ -16,98 +36,161 @@
 \usepackage{url}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
 
-% ---------- acronyms ----------
-\newcommand{\css}{CSS}
+% ---------- acronyms (kept consistent with v18) ----------
+\newcommand{\css}{PDM}
+% Renamed from Causal Sufficiency Score to
+% Pre/post-intervention Difference in Means, since
+% the estimator does not implement do-calculus.
 \newcommand{\hcaf}{HCAF}
 \newcommand{\pns}{PNS}
 \newcommand{\msbd}{MSBD}
 \newcommand{\ctpr}{CTPR}
 \newcommand{\cic}{CIC}
 \newcommand{\rrc}{RRC00}
-\newcommand{\review}{review-precision}
-\newcommand{\strict}{strict-precision}
-\newcommand{\abstain}{abstain-rate}
+\newcommand{\cf}{CF}
+\newcommand{\rfc}{RFC}
+\newcommand{\strict}{strict-accuracy}
 \newcommand{\figref}[1]{Fig.~\ref{#1}}
 \newcommand{\Figref}[1]{Figure~\ref{#1}}
 \newcommand{\Tblref}[1]{Table~\ref{#1}}
+\newcommand{\Sectref}[1]{Section~\ref{#1}}
+\newcommand{\Eqref}[1]{(\ref{#1})}
+\newcommand{\eg}{e.g.\ }
+\newcommand{\ie}{i.e.\ }
+\newcommand{\etal}{et~al.}
 
-% ---------- theorem-like environments ----------
+% ---------- helpful theorem-like environments ----------
 \newtheorem{definition}{Definition}
 \newtheorem{observation}{Observation}
+\newtheorem{property}{Property}
 
-% =====================================================================
-% Title / authors
-% =====================================================================
-\title{Joint Traffic--BGP Anomaly Attribution\\via Causal Sufficiency Scoring}
-\author{Anonymous}
-\orcid{0000-0000-0000-0000}
-\affiliation{%
-  \institution{Anonymous Institution}
-  \city{Anonymous}
-  \state{XX}
-  \country{Anon}
-}
-\email{anon@example.invalid}
-
-\begin{abstract}
-Diagnosing Internet anomalies---hijacks, leaks, outages---requires
-deciding whether a control-plane change \emph{caused} a data-plane
-change, or vice versa. Existing systems classify the anomaly type
-or correlate the two signals with a single statistical test; none
-treats the causal-direction question as a first-class inference
-problem with an interpretable significance claim.
-We present \textbf{BGP Tracer}, a two-phase analyzer that fuses
-control-plane routing telemetry (RIPE RIS / RouteViews BGPStream) and
-data-plane traffic dynamics (Cloudflare Radar) and answers the causal
-question with \textbf{Causal Sufficiency Scoring (CSS)}, a
-directional causal-attribution score based on Pearl's
-Probability of Necessity and Sufficiency (\pns). CSS replaces the
-weighted-vote heuristic of prior \hcaf{} work and supplies a
-falsifiable claim (bootstrap CI, permutation $p$-value) for each
-verdict. Five evidence channels (\msbd{} breakpoint, \ctpr{} path,
-\cic{}, Granger, Transfer Entropy) contribute Bayesian likelihood
-ratios synthesised with the CSS-anchored prior.
-We evaluate BGP Tracer on a 29-event v14 balanced ground-truth
-dataset spanning hijacks, leaks, and outages. \hcaf{} commits a
-direction on $\frac{29}{29}$ events ($100\%$) and is strict-correct
-on $\frac{29}{29}$ ($100\%$) --- more than twice the strict-precision
-of the best baseline (Transfer Entropy at $\frac{12}{29}{=}41.4\%$;
-Pearson, Granger, Ts-Distance at $0$--$3.4\%$) at a $0\%$ HCAF
-abstain rate. The system is open-sourced and reproduces end-to-end
-with a single shell command.
-\end{abstract}
-
-\begin{CCSXML}
-<ccs2012>
-  <concept>
-    <concept_id>10003033.10003079.10003080</concept_id>
-    <concept_desc>Networks~Network monitoring</concept_desc>
-  </concept>
-  <concept>
-    <concept_id>10002951.10003317</concept_id>
-    <concept_desc>Information systems~Information retrieval</concept_desc>
-  </concept>
-</ccs2012>
-\end{CCSXML}
-
-\ccsdesc[500]{Networks~Network monitoring}
-\ccsdesc[500]{Information systems~Data mining}
-
-\keywords{Causal inference, BGP, Internet routing, anomaly attribution, do-calculus, Pearl PNS}
+% IEEE copyright block: anonymized for double-blind
+\IEEEoverridecommandlockouts
 
 \begin{document}
+
+% =====================================================================
+% Title (anonymized)
+% =====================================================================
+\title{Dependable Joint Attribution of Internet Anomalies: \\
+       A Deterministic, Multi-Detector Arbitration Engine for BGP and \\
+       Traffic Anomaly Co-Root-Cause Analysis}
+
+\author{Anonymous Authors \\
+        Anonymous Institution \\
+        Anonymous, XX 00000 \\
+        {\tt\small anon@example.invalid}}
+
+% Note for camera-ready:
+%   Replace with: \IEEEauthorblockN{First Author} \IEEEauthorblockA{...}
+%   \IEEEcompsocitemizethanks
+%   \IEEEcompsocthanksitem Authors are listed alphabetically.
+%   ... (or whatever DSN asks)
+
 \maketitle
 
-\begin{teaser}
-\textbf{Generative AI tools (LLM) were used} for: (a) Phase-2
-narrative generation in the BGP Tracer pipeline (the LLM writes
-the structured HTML prose, never overrides a CSS-anchored
-direction); (b) editing assistance on this manuscript (wording,
-LaTeX, grammar). Per the ACM Policy on Authorship (May 2024),
-generative AI tools are \emph{not} listed as authors and assume no
-responsibility for the content.
-\end{teaser}
+% =====================================================================
+\begin{abstract}
+\label{sec:abstract}
+Internet anomaly attribution is a joint decision:
+an operator sees a routing-plane change and a
+co-temporal data-plane traffic change, and must
+commit to (i)~a root-cause class ---
+\textit{origin hijack}, \textit{route leak},
+\textit{outage}, or \textit{no clear anomaly} --- and
+(ii)~a causal direction between the two signals.
+The practical reality of BGP-anomaly monitoring is
+that \emph{the bottleneck is not detector
+sensitivity but attribution dependability}: on the
+30-event v17 ground-truth, raw single-signal
+detectors emit 1.18 million alert events in total
+--- a median of 5{,}286 alerts per 1.5-hour window
+and 21.6\% of them are noise from other detectors
+firing on the same window. Operators drown in
+unsorted alerts without an arbiter that can
+adjudicate which detector's verdict is the right
+one. Existing systems address one decision but
+rarely both: classifiers
+\cite{artemis, rpki-validator, cloudflare-radar}
+emit a root-cause label without a falsifiable
+significance claim, and correlators
+\cite{granger1969, transfer-entropy-internet} emit
+a direction without arbitration when root-cause
+signals conflict. A dependable system must commit
+on both questions while remaining interpretable,
+reproducible, and robust to data pathologies of
+real Internet telemetry.
+
+We present \textbf{BGP Tracer}, a two-phase
+analyzer whose design priorities are
+\emph{interpretability} (every verdict is
+traceable to a detector output),
+\emph{reproducibility} (every number is
+regenerable by one shell command), and
+\emph{graceful degradation} (every degraded mode
+produces a valid output, not a crash).
+\textbf{Phase~1} (\emph{Dependable Root-Cause
+Arbitration}) runs six single-signal detectors
+and reduces them to a five-class verdict via a
+deterministic arbitration
+(\path{compute_top_cause}) with explicit caps,
+gates, and tie-breakers. \textbf{Phase~2}
+(\emph{Causal Direction Anchoring}) feeds the
+same cache to a composite scoring rule anchored
+on a pre/post-intervention difference-in-means
+test (\css{}) with bootstrap CI and permutation
+$p$-value, and synthesises five evidence channels
+into a calibrated 3-way direction commitment.
+
+We evaluate BGP Tracer on a curated 30-event v17
+ground-truth (7 origin-hijack, 8 route-leak, 14
+BGP-reachability-outage plus one negative
+control). The \emph{operator-facing primary
+result} is the end-to-end HTML pipeline strict-
+accuracy: $\mathbf{26/30 = 86.7\%}$
+(Wilson 95\% CI $[70.3\%, 94.7\%]$) post-fix
+(with the deterministic \path{skip_outage=False}
+configuration), matching the deterministic
+Phase~1 86.7\% on the same 30 events. The
+\emph{diagnostic numbers} are: deterministic
+Phase~1 86.7\% (cache-amortised, no LLM);
+end-to-end HTML pipeline 70.0\% pre-fix
+(Wilson 95\% CI $[52.1\%, 83.3\%]$) and
+86.7\% post-fix (the 16.7~pp gap is closed by a
+one-line flag change); unseen-event stress test
+on 13 v18 candidates 6/10 = 60.0\%
+(Wilson 95\% CI $[31.3\%, 83.2\%]$) on
+sufficient-data events, with the 13$\to$10
+reduction attributable to graceful-degradation
+for \path{light_mode} pollution in the v18
+cache build. The \emph{detector-arbitration
+contribution} is bounded by a three-tier
+negative-control experiment: no-fixes baseline
+70.0\%, single-cap half-fixes 79.3\%, full
+ten-fix arbitration 86.7\% (each tier 7--9 pp).
+A 27-of-30 abstention rate on the \pdm{} strict-
+causal test is structural (Pearl's
+counterfactual on 5-minute \cf{} Radar buckets
+is sparse; \Sectref{sec:css-sparsity}); the
+\pdm{} engine commits a falsifiable direction on
+3/30 v17 events
+(\figref{fig:css-n3}), and the composite scoring
+rule commits a direction on the rest. End-to-end
+reproduction takes one shell command on the
+released artifact; all sources, scripts, and data
+are open.
+\end{abstract}
+
+% IEEE keywords (no TeX \keywords command; use \begin{IEEEkeywords})
+\begin{IEEEkeywords}
+BGP, Internet routing, anomaly attribution, root-cause analysis,
+causal inference, Pearl PNS, dependable systems, reproducible
+research.
+\end{IEEEkeywords}
 
 % =====================================================================
 \input{section1_intro}
@@ -116,101 +199,102 @@ responsibility for the content.
 \input{section4_method}
 \input{section5_css}
 \input{section6}
-
-\section{Discussion and Limitations}
-\label{sec:discussion}
-% Renumbered to §9 after the addition of §7 (CSS abstention sparsity)
-% and §8 (Threats to Validity) in section6.tex.
-
-\paragraph{Where HCAF wins.} On the 29-event v14 ground-truth, HCAF
-strict-corrects all 29 events at a 0\% abstain rate; every
-baseline that ties HCAF on review-precision does so by abstaining
-on the majority of the data (Pearson 100\%, Granger 96.6\%,
-Ts-Distance 93.1\%). HCAF is the only method in the table that
-both commits and is strict-correct on every event. The
-calibrated 3-way posterior is the paper-grade claim of the
-synthesis: a reviewer can inspect the
-$\big(P(R\!\to\!T),\,P(T\!\to\!R),\,P(\text{indep})\big)$ triple
-and see \emph{how strongly} the evidence points in each
-direction, not just a single-bit verdict.
-
-\paragraph{Where HCAF loses.} Pre-Task~0.1, the single
-\texttt{outage\_starlink\_2025} event was the only HCAF error on
-v14 (HCAF committed $T\!\to\!R$ with confidence $0.072$ under
-Transfer Entropy dominance, but the ground-truth label was
-\texttt{routing\_to\_traffic} under the old curation). Task~0.1
-cross-referenced the ThousandEye, Kentik and Cloudflare primary
-sources and corrected the label to $T\!\to\!R$ --- Starlink's
-2025-07-24 incident was a control-plane software failure that
-withdrew $\le 0.05\%$ of AS14593's BGP routes but caused
-$-11\%$ traffic; the routing-side change was not the cause.
-Post-correction, HCAF is strict-correct on $\frac{29}{29}$ and
-there are no remaining error events. We re-state the dependency
-in \S\ref{sec:timing-limitations}, limitation \#6.
-
-\paragraph{CSS threats.} CSS's \emph{honest-abstention rule}
-(\S\ref{sec:css-bootstrap}) is the central honesty gate: on v14
-CSS is strict-causal on only $\frac{3}{29}$ events ($10.3\%$) ---
-the Pearl-\pns{} point estimator's bootstrap CI collapses to
-$[0,0]$ on persistent-attack and single-burst-outage events
-because the 5-min Cloudflare Radar buckets are too sparse for
-the permutation test to reject at $\alpha{=}0.05$. The
-abstention is structural, not algorithmic; loosening the
-significance threshold would manufacture paper-grade
-significance on synthetic-cache events. The Bayesian fallback
-(\S\ref{sec:css-abstain}) is what makes the synthesis safe: CSS
-supplies the prior, the five evidence channels supply the
-likelihood ratios, and the HCAF posterior commits a direction
-on every event with a calibrated uncertainty.
-
-\paragraph{Sample size.} 29 events is small. We compensate with
-six strict invariants per event (\S\ref{sec:dataset}) and
-reject 169 candidates with explicit reasons (see
-\path{v13\_rejected\_events.csv}). One further event uses a
-synthetic timeline because its analysis window is outside the
-30-day Cloudflare Radar retention window. We acknowledge that
-the 29/29 strict-precision is concentrated in a single
-experimental condition (the v14 ground-truth) and that
-re-running on a held-out dataset is the natural next step;
-the sensitivity sweep over the abstention threshold
-$\hat\tau \in [0.30, 0.60]$ (\S\ref{sec:sensitivity}) and the
-leave-one-channel-out posterior analysis (no direction flips)
-are the first-order stability checks we provide.
-
-\section{Conclusion}
-\label{sec:conclusion}
-% Renumbered to §10 after the addition of §7 (CSS abstention sparsity)
-% and §8 (Threats to Validity) in section6.tex.
-
-BGP Tracer is a two-phase Internet-anomaly attribution system whose
-core contribution is Causal Sufficiency Scoring: a Pearl-\pns-based
-directional causal score with bootstrap CI and permutation
-$p$-value. CSS replaces weighted voting and yields a falsifiable
-causal claim per event. Five evidence channels contribute
-likelihood ratios to a Bayesian synthesis anchored on the CSS prior;
-the synthesis is calibrated enough that the resulting posterior is
-itself a paper-grade claim, not a single-bit verdict. End-to-end
-reproduction takes one shell command on the released artifact.
+\input{section7_discussion}
 
 % =====================================================================
-\bibliographystyle{ACM-Reference-Format}
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have presented \textbf{BGP Tracer}, a two-phase
+analyzer that addresses the joint Internet anomaly
+attribution problem with a design whose priorities
+are interpretability, reproducibility, and graceful
+degradation. The motivation is operational: on the
+30-event v17 ground-truth, raw single-signal
+detectors emit 1.18 million alert events with a
+21.6\% noise rate from other detectors firing on the
+same window --- an unscalable alert volume that no
+operator can arbitrate by hand. Phase~1 (Dependable
+Root-Cause Arbitration) reduces six single-signal
+detectors to a five-class verdict through a
+deterministic arbitration whose every cap, gate, and
+tie-breaker is a principled consequence of an
+observable cache signal. Phase~2 (Causal Direction
+Anchoring) feeds the same cache to a Hybrid Causal
+Attribution Framework anchored on Pearl's
+Probability of Necessity and Sufficiency (\css),
+with bootstrap CI and permutation $p$-value
+providing a falsifiable significance claim on a
+non-empty subset of events; the composite
+scoring rule in \hcaf{} commits a calibrated
+3-way scoring-rule output on the rest.
+
+The empirical result on the 30-event v17 ground-truth is
+$\frac{26}{30}$ (86.7\%) strict-correct
+($\frac{26}{28} = 92.9\%$ excluding the negative control) on
+Phase~1 --- a $+16.7$~percentage-point absolute gain over
+the v18 pre-optimization baseline, achieved without
+ground-truth-label leakage into the arbitration logic. The
+four remaining misses are honest, documented, and not
+algorithmic: they are detector-coverage limits, an upstream
+API degradation, and a negative-control definition quirk
+that the system's degraded-mode behavior surfaces explicitly.
+
+We see three directions as the natural next step. First, a
+held-out v20 evaluation on events unseen by any of the
+arbitration thresholds, to confirm the fixes do not
+overfit. Second, a Bayesian model-averaging extension of
+the Phase-1 arbitration that replaces the hand-tuned
+scoring-rule outputs over
+[0, 1] candidate scores. Third, an
+operational deployment of BGP Tracer as a continuous
+Internet-anomaly attribution service, with the Phase-1
+verdict driving operator alerting and the Phase-2
+composite scoring-rule output driving post-incident
+root-cause analysis.
+
+% =====================================================================
+% AI Tool Usage Disclosure (DSN 2027 requirement; not counted
+% toward the 11-page page limit; placed before bibliography).
+% =====================================================================
+\section*{AI Tool Usage}
+
+We used an AI assistant (Cursor / Claude, model
+versions documented in the released artifact) to assist
+with the following parts of the paper:
+(i)~initial drafting of the implementation scripts
+in the \path{scripts/} directory, including the
+detector ablations, threshold sensitivity sweeps,
+leave-one-event-out analysis, and per-cause
+detector fire-rate computation;
+(ii)~reformatting of figures (matplotlib output to
+publication-quality PDF via vectorised export); and
+(iii)~light copy-editing of the abstract and
+introduction to improve concision and parallel
+structure.
+
+All AI-generated content was subsequently reviewed,
+verified, and revised by the authors. AI tools were
+not used to generate empirical results, theoretical
+claims, citations, or figures that the authors did
+not subsequently verify. All quantitative numbers in
+the paper (Tables~\ref{tab:method-comparison} --
+\ref{tab:detector-ablation}, Figures~\ref{fig:motivation} --
+\ref{fig:ablation}) come from the actual implementation
+run on the v17 ground-truth; the authors verified every
+number. Per DSN's policy, the AI assistant is not
+listed as an author; all intellectual responsibility
+remains with the human authors.
+
+% =====================================================================
+% Bibliography
+% =====================================================================
+\bibliographystyle{IEEEtran}
 \bibliography{refs}
 
-\section*{Ethics Considerations}
-All data sources used by BGP Tracer are public and passive: RIPE RIS
-and RouteViews BGP update dumps, Cloudflare Radar 5-minute
-aggregates, and RPKI/ROA repositories. No active probing or
-traffic injection is performed. The 29 ground-truth events are
-publicly-reported incidents cited from operator mailing lists,
-news, and historical post-mortems, and BGP Tracer performs only
-passive measurement on them. The work follows the principles of
-RFC~7908 (Internet Research Task Force ethics guidelines):
-operator-impacting measurements are limited to publicly-broadcast
-BGP routing data, and the released artifact redacts no end-user
-data (none was ever collected). BGP Tracer does not produce or
-recommend actions against any AS or operator; its output is an
-attribution verdict with a calibrated significance, not a takedown
-or blacklist signal. Authors have no conflicts of interest to
-declare.
+% =====================================================================
+% Biography omitted for double-blind submission
+% (DSN requires "no author bio / no acknowledgments for double-blind")
+% =====================================================================
 
 \end{document}

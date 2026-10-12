@@ -2,23 +2,23 @@
 
 ===================
 
-：，。
+: , . 
 
-（）：
-- weekly (35%): Internet ，Sundararajan et al. SIGCOMM 2004
-   7 ，。
-- daily (25%): /，。
-- hourly (15%): ，。
-- biweekly (15%): 。
-- monthly (10%): /，。
+(): 
+- weekly (35%): Internet , Sundararajan et al. SIGCOMM 2004
+ 7 , . 
+- daily (25%): /, . 
+- hourly (15%): , . 
+- biweekly (15%): . 
+- monthly (10%): /, . 
 
-（ci_width），。
+(ci_width), . 
 
-：
-1. （1、1、1、2、1）
+: 
+1. (1 1 1 2 1)
 2. 
-3. ，
-4.  set_weights() （）
+3. , 
+4. set_weights() ()
 """
 
 from __future__ import annotations
@@ -68,14 +68,14 @@ class MultiScaleDecision:
 
 class MultiScaleBaseline:
     """
-    
-    
-    ，。
+ 
+ 
+ , . 
 
-    （ set_weights()），：
-    1.  Ground Truth （ auto_tune_weights()）
-    2. （e.g.,  hourly ）
-    """
+ ( set_weights()), : 
+ 1. Ground Truth ( auto_tune_weights())
+ 2. (e.g., hourly )
+ """
 
     # （ docstring）
     SCALES = {
@@ -116,33 +116,33 @@ class MultiScaleBaseline:
 
     def set_weights(self, weights: dict):
         """
-        （）。
+ (). 
 
-        Args:
-            weights: {'hourly': 0.1, 'daily': 0.3, 'weekly': 0.4, 'biweekly': 0.1, 'monthly': 0.1}
-                     ， 1.0（，）。
+ Args:
+ weights: {'hourly': 0.1, 'daily': 0.3, 'weekly': 0.4, 'biweekly': 0.1, 'monthly': 0.1}
+ , 1.0(, ). 
 
-        Example:
-            # ，
-            detector.set_weights({'hourly': 0.35, 'daily': 0.25, 'weekly': 0.20,
-                                   'biweekly': 0.10, 'monthly': 0.10})
-        """
+ Example:
+ # , 
+ detector.set_weights({'hourly': 0.35, 'daily': 0.25, 'weekly': 0.20,
+ 'biweekly': 0.10, 'monthly': 0.10})
+ """
         for key, value in weights.items():
             if key in self.SCALES:
                 self.SCALES[key]['weight'] = value
                 logger.info(f"[MultiScale] weight[{key}] = {value}")
 
     def get_weights(self) -> dict:
-        """，。"""
+        """, . """
         return {k: v['weight'] for k, v in self.SCALES.items()}
 
     def _shared_scale_windows(self, asn, current_start, current_end):
         """Pre-fetch every scale offset on one shared normalization scale.
 
-        Returns ``{(offset, start, end): (timestamps, values)}`` for the scales
-        that could be fetched, or ``None`` when the shared helper is
-        unavailable (in which case each scale falls back to its own fetch).
-        """
+ Returns ``{(offset, start, end): (timestamps, values)}`` for the scales
+ that could be fetched, or ``None`` when the shared helper is
+ unavailable (in which case each scale falls back to its own fetch).
+ """
         getter = getattr(self.get_traffic, "__self__", None)
         shared_fn = getattr(getter, "get_traffic_windows_shared_scale", None)
         if shared_fn is None:
@@ -170,20 +170,20 @@ class MultiScaleBaseline:
         metric: str = "f1",
     ) -> dict:
         """
-         Ground Truth 。
+ Ground Truth . 
 
-        Args:
-            ground_truth: List of (current_values, is_anomaly) tuples where:
-                - current_values: traffic data points during the event window
-                - is_anomaly: True if this is a true anomaly, False otherwise
-            metric:  ('f1', 'precision', 'recall')
+ Args:
+ ground_truth: List of (current_values, is_anomaly) tuples where:
+ - current_values: traffic data points during the event window
+ - is_anomaly: True if this is a true anomaly, False otherwise
+ metric: ('f1', 'precision', 'recall')
 
-        ：（5^5 = 3125 ，5  5 : 0.05/0.10/0.20/0.30/0.35）
-        。
+ : (5^5 = 3125 , 5 5 : 0.05/0.10/0.20/0.30/0.35)
+ . 
 
-        ：，（50）。
-        ：。
-        """
+ : , (50). 
+ : . 
+ """
         if len(ground_truth) < 10:
             logger.warning(f"[MultiScale] Not enough samples for tuning ({len(ground_truth)}), using default weights")
             return self.get_weights()
@@ -289,18 +289,18 @@ class MultiScaleBaseline:
         current_end: datetime,
     ) -> MultiScaleDecision:
         """
-        
-        
-        Args:
-            asn: AS
-            current_values: 
-            current_timestamps: 
-            current_start: 
-            current_end: 
-        
-        Returns:
-            MultiScaleDecision: 
-        """
+ 
+ 
+ Args:
+ asn: AS
+ current_values: 
+ current_timestamps: 
+ current_start: 
+ current_end: 
+ 
+ Returns:
+ MultiScaleDecision: 
+ """
         scale_results = []
         weighted_sum = 0.0
         total_weight = 0.0
@@ -359,12 +359,12 @@ class MultiScaleBaseline:
     def _decide(self, scale_results, weighted_score, anomaly_count, direction=None):
         """Fuse per-scale verdicts into one decision.
 
-        The consensus threshold is derived from the scales that actually
-        returned a verdict. Using the configured scale count instead made the
-        required vote count exceed the number of scales that could ever vote,
-        so detection became impossible whenever history was sparse -- e.g.
-        AS12479 had only hourly+daily available but the rule demanded 3 of 5.
-        """
+ The consensus threshold is derived from the scales that actually
+ returned a verdict. Using the configured scale count instead made the
+ required vote count exceed the number of scales that could ever vote,
+ so detection became impossible whenever history was sparse -- e.g.
+ AS12479 had only hourly+daily available but the rule demanded 3 of 5.
+ """
         available_count = sum(1 for r in scale_results if r.available)
         threshold_vote = math.ceil(available_count / 2) if available_count else 1
         threshold_score = 1.5  # z-score gate: 2.0 lenient, 1.5 stricter
@@ -596,10 +596,10 @@ class MultiScaleBaseline:
 
 class CausalCorrelationScorer:
     """
-    
-    
-    ，。
-    """
+ 
+ 
+ , . 
+ """
 
     def score(
         self,
@@ -615,15 +615,15 @@ class CausalCorrelationScorer:
     ):
         """Score association and gate any stronger causal-hypothesis claim on independent evidence.
 
-        B2 extensions (opt-in via event_phases / prefix_traffic):
-          * event_phases maps a routing event to its first_seen / peak /
-            last_seen / withdrawn timestamps; temporal scoring then gives
-            partial credit when traffic falls inside the active phase
-            rather than the strict "after the event" rule.
-          * prefix_traffic maps a prefix to attacker_path_delta_pct; this
-            bumps the semantic_alignment score (real BGP path shift =
-            real traffic redirection).
-        """
+ B2 extensions (opt-in via event_phases / prefix_traffic):
+ * event_phases maps a routing event to its first_seen / peak /
+ last_seen / withdrawn timestamps; temporal scoring then gives
+ partial credit when traffic falls inside the active phase
+ rather than the strict "after the event" rule.
+ * prefix_traffic maps a prefix to attacker_path_delta_pct; this
+ bumps the semantic_alignment score (real BGP path shift =
+ real traffic redirection).
+ """
         routing_events = routing_events or []
         traffic_anomalies = traffic_anomalies or []
         routing_status = "anomaly" if routing_events else ("no_data" if not routing_available else "normal")
@@ -723,10 +723,10 @@ class CausalCorrelationScorer:
     def _causal_claim_gate(self, evidence, has_association):
         """Require independent external, mechanism, and alternative-cause evidence.
 
-        Same-window timing, semantic similarity, and any numeric association score are
-        deliberately excluded from this gate. Each evidence class must be explicitly
-        verified and provide a provenance-bearing source.
-        """
+ Same-window timing, semantic similarity, and any numeric association score are
+ deliberately excluded from this gate. Each evidence class must be explicitly
+ verified and provide a provenance-bearing source.
+ """
         evidence = evidence if isinstance(evidence, dict) else {}
 
         def verified(name):
@@ -824,19 +824,19 @@ class CausalCorrelationScorer:
     def _recommended_actions(self, routing_status, traffic_status, match_status, quality, penalty):
         actions = []
         if routing_status == "no_data":
-            actions.append("BGP")
+            actions.append("Check BGP feed availability")
         if traffic_status == "no_data":
-            actions.append("AS")
+            actions.append("Check AS traffic telemetry")
         if traffic_status == "anomaly" and routing_status == "normal":
-            actions.extend(["、", ""])
+            actions.append("Investigate non-routing cause of traffic drop")
         if match_status in {"no_temporal_match", "matched_attacker_only"}:
-            actions.append("")
+            actions.append("No co-temporal evidence; escalate manually")
         if penalty > 0:
-            actions.append("、CDN")
+            actions.append("Consider CDN/edge effect confounders")
         if not actions and quality in {"low", "medium"}:
-            actions.append("")
+            actions.append("Re-evaluate with higher-quality telemetry")
         if not actions:
-            actions.append("")
+            actions.append("No additional action recommended")
         return actions
 
     def _impact_scope(self, routing_events, traffic_anomalies, target_asn):
@@ -858,14 +858,14 @@ class CausalCorrelationScorer:
     def _compute_temporal_score(self, routing_events, traffic_anomalies, event_phases=None):
         """Match each traffic anomaly to the closest preceding route event.
 
-        event_phases (optional) is a dict keyed by routing event id that
-        carries first_seen / peak / last_seen / withdrawn timestamps.
-        Phase info is purely additive — it never lowers the original
-        score, but it does bump the phase_score component so the B2
-        baseline can recognise traffic that landed inside the active
-        phase of an ongoing event (e.g. a leak that takes 90 min to
-        drain) instead of insisting on the strict "after the event" rule.
-        """
+ event_phases (optional) is a dict keyed by routing event id that
+ carries first_seen / peak / last_seen / withdrawn timestamps.
+ Phase info is purely additive - it never lowers the original
+ score, but it does bump the phase_score component so the B2
+ baseline can recognise traffic that landed inside the active
+ phase of an ongoing event (e.g. a leak that takes 90 min to
+ drain) instead of insisting on the strict "after the event" rule.
+ """
         event_phases = event_phases or {}
         routing_times = [
             (event, self._parse_time(event.get("timestamp") or event.get("first_seen")))
@@ -922,7 +922,7 @@ class CausalCorrelationScorer:
 
     def _phase_bonus(self, event, event_phases, traffic_time):
         """Return 0..0.3 bonus when traffic falls inside the active phase
-        of the matched routing event."""
+ of the matched routing event."""
         phases = event_phases.get(event.get("event_id")) or event_phases.get(
             event.get("prefix")
         )
@@ -943,7 +943,7 @@ class CausalCorrelationScorer:
 
     def _score_event_phases(self, event_phases, traffic_anomalies):
         """Average phase bonus across all traffic anomalies with a
-        matched phase window. Returns 0.0 when no phase data exists."""
+ matched phase window. Returns 0.0 when no phase data exists."""
         if not event_phases or not traffic_anomalies:
             return 0.0
         traffic_times = [
@@ -969,7 +969,7 @@ class CausalCorrelationScorer:
 
     def _score_prefix_traffic_shift(self, prefix_traffic, routing_events):
         """Bump semantic score when prefix-level AS-path data shows the
-        attacker absorbing a real share of the affected prefix's paths."""
+ attacker absorbing a real share of the affected prefix's paths."""
         if not prefix_traffic or not routing_events:
             return 0.0
         attacker_asns = {

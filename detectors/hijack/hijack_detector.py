@@ -11,11 +11,11 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from utils.logger import logger
-from detectors.hijack.hijack_utils import remove_consecutive_duplicates
+from detectors.input_validation import InputValidationError, validate_detection_request
 from detectors.hijack import hijack_cache_manager
-from detectors.hijack.hijack_prefix_processor import get_target_prefixes_batch, build_prefix_trie, is_subnet_of_trie
+from detectors.hijack.hijack_prefix_processor import get_target_prefixes_batch, build_prefix_trie
 from detectors.hijack.hijack_detector_core import detect_origin_hijacks, detect_forge_hijacks, analyze_connection_frequency
-from detectors.hijack.hijack_analyzer import aggregate_anomalies, save_alert_messages, StreamingAnomalyAggregator
+from detectors.hijack.hijack_analyzer import save_alert_messages, StreamingAnomalyAggregator
 from detectors.unified_result import wrap, DetectionType
 
 from data.updates_loader import get_updates_streaming
@@ -179,6 +179,31 @@ def detect_hijacks_streaming(
     io_busy_threshold = 85,
     skip_forge_detection = True,  #  forge ( ES + , )
 ):
+    # Validate BEFORE any I/O. Without this, a swapped call such as
+    # detect_hijacks("AS24940", start, end) parses the AS as a timestamp,
+    # runs to completion, and writes a results file with an inverted window
+    # and zero alerts -- a false negative shaped like a finding.
+    try:
+        target_as, _start_dt, _end_dt = validate_detection_request(
+            target_as, start_time, end_time
+        )
+    except InputValidationError as exc:
+        logger.error(f"[hijack] rejected request: {exc}")
+        return wrap(DetectionType.HIJACK, {
+            "success": False,
+            "error": str(exc),
+            "asn": str(target_as),
+            "analysis_period": f"{start_time} to {end_time}",
+            "origin_hijacked": [],
+            "forge_hijacked": [],
+            "origin_hijacking": [],
+            "forge_hijacking": [],
+            "mitm_alerts": [],
+            "data_available": False,
+            "no_data_reason": "invalid_request",
+            "invalid_request": True,
+        }, asn=str(target_as)).to_dict()
+
     try:
         logger.info(f"Starting hijack detection for AS{target_as} from {start_time} to {end_time} (skip_forge: {skip_forge_detection})")
 
@@ -225,8 +250,14 @@ def detect_hijacks_streaming(
                 "batch_mode": False,
                 "aggregated_alerts": as_result.get("aggregated_alerts", []),
                 # Unified schema: RIPE RIS updates are loaded from disk, so
-                "data_available": True,
-                "no_data_reason": "",
+                # availability follows whether any rows were scanned. A run
+                # that processed 0 announcements has no data to judge and
+                # must not be reported as a clean negative.
+                "data_available": bool(as_result.get("total_announcements", 0)),
+                "no_data_reason": (
+                    "" if as_result.get("total_announcements", 0)
+                    else "no_announcements_in_window"
+                ),
             }
             return wrap(DetectionType.HIJACK, result, asn=target_as).to_dict()
 
@@ -268,7 +299,6 @@ def detect_hijacks(
     start_time,
     end_time,
     target_as,
-    use_streaming = True,
     validate_with_updates = False,
     save_alerts = True,
     update_workers = 1,
@@ -938,9 +968,15 @@ def detect_hijacks_batch(
             "target_prefixes": list(prefixes_by_as[asn]),
             "total_announcements": result_data["total_announcements"],
             "analysis_timestamp": datetime.now().isoformat(),
-            # Unified schema fields
-            "data_available": True,
-            "no_data_reason": "",
+            # Unified schema fields. Availability must reflect whether any
+            # BGP rows were actually scanned: a run that loaded the window
+            # but processed 0 announcements had no data to judge, and
+            # reporting data_available=True would turn it into a false
+            # negative that a scoring script counts as a clean miss.
+            "data_available": bool(result_data["total_announcements"]),
+            "no_data_reason": (
+                "" if result_data["total_announcements"] else "no_announcements_in_window"
+            ),
             "anomalies_detected": all_anomalies_count > 0,
             "anomaly_count": all_anomalies_count,
         }

@@ -2,16 +2,16 @@
 Hypothesis Agent
 ================
 
-LLM 。
+LLM . 
 
 Workflow:
-  1.  Blackboard  traffic + routing 
-  2.  LLM  + 
-  3.  claims  Blackboard `diagnosis.claims`
-  4.  (LLMDebateAgent / report generation) 
+ 1. Blackboard traffic + routing 
+ 2. LLM + 
+ 3. claims Blackboard `diagnosis.claims`
+ 4. (LLMDebateAgent / report generation) 
 
- LLM：， TaskResult(success=False)
- Blackboard `diagnosis.error`， workflow_engine / 。
+ LLM: , TaskResult(success=False)
+ Blackboard `diagnosis.error`, workflow_engine / . 
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ from agents.core import Agent, AgentState, TaskResult
 def extract_json_robust(text):
     """Try fenced block, then balanced-brace depth scan (string-aware).
 
-    Returns ``(dict | None, ok, err)``.  ``text`` may be a ``str`` or, when
-    some LLM backends emit ``(reasoning_content, content)``, a tuple/list.
-    In the tuple case we use the last string element as the payload.
-    """
+ Returns ``(dict | None, ok, err)``. ``text`` may be a ``str`` or, when
+ some LLM backends emit ``(reasoning_content, content)``, a tuple/list.
+ In the tuple case we use the last string element as the payload.
+ """
     if isinstance(text, (tuple, list)):
         for item in reversed(text):
             if isinstance(item, str):
@@ -90,32 +90,32 @@ class Evidence:
     payload: dict = field(default_factory=dict)
 
 
-_HYPOTHESIS_AGENT_PROMPT = """ BGP 。 traffic + routing ，
- 2-4 ，，
-（0.0 - 1.0）。
+_HYPOTHESIS_AGENT_PROMPT = """ BGP . traffic + routing , 
+ 2-4 , , 
+(0.0 - 1.0). 
 
-【traffic 】
+[traffic ]
 {traffic_json}
 
-【routing 】
+[routing ]
 {routing_json}
 
-【】
+[]
 asn: {asn}
 time_range: {time_range}
 
- JSON（ markdown ）：
+ JSON( markdown ): 
 {{
-  "hypotheses": [
-    {{
-      "id": "h1",
-      "kind": "origin_hijack | route_leak | outage | misconfiguration | legitimate_change | other",
-      "summary": "",
-      "description": "（≤120 ）",
-      "confidence": 0.0,
-      "supporting_evidence_ids": ["ev-1", "ev-2"]
-    }}
-  ]
+ "hypotheses": [
+ {{
+ "id": "h1",
+ "kind": "origin_hijack | route_leak | outage | misconfiguration | legitimate_change | other",
+ "summary": "",
+ "description": "(≤120 )",
+ "confidence": 0.0,
+ "supporting_evidence_ids": ["ev-1", "ev-2"]
+ }}
+ ]
 }}
 """
 

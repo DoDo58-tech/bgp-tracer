@@ -78,7 +78,6 @@ Public API:
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -665,7 +664,7 @@ def css_score(
     # PNS(T → R): split at the *traffic* breakpoint (traffic defines the
     # intervention). The traffic-breakpoint split is computed independently
     # so each PNS estimator uses the right pre/post window for its claim.
-    t_bp_idx = _find_breakpoint(t_aligned) if NUMPY_OK else n // 2
+    t_bp_idx = _find_breakpoint(t_aligned)
     tr_pre = r_aligned[:t_bp_idx]
     tr_post = r_aligned[t_bp_idx:]
     tr = _pns_estimate(tr_pre, tr_post, n_bootstrap=n_bootstrap, seed=23)

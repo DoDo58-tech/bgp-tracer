@@ -2,9 +2,9 @@
 
 ==============
 
-，，。
+, , . 
 
-：
+: 
 - check_victim_traffic: AS
 - bgp_path_analysis: RIPE RIS / RouteViewsAS_PATH
 - traceroute_probing: traceroute
@@ -59,22 +59,22 @@ class AutoProbeFinding:
 
 class AutoProbeExecutor:
     """
-    ：agent，API/。
+ : agent, API/. 
 
-    ：
-        executor = AutoProbeExecutor(timeout=10)
-        findings = await executor.execute_probes(probing_recommendations, target_as="12479")
-    """
+ : 
+ executor = AutoProbeExecutor(timeout=10)
+ findings = await executor.execute_probes(probing_recommendations, target_as="12479")
+ """
 
     # Cloudflare Radar API（，token） AS 
     CF_RADAR_BASE = "https://api.cloudflare.com/client/v4/radar"
 
     def __init__(self, timeout: float = 10.0, enable_external: bool = True):
         """
-        Args:
-            timeout: （）
-            enable_external: （false  skipped）
-        """
+ Args:
+ timeout: ()
+ enable_external: (false skipped)
+ """
         self.timeout = timeout
         self.enable_external = enable_external
 
@@ -85,17 +85,17 @@ class AutoProbeExecutor:
         analysis_window: dict = None,
     ) -> List[AutoProbeFinding]:
         """
-        
+ 
 
-        Args:
-            probing_recommendations: _report_agent._generate_refutable_hypotheses 
-                : {"action": str, "target": str, "reason": str, "method": str}
-            target_as: AS
-            analysis_window: {"start": iso, "end": iso} 
+ Args:
+ probing_recommendations: _report_agent._generate_refutable_hypotheses 
+ : {"action": str, "target": str, "reason": str, "method": str}
+ target_as: AS
+ analysis_window: {"start": iso, "end": iso} 
 
-        Returns:
-            list[AutoProbeFinding]
-        """
+ Returns:
+ list[AutoProbeFinding]
+ """
         if not probing_recommendations:
             return []
 
@@ -198,10 +198,10 @@ class AutoProbeExecutor:
         self, target: str, target_as: str
     ) -> AutoProbeFinding:
         """
-         victim ASes 
+ victim ASes 
 
-        target : "victim ASes: 20119, 34927, 207564, 34854, 3257"
-        """
+ target : "victim ASes: 20119, 34927, 207564, 34854, 3257"
+ """
         ases = extract_as_numbers(target)
         if not ases:
             return AutoProbeFinding(
@@ -240,10 +240,10 @@ class AutoProbeExecutor:
 
     async def _probe_bgp_path(self, target: str) -> AutoProbeFinding:
         """
-         RIPE RIS / RouteViews  AS_PATH
+ RIPE RIS / RouteViews AS_PATH
 
-        target : "prefixes: 90.174.144.0/20, 85.54.152.0/22, ..."
-        """
+ target : "prefixes: 90.174.144.0/20, 85.54.152.0/22, ..."
+ """
         prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
@@ -281,10 +281,10 @@ class AutoProbeExecutor:
 
     async def _probe_traceroute(self, target: str, target_as: str) -> AutoProbeFinding:
         """
-         traceroute （ scapy， root ）
+ traceroute ( scapy, root )
 
-        target : "target AS12479"
-        """
+ target : "target AS12479"
+ """
         #  AS ， AS info  IP
         target_ip = await self._resolve_target_for_as(target_as)
         if not target_ip:
@@ -346,7 +346,7 @@ class AutoProbeExecutor:
     async def _probe_traffic_data(
         self, target: str, target_as: str, analysis_window: Optional[dict],
     ) -> AutoProbeFinding:
-        """ AS （Cloudflare Radar ）"""
+        """ AS (Cloudflare Radar )"""
         asn = extract_first_as(target) or target_as
         if not asn:
             return AutoProbeFinding(
@@ -373,7 +373,7 @@ class AutoProbeExecutor:
     async def _probe_prefix_specific_traffic(
         self, target: str, target_as: str,
     ) -> AutoProbeFinding:
-        """（Cloudflare Radar）"""
+        """(Cloudflare Radar)"""
         prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
@@ -399,7 +399,7 @@ class AutoProbeExecutor:
         )
 
     async def _probe_rpki(self, target: str) -> AutoProbeFinding:
-        """RPKI ： rpki-validator.console.api  ROA """
+        """RPKI : rpki-validator.console.api ROA """
         prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
@@ -433,7 +433,7 @@ class AutoProbeExecutor:
         )
 
     async def _probe_as_topology(self, target: str) -> AutoProbeFinding:
-        """AS （ CAIDA AS-Relationship ）"""
+        """AS ( CAIDA AS-Relationship )"""
         asn = extract_first_as(target)
         if not asn:
             return AutoProbeFinding(
@@ -460,10 +460,10 @@ class AutoProbeExecutor:
     async def _probe_irr_registry(self, target: str) -> AutoProbeFinding:
         """Look up prefix → registered origin AS in IRR (RIPE/RADB/ALTDB).
 
-        Returns the registered origin AS for each prefix. Useful to
-        distinguish ROA misconfig (no IRR record) from hostile hijack
-        (IRR record conflicts with the announced origin).
-        """
+ Returns the registered origin AS for each prefix. Useful to
+ distinguish ROA misconfig (no IRR record) from hostile hijack
+ (IRR record conflicts with the announced origin).
+ """
         prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
@@ -513,11 +513,11 @@ class AutoProbeExecutor:
     async def _probe_rdap(self, target: str) -> AutoProbeFinding:
         """Query RDAP / whois for each prefix.
 
-        Uses the public RDAP bootstrap (rdap.org) over HTTPS — works
-        without shell binaries. Returns the registered organisation and
-        abuse contact, which the reviewer can compare with the announced
-        origin AS.
-        """
+ Uses the public RDAP bootstrap (rdap.org) over HTTPS - works
+ without shell binaries. Returns the registered organisation and
+ abuse contact, which the reviewer can compare with the announced
+ origin AS.
+ """
         prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
@@ -581,10 +581,10 @@ class AutoProbeExecutor:
 
     async def _query_cloudflare_radar_as(self, asn: str) -> dict:
         """
-         Cloudflare Radar （token） AS 
+ Cloudflare Radar (token) AS 
 
-        : https://developers.cloudflare.com/api/operations/radar-entities-as-get
-        """
+ : https://developers.cloudflare.com/api/operations/radar-entities-as-get
+ """
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
 
@@ -640,10 +640,10 @@ class AutoProbeExecutor:
 
     async def _query_ripe_ris_origin(self, prefix: str) -> dict:
         """
-         RIPE RIS  API  AS
+ RIPE RIS API AS
 
-        : https://stat.ripe.net/docs/data-api
-        """
+ : https://stat.ripe.net/docs/data-api
+ """
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
 
@@ -672,7 +672,7 @@ class AutoProbeExecutor:
         }
 
     async def _query_rpki_validation(self, prefix: str) -> dict:
-        """ RPKI Validator HTTP API  ROA """
+        """ RPKI Validator HTTP API ROA """
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
 
@@ -707,10 +707,10 @@ class AutoProbeExecutor:
 
     async def _query_as_topology(self, asn: str) -> dict:
         """
-         AS-Relationship  AS （）
+ AS-Relationship AS ()
 
-         data/asrel/  .as-rel.txt 
-        """
+ data/asrel/ .as-rel.txt 
+ """
         #  CAIDA AS-Relationship 
         asrel_files = []
         try:
@@ -773,10 +773,10 @@ class AutoProbeExecutor:
 
     async def _resolve_target_for_as(self, asn: str) -> Optional[str]:
         """
-         AS  IP（ RIPE RIS API ）
+ AS IP( RIPE RIS API )
 
-         IP（）
-        """
+ IP()
+ """
         asn_clean = asn.replace("AS", "").strip()
         try:
             if not AIOHTTP_AVAILABLE:
@@ -815,7 +815,7 @@ class AutoProbeExecutor:
 
 # ----------  ----------
 def extract_as_numbers(text: str) -> List[str]:
-    """ "victim ASes: 20119, 34927, 207564"  AS """
+    """ "victim ASes: 20119, 34927, 207564" AS """
     import re
     matches = re.findall(r"\b(?:AS)?(\d{2,6})\b", text or "")
     seen = set()
@@ -828,25 +828,25 @@ def extract_as_numbers(text: str) -> List[str]:
 
 
 def extract_prefixes(text: str) -> List[str]:
-    """ ``"prefixes: 90.174.144.0/20, ..."`` 。
+    """ ``"prefixes: 90.174.144.0/20, ..."`` . 
 
-    Bug fix 2026-09-13 (BUG-R123, two improvements):
-      1. ``\b\\d{1,3}(?:\\.\\d{1,3}){3}/\\d{1,2}\\b`` accepts out-of-range
-         octets like ``999.999.999.999/8`` because each ``\\d{1,3}`` matches
-         any three digits. We now validate ``0 <= octet <= 255`` so
-         nonsense inputs are filtered out instead of being passed to the
-         RPKI / traceroute probes (which then either silently fail or
-         shell-inject-or-error-out).
-      2. The original regex was IPv4-only. IPv6 prefixes
-         (``2001:db8::/32``) were silently dropped — meaning the probe
-         executor reported only ``probe_results=[]`` for IPv6-only
-         hijack events, even though valid targets were given. We now
-         also match standard IPv6 prefix syntax.
+ Bug fix 2026-09-13 (BUG-R123, two improvements):
+ 1. ``\b\\d{1,3}(?:\\.\\d{1,3}){3}/\\d{1,2}\\b`` accepts out-of-range
+ octets like ``999.999.999.999/8`` because each ``\\d{1,3}`` matches
+ any three digits. We now validate ``0 <= octet <= 255`` so
+ nonsense inputs are filtered out instead of being passed to the
+ RPKI / traceroute probes (which then either silently fail or
+ shell-inject-or-error-out).
+ 2. The original regex was IPv4-only. IPv6 prefixes
+ (``2001:db8::/32``) were silently dropped - meaning the probe
+ executor reported only ``probe_results=[]`` for IPv6-only
+ hijack events, even though valid targets were given. We now
+ also match standard IPv6 prefix syntax.
 
-    Note: this intentionally returns ``list`` in input order, not a
-    ``set``; downstream code prefers deterministic ordering and
-    dedupes via ``list(dict.fromkeys(...))`` where needed.
-    """
+ Note: this intentionally returns ``list`` in input order, not a
+ ``set``; downstream code prefers deterministic ordering and
+ dedupes via ``list(dict.fromkeys(...))`` where needed.
+ """
     import re
     if not text:
         return []
@@ -884,7 +884,7 @@ def extract_first_as(text: str) -> str:
 
 
 def format_findings_for_html(findings: List[AutoProbeFinding]) -> str:
-    """ HTML（）"""
+    """ HTML()"""
     if not findings:
         return "<p class='probe-empty'>（）</p>"
 
@@ -892,40 +892,40 @@ def format_findings_for_html(findings: List[AutoProbeFinding]) -> str:
     for f in findings:
         status_icon = "✅" if f.success else "⚠️"
         rows.append(f"""
-        <tr class="probe-row {'probe-ok' if f.success else 'probe-fail'}">
-            <td>{status_icon}</td>
-            <td><code>{f.action}</code></td>
-            <td>{f.target}</td>
-            <td>{f.summary}</td>
-            <td class="probe-time">{f.execution_time_s:.1f}s</td>
-        </tr>
-        """)
+ <tr class="probe-row {'probe-ok' if f.success else 'probe-fail'}">
+ <td>{status_icon}</td>
+ <td><code>{f.action}</code></td>
+ <td>{f.target}</td>
+ <td>{f.summary}</td>
+ <td class="probe-time">{f.execution_time_s:.1f}s</td>
+ </tr>
+ """)
 
     return f"""
-    <table class="probe-table">
-        <thead>
-            <tr>
-                <th></th>
-                <th></th>
-                <th></th>
-                <th></th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            {"".join(rows)}
-        </tbody>
-    </table>
-    <style>
-        .probe-table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 0.92em; }}
-        .probe-table th, .probe-table td {{ border: 1px solid #ddd; padding: 6px 10px; text-align: left; }}
-        .probe-table th {{ background: #f5f5f5; }}
-        .probe-ok td {{ background: #f0fff4; }}
-        .probe-fail td {{ background: #fff8f0; }}
-        .probe-time {{ color: #888; font-family: monospace; }}
-        .probe-empty {{ color: #888; font-style: italic; }}
-    </style>
-    """
+ <table class="probe-table">
+ <thead>
+ <tr>
+ <th></th>
+ <th></th>
+ <th></th>
+ <th></th>
+ <th></th>
+ </tr>
+ </thead>
+ <tbody>
+ {"".join(rows)}
+ </tbody>
+ </table>
+ <style>
+ .probe-table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 0.92em; }}
+ .probe-table th, .probe-table td {{ border: 1px solid #ddd; padding: 6px 10px; text-align: left; }}
+ .probe-table th {{ background: #f5f5f5; }}
+ .probe-ok td {{ background: #f0fff4; }}
+ .probe-fail td {{ background: #fff8f0; }}
+ .probe-time {{ color: #888; font-family: monospace; }}
+ .probe-empty {{ color: #888; font-style: italic; }}
+ </style>
+ """
 
 
 async def run_auto_probes(

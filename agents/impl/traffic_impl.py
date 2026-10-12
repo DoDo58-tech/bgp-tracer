@@ -67,10 +67,10 @@ class LLMEnhancedTrafficAgent:
                                      original_start_time=None, original_end_time=None):
         """Phase-1 light version: skip LLM insights, just return CloudflareRadar facts.
 
-        Same anomaly detection + plot as analyze_traffic_with_llm, but without
-        the ~10s LLM round-trip. Used by the two-phase diagnosis quick phase
-        to keep wall time under 60 s.
-        """
+ Same anomaly detection + plot as analyze_traffic_with_llm, but without
+ the ~10s LLM round-trip. Used by the two-phase diagnosis quick phase
+ to keep wall time under 60 s.
+ """
         traffic_result = self.cloudflare_api.detect_anomalies(
             asn=asn, start_time=start_time, end_time=end_time, plot_result=True,
             event_start_time=original_start_time, event_end_time=original_end_time,
@@ -340,26 +340,26 @@ async def run_traffic_agent_batch(
     max_concurrent: int = 4,
 ):
     """
-     P2-Fix1： reasoning_agent.run_reasoning_agent_batch  import 
-    ， ImportError。
-    ： AS  analyze_traffic， AS 。
+ P2-Fix1: reasoning_agent.run_reasoning_agent_batch import 
+ , ImportError. 
+ : AS analyze_traffic, AS . 
 
-    Args:
-        as_list:  AS 
-        start_time: 
-        end_time: 
-        max_concurrent: 
+ Args:
+ as_list: AS 
+ start_time: 
+ end_time: 
+ max_concurrent: 
 
-    Returns:
-        {
-            "success": bool,
-            "batch_mode": True,
-            "as_count": int,
-            "results_by_as": {asn: traffic_result},
-            "anomaly_as_list": [asn, ...],
-            "error": str (optional)
-        }
-    """
+ Returns:
+ {
+ "success": bool,
+ "batch_mode": True,
+ "as_count": int,
+ "results_by_as": {asn: traffic_result},
+ "anomaly_as_list": [asn, ...],
+ "error": str (optional)
+ }
+ """
     import asyncio
     from datetime import datetime
 

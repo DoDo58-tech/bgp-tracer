@@ -2,8 +2,8 @@
 
 Unified Detection Result Schema
 
-：
-1. （hijack/leak/outage/traffic）
+: 
+1. (hijack/leak/outage/traffic)
 2. 
 3. 
 
@@ -183,10 +183,10 @@ class ConfidenceAssessment:
 @dataclass
 class UnifiedDetectionResult:
     """
-    
+ 
 
-    （hijack/leak/outage/traffic）
-    """
+ (hijack/leak/outage/traffic)
+ """
     # 
     success: bool = True
     error: Optional[str] = None
@@ -218,19 +218,19 @@ class UnifiedDetectionResult:
     
     @property
     def origin_hijacked(self) -> List[AnomalyDetail]:
-        """origin_hijacked （）"""
+        """origin_hijacked ()"""
         return [a for a in self.anomalies
                 if (a.subtype and 'origin_hijacked' in a.subtype) or a.type == 'origin_hijack']
 
     @property
     def forge_hijacked(self) -> List[AnomalyDetail]:
-        """forge_hijacked （）"""
+        """forge_hijacked ()"""
         return [a for a in self.anomalies
                 if (a.subtype and 'forge_hijacked' in a.subtype) or a.type == 'forge_hijack']
 
     @property
     def route_leaks(self) -> List[AnomalyDetail]:
-        """route_leaks （）"""
+        """route_leaks ()"""
         return [a for a in self.anomalies if a.type == 'leak']
     
     # 
@@ -275,10 +275,10 @@ class UnifiedDetectionResult:
     
     def to_legacy_dict(self) -> dict:
         """
-        （）
+ ()
 
-        
-        """
+ 
+ """
         result = {
             'success': self.success,
             'asn': self.asn or self.target_asn,
@@ -425,10 +425,10 @@ class UnifiedDetectionResult:
 
 class DetectionResultConverter:
     """
-    
-    
-    
-    """
+ 
+ 
+ 
+ """
     
     @staticmethod
     def hijack_to_unified(hijack_result: dict) -> UnifiedDetectionResult:
@@ -505,8 +505,8 @@ class DetectionResultConverter:
             anomalies_detected=len(anomalies) > 0,
             anomaly_count=len(anomalies),
             anomalies=anomalies,
-            # BGP  RIPE RIS ，
-            #  updates；。
+            # BGP data from RIPE RIS
+            # available; flag as data_available = True.
             data_available=hijack_result.get('data_available', True),
             no_data_reason=hijack_result.get('no_data_reason', ''),
         )
@@ -585,8 +585,8 @@ class DetectionResultConverter:
                 confidence=item.get('confidence', 0.5),
             ))
 
-        # Traffic detector （Cloudflare Radar API token 、
-        # ASN  data_points=0）。 data_available。
+        # Traffic detector (Cloudflare Radar API token missing or
+        # ASN with data_points=0). Flag as not data_available.
         return UnifiedDetectionResult(
             success=traffic_result.get('success', True),
             error=traffic_result.get('error'),
@@ -599,8 +599,8 @@ class DetectionResultConverter:
             anomalies=anomalies,
             data_available=traffic_result.get(
                 'data_available',
-                # ： detector  data_available； success=True
-                #  data_points>0 ，。
+                # Default: detector didn't set data_available; treat as
+                # success=True only when data_points>0.
                 bool(traffic_result.get('data_points', 0)) and traffic_result.get('success', True),
             ),
             no_data_reason=traffic_result.get('no_data_reason', ''),
@@ -609,10 +609,10 @@ class DetectionResultConverter:
 
 def merge_detection_results(results: List[UnifiedDetectionResult]) -> UnifiedDetectionResult:
     """
-    
-    
-     hijack + leak + outage + traffic 
-    """
+ 
+ 
+ hijack + leak + outage + traffic 
+ """
     if not results:
         return UnifiedDetectionResult()
     
@@ -653,17 +653,17 @@ def wrap(
     no_data_reason: str = "",
 ) -> UnifiedDetectionResult:
     """
-    Wrap a raw detector dict into a UnifiedDetectionResult without forcing
-    the detector author to spell out every field.
+ Wrap a raw detector dict into a UnifiedDetectionResult without forcing
+ the detector author to spell out every field.
 
-    Detection modules that already produce dicts (hijack / leak / outage /
-    traffic) can pass their dict through this helper at the very end of
-    the pipeline. If they also write `data_available` /
-    `no_data_reason` themselves, those values win.
+ Detection modules that already produce dicts (hijack / leak / outage /
+ traffic) can pass their dict through this helper at the very end of
+ the pipeline. If they also write `data_available` /
+ `no_data_reason` themselves, those values win.
 
-    Example:
-        return wrap(DetectionType.HIJACK, result_dict, asn="13335")
-    """
+ Example:
+ return wrap(DetectionType.HIJACK, result_dict, asn="13335")
+ """
     if success is None:
         success = bool(raw.get("success", True))
     if data_available is None:

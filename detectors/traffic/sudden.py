@@ -1,5 +1,4 @@
 import numpy as np
-from utils.logger import logger
 
 
 def _cluster_points(mask):

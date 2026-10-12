@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-GT = ROOT / "data_check/ground_truth_collection" / "final_balanced_dataset_v13.csv"
+GT = ROOT / "data_check/ground_truth_collection" / "final_balanced_dataset_v17.csv"
 
 
 def announce(step: str) -> None:
@@ -101,6 +101,7 @@ def phase5(dry: bool) -> None:
     run(["python3", str(ROOT / "scripts" / "build_real_subset_csv.py")], dry)
     run(["python3", str(ROOT / "scripts" / "build_sensitivity.py")], dry)
     run(["python3", str(ROOT / "scripts" / "build_threshold_sensitivity.py")], dry)
+    run(["python3", str(ROOT / "scripts" / "build_delta_sensitivity.py")], dry)
     run(["python3", str(ROOT / "scripts" / "benchmark_timing.py")], dry)
 
 

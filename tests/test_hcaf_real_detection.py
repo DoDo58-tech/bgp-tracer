@@ -43,7 +43,6 @@ def _routing_timeline_from_events(events: list) -> list:
     events. Each 5-min bucket's score is the number of events in it
     (capped at 1.0)."""
     from datetime import datetime, timedelta
-    from collections import defaultdict
     if not events:
         return []
     buckets = defaultdict(int)

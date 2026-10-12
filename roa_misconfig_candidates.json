@@ -1,0 +1,26 @@
+[
+  {
+    "event_id": "roa_misconfig_001",
+    "date_utc": "2026-08-28",
+    "start_time_utc": "2026-08-28T20:57:30Z",
+    "end_time_utc": "2026-08-30T06:10:00Z",
+    "duration_hours": 33.2,
+    "victim_as": "24940",
+    "attacker_as": "62390",
+    "misconfig_type": "over_broad_maxLength_sub_prefix_hijack",
+    "source_url": "https://blog.apnic.net/2026/09/22/latest-bgp-hijack-targets-hosting-software-vendor/",
+    "notes": "Hetzner (AS24940) had a ROA for 162.55.0.0/16 authorizing origin AS24940 with maxLength=24. An attacker (AS62390, NexonHost) announced the sub-prefix 162.55.80.0/24 with AS24940 retained at the tail of the AS path (forged-origin / sub-prefix hijack). The forged route passed RPKI origin validation because AS24940 was the correct origin and /24 was within the maxLength envelope. The sub-prefix hi-jacked traffic to Softaculous/Virtualizor update servers, enabling a supply-chain attack via a rogue Let's Encrypt certificate obtained through diverted domain validation. The forged 162.55.80.0/24 announcement was first sighted at RIPE RIS rrc00 at 2026-08-28T20:57:30Z with AS path '29504 15935 6204 62390 24940'; Route Views saw it at 21:01:04UTC. It reached 584 collector peers within the first minute and peaked at 615 simultaneously diverted peers. All 368 RIS peers carried the route at some point. Hetzner subsequently tightened the ROA maxLength to 16. BGPKIT confirmed the RRC00 sighting in their incident report IR-2026-0831. APNIC covered this as a Tier A source documenting the incident."
+  },
+  {
+    "event_id": "roa_misconfig_002",
+    "date_utc": "2019-08-07",
+    "start_time_utc": "2019-08-07T00:00:00Z",
+    "end_time_utc": "2019-08-24T23:59:59Z",
+    "duration_hours": null,
+    "victim_as": "1199",
+    "attacker_as": null,
+    "misconfig_type": "wrong_origin_ROA",
+    "source_url": "https://mailman.nlnog.net/hyperkitty/list/nlnog@nlnog.net/message/ZPDFDP3VSEE67VMF35JEIWVCRH26J747/",
+    "notes": "SURFnet (AS1199, SPEELTUIN-AS) began announcing 145.111.0.0/16 from its own AS1199, but the corresponding RPKI ROA authorized AS1101 as the legitimate origin — not AS1199. This made the 145.111.0.0/16 announcement RPKI-invalid. NLNOG mailing list reported the incident on 2019-08-24, noting the BGP announcement had changed approximately two weeks prior (circa 2019-08-07). RIPE Stat visibility widget confirmed reduced BGP visibility for the prefix; multiple networks including AS1299 (Telia) showed the route as hidden/validation-state:invalid. The RIPE NCC RPKI validator returned 'invalid' for AS1199+145.111.0.0/16. The issue was subsequently corrected: the ROA now correctly authorizes AS1199 for 145.111.0.0/16 with maxLength=16, and the prefix is currently VALID. Note: the prefix appeared to be used for test/development purposes (SPEELTUIN-AS playground, linked to HITB2014AMS), so the ROA mismatch may have been intentional; however the resulting BGP-level effect (RPKI-invalid, reduced visibility) matches the criteria for this dataset."
+  }
+]

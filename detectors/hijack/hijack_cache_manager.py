@@ -1,5 +1,4 @@
 import json
-import os
 import sqlite3
 import threading
 import hashlib
@@ -102,7 +101,7 @@ def cleanup_old_cache_entries(days_to_keep=30):
 
 def load_fake_conn_cache():
     global FAKE_CONN_FREQ_CACHE, FAKE_CONN_CACHE_LOADED
-    if _FAKE_CONN_CACHE_LOADED:
+    if FAKE_CONN_CACHE_LOADED:
         return
 
     try:
@@ -357,7 +356,7 @@ def get_cache_stats():
 
     except Exception as e:
         print(f"Failed to get cache stats: {e}")
-    return {
+        return {
             "sqlite_entries": 0,
             "sqlite_db_size_mb": 0,
             "lru_cache_entries": 0,
@@ -367,8 +366,8 @@ def get_cache_stats():
             "legacy_json_exists": False,
             "legacy_json_size_mb": 0,
             "total_entries": 0,
-            "error": str(e)
-    }
+            "error": str(e),
+        }
 
 
 # Cache for fake connection detection (as_path -> fake_connections mapping)

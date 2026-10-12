@@ -779,7 +779,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--csv",
-        default=str(ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v16.csv"),
+        default=str(ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v17.csv"),
     )
     ap.add_argument(
         "--quick-dir",

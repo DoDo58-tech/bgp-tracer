@@ -52,7 +52,7 @@ TRAFFIC_CONTEXT_THRESHOLD = 0.35     # neighbourhood agreement for a real drop
 
 
 def _extract_series_from_result(result, asn):
-    """Cloudflare Radar  result ， (timestamps, values)。"""
+    """Cloudflare Radar result , (timestamps, values). """
     if result is None:
         return None, None
     if isinstance(result, dict) and "timestamps" in result and "values" in result:
@@ -76,7 +76,7 @@ def _extract_series_from_result(result, asn):
 
 
 def _get_as_country(asn, target_time=None):
-    """ AS （ISO alpha-2），。"""
+    """ AS (ISO alpha-2), . """
     asn_str = str(asn)
     if asn_str in _as_country_cache:
         return _as_country_cache[asn_str]
@@ -101,15 +101,15 @@ def _get_as_country(asn, target_time=None):
 def _parse_iso(s):
     """Parse a time string in any of several common formats.
 
-    Bug fix 2026-09-15: the previous implementation only accepted
-    ``"%Y-%m-%d %H:%M:%S"`` and ``"%Y-%m-%d %H:%M"`` — every other variant
-    (ISO 8601 with ``T`` separator, ``Z`` suffix, microseconds, ...) raised
-    ``ValueError`` and the tool returned a confusing "time data does not
-    match format" error to the ReAct agent. The ReAct loop would then
-    repeatedly retry with the same bad format, wasting both tokens and
-    time. Now we iterate over every supported format so that any input
-    the LLM generates is silently normalised.
-    """
+ Bug fix 2026-09-15: the previous implementation only accepted
+ ``"%Y-%m-%d %H:%M:%S"`` and ``"%Y-%m-%d %H:%M"`` - every other variant
+ (ISO 8601 with ``T`` separator, ``Z`` suffix, microseconds, ...) raised
+ ``ValueError`` and the tool returned a confusing "time data does not
+ match format" error to the ReAct agent. The ReAct loop would then
+ repeatedly retry with the same bad format, wasting both tokens and
+ time. Now we iterate over every supported format so that any input
+ the LLM generates is silently normalised.
+ """
     if not s:
         raise ValueError("empty time string")
     s = str(s).strip()
@@ -143,13 +143,13 @@ def _parse_iso(s):
 def _parse_iso_utc(s):
     """Parse a UTC time string. Returns ``None`` on failure.
 
-    Bug fix 2026-09-15: ``fromisoformat`` accepts many formats including
-    plain ``"%Y-%m-%d %H:%M:%S"`` (no ``T``). Previously, non-ISO inputs
-    raised ``ValueError`` and we silently swallowed the error, returning
-    ``None`` — which then propagated as a confusing crash deeper in the
-    pipeline. Now we fall back to ``_parse_iso`` so we accept the same
-    wide range of inputs as the normal-time parser.
-    """
+ Bug fix 2026-09-15: ``fromisoformat`` accepts many formats including
+ plain ``"%Y-%m-%d %H:%M:%S"`` (no ``T``). Previously, non-ISO inputs
+ raised ``ValueError`` and we silently swallowed the error, returning
+ ``None`` - which then propagated as a confusing crash deeper in the
+ pipeline. Now we fall back to ``_parse_iso`` so we accept the same
+ wide range of inputs as the normal-time parser.
+ """
     if not s:
         return None
     try:
@@ -163,7 +163,7 @@ def _parse_iso_utc(s):
 
 
 def _build_request_params(asn, start_dt, end_dt, location):
-    """ Cloudflare Radar 。location  ISO alpha-2  None。"""
+    """ Cloudflare Radar . location ISO alpha-2 None. """
     asn_str = str(asn).strip().upper()
     if asn_str.startswith("AS"):
         asn_str = asn_str[2:].strip()
@@ -182,7 +182,7 @@ def _build_request_params(asn, start_dt, end_dt, location):
 
 
 def _normalize_location(value):
-    """ location ， ISO alpha-2 。"""
+    """ location , ISO alpha-2 . """
     if not isinstance(value, str):
         return None
     cleaned = value.strip().upper()
@@ -194,7 +194,7 @@ def _normalize_location(value):
 
 
 def _resolve_location(asn):
-    """： >  >  location。"""
+    """: > > location. """
     loc = CLOUDFLARE_RADAR_LOCATION or _as_country_cache.get(str(asn))
     return _normalize_location(loc)
 
@@ -228,17 +228,17 @@ def _response_error(resp):
 class _RadarSpanFetcher:
     """Fetch several sub-windows that must share one normalization scale.
 
-    Cloudflare's ``MIN0_MAX`` normalization rescales **every response
-    independently** to its own ``[0, 1]`` range. Issuing one request per
-    baseline week therefore returns series on mutually incompatible scales, so
-    comparing an event window against those weeks measures their internal
-    shapes rather than their relative traffic. That artefact is the source of
-    the phantom anomaly counts recorded in saved payloads (e.g. 192
-    "anomalies" over 97 points, every ``z_score`` 0.0).
+ Cloudflare's ``MIN0_MAX`` normalization rescales **every response
+ independently** to its own ``[0, 1]`` range. Issuing one request per
+ baseline week therefore returns series on mutually incompatible scales, so
+ comparing an event window against those weeks measures their internal
+ shapes rather than their relative traffic. That artefact is the source of
+ the phantom anomaly counts recorded in saved payloads (e.g. 192
+ "anomalies" over 97 points, every ``z_score`` 0.0).
 
-    Fetching the whole span in a single request and slicing afterwards keeps one
-    shared scale across the event and all baseline weeks.
-    """
+ Fetching the whole span in a single request and slicing afterwards keeps one
+ shared scale across the event and all baseline weeks.
+ """
 
     def __init__(self, api, asn, location=None):
         self.api = api
@@ -302,13 +302,13 @@ class _RadarSpanFetcher:
 
 
 def _request_with_location(api, params, asn):
-    """ Cloudflare Radar ， location 。
+    """ Cloudflare Radar , location . 
 
-    Fallback strategy when HTTP 400 is returned:
-    1. Try coarser aggInterval + no location (handles "interval too granular")
-    2. Try even coarser aggInterval = 1d
-    3. Log the actual error text for diagnostics.
-    """
+ Fallback strategy when HTTP 400 is returned:
+ 1. Try coarser aggInterval + no location (handles "interval too granular")
+ 2. Try even coarser aggInterval = 1d
+ 3. Log the actual error text for diagnostics.
+ """
     for attempt in range(5):
         if attempt > 0:
             wait = min(2 ** attempt + 0.5, 30)
@@ -403,7 +403,7 @@ def _consecutive_windows(anomalies, timestamps, min_consecutive=4):
 
 
 def _resolve_country_for_event(asn, event_time):
-    """：， AS-Org。"""
+    """: , AS-Org. """
     if CLOUDFLARE_RADAR_LOCATION:
         return CLOUDFLARE_RADAR_LOCATION
     country = _get_as_country(asn, target_time=event_time)
@@ -413,7 +413,7 @@ def _resolve_country_for_event(asn, event_time):
 
 
 def _select_use_periodicity(detected, daily_conf, weekly_conf, historical_count):
-    """： daily  weekly 。"""
+    """: daily weekly . """
     if detected == "daily" and daily_conf > 3 * weekly_conf:
         logger.info(f"🔄 Daily ({daily_conf:.2%}) > 3x weekly ({weekly_conf:.2%}), using daily.")
         return "daily"
@@ -469,7 +469,7 @@ class CloudflareRadarAPI:
         self.traffic_cache_dir = Path(__file__).resolve().parents[2] / "data" / "traffic"
 
     def quick_screening(self, asn, start_time, end_time):
-        """5-10 ，。"""
+        """5-10 , . """
         user_start_dt, user_end_dt = _parse_iso(start_time), _parse_iso(end_time)
         timestamps, current_values = self.get_traffic_data(asn, user_start_dt, user_end_dt)
         if not current_values or len(current_values) < 5:
@@ -744,12 +744,12 @@ class CloudflareRadarAPI:
     def analyze_periodicity(self, asn, query_start, query_end, windows=None):
         """Build the historical baseline for a query window.
 
-        ``windows`` optionally supplies the baseline weeks pre-fetched on a
-        shared normalization scale (see ``get_traffic_windows_shared_scale``).
-        Supplying it is what keeps every baseline week on the same scale as the
-        event window; fetching each week separately lets ``MIN0_MAX`` rescale
-        each response against itself, which makes the weeks incomparable.
-        """
+ ``windows`` optionally supplies the baseline weeks pre-fetched on a
+ shared normalization scale (see ``get_traffic_windows_shared_scale``).
+ Supplying it is what keeps every baseline week on the same scale as the
+ event window; fetching each week separately lets ``MIN0_MAX`` rescale
+ each response against itself, which makes the weeks incomparable.
+ """
         historical_periods = []
         for week_offset in range(1, 5):
             period_start = query_start - timedelta(days=7 * week_offset)
@@ -816,10 +816,10 @@ class CloudflareRadarAPI:
     def _classify_traffic_unit(self, values):
         """Return "raw" for request counts, "normalized" for MIN0_MAX floats.
 
-        MIN0_MAX output is bounded by 1.0, so anything above the split
-        threshold is unambiguously a raw count. The threshold sits far from
-        both ranges so it cannot misclassify realistic data.
-        """
+ MIN0_MAX output is bounded by 1.0, so anything above the split
+ threshold is unambiguously a raw count. The threshold sits far from
+ both ranges so it cannot misclassify realistic data.
+ """
         peak = 0.0
         for v in values:
             av = abs(v)
@@ -830,11 +830,11 @@ class CloudflareRadarAPI:
     def _load_cached_traffic_data(self, asn, start_dt, end_dt):
         """Single-window convenience wrapper.
 
-        Returns ``None`` when the cache holds nothing for this window, so the
-        caller falls through to a live fetch. ``_load_cached_windows`` returns
-        ``None`` for a cache miss (it is also the "no such ASN" signal), so the
-        result must be checked before indexing.
-        """
+ Returns ``None`` when the cache holds nothing for this window, so the
+ caller falls through to a live fetch. ``_load_cached_windows`` returns
+ ``None`` for a cache miss (it is also the "no such ASN" signal), so the
+ result must be checked before indexing.
+ """
         loaded = self._load_cached_windows(asn, [(start_dt, end_dt)])
         if loaded is None:
             return None
@@ -843,16 +843,16 @@ class CloudflareRadarAPI:
     def _load_cached_windows(self, asn, windows):
         """Load every requested window from cache on ONE shared unit scale.
 
-        Returns ``{(start, end): (timestamps, values)}`` for windows the cache
-        covers, and ``None`` when the cache holds nothing for the ASN at all.
+ Returns ``{(start, end): (timestamps, values)}`` for windows the cache
+ covers, and ``None`` when the cache holds nothing for the ASN at all.
 
-        The unit bucket is chosen once for the whole set of windows rather than
-        per window. Choosing per window is what produced mutually incomparable
-        baselines: an event window could resolve to the ``normalized`` bucket
-        while its baseline week resolved to ``raw``, or two baseline weeks could
-        come from different cache files that were each ``MIN0_MAX``-scaled
-        independently. Both make the resulting z-scores meaningless.
-        """
+ The unit bucket is chosen once for the whole set of windows rather than
+ per window. Choosing per window is what produced mutually incomparable
+ baselines: an event window could resolve to the ``normalized`` bucket
+ while its baseline week resolved to ``raw``, or two baseline weeks could
+ come from different cache files that were each ``MIN0_MAX``-scaled
+ independently. Both make the resulting z-scores meaningless.
+ """
         if not windows:
             return {}
         if not self.traffic_cache_dir.is_dir():
@@ -941,24 +941,24 @@ class CloudflareRadarAPI:
     def get_traffic_windows_shared_scale(self, asn, windows):
         """Return ``{(start, end): (timestamps, values)}`` on ONE shared scale.
 
-        Every window that will be compared against another must come from a
-        single normalization scope. ``MIN0_MAX`` rescales each HTTP *response*
-        into its own ``[0, 1]`` range, so fetching the event window and its
-        four baseline weeks independently produces five mutually incomparable
-        series: each week is stretched so its own peak becomes exactly 1.0.
-        Comparing an event week against such a baseline measures the shape of
-        two unrelated rescalings instead of the change in traffic.
+ Every window that will be compared against another must come from a
+ single normalization scope. ``MIN0_MAX`` rescales each HTTP *response*
+ into its own ``[0, 1]`` range, so fetching the event window and its
+ four baseline weeks independently produces five mutually incomparable
+ series: each week is stretched so its own peak becomes exactly 1.0.
+ Comparing an event week against such a baseline measures the shape of
+ two unrelated rescalings instead of the change in traffic.
 
-        This is the live equivalent of the on-disk invariant enforced by
-        ``_load_cached_traffic_data``: cached files are classified into unit
-        buckets and never merged across systems. Here the same rule is applied
-        to requests, so a cached series and a live series are always built the
-        same way.
+ This is the live equivalent of the on-disk invariant enforced by
+ ``_load_cached_traffic_data``: cached files are classified into unit
+ buckets and never merged across systems. Here the same rule is applied
+ to requests, so a cached series and a live series are always built the
+ same way.
 
-        Falls back to per-window fetching when no credentials are available, so
-        cache-only runs keep working; the caller can detect that case through
-        the ``scale_shared`` flag.
-        """
+ Falls back to per-window fetching when no credentials are available, so
+ cache-only runs keep working; the caller can detect that case through
+ the ``scale_shared`` flag.
+ """
         windows = [w for w in windows if w and w[0] and w[1]]
         if not windows:
             return {}
@@ -999,11 +999,11 @@ class CloudflareRadarAPI:
                                     plot_result=True, use_aligned_baseline=True):
         """Event-typed wrapper around the shared-scale detection path.
 
-        Both entry points now obtain their windows through
-        ``get_traffic_windows_shared_scale``, so the query window and its four
-        baseline weeks are always built on one normalization scale and the two
-        functions can no longer drift apart in how they source traffic.
-        """
+ Both entry points now obtain their windows through
+ ``get_traffic_windows_shared_scale``, so the query window and its four
+ baseline weeks are always built on one normalization scale and the two
+ functions can no longer drift apart in how they source traffic.
+ """
         user_start_dt, user_end_dt = _parse_iso(start_time), _parse_iso(end_time)
 
         try:
@@ -1113,7 +1113,7 @@ class CloudflareRadarAPI:
 
 
 def detect_anomalies_for_event_batch(events, output_dir=None):
-    """。"""
+    """. """
     api = CloudflareRadarAPI()
     results = []
     for event in events:

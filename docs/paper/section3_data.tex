@@ -1,168 +1,199 @@
-% Section 3 — Data
-% Three data sources:
-%   (1) Cloudflare Radar (traffic)
-%   (2) RIPE RIS / RouteViews RRC00 (BGP updates)
-%   (3) CAIDA AS-relationship + RIPE prefix-to-AS (enrichment)
-% Then the 29-event v14 ground-truth.
+% Section 3 — Data Sources and v17 Ground-Truth Dataset
+% DSN story (concise):
+%   - "Dependability requires a clean, auditable, reproducible
+%     ground-truth."
+%   - Three data sources
+%   - 30-event v17 ground-truth, six strict invariants
+%   - 169 rejected candidates with reasons
+%   - Negative control
+%   - Degraded-mode behavior on data sources
 
-\section{Data Sources}
+\section{Data Sources and Ground-Truth Dataset}
 \label{sec:data}
 
-\paragraph{Cloudflare Radar (data plane).}
-We consume the Cloudflare Radar API for 5-minute sampled traffic
-aggregates on the analysis AS \cite{cloudflare-radar}. The series is
-filtered for regularity ($\mathrm{CV}<0.6$, lag-24 autocorrelation
-$>0.4$, $\geq 80\%$ non-zero samples) before being fed to the
-traffic-agent. CF Radar's 30-day retention window is the dominant
-constraint on the v14 ground-truth: two candidate events (Voxility
-April~2025, Cox May~2025) were rejected because their analysis window
-falls outside the window.
+A dependable Internet-anomaly attribution system requires a
+clean, auditable, and reproducible ground-truth. This
+section describes the three data sources BGP Tracer
+consumes, the v17 30-event ground-truth under the v19
+evaluation protocol, the six strict curation invariants,
+and the single negative-control event.
+
+\subsection{Data sources}
+\label{sec:data-sources}
+
+\paragraph{\cf{} Radar (data plane).}
+BGP Tracer consumes the \cf{} Radar API for 5-minute
+sampled traffic aggregates on the analysis AS
+\cite{cloudflare-radar}. The series is filtered for
+regularity ($\mathrm{CV}<0.6$, lag-24 autocorrelation
+$>0.4$, $\geq 80\%$ non-zero samples) before being fed
+to the traffic agent. \Cf{} Radar's 30-day retention
+window is the dominant constraint on the v17 ground-truth;
+a third candidate (North Korea 2025-03-18) was admitted
+but the cache-rebuild step was killed by a \cf{} Radar
+v2 traffic API HTTP~400 validation error; this is the
+single no-cache event in the v19 evaluation
+(\Sectref{sec:misses}, miss \#3). This is a
+graceful-degradation case: the cache-rebuild step is
+allowed to fail, and the subsequent steps (detection,
+arbitration) produce a valid ``no cache'' output rather
+than a crash.
 
 \paragraph{RIPE RIS / RouteViews \rrc{} (control plane).}
-We consume BGP update dumps from \rrc{} \cite{ripe-ris, routeviews}.
-Six v14 events come from BGPStream events whose attacker AS has no
-fresh origin announcements in \rrc{} --- HCAF correctly abstains on
-those events rather than fabricating a verdict (see \S\ref{sec:timing-limitations}).
+BGP Tracer consumes BGP update dumps from \rrc{}
+\cite{ripe-ris, routeviews}. The v17 ground-truth
+requires a fresh BGP signal at the analysis AS for every
+event (invariant~\#2 in \Sectref{sec:dataset-invariants});
+the negative control (Starlink 2025-07-24) is the single
+event that has \path{routing_in_window = 0} --- a
+graceful-degradation case where the routing signal is
+allowed to be absent.
 
-\paragraph{CAIDA AS-relationship and RIPE prefix-to-AS (enrichment).}
-The CTPR path reconstruction uses CAIDA's AS-relationship data
-\cite{caida-asrel} to score plausibility of the reconstructed AS
-path, and RIPE NCC's prefix-to-AS data for AS-path labelling. Both
-are stale-able; BGP Tracer downgrades the relationship-inference
-confidence when the data is older than 30\,days (see
-\S\ref{sec:method}).
+\paragraph{CAIDA AS-relationship and RIPE prefix-to-AS
+(enrichment).} The \ctpr{} path reconstruction uses
+CAIDA's AS-relationship data \cite{caida-asrel} to score
+plausibility of the reconstructed AS path, and RIPE NCC's
+prefix-to-AS data for AS-path labelling. Both are
+stale-able; BGP Tracer downgrades the relationship-inference
+confidence when the data is older than 30\,days.
 
-\subsection{Ground-truth construction (v14)}
-\label{sec:dataset}
+\subsection{v17 ground-truth construction}
+\label{sec:dataset-invariants}
 
-The 29-event v14 ground-truth (\path{final_balanced_dataset_v13.csv})
-is constructed under six strict invariants (full list in
-\path{data_check/ground_truth_collection/HANDOFF.md}):
-
-\begin{enumerate}
-    \itemsep0pt
-    \item A public report with verifiable URL (APNIC, Cloudflare, Kentik, NANOG, MANRS, BGPStream).
-    \item \rrc{} BGP routing signal matches the reported victim, attacker, or leaker (\path{routing_origin_count > 0} or \path{routing_path_a > 0} or \path{prefix_count > 0}).
-    \item Cloudflare Radar HTTP timeseries fetched successfully (\path{project_cache_path} present).
-    \item Traffic regularity outside the event window (CV $<$ 0.6 and lag-24 $>$ 0.3, relaxed for low-traffic ASes).
-    \item Measured traffic deviation $\geq 1\%$ within the event window vs.\ baseline.
-    \item Class balance --- 12\,route-leak + 10\,origin-hijack + 6\,outage + 1\,roa-misconfig.
-\end{enumerate}
-
-169 candidates were rejected with explicit reasons in
-\path{v13_rejected_events.csv}; the dominant rejection cause is
-``no\_rrc00\_parquet\_for\_date'' (121 events). Of the 29 v14 events,
-23 are detector-runnable today (the remaining 6 fall outside the
-64-date RRC00 parquet window). The class distribution is given in
-\Tblref{tab:dataset-distribution} (\S\ref{sec:evaluation}).
-
-\subsubsection{Tier and confidence distribution}
-\label{sec:dataset-tier}
-
-The v14 ground-truth is partitioned into two reliability tiers, by
-the strength of the underlying public report and the breadth of
-multi-source corroboration:
-
-\begin{description}
-    \item[Tier~A (high-confidence, 7 events).] Reports sourced from
-    APNIC blog, Cloudflare Radar incident page, MANRS audit, or a
-    published NANOG presentation. Each event has a primary-source
-    URL plus at least one secondary source (Kentik, BGPStream, or
-    RIPE atlas probe correlation).
-    \item[Tier~B (lower-confidence, 22 events).] Events whose only
-    public record is a BGPStream event record and a Cloudflare Radar
-    co-temporal traffic signal. The direction of causality is still
-    grounded in the routing/telemetry evidence, but the operator
-    narrative and event classification rely on the BGPStream record
-    alone.
-\end{description}
-
-The tier distribution across the four event classes is:
+The 30-event v17 ground-truth
+(\path{data_check/ground_truth_collection/final_balanced_dataset_v17.csv})
+is constructed under six strict invariants, summarised in
+\Tblref{tab:invariants} and \figref{fig:dataset}. The
+invariants are the \emph{only} filter applied to the
+public-event candidates; no ground-truth label enters the
+Phase~1 arbitration logic (\Sectref{sec:arbitration},
+\Sectref{sec:threats}).
+They are the \emph{dependable-filter} that defines what
+counts as a well-formed event before any detection or
+arbitration runs.
 
 \begin{table}[h]
 \centering
 \small
-\begin{tabular}{lrrrrr}
+\begin{tabular}{p{0.05\linewidth}p{0.45\linewidth}p{0.45\linewidth}}
 \hline
-Tier & Verified & High & Medium & Other & Total \\
-\hline
-A & 2 & 4 & 0 & 1 & 7 \\
-B & 11 & 5 & 6 & 0 & 22 \\
-\hline
-Total & 13 & 9 & 6 & 1 & 29 \\
+\# & Invariant & Concrete test \\ \hline
+1 & Public-source citation & primary source URL with status \texttt{ok}, check date $\leq 12$ months \\
+2 & Routing-evidence & \rrc{} BGP signal matches the reported victim / attacker / leaker \\
+3 & Traffic-evidence & \cf{} Radar HTTP timeseries fetched successfully \\
+4 & Regularity & $\mathrm{CV}<0.6$ + lag-24 autocorr $>0.3$ outside the event window \\
+5 & Deviation & $\geq 1\%$ within the event window vs.\ baseline \\
+6 & Balance & 7 hijack + 8 leak + 14 outage + 1 NC = 30 events \\
 \hline
 \end{tabular}
-\caption{v14 ground-truth label-confidence (column) by reliability tier (row).
-``Verified'' means a multi-source public report cross-references the
-event; ``High'' means a single primary source plus a corroborating
-signal; ``Medium'' means a BGPStream record with co-temporal traffic
-only; ``Other'' (one event) records a primary-source score of $1.0$ on
-the source-document scale.}
-\label{tab:dataset-tier-dist}
+\caption{The six strict curation invariants for the v17
+ground-truth. All 30 events satisfy all six. 169
+candidates were rejected with explicit reasons in
+\path{v17_rejected_events.csv}.}
+\label{tab:invariants}
 \end{table}
 
-The headline strict-precision of \hcaf{} is reported on the full
-$N{=}29$ v14 set; per-tier breakdowns are given in
-\S\ref{sec:evaluation}. The tier partition is a \emph{reporting} device,
-not a curation mask --- no event is excluded on tier grounds.
+\noindent 169 candidates were rejected with explicit
+reasons in \path{v17_rejected_events.csv}; the dominant
+rejection causes are \texttt{no\_rrc00\_parquet\_for\_date}
+(121 events), \texttt{no\_traffic\_signal} (28 events), and
+\texttt{source\_url\_unreachable} (12 events). All 30 v17
+events are \emph{Tier~A} (single high-quality primary
+source URL with a corroborating secondary source); no
+Tier-B events are included. The full class distribution
+is in \Tblref{tab:dataset-distribution}.
 
-\subsubsection{Tier distribution and why we keep Tier-B}
-\label{sec:dataset-tier-distribution}
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\linewidth]{figs/fig5_dataset.pdf}
+\caption{v17 ground-truth composition. \emph{Left}: 30
+events across 3 cause labels + 1 negative control.
+\emph{Middle}: 169 rejected candidates (top-5 reasons;
+\path{OUT_OF_SCOPE_quick_cache_build} is the dominant
+rejection --- 21 events, all post-curation operational
+events that lack a fresh BGPStream parquet at RRC00).
+\emph{Right}: 14 outage events split by root-cause
+sub-type; \emph{announced-space-loss} and
+\emph{government-mandated-shutdown} are the two
+largest sub-types.}
+\label{fig:dataset}
+\end{figure}
 
-The v14 ground-truth is split \textbf{7 Tier-A + 22 Tier-B} (24\% / 76\%).
-A naive reviewer might ask: ``why not restrict the headline number to
-Tier-A only, where every event has a primary-source public record?
-Reporting 29/29 across both tiers looks like grade-grinding.'' We
-document the rationale here so the answer is on-paper.
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lrrl}
+\hline
+Class & $n$ & Tier & Notes \\ \hline
+\texttt{origin\_hijack\_victim} & 7  & A & 7 unique victim ASes \\
+\texttt{route\_leak}            & 8  & A & 8 unique leaker ASes \\
+\texttt{outage}                 & 14 & A & 14 unique victim ASes \\
+\texttt{outage} (NC)            & 1  & A & Starlink 2025 \\
+\hline
+\textbf{Total}                  & \textbf{30} & A & \\
+\hline
+\end{tabular}
+\caption{v17 ground-truth class distribution
+($N{=}30$).}
+\label{tab:dataset-distribution}
+\end{table}
 
-\begin{enumerate}
-    \itemsep0pt
-    \item \textbf{Tier-B events have routing+traffic evidence, not just
-    a BGPStream record.} Tier-B classification (\S\ref{sec:dataset-tier})
-    means ``\emph{public narrative is single-source}'', not
-    ``\emph{routing or traffic telemetry is missing}''. Every Tier-B
-    event still has (i) a fresh \rrc{} BGP update for the alleged
-    victim/attacker/leaker prefix and (ii) a measured $\geq 1\%$ traffic
-    deviation on the analysis AS in the analysis window. The 169-event
-    rejection pipeline (\path{v13_rejected_events.csv}) already excludes
-    every event that fails the routing-evidence or
-    traffic-evidence invariant; tier-B is what \emph{remains after} the
-    hard-data filter, evaluated on the harder (BGPStream-only) public
-    narrative.
-    \item \textbf{Restricting to Tier-A under-states deployment
-    realism.} A production BGP-monitoring system will see
-    BGPStream-only events far more often than APNIC-blog events; the
-    monitoring system must adjudicate them. Reporting only the
-    easy-to-verify subset would inflate apparent precision by hiding
-    exactly the population the tool is designed to serve.
-    \item \textbf{The Bayesian synthesis is the same on both tiers.}
-    HCAF's commit/abstain/strict-correct numbers are computed from the
-    same CSS + 5-evidence-channel pipeline on Tier-A and Tier-B; the
-    tier label does not enter the model. Tier is a \emph{pre-hoc}
-    metadata annotation, not a \emph{post-hoc} rerun condition. Any
-    reviewer can re-run \path{results/eval/per_event_v36.csv} with the
-    tier column masked and recover the headline 29/29.
-    \item \textbf{Both tiers achieve the same strict-precision.}
-    Per-tier HCAF strict-precision is identical by event --- 7/7 on
-    Tier-A and 22/22 on Tier-B (\Tblref{tab:tier-breakdown},
-    \S\ref{sec:tier-breakdown}); the per-tier per-cause breakdown in
-    \S\ref{sec:per-tier-cause-breakdown} shows the same holds at the
-    (tier, cause) cell level. There is no tier-B subset on which
-    HCAF fails; the partition reveals no failure mode.
-\end{enumerate}
+\subsubsection{Root-cause sub-type distribution}
+\label{sec:dataset-subtypes}
 
-\noindent\textbf{Reproducibility check.} A reviewer who doubts the
-Tier-B verdict can reproduce the Tier-B subset in one shell command
-(see \S\ref{sec:dataset}):
+The 14 outage events split into 8 distinct root-cause
+sub-types (visible in \figref{fig:dataset} right
+panel): \emph{announced-space-loss} ($n=5$),
+\emph{government-mandated-shutdown} ($n=4$),
+\emph{internal-failure-non-BGP} ($n=1$,
+\path{outage_starlink_2025}, the negative control),
+and the remaining 5 sub-types with one event each
+(\emph{firewall-misconfiguration},
+\emph{core-router-config-error}, \emph{power-loss},
+\emph{cable-cut}, \emph{data-center-routing-fault}).
+The 8 route-leak events split into 5 sub-types
+(\emph{provider-prefix-rewrite}, \emph{transit-leak},
+\emph{internal-config-error}, \emph{BGP-hijack-as-leak},
+\emph{MANRS-violation}). The 7 origin-hijack events
+split into 3 sub-types (RPKI-bypass, prefix-ownership
+dispute, BGP-Forge-Hijack). The 20 distinct sub-types
+ensure the strict-accuracy generalises beyond
+single-type coverage (\Sectref{sec:threats}).
 
-\begin{verbatim}
-python3 -c "import csv; \
-  print(sum(1 for r in csv.DictReader(open( \
-    'results/eval/per_event_v36.csv')) if r['tier']=='B'))"
-# -> 22
-\end{verbatim}
+\subsubsection{The Starlink negative control}
+\label{sec:neg-ctrl}
 
-\noindent Re-running the headline analysis on the 7 Tier-A events
-delivers the same HCAF 7/7 = 100.0\% strict-precision; re-running on
-the 22 Tier-B events delivers 22/22 = 100.0\%. The headline number
-is not inflated by the Tier-B choice.
+The Starlink 2025-07-24 event
+(\path{outage_starlink_2025}) is admitted as the single
+negative control. Its root cause is
+\path{internal_failure_non_bgp}: AS14593 withdrew
+$\leq 0.05\%$ of its BGP routes and the BGP-level signal
+is statistically indistinguishable from background noise
+(\path{routing_in_window = 0}); the $-11\%$ traffic drop
+was a control-plane software fault, not a BGP fault. The
+\path{ground_truth_cause_label} is still \texttt{outage}
+(the event was real downtime) but the
+\path{ground_truth_root_cause_subtype} is
+\path{internal_failure_non_bgp}, which the v19 evaluator
+treats as a negative control: a correct verdict on this
+event is \texttt{no\_clear\_anomaly} or
+\texttt{traffic\_anomaly\_only}.
+
+\subsection{Reproducibility and degraded-mode behavior}
+\label{sec:reproducibility}
+
+A reviewer can reproduce every number in this paper with
+two shell commands on the released artifact:
+\path{python3 scripts/build_v18_caches.py} and
+\path{python3 scripts/cache_only_evaluation_v17.py}. The 1
+event whose cache is not built
+(\path{outage_north_korea_star_2025_03_18}) requires a
+fresh \cf{} Radar session; the algorithmic evaluation is
+not affected. Each data source can fail independently;
+the graceful-degradation design treats each as a
+first-class degraded mode (\cf{} Radar HTTP~400 $\to$
+traffic-only verdict, RIPE RIS missing $\to$
+outage-only verdict, CAIDA / RIPE stale $\to$
+relationship-inference confidence downgrade). This is
+the architectural reason the single no-cache miss in the
+v19 evaluation is explainable rather than catastrophic.

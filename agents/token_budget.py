@@ -2,15 +2,15 @@
  Token 
 ==================
 
-： LLM  token ，
-" token"。
+: LLM token , 
+" token". 
 
-：
-    from agents.token_budget import TokenBudget
-    tb = TokenBudget.get_instance("run_123")
-    tb.add("routing_agent", 500, 200)
-    tb.add("reasoning_agent", 1000, 400)
-    total = tb.total()  # (1500, 600)
+: 
+ from agents.token_budget import TokenBudget
+ tb = TokenBudget.get_instance("run_123")
+ tb.add("routing_agent", 500, 200)
+ tb.add("reasoning_agent", 1000, 400)
+ total = tb.total() # (1500, 600)
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from datetime import datetime
 
 @dataclass
 class AgentTokenUsage:
-    """ agent  token """
+    """ agent token """
     agent: str
     prompt_tokens: int
     completion_tokens: int
@@ -30,11 +30,11 @@ class AgentTokenUsage:
 
 class TokenBudget:
     """
-    ： run_id  token 。
+ : run_id token . 
 
-     LLM  TokenBudget.add() ，
-   chief_agent 。
-    """
+ LLM TokenBudget.add() , 
+ chief_agent . 
+ """
 
     _instances: dict[str, "TokenBudget"] = {}
 
@@ -57,8 +57,8 @@ class TokenBudget:
 
     def add(self, agent: str, prompt_tokens: int, completion_tokens: int):
         """
-         LLM  token 。
-        """
+ LLM token . 
+ """
         record = AgentTokenUsage(
             agent=agent,
             prompt_tokens=prompt_tokens,
@@ -72,9 +72,9 @@ class TokenBudget:
 
     def add_from_response(self, agent: str, response, prompt_tokens: int = 0):
         """
-         LLM  usage 。
-         OpenAI-compatible : response.usage.prompt_tokens / completion_tokens
-        """
+ LLM usage . 
+ OpenAI-compatible : response.usage.prompt_tokens / completion_tokens
+ """
         try:
             usage = getattr(response, "usage", None)
             if usage:
@@ -93,7 +93,7 @@ class TokenBudget:
         return self._total_prompt, self._total_completion
 
     def by_agent(self) -> dict[str, tuple[int, int]]:
-        """ agent  token """
+        """ agent token """
         result: dict[str, tuple[int, int]] = {}
         for rec in self._records:
             key = rec.agent

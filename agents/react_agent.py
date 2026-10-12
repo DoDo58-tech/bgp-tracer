@@ -94,12 +94,12 @@ def clear_shared_evidence(run_id: str) -> None:
 def _finalize_run(result: "ReactResult") -> "ReactResult":
     """Release per-run resources once a React run is done.
 
-    Wrapping the cleanup behind a helper keeps every ``return ReactResult``
-    branch in ``ReactAgent.run`` (and any future call site) honest about
-    freeing ``_SHARED_EVIDENCE`` — without it, every analysis run leaves
-    behind a full bucket of tool output that lives for the lifetime of
-    the Python process.
-    """
+ Wrapping the cleanup behind a helper keeps every ``return ReactResult``
+ branch in ``ReactAgent.run`` (and any future call site) honest about
+ freeing ``_SHARED_EVIDENCE`` - without it, every analysis run leaves
+ behind a full bucket of tool output that lives for the lifetime of
+ the Python process.
+ """
     try:
         clear_shared_evidence(getattr(result, "run_id", "") or "")
     except Exception:
@@ -111,13 +111,13 @@ def _finalize_run(result: "ReactResult") -> "ReactResult":
 def valid_llm_html_report(report_path: str) -> bool:
     """Return True only for a saved, complete, non-fallback LLM HTML report.
 
-    Checks:
-    1. File exists and has sufficient content (>=300 bytes)
-    2. Not a deterministic fallback
-    3. Has proper DOCTYPE/html structure
-    4. Has matching <html>...</html> tags
-    5. CRITICAL: Has valid HTML tag structure (not missing '<' like 'div>' instead of '<div>')
-    """
+ Checks:
+ 1. File exists and has sufficient content (>=300 bytes)
+ 2. Not a deterministic fallback
+ 3. Has proper DOCTYPE/html structure
+ 4. Has matching <html>...</html> tags
+ 5. CRITICAL: Has valid HTML tag structure (not missing '<' like 'div>' instead of '<div>')
+ """
     if not report_path:
         return False
     try:
@@ -225,9 +225,9 @@ class ReactResult:
     tools_used: List[str] = field(default_factory=list)
     error: str = ""
     total_rounds: int = 0
-    #  evidence ， run() 。
+    # Evidence accumulated by run() across rounds.
     evidence: Dict[str, Any] = field(default_factory=dict)
-    # run_id （chief_agent ） evidence bucket。
+    # run_id (set by chief_agent) tags the evidence bucket.
     run_id: str = ""
 
 
@@ -252,18 +252,18 @@ class StreamingBuffer:
 
 class ReactAgent:
     """
-    React-style coordinator agent with streaming support.
+ React-style coordinator agent with streaming support.
 
-    The agent runs a Think -> Action -> Observe loop where:
-    - Think: LLM reasons about what to do next
-    - Action: LLM calls a tool or provides final answer
-    - Observe: Tool result is fed back to LLM for next decision
+ The agent runs a Think -> Action -> Observe loop where:
+ - Think: LLM reasons about what to do next
+ - Action: LLM calls a tool or provides final answer
+ - Observe: Tool result is fed back to LLM for next decision
 
-    Args:
-        llm: LLM instance for reasoning
-        max_rounds: Maximum number of React rounds (default: 15)
-        streaming_callback: Optional callback for streaming output
-    """
+ Args:
+ llm: LLM instance for reasoning
+ max_rounds: Maximum number of React rounds (default: 15)
+ streaming_callback: Optional callback for streaming output
+ """
 
     def __init__(
         self,
@@ -323,17 +323,17 @@ class ReactAgent:
         user_input: Optional[str] = None,
     ) -> ReactResult:
         """
-        Run the React agent to analyze the given AS and time window.
+ Run the React agent to analyze the given AS and time window.
 
-        Args:
-            asn: Autonomous System number
-            start_time: Analysis window start (ISO format)
-            end_time: Analysis window end (ISO format)
-            user_input: Optional natural language request
+ Args:
+ asn: Autonomous System number
+ start_time: Analysis window start (ISO format)
+ end_time: Analysis window end (ISO format)
+ user_input: Optional natural language request
 
-        Returns:
-            ReactResult with answer and trace
-        """
+ Returns:
+ ReactResult with answer and trace
+ """
         self.trace = []
         self.tools_used = set()
         self._round = 0
@@ -462,8 +462,7 @@ class ReactAgent:
             if parsed["type"] == "answer":
                 self.stream_print(f"\n[Final Answer]\n{parsed['answer']}\n")
 
-                #  LLM  Answer ，
-                # InvestigationSupervisor 。
+                # Hand the LLM answer off to the InvestigationSupervisor.
                 if (
                     not self._supervisor_enrichment_done
                     and self._traffic_result is not None
@@ -476,8 +475,10 @@ class ReactAgent:
                             context_for_supervisor, self._asn, self._traffic_result, self._routing_result
                         )
                         self._supervisor_enrichment_done = True
-                        # Supervisor enrichment  Answer（Answer  LLM ），
-                        #  enrich_result  self._supervisor_enrichment_result  generate_report。
+                        # Supervisor enrichment ran before Answer return
+                        # (Answer is from the LLM), and we wired enrich_result
+                        # into self._supervisor_enrichment_result for
+                        # generate_report.
                         logger.info("[ReAct] Supervisor enrichment complete before Answer return")
                     except Exception as e:
                         logger.warning(f"[ReAct] Supervisor enrichment in Answer path failed: {e}")
@@ -846,12 +847,12 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
 
     def parse_response(self, response: str) -> Dict[str, Any]:
         """
-        Parse LLM response into thought, action, and input.
+ Parse LLM response into thought, action, and input.
 
-        Expected formats:
-        - Thought: ... Action: tool_name Action Input: {{"param": "value"}}
-        - Thought: ... Action: Answer Action Input: {{"answer": "final answer"}}
-        """
+ Expected formats:
+ - Thought: ... Action: tool_name Action Input: {{"param": "value"}}
+ - Thought: ... Action: Answer Action Input: {{"answer": "final answer"}}
+ """
         result = {
             "type": "unknown",
             "thought": "",
@@ -920,8 +921,8 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
 
         class _SessionShim:
             """
-            Lightweight session-like object passed to each tool.
-            """
+ Lightweight session-like object passed to each tool.
+ """
             def __init__(self, evidence_dict, run_id):
                 # Instance-level evidence replaces the module-global _SHARED_EVIDENCE
                 # so concurrent --parallel>1 runs don't share state.
@@ -938,10 +939,10 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             def _traffic_has_evidence(value: Any) -> bool:
                 """Check analyze_traffic result.
 
-                Structure: {"success":True,"results":{"<asn>":{"anomalies":[...],"traffic_plot_path":"..."}}}
-                The results dict can be empty (all ASes failed). We need to check
-                inside each per-AS sub-dict for anomalies or a plot.
-                """
+ Structure: {"success":True,"results":{"<asn>":{"anomalies":[...],"traffic_plot_path":"..."}}}
+ The results dict can be empty (all ASes failed). We need to check
+ inside each per-AS sub-dict for anomalies or a plot.
+ """
                 if not isinstance(value, dict) or value.get("success") is False:
                     return False
                 results = value.get("results", {})
@@ -962,10 +963,10 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             def _routing_has_evidence(value: Any) -> bool:
                 """Check analyze_routing result.
 
-                Structure: {"success":True,"result":{"origin_hijacked":[...],
-                              "route_leaks":[...],"outage_analysis":{...}}}
-                Any non-empty event list (hijack/leak/outage) counts as evidence.
-                """
+ Structure: {"success":True,"result":{"origin_hijacked":[...],
+ "route_leaks":[...],"outage_analysis":{...}}}
+ Any non-empty event list (hijack/leak/outage) counts as evidence.
+ """
                 if not isinstance(value, dict) or value.get("success") is False:
                     return False
                 result = value.get("result", {})
@@ -1036,8 +1037,9 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 self._evidence[tool_name] = result
                 logger.info(f"[execute_tool] stored '{tool_name}', keys now: {list(self._evidence.keys())}")
 
-                # enhanced ： evidence  Blackboard，
-                #  LLMDebateAgent / MultiAgentReportAgent 。
+                # enhanced mode: mirror the evidence to the Blackboard so
+                # downstream agents (LLMDebateAgent, MultiAgentReportAgent)
+                # can read it.
                 if self.enhanced and self._blackboard is not None:
                     try:
                         await self._sync_evidence_to_blackboard(tool_name, result)
@@ -1056,15 +1058,15 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
 
     def _pick_fallback_action(self, context: Dict[str, Any]) -> tuple:
         """Bug #9 fix: pick the next sensible tool when the LLM returns an
-        empty action (e.g. JS safety guard refuses the role).
+ empty action (e.g. JS safety guard refuses the role).
 
-        Walks a deterministic tool pipeline in priority order, skipping any
-        tool whose evidence is already present. The pipeline mirrors the
-        reasoning flow that a thoughtful analyst would take:
+ Walks a deterministic tool pipeline in priority order, skipping any
+ tool whose evidence is already present. The pipeline mirrors the
+ reasoning flow that a thoughtful analyst would take:
 
-            analyze_traffic → analyze_routing → check_correlation →
-            generate_report
-        """
+ analyze_traffic → analyze_routing → check_correlation →
+ generate_report
+ """
         pipeline = [
             ("analyze_traffic", {
                 "asn": self._asn or None,
@@ -1099,14 +1101,14 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
     def format_observation(self, result: Dict[str, Any]) -> str:
         """Format tool result as observation string.
 
-         P1-#2： tool （ analyze_traffic  traffic_timeline 
-        ） round  context， round  LLM 
-        (400 token )。：
-        -  dict  count + first/last + 
-        -  OBSERVATION_MAX_CHARS（ 4000）
-        - （timestamp）（score/drop_ratio/anomaly_score）
-        - _SHARED_EVIDENCE ，； slim  context  observation 
-        """
+ P1-#2: tool ( analyze_traffic traffic_timeline 
+ ) round context, round LLM 
+ (400 token ). : 
+ - dict count + first/last + 
+ - OBSERVATION_MAX_CHARS( 4000)
+ - (timestamp)(score/drop_ratio/anomaly_score)
+ - _SHARED_EVIDENCE , ; slim context observation 
+ """
         if not result:
             return "No result returned."
 
@@ -1174,17 +1176,17 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
     def update_context(self, old_context: str, entry: ReactTraceEntry) -> str:
         """Update context with new observation for next round.
 
-         P1-#1：context ， 489K token 。
-         MAX_CONTEXT_CHARS（ 50K chars ≈ 13K tokens），
-         trace。 trace  trace summary 。
+ P1-#1: context , 489K token . 
+ MAX_CONTEXT_CHARS( 50K chars ≈ 13K tokens), 
+ trace. trace trace summary . 
 
-         B-#10： observation  [Tool Observation] ... [/Tool Observation]
-         fence 。：
-          1.  LLM ， chat-completion
-             （GLM-5 /  GPT ） observation 
-             ""， round 。
-          2.  observation " glm-5"。
-        """
+ B-#10: observation [Tool Observation] ... [/Tool Observation]
+ fence . : 
+ 1. LLM , chat-completion
+ (GLM-5 / GPT ) observation 
+ "", round . 
+ 2. observation " glm-5". 
+ """
         new_context = old_context
 
         # Add the completed action and its result, with explicit observation
@@ -1203,12 +1205,12 @@ Action Input: {json.dumps(entry.action_input, ensure_ascii=False)}
         return self.cap_context(new_context)
 
     def cap_context(self, context: str) -> str:
-        """ context ，。
+        """ context , . 
 
-        MAX_CONTEXT_CHARS  __init__  50000（ 13K tokens）， LLM
-        context window 。 context 
-        ，（system + initial query）。
-        """
+ MAX_CONTEXT_CHARS __init__ 50000( 13K tokens), LLM
+ context window . context 
+ , (system + initial query). 
+ """
         cap = getattr(self, "MAX_CONTEXT_CHARS", 50000)
         if len(context) <= cap:
             return context
@@ -1265,17 +1267,17 @@ Please continue with an alternative approach or adjust the parameters.
         result: Dict[str, Any],
     ) -> str:
         """
-        Update context for a retry round after a tool returned success=False.
+ Update context for a retry round after a tool returned success=False.
 
-        Tells the LLM exactly what went wrong so it can fix the parameters.
-        """
+ Tells the LLM exactly what went wrong so it can fix the parameters.
+ """
         error_msg = result.get("error", "Unknown error")
         new_context = old_context
 
         # Match the Tool Observation fence used elsewhere.
         new_context += f"""
 
-## Round {entry.round_num} — Tool Execution Failed
+## Round {entry.round_num} - Tool Execution Failed
 
 [Tool Observation]
 The tool "{failed_action}" returned an error:
@@ -1298,13 +1300,13 @@ Current evidence already collected: {list(self._evidence.keys())}
         routing_result: dict,
     ) -> str:
         """
-        Run InvestigationSupervisor after both traffic and routing analysis are complete.
+ Run InvestigationSupervisor after both traffic and routing analysis are complete.
 
-        This is the key "human-like" enhancement for the ReAct mode:
-        - Automatically triggers auxiliary tools based on detected patterns
-        - Injects enriched evidence into the LLM context
-        - Saves LLM from having to "decide" whether to use each tool
-        """
+ This is the key "human-like" enhancement for the ReAct mode:
+ - Automatically triggers auxiliary tools based on detected patterns
+ - Injects enriched evidence into the LLM context
+ - Saves LLM from having to "decide" whether to use each tool
+ """
         from agents.investigation_supervisor import InvestigationSupervisor
         import asyncio
 
@@ -1365,7 +1367,7 @@ Current evidence already collected: {list(self._evidence.keys())}
 The following evidence was automatically gathered because routing/traffic anomalies were detected.
 You MUST incorporate this evidence into your final reasoning.
 
-This section is NOT part of the original conversation — it was automatically enriched
+This section is NOT part of the original conversation - it was automatically enriched
 based on the detected patterns (type: {suspected_type}).
 
 {narrative}
@@ -1399,12 +1401,12 @@ Number of auxiliary tools executed: {tool_count}
 
     async def _sync_evidence_to_blackboard(self, tool_name: str, result: Any):
         """Mirror key tool outputs into the Blackboard so downstream agents
-        (LLMDebateAgent, MultiAgentReportAgent) can read them.
+ (LLMDebateAgent, MultiAgentReportAgent) can read them.
 
-        Only the 3 evidence sources that DebateAgent itself inspects are
-        mirrored; everything else stays in self._evidence to avoid paying
-        the BB async-write cost on every round.
-        """
+ Only the 3 evidence sources that DebateAgent itself inspects are
+ mirrored; everything else stays in self._evidence to avoid paying
+ the BB async-write cost on every round.
+ """
         if self._blackboard is None:
             return
         bb = self._blackboard
@@ -1456,18 +1458,18 @@ def create_react_agent(
     streaming_callback: Optional[Callable[[str], None]] = None,
 ) -> ReactAgent:
     """
-    Factory function to create a ReactAgent with LLM.
+ Factory function to create a ReactAgent with LLM.
 
-    Args:
-        model: Model name (defaults to config.MODEL)
-        api_key: API key (defaults to config.API_KEY)
-        base_url: API base URL (defaults to config.BASE_URL)
-        max_rounds: Maximum React rounds
-        streaming_callback: Optional callback for streaming output
+ Args:
+ model: Model name (defaults to config.MODEL)
+ api_key: API key (defaults to config.API_KEY)
+ base_url: API base URL (defaults to config.BASE_URL)
+ max_rounds: Maximum React rounds
+ streaming_callback: Optional callback for streaming output
 
-    Returns:
-        Configured ReactAgent instance
-    """
+ Returns:
+ Configured ReactAgent instance
+ """
     try:
         from config import MODEL, API_KEY, BASE_URL
 

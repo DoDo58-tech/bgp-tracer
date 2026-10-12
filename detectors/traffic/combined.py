@@ -1,14 +1,14 @@
 """
- — 
+ - 
 =========================
 
-，（）。
-：
-- 「」(AND) 「」(OR)：
-- 「」：
--  context_filter：，
--  sudden_drop ： 0.50  0.35，min_consecutive  3  1
-- ：，
+, (). 
+: 
+- ""(AND) ""(OR): 
+- "": 
+- context_filter: , 
+- sudden_drop : 0.50 0.35, min_consecutive 3 1
+- : , 
 """
 
 import numpy as np
@@ -47,14 +47,14 @@ def detect_anomalies_combined(
     event_end_time=None,
 ):
     """
-    。
-    
-    ：
-    1.  → ：
-    2.  context ： + 
-    3. ：
-    4. ：
-    """
+ . 
+ 
+ : 
+ 1. → : 
+ 2. context : + 
+ 3. : 
+ 4. : 
+ """
     curr = np.array(current_values, dtype=float)
     n = len(curr)
     hist = np.array(historical_means, dtype=float) if len(historical_means) == n else None
@@ -226,7 +226,7 @@ def detect_anomalies_combined(
         except Exception as e:
             logger.warning(f"Percentile detection failed: {e}")
 
-    # ── 9. （「」）────────────────
+    # ── 9. Cross-modal fusion (AND/OR) ────────────────
     if n >= 4 and len(historical_means) == n:
         try:
             for oa in _detect_peak_trough_drops(
@@ -348,7 +348,7 @@ def detect_anomalies_combined(
 
 # ─────────────────────────────────────────────────────────────────
 def _parse_event_ts(s):
-    """ datetime（ tz） None。"""
+    """ datetime( tz) None. """
     if s is None:
         return None
     if isinstance(s, str):
@@ -366,13 +366,13 @@ def _find_peak_trough_in_event_window(
     curr, hist, timestamps, event_start_timestamp, event_end_timestamp,
 ):
     """
-     peak/trough，。
+ peak/trough, . 
 
-    ：
-    - ：peak  [event_start - 4h, event_end + 6h] ，
-      trough （：trough ，）
-    - ：（）
-    """
+ : 
+ - : peak [event_start - 4h, event_end + 6h] , 
+ trough (: trough , )
+ - : ()
+ """
     n = len(curr)
     if n == 0:
         return None, None
@@ -430,24 +430,24 @@ def _detect_peak_trough_drops(
     event_start_timestamp=None, event_end_timestamp=None,
 ):
     """
-    ： →  → 
+ : → → 
 
-     13:00-16:00 「」。
-     sudden_drop ，peak_trough （peak -> sustained low -> recovery）。
+ 13:00-16:00 "". 
+ sudden_drop , peak_trough (peak -> sustained low -> recovery). 
 
-    （2026-09-04）： current values  historical_means 
-    。（peak-to-trough ）。
+ (2026-09-04): current values historical_means 
+ . (peak-to-trough ). 
 
-    （2026-09-07）：（）。
-     event_start_timestamp，（）。
+ (2026-09-07): (). 
+ event_start_timestamp, (). 
 
-    Args:
-        min_historical_deviation_ratio: （20%）。
-             current_value  historical_mean，。
-        event_start_timestamp / event_end_timestamp: （ datetime）。
-            Peak  trough （）。
-            ""。
-    """
+ Args:
+ min_historical_deviation_ratio: (20%). 
+ current_value historical_mean, . 
+ event_start_timestamp / event_end_timestamp: ( datetime). 
+ Peak trough (). 
+ "". 
+ """
     curr = np.array(current_values, dtype=float)
     hist = np.array(historical_means, dtype=float) if len(historical_means) == len(curr) else None
     n = len(curr)
@@ -456,8 +456,8 @@ def _detect_peak_trough_drops(
     if n < 4:
         return anomalies
 
-    # ── P0 Fix 2026-09-07:  ─────────────────────
-    # "、"
+    # ── P0 Fix 2026-09-07: raise the Starlink/Turkey z=3+ false-positive
+    # floor from 5% to 10% ─────────────────────
     peak_idx, trough_idx = _find_peak_trough_in_event_window(
         curr, hist, timestamps, event_start_timestamp, event_end_timestamp,
     )
@@ -603,10 +603,10 @@ def _fallback_detection(
     current_values, historical_means, historical_stds, timestamps=None,
 ):
     """
-    ：。
+ : . 
 
-    ，。
-    """
+ , . 
+ """
     curr = np.array(current_values, dtype=float)
     n = len(curr)
 

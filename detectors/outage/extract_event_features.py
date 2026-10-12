@@ -56,7 +56,8 @@ def parse_as_list(as_string):
         return set()
     
     as_set = set()
-    parts = re.split(r'[,\s、]+', str(as_string))
+    # CJK comma U+3001 is sometimes used as a separator in legacy data.
+    parts = re.split(r'[,\s\u3001]+', str(as_string))
     for part in parts:
         part = part.strip()
         if not part:
@@ -151,15 +152,15 @@ def _download_and_decode(url: str, gz_path: Path, txt_path: Path) -> bool:
 
 def find_update_files(time_start, time_end, auto_download=True):
     """
-    Find local decoded BGP update files for the time range.
-    If auto_download=True, missing files are downloaded from RIPE RIS and decoded.
+ Find local decoded BGP update files for the time range.
+ If auto_download=True, missing files are downloaded from RIPE RIS and decoded.
 
-    Concurrency: uses a ThreadPoolExecutor to parallelise the per-bucket
-    download+decode step. The previous implementation iterated sequentially
-    which made 24h baseline windows stall for 5-15 minutes on RIPE RIS latency.
-    RIPE RIS allows ~8 concurrent connections; we cap at 8 workers. Workers
-    can be tuned via the BGP_OUTAGE_DOWNLOAD_WORKERS env var.
-    """
+ Concurrency: uses a ThreadPoolExecutor to parallelise the per-bucket
+ download+decode step. The previous implementation iterated sequentially
+ which made 24h baseline windows stall for 5-15 minutes on RIPE RIS latency.
+ RIPE RIS allows ~8 concurrent connections; we cap at 8 workers. Workers
+ can be tuned via the BGP_OUTAGE_DOWNLOAD_WORKERS env var.
+ """
     import os as _os
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -919,16 +920,16 @@ def detect_anomalies_timeseries(event_ts, baseline_ts):
 
 def detect_anomalies_timeseries_periodic(event_ts, baseline_ts_dict):
     """
-    Detect anomalies using multiple baseline periods.
-    Uses mean and std computed across all baseline periods for each time slot.
+ Detect anomalies using multiple baseline periods.
+ Uses mean and std computed across all baseline periods for each time slot.
 
-    Args:
-        event_ts: dict of timestamp -> features for event window
-        baseline_ts_dict: dict of period_index -> (timestamp -> features)
+ Args:
+ event_ts: dict of timestamp -> features for event window
+ baseline_ts_dict: dict of period_index -> (timestamp -> features)
 
-    Returns:
-        list of anomaly dicts with timestamp, feature, z_score, etc.
-    """
+ Returns:
+ list of anomaly dicts with timestamp, feature, z_score, etc.
+ """
     if not event_ts or not baseline_ts_dict:
         return []
 

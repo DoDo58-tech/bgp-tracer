@@ -297,7 +297,7 @@ Now, what is your next step?"""
                 try:
                     parsed = json.loads(input_part)
                     answer = parsed.get("summary") or parsed.get("answer") or input_part
-                except:
+                except (ValueError, TypeError):
                     answer = input_part
             else:
                 # Answer might be in the response after "Answer"

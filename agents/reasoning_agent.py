@@ -97,12 +97,12 @@ class ReasoningAgent:
 
     def perform_multi_round_analysis(self, max_rounds = 3, workflow_claims = None):
         """
-        Args:
-            max_rounds: Maximum reasoning rounds
-            workflow_claims: Pre-generated claims from workflow_engine's HypothesisAgent.
-                             If provided, skip local hypothesis generation to avoid
-                             duplicate work.
-        """
+ Args:
+ max_rounds: Maximum reasoning rounds
+ workflow_claims: Pre-generated claims from workflow_engine's HypothesisAgent.
+ If provided, skip local hypothesis generation to avoid
+ duplicate work.
+ """
         try:
             self.reasoning_trace.append(f"Starting multi-round analysis for ASN {self.asn}")
             self.reasoning_trace.append(f"Time range: {self.start_time} to {self.end_time}")
@@ -307,17 +307,17 @@ class ReasoningAgent:
 
     def classify_multi_role(self, initial_data: dict) -> dict | None:
         """
-        Run the MultiRoleClassifier to understand the AS's full role picture
-        BEFORE the LLM reasons about it.
+ Run the MultiRoleClassifier to understand the AS's full role picture
+ BEFORE the LLM reasons about it.
 
-        This resolves the core classification challenge: AS9121 (Turk Telekom) was
-        annotated as 'leaker' but also shows origin_hijacking + origin_hijacked events.
-        The classifier identifies ALL applicable roles and detects cross-reference
-        patterns (self-hijack, victim→attacker temporal sequence, etc.).
+ This resolves the core classification challenge: AS9121 (Turk Telekom) was
+ annotated as 'leaker' but also shows origin_hijacking + origin_hijacked events.
+ The classifier identifies ALL applicable roles and detects cross-reference
+ patterns (self-hijack, victim→attacker temporal sequence, etc.).
 
-        Results are injected into the reasoning context so the LLM has a complete
-        picture of the AS's role before making decisions.
-        """
+ Results are injected into the reasoning context so the LLM has a complete
+ picture of the AS's role before making decisions.
+ """
         from agents.multi_role_classifier import MultiRoleClassifier
 
         routing_data = initial_data.get("routing_data", {})
@@ -405,13 +405,13 @@ class ReasoningAgent:
 
     def run_auxiliary_enrichment(self, initial_data: dict) -> dict | None:
         """
-        Run the InvestigationSupervisor to enrich routing + traffic evidence
-        with auxiliary tools (threat intel, news, IRR, history, etc.).
+ Run the InvestigationSupervisor to enrich routing + traffic evidence
+ with auxiliary tools (threat intel, news, IRR, history, etc.).
 
-        This is the key "human-like" enhancement: after collecting routing
-        and traffic data, we automatically enrich it with external context
-        BEFORE the LLM reasons about it.
-        """
+ This is the key "human-like" enhancement: after collecting routing
+ and traffic data, we automatically enrich it with external context
+ BEFORE the LLM reasons about it.
+ """
         routing_data = initial_data.get("routing_data", {})
         traffic_data = initial_data.get("traffic_data", {})
 
@@ -488,11 +488,11 @@ class ReasoningAgent:
         enrichment_result: dict = None,
     ) -> list[dict]:
         """
-        Bug Fix 3.1: （ enhanced_reasoning_agent.py）。
+ Bug Fix 3.1: ( enhanced_reasoning_agent.py). 
 
-         EnhancedReasoningAgent.identify_evidence_gaps ， ReasoningAgent。
-        ，，。
-        """
+ EnhancedReasoningAgent.identify_evidence_gaps , ReasoningAgent. 
+ , , . 
+ """
         gaps = []
         gap_counter = 0
 
@@ -956,15 +956,15 @@ class ReasoningAgent:
 
     def perform_deeper_analysis(self, round_num, knowledge_gaps):
         """
-        P5: In round > 1, use accumulated per-round summaries instead of
-        re-sending full routing/traffic dumps.  This reduces token consumption
-        by 40-60% in typical 3-round runs.
+ P5: In round > 1, use accumulated per-round summaries instead of
+ re-sending full routing/traffic dumps. This reduces token consumption
+ by 40-60% in typical 3-round runs.
 
-        Round 1  → sends full routing + traffic (cold start; LLM needs all data)
-        Round 2  → sends full routing + traffic + previous round 1 summary
-        Round 3+ → sends ONLY previous round summaries + new knowledge gaps
-                   (full data already available to the LLM from rounds 1-2)
-        """
+ Round 1 → sends full routing + traffic (cold start; LLM needs all data)
+ Round 2 → sends full routing + traffic + previous round 1 summary
+ Round 3+ → sends ONLY previous round summaries + new knowledge gaps
+ (full data already available to the LLM from rounds 1-2)
+ """
         self.reasoning_trace.append(
             f"[Round {round_num}] Performing LLM deeper analysis for {len(knowledge_gaps)} gap(s)"
         )
@@ -1105,13 +1105,13 @@ Respond concisely in JSON:
 
     def cross_validate_temporal_overlap(self, overlap_window_seconds: int = 3600):
         """Compute routing↔traffic temporal overlap and stash it in
-        ``evidence_pool["temporal_correlation"]``.
+ ``evidence_pool["temporal_correlation"]``.
 
-        This is a lightweight, deterministic backstop used by callers that
-        want quick overlap stats without spinning up the LLM deeper-analysis
-        pipeline.  Returns the overlap dict (or ``None`` when there isn't
-        enough data on either side).
-        """
+ This is a lightweight, deterministic backstop used by callers that
+ want quick overlap stats without spinning up the LLM deeper-analysis
+ pipeline. Returns the overlap dict (or ``None`` when there isn't
+ enough data on either side).
+ """
         routing_data = self.evidence_pool.get("routing_data", {})
         traffic_data = self.evidence_pool.get("traffic_data", {})
 
@@ -1470,9 +1470,9 @@ Respond concisely in JSON:
     def build_coordination_prompt(self):
         """Build prompt for final coordination.
 
-        Evidence pool sections are slimmed via PayloadBuilder so the final
-        coordination LLM call stays within PayloadBudget.REASONING bytes.
-        """
+ Evidence pool sections are slimmed via PayloadBuilder so the final
+ coordination LLM call stays within PayloadBudget.REASONING bytes.
+ """
         prompt_template = build_multi_agent_coordination_prompt()
 
         # Slim routing and traffic via PayloadBuilder before embedding in prompt
@@ -1625,7 +1625,7 @@ Respond concisely in JSON:
         }
 
     def build_confidence_assessment(self) -> dict:
-        """（）"""
+        """()"""
         base = self.get_final_confidence()
 
         calibration = self.evidence_pool.get("calibration", {})

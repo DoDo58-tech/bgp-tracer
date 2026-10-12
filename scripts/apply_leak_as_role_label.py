@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-CSV = ROOT / "data_check" / "ground_truth_collection" / "final_balanced_dataset_v16.csv"
+CSV = ROOT / "data_check" / "ground_truth_collection" / "final_balanced_dataset_v17.csv"
 
 
 def main():

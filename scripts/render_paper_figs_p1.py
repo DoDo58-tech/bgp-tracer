@@ -134,6 +134,7 @@ def fig11_abstention_audit() -> Path:
                 ax.text(i, bottoms[i] + v / 2, str(v), ha="center", va="center", fontsize=8, color="white", fontweight="bold")
         bottoms += np.array(vals)
 
+    n_full = len(full_rows)
     ax.set_ylabel(f"Number of abstentions (out of {n_full} events)")
     ax.set_title("§6 — Abstention composition per method. HCAF's 4 abstentions are\n"
                  "all BGPStream events with no fresh RRC00 origin announcements (detector being honest)")

@@ -2,15 +2,15 @@
 Correlation Analyzer Module
 ==========================
 
-： traffic_raw  routing_result 、
- ΔT（）、、。
+: traffic_raw routing_result 
+ ΔT() . 
 
- report_agent.before_rewrite.py ，
- report_agent.py  correlation_analysis 。
+ report_agent.before_rewrite.py , 
+ report_agent.py correlation_analysis . 
 
 :
-    from agents.correlation_analyzer import analyze_temporal_correlation
-    result = analyze_temporal_correlation(traffic_raw, routing_result, target_as="16509")
+ from agents.correlation_analyzer import analyze_temporal_correlation
+ result = analyze_temporal_correlation(traffic_raw, routing_result, target_as="16509")
 """
 
 from __future__ import annotations
@@ -113,16 +113,16 @@ def to_dict_helper(value):
 
 def _resolve_fallback_timestamp(routing_result: dict, analysis_window) -> Optional[datetime]:
     """Pick a single deterministic fallback timestamp for events whose own
-    timestamp field is missing/unparseable.
+ timestamp field is missing/unparseable.
 
-    Priority:
-      1. ``analysis_window`` midpoint — most accurate since callers know it.
-      2. ``routing_result["analysis_period"]`` (string "start to end").
-      3. ``datetime(1970, 1, 1)`` — extreme but always valid.
+ Priority:
+ 1. ``analysis_window`` midpoint - most accurate since callers know it.
+ 2. ``routing_result["analysis_period"]`` (string "start to end").
+ 3. ``datetime(1970, 1, 1)`` - extreme but always valid.
 
-    Returning ``None`` means "no information" and the caller should drop the
-    event with a loud warning (we can't synthesise a meaningful timestamp).
-    """
+ Returning ``None`` means "no information" and the caller should drop the
+ event with a loud warning (we can't synthesise a meaningful timestamp).
+ """
     if analysis_window:
         start = analysis_window.get("start") or analysis_window.get("detected_start")
         end = analysis_window.get("end") or analysis_window.get("detected_end")
@@ -151,12 +151,12 @@ def _resolve_fallback_timestamp(routing_result: dict, analysis_window) -> Option
 def _resolve_event_timestamp(event_dict, fallback_ts, fallback_used_box):
     """Parse timestamp from an event dict, falling back to ``fallback_ts``.
 
-    Returns ``(timestamp, None)`` on success. On fallback the first event
-    triggers a single warning and ``fallback_used_box`` is mutated to True
-    so subsequent events stay quiet (avoids log floods on 401-event payloads).
+ Returns ``(timestamp, None)`` on success. On fallback the first event
+ triggers a single warning and ``fallback_used_box`` is mutated to True
+ so subsequent events stay quiet (avoids log floods on 401-event payloads).
 
-    ``fallback_used_box`` is a single-element list used as a mutable flag.
-    """
+ ``fallback_used_box`` is a single-element list used as a mutable flag.
+ """
     raw = event_dict.get("timestamp") or event_dict.get("first_seen") or event_dict.get("time")
     ts = parse_timestamp(raw)
     if ts is not None:
@@ -181,15 +181,15 @@ def extract_traffic_events(
 ) -> list[TemporalEvent]:
     """Pull TemporalEvent objects from traffic_raw, falling back to window synthesis.
 
-    Accepts several input shapes so callers don't have to know which one to pass:
+ Accepts several input shapes so callers don't have to know which one to pass:
 
-    1. ``{"result": {...}}`` — workflow-style blackboard entry (unwrapped to ``result``).
-    2. ``{"anomalies": [...], "anomaly_count": N, ...}`` — raw result dict.
-    3. ``{"<asn_str>": {...same as case 2...}}`` — react-mode multi-AS wrapper
-       where the tool returned ``{"results": {"12479": raw_result}}`` and the
-       caller already unwrapped one level, leaving a dict keyed by ASN.
-       We pick the first AS-typed key.
-    """
+ 1. ``{"result": {...}}`` - workflow-style blackboard entry (unwrapped to ``result``).
+ 2. ``{"anomalies": [...], "anomaly_count": N, ...}`` - raw result dict.
+ 3. ``{"<asn_str>": {...same as case 2...}}`` - react-mode multi-AS wrapper
+ where the tool returned ``{"results": {"12479": raw_result}}`` and the
+ caller already unwrapped one level, leaving a dict keyed by ASN.
+ We pick the first AS-typed key.
+ """
     events: list[TemporalEvent] = []
     traffic_raw = traffic_raw or {}
 
@@ -321,22 +321,22 @@ def extract_traffic_events(
 def extract_routing_events(routing_result=None, target_as="", analysis_window=None) -> list[TemporalEvent]:
     """Pull TemporalEvent objects from routing_result across flat/nested/annotation_package formats.
 
-    Behavior change (Bug #R1, 2026-09-13): events whose ``timestamp``,
-    ``first_seen``, or ``time`` field is missing or unparseable are no
-    longer silently dropped — that was the root cause of verdict
-    divergence between runs (e.g. AS12479 showed 401 events in one report
-    and 0 in another). Instead we fall back to:
+ Behavior change (Bug #R1, 2026-09-13): events whose ``timestamp``,
+ ``first_seen``, or ``time`` field is missing or unparseable are no
+ longer silently dropped - that was the root cause of verdict
+ divergence between runs (e.g. AS12479 showed 401 events in one report
+ and 0 in another). Instead we fall back to:
 
-      1. The mid-point of ``analysis_window`` (if provided).
-      2. The analysis_period field inside ``routing_result``.
-      3. ``datetime.min`` (1970-01-01) as last resort.
+ 1. The mid-point of ``analysis_window`` (if provided).
+ 2. The analysis_period field inside ``routing_result``.
+ 3. ``datetime.min`` (1970-01-01) as last resort.
 
-    A WARNING is logged the first time a fallback fires so operators can
-    see the data quality issue.
+ A WARNING is logged the first time a fallback fires so operators can
+ see the data quality issue.
 
-    Also handles (Bug #R6, 2026-09-13): a react-mode ``{asn_str: raw_result}``
-    wrapper — same shape as the new ``extract_traffic_events`` fix.
-    """
+ Also handles (Bug #R6, 2026-09-13): a react-mode ``{asn_str: raw_result}``
+ wrapper - same shape as the new ``extract_traffic_events`` fix.
+ """
     events = []
     routing_result = routing_result or {}
     seen = set()

@@ -4,6 +4,7 @@ polars>=1.0.0
 numpy>=1.24.0
 matplotlib>=3.7.0
 requests>=2.31.0
+httpx>=0.27.0  # async HTTP client used by query_as_info (RIPE Whois DB)
 python-dateutil>=2.8.0
 psutil>=5.9.0
 

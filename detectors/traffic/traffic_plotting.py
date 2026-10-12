@@ -24,18 +24,18 @@ def _parse_iso_safe(ts: str):
 
 def _percentile_bounds_for_baseline(historical_values_list: list, current_len: int, lower_pct: float = 2.5, upper_pct: float = 97.5):
     """
-    （ mean ± 3σ）。
-    ，。
-    
-    Args:
-        historical_values_list: ，
-        current_len: 
-        lower_pct: （ 2.5%）
-        upper_pct: （ 97.5%）
-    
-    Returns:
-        (lower_bounds, upper_bounds, median): 、、
-    """
+ ( mean ± 3σ). 
+ , . 
+ 
+ Args:
+ historical_values_list: , 
+ current_len: 
+ lower_pct: ( 2.5%)
+ upper_pct: ( 97.5%)
+ 
+ Returns:
+ (lower_bounds, upper_bounds, median): 
+ """
     import numpy as np
     
     if not historical_values_list:
@@ -60,7 +60,7 @@ def _percentile_bounds_for_baseline(historical_values_list: list, current_len: i
 
 
 def _effective_std_for_baseline(mean_arr: np.ndarray, std_arr: np.ndarray):
-    """ detect_anomalies_statistical ： std ， ±3σ 。"""
+    """ detect_anomalies_statistical : std , ±3σ . """
     mean_arr = np.asarray(mean_arr, dtype=float)
     std_arr = np.asarray(std_arr, dtype=float)
     floor = np.maximum(0.05 * np.maximum(np.abs(mean_arr), 1.0), 0.02)

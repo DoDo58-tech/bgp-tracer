@@ -1,10 +1,7 @@
 import os
 import sys
-import json
 import polars as pl
-from typing import Any, Dict, List, Optional, Set, Tuple
 from datetime import datetime
-from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from config import DEFAULT_ANOMALY_THRESHOLD
@@ -74,9 +71,7 @@ def find_common_path_endings(as_paths, threshold=DEFAULT_ANOMALY_THRESHOLD):
     return common_endings
 
 
-def check_fake_connections_in_df(df, as_relationships, use_disk_cache = False,
-                               asrel_file_paths = None,
-                               early_exit = False, use_ultra_fast = False):
+def check_fake_connections_in_df(df, as_relationships):
     if not isinstance(df, pl.DataFrame):
         df = pl.DataFrame(df)
     

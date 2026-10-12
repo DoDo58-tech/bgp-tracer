@@ -7,9 +7,9 @@ from utils.logger import logger
 def _effective_std(mean_arr, std_arr):
     """Floor for std deviation to avoid div-by-zero and noisy z-scores.
 
-    P0 Fix 2026-09-07: floor  5% → 10% ， z>3。
-     Starlink/Turkey ： std ， z=3+。
-    """
+ P0 Fix 2026-09-07: floor 5% → 10% , z>3. 
+ Starlink/Turkey : std , z=3+. 
+ """
     std_arr = np.asarray(std_arr, dtype=float)
     floor = np.maximum(0.10 * np.maximum(np.abs(mean_arr), 1.0), 0.05)
     return np.where(std_arr > 1e-6, std_arr, floor)

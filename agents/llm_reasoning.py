@@ -2,9 +2,9 @@
 LLM 
 ================
 
- LLM 、。
+ LLM . 
 
-：
+: 
 - LLM 
 - LLM 
 - LLM 
@@ -12,6 +12,7 @@ LLM
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from typing import Optional, Any, Dict, List
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REASONING
@@ -42,10 +43,10 @@ def _safe_event_get(event, key, default=None):
 
 class LLMIncidentClassifier:
     """
-    LLM 
-    
-    ，。
-    """
+ LLM 
+ 
+ , . 
+ """
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in incident classification.
 
@@ -60,13 +61,13 @@ Consider:
 
 Output MUST be valid JSON:
 {
-    "incident_type": "type name",
-    "confidence": 0.0-1.0,
-    "sub_type": "optional sub-type",
-    "reasoning": "explanation of classification",
-    "alternative_types": [
-        {"type": "alternative", "confidence": 0.0-1.0, "reasoning": "why this could be it"}
-    ]
+ "incident_type": "type name",
+ "confidence": 0.0-1.0,
+ "sub_type": "optional sub-type",
+ "reasoning": "explanation of classification",
+ "alternative_types": [
+ {"type": "alternative", "confidence": 0.0-1.0, "reasoning": "why this could be it"}
+ ]
 }"""
 
     USER_PROMPT_TEMPLATE = """## Routing Evidence
@@ -112,7 +113,7 @@ If multiple types are possible, provide alternative classifications with confide
         self._llm_initialized = llm is not None
 
     def ensure_llm(self):
-        """ LLM；，。"""
+        """ LLM; , . """
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL,
@@ -132,18 +133,18 @@ If multiple types are possible, provide alternative classifications with confide
         run_id: str = "",
     ) -> Dict[str, Any]:
         """
-        
-        
-        Returns:
-            {
-                "incident_type": str,
-                "confidence": float,
-                "sub_type": str,
-                "reasoning": str,
-                "alternative_types": [...],
-                "source": "llm" or "rule"
-            }
-        """
+ 
+ 
+ Returns:
+ {
+ "incident_type": str,
+ "confidence": float,
+ "sub_type": str,
+ "reasoning": str,
+ "alternative_types": [...],
+ "source": "llm" or "rule"
+ }
+ """
         self.ensure_llm()
 
         # 
@@ -218,7 +219,7 @@ If multiple types are possible, provide alternative classifications with confide
         traffic_anomaly: bool,
         traffic_count: int,
     ) -> Dict[str, Any]:
-        """-based （）"""
+        """-based ()"""
         if origin_hijacked:
             return {
                 "incident_type": "Origin Hijacking",
@@ -308,10 +309,10 @@ If multiple types are possible, provide alternative classifications with confide
 
 class LLMSeverityAssessor:
     """
-    LLM 
-    
-    。
-    """
+ LLM 
+ 
+ . 
+ """
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in incident severity assessment.
 
@@ -326,16 +327,16 @@ Consider:
 
 Output MUST be valid JSON:
 {
-    "severity": "High/Medium/Low",
-    "confidence": 0.0-1.0,
-    "score": 0-100,
-    "factors": {
-        "duration": {"level": "High/Medium/Low", "reasoning": "..."},
-        "scope": {"level": "High/Medium/Low", "reasoning": "..."},
-        "impact": {"level": "High/Medium/Low", "reasoning": "..."},
-        "persistence": {"level": "High/Medium/Low", "reasoning": "..."}
-    },
-    "reasoning": "overall reasoning"
+ "severity": "High/Medium/Low",
+ "confidence": 0.0-1.0,
+ "score": 0-100,
+ "factors": {
+ "duration": {"level": "High/Medium/Low", "reasoning": "..."},
+ "scope": {"level": "High/Medium/Low", "reasoning": "..."},
+ "impact": {"level": "High/Medium/Low", "reasoning": "..."},
+ "persistence": {"level": "High/Medium/Low", "reasoning": "..."}
+ },
+ "reasoning": "overall reasoning"
 }"""
 
     USER_PROMPT_TEMPLATE = """## Incident Details
@@ -375,7 +376,7 @@ Assess the severity of this incident based on:
         self._llm_initialized = llm is not None
 
     def ensure_llm(self):
-        """ LLM；，。"""
+        """ LLM; , . """
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL,
@@ -395,18 +396,18 @@ Assess the severity of this incident based on:
         run_id: str = "",
     ) -> Dict[str, Any]:
         """
-        
-        
-        Returns:
-            {
-                "severity": "High/Medium/Low",
-                "confidence": float,
-                "score": int,
-                "factors": {...},
-                "reasoning": str,
-                "source": "llm" or "rule"
-            }
-        """
+ 
+ 
+ Returns:
+ {
+ "severity": "High/Medium/Low",
+ "confidence": float,
+ "score": int,
+ "factors": {...},
+ "reasoning": str,
+ "source": "llm" or "rule"
+ }
+ """
         self.ensure_llm()
 
         # 
@@ -479,7 +480,7 @@ Assess the severity of this incident based on:
         percent_change: float,
         duration_minutes: float,
     ) -> Dict[str, Any]:
-        """-based （）"""
+        """-based ()"""
         score = 0
         
         # 
@@ -569,10 +570,10 @@ Assess the severity of this incident based on:
 
 class LLMTrafficCorrelator:
     """
-    LLM 
-    
-    。
-    """
+ LLM 
+ 
+ . 
+ """
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in causal correlation analysis.
 
@@ -586,13 +587,13 @@ Consider:
 
 Output MUST be valid JSON:
 {
-    "has_correlation": true/false,
-    "confidence": 0.0-1.0,
-    "correlation_type": "direct/indirect/unclear/none",
-    "reasoning": "explanation",
-    "temporal_alignment": 0.0-1.0,
-    "intensity_correlation": 0.0-1.0,
-    "alternative_explanations": ["explanation1", "explanation2"]
+ "has_correlation": true/false,
+ "confidence": 0.0-1.0,
+ "correlation_type": "direct/indirect/unclear/none",
+ "reasoning": "explanation",
+ "temporal_alignment": 0.0-1.0,
+ "intensity_correlation": 0.0-1.0,
+ "alternative_explanations": ["explanation1", "explanation2"]
 }"""
 
     USER_PROMPT_TEMPLATE = """## Routing Anomalies
@@ -631,7 +632,7 @@ Consider timing, intensity, and possible alternative explanations.
         self._llm_initialized = llm is not None
 
     def ensure_llm(self):
-        """ LLM；，。"""
+        """ LLM; , . """
         if not self._llm_initialized:
             self.llm, _ = setup_llm_settings(
                 model=MODEL,
@@ -648,20 +649,20 @@ Consider timing, intensity, and possible alternative explanations.
         run_id: str = "",
     ) -> Dict[str, Any]:
         """
-        
-        
-        Returns:
-            {
-                "has_correlation": bool,
-                "confidence": float,
-                "correlation_type": str,
-                "reasoning": str,
-                "temporal_alignment": float,
-                "intensity_correlation": float,
-                "alternative_explanations": [...],
-                "source": "llm" or "rule"
-            }
-        """
+ 
+ 
+ Returns:
+ {
+ "has_correlation": bool,
+ "confidence": float,
+ "correlation_type": str,
+ "reasoning": str,
+ "temporal_alignment": float,
+ "intensity_correlation": float,
+ "alternative_explanations": [...],
+ "source": "llm" or "rule"
+ }
+ """
         self.ensure_llm()
 
         # 
@@ -763,7 +764,7 @@ Consider timing, intensity, and possible alternative explanations.
         traffic_count: int,
         percent_change: float,
     ) -> Dict[str, Any]:
-        """-based （）"""
+        """-based ()"""
         if routing_count > 0 and traffic_anomaly:
             # /
             intensity = min(1.0, (routing_count / 5) * (abs(percent_change) / 50))

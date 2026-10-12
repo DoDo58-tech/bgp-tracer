@@ -1,13 +1,13 @@
 """
-（LLM ）
+(LLM )
 ========================
 
-。
+. 
 
-：
+: 
 - LLM 
 - LLM 
-- ， LLM 
+- , LLM 
 """
 
 from __future__ import annotations
@@ -55,10 +55,10 @@ class EvidenceChain:
 # ============================================================
 class LLMHypothesisIdentifier:
     """
-    LLM 
-    
-    。
-    """
+ LLM 
+ 
+ . 
+ """
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in evidence analysis and hypothesis generation.
 
@@ -70,31 +70,31 @@ Given observed evidence from multiple data sources, your task is to:
 
 Output MUST be valid JSON:
 {
-    "assumptions": [
-        {
-            "assumption": "assumption text",
-            "relevance": "high/medium/low",
-            "reasoning": "why this assumption is relevant"
-        }
-    ],
-    "limitations": [
-        {
-            "limitation": "limitation text",
-            "impact": "high/medium/low",
-            "reasoning": "how this limitation affects the analysis"
-        }
-    ],
-    "evidence_gaps": [
-        {
-            "gap": "gap description",
-            "priority": "high/medium/low",
-            "how_to_address": "suggestion to fill the gap"
-        }
-    ],
-    "contextual_insights": [
-        "insight1",
-        "insight2"
-    ]
+ "assumptions": [
+ {
+ "assumption": "assumption text",
+ "relevance": "high/medium/low",
+ "reasoning": "why this assumption is relevant"
+ }
+ ],
+ "limitations": [
+ {
+ "limitation": "limitation text",
+ "impact": "high/medium/low",
+ "reasoning": "how this limitation affects the analysis"
+ }
+ ],
+ "evidence_gaps": [
+ {
+ "gap": "gap description",
+ "priority": "high/medium/low",
+ "how_to_address": "suggestion to fill the gap"
+ }
+ ],
+ "contextual_insights": [
+ "insight1",
+ "insight2"
+ ]
 }"""
 
     USER_PROMPT_TEMPLATE = """## Evidence Collected
@@ -161,17 +161,17 @@ Based on the evidence collected, identify:
         time_range: str = "unknown",
     ) -> Dict[str, Any]:
         """
-        、
-        
-        Returns:
-            {
-                "assumptions": [...],
-                "limitations": [...],
-                "evidence_gaps": [...],
-                "contextual_insights": [...],
-                "source": "llm" or "default"
-            }
-        """
+ 
+ 
+ Returns:
+ {
+ "assumptions": [...],
+ "limitations": [...],
+ "evidence_gaps": [...],
+ "contextual_insights": [...],
+ "source": "llm" or "default"
+ }
+ """
         self._ensure_llm()
 
         if self.llm is None:
@@ -330,7 +330,7 @@ Based on the evidence collected, identify:
             {
                 "limitation": "",
                 "impact": "medium",
-                "reasoning": "CDN 、"
+                "reasoning": "CDN-related traffic drop"
             },
         ]
 
@@ -360,11 +360,11 @@ Based on the evidence collected, identify:
 # ============================================================
 class EvidenceChainBuilder:
     """
-    （LLM ）
-    
-    。
-     LLM 、。
-    """
+ (LLM )
+ 
+ . 
+ LLM . 
+ """
 
     SOURCE_PRIORITY = {
         "bgp": 0.9,
@@ -377,9 +377,9 @@ class EvidenceChainBuilder:
 
     def __init__(self, use_llm: bool = False):
         """
-        Args:
-            use_llm:  LLM 
-        """
+ Args:
+ use_llm: LLM 
+ """
         self.use_llm = use_llm
         self.hypothesis_identifier = LLMHypothesisIdentifier() if use_llm else None
 
@@ -394,19 +394,19 @@ class EvidenceChainBuilder:
         time_range: str = "unknown",
     ) -> EvidenceChain:
         """
-        
-        
-        Args:
-            traffic_result: 
-            routing_result: 
-            causal_analysis: 
-            bayesian_result: 
-            asn: AS 
-            time_range: 
-        
-        Returns:
-            EvidenceChain: 
-        """
+ 
+ 
+ Args:
+ traffic_result: 
+ routing_result: 
+ causal_analysis: 
+ bayesian_result: 
+ asn: AS 
+ time_range: 
+ 
+ Returns:
+ EvidenceChain: 
+ """
         evidence_chain = []
         reasoning_steps = []
         llm_analysis = None
@@ -427,7 +427,7 @@ class EvidenceChainBuilder:
         causal_evidence = self._extract_causal_evidence(causal_analysis)
         evidence_chain.extend(causal_evidence)
 
-        # LLM 、
+        # LLM-assisted hypothesis generation path.
         if self.use_llm and self.hypothesis_identifier:
             llm_analysis = self.hypothesis_identifier.identify_hypotheses(
                 traffic_result=traffic_result,
@@ -730,7 +730,7 @@ class EvidenceChainBuilder:
             steps.append({
                 "step": 3,
                 "type": "hypothesis",
-                "content": f"「{best}」",
+                "content": f"[{best}]",
                 "confidence": confidence,
             })
 
@@ -748,7 +748,7 @@ class EvidenceChainBuilder:
         routing_result: dict,
         evidence_chain: list,
     ) -> list:
-        """（）"""
+        """()"""
         assumptions = [
             "BGP ",
             "Cloudflare ",
@@ -769,9 +769,9 @@ class EvidenceChainBuilder:
     ) -> list:
         """"""
         limitations = [
-            "BGP  15-30 ",
-            " API，",
-            "（ CDN 、）",
+            "BGP feed lag 15-30 minutes",
+            "CDN/RIS API rate limit",
+            "Client connectivity restored (e.g. CDN edge back online)",
             "",
         ]
 

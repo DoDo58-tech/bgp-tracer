@@ -129,7 +129,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset",
                     default=str(ROOT / "data_check" / "ground_truth_collection"
-                                / "final_public_dataset.csv"))
+                                / "final_balanced_dataset_v17.csv"))
     ap.add_argument("--out", default=None, help="write JSON results here")
     args = ap.parse_args()
 

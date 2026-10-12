@@ -45,11 +45,10 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup
@@ -210,7 +209,6 @@ def build_table(
     rows: Sequence[Sequence[Any]],
     *,
     row_limit: int = 50,
-    empty_note: str = "No events of this type were detected.",
 ) -> Optional[dict]:
     """Render a data table, dropping columns that are empty in every row.
 

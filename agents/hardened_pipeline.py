@@ -161,10 +161,6 @@ def deterministic_postprocess(
     inject_tca: bool = True,
     inject_correlation_gauge: bool = True,
     inject_traffic_plot: bool = True,
-    inject_hijack_table: bool = True,
-    inject_leak_table: bool = True,
-    inject_traffic_anomaly_table: bool = True,
-    inject_routing_counts: bool = True,
 ) -> str:
     """Replace the body of the report between <body> and </body> with a
     deterministic, payload-driven version.
