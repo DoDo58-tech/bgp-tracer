@@ -52,6 +52,41 @@ def _to_canonical_severity(items: list) -> str:
     return best_label
 
 
+def _extract_confidence(result: dict, *, default_high: float, default_low: float) -> float:
+    """Pull the detector's calibrated confidence out of a raw result.
+
+    Detectors write confidence in several shapes (bare float, dict with
+    `calibrated_confidence` / `raw_confidence`, nested under
+    `confidence.calibrated_confidence`). When the detector provided a
+    real number we trust it; otherwise we fall back to a coarse
+    anomaly/no-anomaly heuristic with the supplied defaults.
+
+    The result is clamped to [0, 1] so a bad value cannot poison downstream
+    weighted combinations in the HCAF causal engine.
+    """
+    if not isinstance(result, dict):
+        return default_low
+
+    candidates = []
+    conf = result.get("confidence")
+    if isinstance(conf, (int, float)):
+        candidates.append(float(conf))
+    elif isinstance(conf, dict):
+        for k in ("calibrated_confidence", "raw_confidence"):
+            v = conf.get(k)
+            if isinstance(v, (int, float)):
+                candidates.append(float(v))
+    inner = result.get("confidence_assessment")
+    if isinstance(inner, dict):
+        v = inner.get("calibrated_confidence")
+        if isinstance(v, (int, float)):
+            candidates.append(float(v))
+    if candidates:
+        return max(0.0, min(1.0, candidates[0]))
+
+    return default_high if result.get("anomalies_detected") else default_low
+
+
 class TrafficAgent(Agent):
     name = "TrafficAgent"
 
@@ -96,7 +131,13 @@ class TrafficAgent(Agent):
                 "asn": str(asn),
                 "start_time": str(start_time),
                 "end_time": str(end_time),
-                "confidence": 0.8 if result.get("anomalies_detected") else 0.5,
+                # Prefer the detector's calibrated confidence when available;
+                # fall back to a simple heuristic so earlier contracts still work.
+                "confidence": _extract_confidence(
+                    result,
+                    default_high=0.8,
+                    default_low=0.5,
+                ),
                 # Surface unified schema fields so the evaluator can distinguish
                 "data_available": result.get("data_available", result.get("success", False)),
                 "no_data_reason": result.get("no_data_reason", ""),

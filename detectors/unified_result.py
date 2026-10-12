@@ -355,10 +355,19 @@ class UnifiedDetectionResult:
         # 
         conf_data = data.get('confidence', {})
         if isinstance(conf_data, dict):
+            evidence_q = conf_data.get('evidence_quality', {}) or {}
+            unc_range = conf_data.get('uncertainty_range', [0.0, 1.0]) or [0.0, 1.0]
             confidence = ConfidenceAssessment(
                 raw_confidence=conf_data.get('raw_confidence', 0.5),
                 calibrated_confidence=conf_data.get('calibrated_confidence', 0.5),
                 calibration_level=conf_data.get('calibration_level', 'unknown'),
+                evidence_sufficiency=float(evidence_q.get('sufficiency', 0.0)),
+                evidence_consistency=float(evidence_q.get('consistency', 0.0)),
+                evidence_diversity=float(evidence_q.get('diversity', 0.0)),
+                uncertainty_lower=float(unc_range[0]) if len(unc_range) > 0 else 0.0,
+                uncertainty_upper=float(unc_range[1]) if len(unc_range) > 1 else 1.0,
+                reasoning_chain=list(conf_data.get('reasoning_chain', []) or []),
+                alternative_hypotheses=list(conf_data.get('alternative_hypotheses', []) or []),
             )
         else:
             confidence = ConfidenceAssessment(
@@ -372,6 +381,13 @@ class UnifiedDetectionResult:
             analysis_start=meta_data.get('analysis_start', ''),
             analysis_end=meta_data.get('analysis_end', ''),
             analysis_duration_ms=meta_data.get('analysis_duration_ms', 0.0),
+            data_sources=meta_data.get('data_sources', []) or list(data.get('data_sources', []) or []),
+            data_quality_score=meta_data.get('data_quality_score', data.get('data_quality_score', 1.0)),
+            coverage_percent=meta_data.get('coverage_percent', data.get('coverage_percent', 100.0)),
+            api_calls_made=meta_data.get('api_calls_made', data.get('api_calls_made', 0)),
+            api_calls_failed=meta_data.get('api_calls_failed', data.get('api_calls_failed', 0)),
+            detection_threshold=meta_data.get('detection_threshold', data.get('detection_threshold', 0.5)),
+            sensitivity=meta_data.get('sensitivity', data.get('sensitivity', 'normal')),
         )
 
         return cls(
@@ -388,7 +404,6 @@ class UnifiedDetectionResult:
             confidence=confidence,
             metadata=metadata,
             raw_data=data,
-            # data_available ： True（）
             data_available=data.get('data_available', True),
             no_data_reason=data.get('no_data_reason', ''),
         )
@@ -682,6 +697,24 @@ def wrap(
                 or raw.get("route_leaks")
                 or raw.get("anomalies")
             )
+
+    # Contract guard: data_available=False MUST carry a non-empty reason so
+    # downstream agents / report renderers can tell "no data" apart from
+    # "scanned and clean". Infer the reason when the detector left it blank.
+    resolved_no_data_reason = no_data_reason or raw.get("no_data_reason", "") or ""
+    if not data_available and not resolved_no_data_reason:
+        # Order matters: pick the most specific actionable reason first so
+        # report renderers can guide operators ("check inputs" beats
+        # "detector failed" when the input itself was the problem).
+        if raw.get("invalid_request"):
+            resolved_no_data_reason = "invalid_request"
+        elif raw.get("error"):
+            resolved_no_data_reason = "detector_error"
+        elif not success:
+            resolved_no_data_reason = "detector_failure"
+        else:
+            resolved_no_data_reason = "no_data"
+
     return UnifiedDetectionResult.from_dict({
         **raw,
         "asn": asn or raw.get("asn", ""),
@@ -689,7 +722,7 @@ def wrap(
         "detection_type": detection_type.value,
         "success": success,
         "data_available": data_available,
-        "no_data_reason": no_data_reason or raw.get("no_data_reason", ""),
+        "no_data_reason": resolved_no_data_reason,
     })
 
 

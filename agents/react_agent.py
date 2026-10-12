@@ -81,14 +81,14 @@ _SHARED_EVIDENCE: Dict[str, Dict[str, Any]] = {}
 
 def shared_evidence(session_id: str) -> Dict[str, Any]:
     """Get or create the per-run shared evidence bucket."""
-    if run_id not in _SHARED_EVIDENCE:
-        _SHARED_EVIDENCE[run_id] = {}
-    return _SHARED_EVIDENCE[run_id]
+    if session_id not in _SHARED_EVIDENCE:
+        _SHARED_EVIDENCE[session_id] = {}
+    return _SHARED_EVIDENCE[session_id]
 
 
 def clear_shared_evidence(session_id: str) -> None:
     """Drop the per-run bucket after agent.run() finishes."""
-    _SHARED_EVIDENCE.pop(run_id, None)
+    _SHARED_EVIDENCE.pop(session_id, None)
 
 
 def _finalize_run(result: "ReactResult") -> "ReactResult":

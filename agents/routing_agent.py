@@ -23,6 +23,65 @@ def run_routing_agent(asn, start_time, end_time, target_asns=None, periodicity=N
     )
 
 
+def _extract_routing_confidence(
+    result,
+    *,
+    hijacked_alerts,
+    origin_hijacking,
+    forge_hijacking,
+    leaks,
+    has_outage,
+) -> float:
+    """Best-effort confidence for the routing layer.
+
+    The detectors publish a calibrated confidence in several shapes. When
+    any of them is present we trust it (clamped to [0, 1]); otherwise we
+    fall back to the historical 0.85 / 0.6 anomaly/no-anomaly heuristic
+    so existing consumers keep working.
+    """
+    has_anomaly = bool(
+        hijacked_alerts or origin_hijacking or forge_hijacking or leaks or has_outage
+    )
+
+    candidates: list[float] = []
+    if isinstance(result, dict):
+        conf = result.get("confidence")
+        if isinstance(conf, (int, float)):
+            candidates.append(float(conf))
+        elif isinstance(conf, dict):
+            for k in ("calibrated_confidence", "raw_confidence"):
+                v = conf.get(k)
+                if isinstance(v, (int, float)):
+                    candidates.append(float(v))
+        for nested_key in ("confidence_assessment",):
+            inner = result.get(nested_key)
+            if isinstance(inner, dict):
+                v = inner.get("calibrated_confidence")
+                if isinstance(v, (int, float)):
+                    candidates.append(float(v))
+
+    # Pull the strongest individual anomaly confidence if the detector
+    # stamped it on each item. The mean is more conservative than the max
+    # because multiple weak signals should not balloon the routing score.
+    individual: list[float] = []
+    for items in (hijacked_alerts, origin_hijacking, forge_hijacking, leaks):
+        for it in items or []:
+            v = None
+            if isinstance(it, dict):
+                v = it.get("confidence")
+            else:
+                v = getattr(it, "confidence", None)
+            if isinstance(v, (int, float)):
+                individual.append(float(v))
+    if individual:
+        candidates.append(sum(individual) / len(individual))
+
+    if candidates:
+        return max(0.0, min(1.0, candidates[0]))
+
+    return 0.85 if has_anomaly else 0.6
+
+
 class RoutingAgent(Agent):
     name = "RoutingAgent"
 
@@ -206,7 +265,17 @@ def prepare_routing_payload(result, partial_error=None):
         "has_anomaly": has_victim_anomaly or has_attacker_anomaly or bool(leaks) or has_outage,
         "routing_status": "anomaly" if (has_victim_anomaly or has_attacker_anomaly or leaks or has_outage) else "normal",
         "impact_scope": routing_scope(hijacked_alerts, leaks, outages),
-        "confidence": 0.85 if (has_victim_anomaly or has_attacker_anomaly or leaks or has_outage) else 0.6,
+        # Prefer the detector's calibrated confidence when present so the
+        # HCAF / report agents do not see a constant regardless of detector
+        # output. Fall back to a coarse 0.85 / 0.6 heuristic otherwise.
+        "confidence": _extract_routing_confidence(
+            result,
+            hijacked_alerts=hijacked_alerts,
+            origin_hijacking=origin_hijacking,
+            forge_hijacking=forge_hijacking,
+            leaks=leaks,
+            has_outage=has_outage,
+        ),
         #  ChallengeAgent/RefereeAgent/EvaluationLoop  total_* 
         "total_prefix_hijacks": len(hijacked_alerts),
         "total_prefix_hijacking": len(origin_hijacking + forge_hijacking),

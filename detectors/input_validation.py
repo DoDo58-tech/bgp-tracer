@@ -61,13 +61,15 @@ _TS_FORMATS = (
 )
 
 
-def _looks_timestampy(value_text: str) -> bool:
+def _looks_timestampy(value: str) -> bool:
     """True for strings that are clearly datetimes, not ASNs.
 
  Used only to produce a *better error message* when the AS slot received a
  timestamp (the mis-binding case). A bare number is ambiguous by design:
  ``AS1234`` and ``1234`` are both valid, so it is accepted as an ASN.
  """
+    if not isinstance(value, str):
+        return False
     v = value.strip()
     if "-" in v or ":" in v or "/" in v:
         return True

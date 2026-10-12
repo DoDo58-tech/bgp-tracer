@@ -444,7 +444,7 @@ def _generate_as_section_html(asn_id, result: Dict[str, Any], template: str) -> 
 
     except Exception as e:
         logger.error(f"Error generating AS section HTML: {e}")
-        return f"<div>Error generating section for AS{asn}: {str(e)}</div>"
+        return f"<div>Error generating section for AS{asn_id}: {str(e)}</div>"
 
 
 def _generate_batch_recommendations(routing_anomalies, traffic_anomalies, high_severity_as) -> List[str]:
