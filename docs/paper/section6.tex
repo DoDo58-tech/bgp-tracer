@@ -345,8 +345,9 @@ labels.}
 \label{fig:misses}
 \end{figure}
 
-\paragraph{Why the held-out fixes are principled.}
-The principle is: ``if a signal implies a
+The four misses are visualised in
+\figref{fig:misses}. The principle behind our
+held-out fixes is: ``if a signal implies a
 detector-firing pattern that does not match the
 event's true root cause, our fix is to gate, cap,
 or tie-break on signal --- not to use the
@@ -735,7 +736,9 @@ is the operational signal of the 5-min Radar bucket
 sparsity limit. CSS strict-causal fires on
 $\leq 3/30$ events; the 3 strict-causal events are
 visualised in \figref{fig:css-n3}
-(\Sectref{sec:css-strict-subset}). The remaining
+(\Sectref{sec:css-strict-subset}). The per-channel
+abstention rates are visualised in
+\figref{fig:ch-sparsity}. The remaining
 27 events are routed through the \hcaf{}
 composite scoring rule, whose uniform-prior
 ablation (\Sectref{sec:uniform-prior}) shows a
