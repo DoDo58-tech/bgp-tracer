@@ -58,11 +58,11 @@ ASes whose routing state is affected (consumed by
 Phase~2). All six detectors are \emph{single-signal}: each
 emits a structured payload with a count, a score, and a
 list of retained events. The arbitration function
- is the
+\texttt{compute\_top\_cause} is the
 only component that combines them. The interpretability
 property is the key: every Phase~1 verdict is traceable
 to a detector output, and the arbitration is auditable
-by reading .
+by reading the function source.
 
 \subsection{Phase-1 arbitration: \texttt{compute\_top\_cause}}
 \label{sec:arbitration}
@@ -90,8 +90,11 @@ candidates land within $0.05$ of each other.
 \end{enumerate}
 
 The output is one of five classes:
-, or
-. The fifth class is the only
+\texttt{origin\_hijack\_victim},
+\texttt{route\_leak},
+\texttt{outage},
+\texttt{roa\_misconfig}, or
+\texttt{no\_clear\_anomaly}. The fifth class is the only
 one that triggers a Phase~1 \texttt{unknown}; the other
 four commit a label with a calibrated confidence in
 $[0, 1]$.
@@ -103,7 +106,7 @@ would be the natural alternative, but it would fail the
 no-data-leakage constraint: the model's decision
 boundaries would be tuned to the ground-truth labels,
 not to the cache signals. The explicit decision tree in
- has the counter-factual
+\Eqref{eq:hcaf-score} has the counter-factual
 property that every cap, gate, and tie-breaker is a
 \emph{principled consequence} of an observable cache
 signal (\Sectref{sec:fixes}) and our evaluation
@@ -232,7 +235,7 @@ $\hat\tau \in [0.30, 0.60]$ and shows our Phase~2
 strict-precision is insensitive to the exact value
 within this range.
 
-\paragraph{Per-channel sparsity on .}
+\paragraph{Per-channel sparsity on the ground-truth.}
 \label{sec:per-channel-sparsity}
 The five evidence channels do not all fire equally often on
 the ground-truth. \Tblref{tab:ch-sparsity} reports
@@ -246,13 +249,13 @@ is structurally low ($\leq 3/30$) for reasons analysed in
 fire on vast majority of events; Granger and TE
 abstain on roughly a quarter of events due to the
 5-minute Radar bucket resolution limit. The
-abstention pattern is the same on held-out held-out
+abstention pattern is the same on the held-out
 candidate set (supplementary \Sectref{sec:supp-heldout}).
 
 \begin{table}[t]
 \centering
-\caption{Per-channel abstention on with Wilson 95\%
-CIs. The 5-min Radar bucket resolution is the dominant
+\caption{Per-channel abstention on the 30-event ground-truth
+with Wilson 95\% CIs. The 5-min Radar bucket resolution is the dominant
 sparsity cause for the Granger and TE channels; their
 CIs overlap ($[16.7\%, 47.9\%]$ vs.\ $[9.5\%, 37.3\%]$),
 which is consistent with both being driven by the same
@@ -310,15 +313,15 @@ $\delta_{\text{disagree}} \in \{0.0, 0.2, 0.4, 0.6,
 0.8, 1.0\}$ (channels opposite the CSS direction
 are weighted $\delta_{\text{disagree}}$ instead of
 $0.4$) and report the flip rate on committed
-directions. The sweep is implemented in
- and the
-output is
-:
+directions. The sweep is implemented in the
+disagreement-discount sensitivity script and the
+output is the per-$\delta$ sensitivity table below:
 
 \begin{table}[t][h]
 \centering
-\caption{Disagreement discount sensitivity on
-(29 committed events; \protect).
+\caption{Disagreement discount sensitivity on the
+30-event ground-truth
+(29 committed events).
 The flip rate stays at 0\% across $\delta_{\text{disagree}} \in [0.0,
 0.8]$ and rises to 3.5\% only at the $\delta=1.0$ extreme
 (no penalty for disagreement). The average L1 shift vs.\

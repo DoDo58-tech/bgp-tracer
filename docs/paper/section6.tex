@@ -14,10 +14,10 @@ We evaluate BGP Tracer's deterministic Phase~1 root-cause
 arbitration on \textbf{30-event ground-truth}
 (\Sectref{sec:dataset-invariants}): 7 origin-hijack,
 8 route-leak, 14 BGP-reachability-outage, plus one negative
-control (Starlink~2025 ). The
+control (Starlink~2025). The
 evaluation is fully deterministic, no LLM call is made, and
 the verdict is compared against the ground-truth cause label
-by . Reproducible
+by \texttt{reproduce\_eval.py}. Reproducible
 with two shell commands (see \Sectref{sec:reproducibility}).
 
 \subsection{Definition of evaluation metrics}
@@ -90,10 +90,11 @@ review-precision and the per-event Wilson CI.}
 \centering
 \caption{Phase~1 strict-accuracy on 30-event ground-truth
 ($N{=}30$). \Strict{} is the fraction of events for which
-\protect matches the ground-truth cause label.
+the Phase~1 verdict
+matches the ground-truth cause label.
 For the single negative control (Starlink~2025) a correct
 verdict is \emph{no clear anomaly} or
-\emph{traffic-only anomaly} (see \Sectref{sec:neg-ctrl}).
+\emph{traffic-only anomaly} (see \Sectref{sec:neg-ctrl-fixes}).
 The pre-optimization baseline is the cache build
 \emph{without} the ten principled fixes detailed in
 the supplementary material \Sectref{sec:fixes}.
@@ -204,7 +205,8 @@ Beyond strict-accuracy, we report the confidence
 calibration of the Phase~1 verdict on the
 ground-truth. The top-1 confidence is the
 probabilistic score that
- emits for its committed cause, in $[0.60, 0.99]$.
+\texttt{compute\_top\_cause}
+emits for its committed cause, in $[0.60, 0.99]$.
 We bin events by confidence (10 equal-width bins over
 $[0, 1]$) and compute the empirical accuracy in each
 bin; a perfectly calibrated model would lie on the
@@ -216,7 +218,8 @@ $\mathrm{ECE} = \sum_{b=1}^{B} \tfrac{n_b}{N}
 standard scalar summaries. We do not
 expect the top-1 confidence to be well-calibrated
 out-of-the-box, because the deterministic caps
-in \protect are tuned to favour committed verdicts
+in the arbitration logic
+are tuned to favour committed verdicts
 over abstention. The empirical calibration
 (\figref{fig:calibration} and
 \Tblref{tab:calibration}) is therefore a useful
@@ -242,7 +245,7 @@ over-confident in the $0.95$--$1.00$ bin
 expected), which is the documented behaviour of
 the deterministic arbitration: the top-1
 confidence is the maximum of the candidate scores,
-and the deterministic caps in
+and the deterministic caps in the arbitration
 favour of committed verdicts over abstention.}
 \label{fig:calibration}
 \end{figure}
@@ -307,18 +310,14 @@ given in \Tblref{tab:misses}.
 \begin{tabular}{p{0.18\textwidth}llp{0.42\textwidth}}
 \hline
 Event & GT & PRED & Why missed \\ \hline
- &
- & 0.75 &
-Leak over-fires on Cloudflare's internal re-announcements (self/victim ratio = 1.0); leak signal is hijack side-effect. \\k side-effect. \\
- &
- & 0.99 &
+\texttt{hijack\_cloudflare\_1.1.1.1\_2024} & \texttt{origin\_hijack\_victim} & route\_leak (0.75) &
+Leak over-fires on Cloudflare's internal re-announcements (self/victim ratio = 1.0); leak signal is hijack side-effect. \\
+\texttt{leak\_cox\_communications\_2025\_05\_01} & \texttt{route\_leak} & outage (0.99) &
 68.95\% real leak with outage-like traffic signature; both detectors fire (outage 0.99 vs leak 0.65); arbitration picks outage. \\
- &
- & &
+\texttt{outage\_north\_korea\_star\_2025\_03\_18} & \texttt{outage} & no cache &
 \cf{} Radar v2 API HTTP~400; no cache built (graceful-degradation case). \\
- (NC) &
-/NC & 0.99 &
-NC rule requires ; system picks outage on no-cache fallback. \\
+\texttt{outage\_starlink\_2025} (NC) & \texttt{outage}/NC & outage (0.99) &
+NC rule requires no-cache at analysis AS; system picks outage on no-cache fallback. \\
 \hline
 \end{tabular}
 
@@ -337,10 +336,12 @@ detector-coverage limits (leak over-fires on hijack
 side-effect; outage over-fires on real leak with
 outage-like signature). Miss 3 is an upstream-API
 degradation (CF Radar HTTP 400 --- graceful-degradation
-case). Miss 4 is an NC definition quirk (NC requires
-\protect; system picks outage). None
-recoverable by additional thresholds without leaking
-ground-truth labels.}
+case). Miss 4 is an NC definition quirk: the
+negative-control rule requires the cache to be
+absent at the analysis AS, so the system picks
+outage on the partial cache. None recoverable by
+additional thresholds without leaking ground-truth
+labels.}
 \label{fig:misses}
 \end{figure}
 
@@ -390,7 +391,7 @@ event). All four detectors contribute positively to
 the strict-accuracy; the traffic detector is the most
 critical single source ($-37.9$~pp when dropped). The
 \enquote{drop all} row of 34.5\% is the default
-\protect verdict, which catches the 1
+\enquote{no detector} verdict, which catches the 1
 negative-control event plus 9/29 of the \enquote{soft}
 causes where the dominant routing signal is below the
 detector's reported threshold.}
@@ -510,11 +511,12 @@ $86.7\%$ is not driven by any single event.}
 the 86.7\% headline, not a side experiment.} The held-out
 candidate set contains 13 events with built
 caches that are not in the evaluation
-.
+ground-truth.
 We ran Phase~1 on these 13 events as a held-out stress
-test .
+test.
 The GT label for each held-out event is its
- (not the ground-truth cause label,
+operator-cited cause label
+(not the ground-truth cause label,
 which is absent for the held-out candidates). The 13 events
 reduce to 10 after excluding the 3 held-out events whose
 cached detector data was insufficient for arbitration.
@@ -570,9 +572,9 @@ source. The dataset is balanced across
 hijack / leak / outage / NC labels, with a
 post-2023 majority reflecting the BGP-Tracer
 deployment window. Composition is in
-\protect and the
+\Tblref{tab:dataset-distribution} and the
 rejection breakdown is in
-\protect.}
+\Tblref{tab:s17-rej}.}
 \label{fig:comp-table}
 \end{figure}
 
@@ -607,8 +609,8 @@ single-cap half-fixes (79.3\%) add per-cause
 caps; the full ten-fix arbitration (86.7\%)
 adds the tie-breakers, gates, and the routing-
 withdrawal override. Each tier contributes
-7--9 pp. Reproduce:
-\protect.}
+7--9 pp. Reproduce: per-cause cap and full-fix
+ablation rows in \Tblref{tab:detector-ablation}.}
 \label{fig:neg-ctrl}
 \end{figure}
 
@@ -624,42 +626,38 @@ accuracy. We audit the HTML pipeline on
 \centering
 \includegraphics[width=0.75\linewidth]{figs/fig_html_eval.pdf}
 \caption{Operator-facing HTML pipeline evaluation
-on . \emph{Top}: pre-fix
-(\protectthe \texttt{skip\_outage=True} default) strict-accuracy is
+on the 30-event ground-truth.
+\emph{Top}: pre-fix
+(the \texttt{skip\_outage=True} default) strict-accuracy is
 21/30 = 70.0\%; LLM override rate is 8/30 = 26.7\%;
 LLM regression rate is 6/30 = 20.0\%.
 \emph{Bottom}: post-fix
-(\protectsetting \texttt{skip\_outage=False}) strict-accuracy is
+(setting \texttt{skip\_outage=False}) strict-accuracy is
 26/30 = 86.7\%; override rate drops to 2/30;
 regression rate is 0/30. The 16.7~pp gap is
-closed by a one-line \protectsetting \texttt{skip\_outage=False}
-flag. Reproduce:
-\protect.}
+closed by a one-line
+\texttt{skip\_outage=False}
+flag. Reproduce: \Tblref{tab:supp-html}.}
 \label{fig:html-eval}
 \end{figure}
 
 \paragraph{History of the flag.}
 The flag was introduced in
- on 2026-08-14 as a
+the React-mode HTML pipeline on 2026-08-14 as a
 performance optimisation: when the outage detector
 takes longer than 30\,s on a 1.5-hour cache, the
 flag short-circuits the outage branch and the LLM
 narrative is generated from the leak + hijack
 detectors alone. The flag was set to
- by default in the React-mode HTML
+\texttt{True} by default in the React-mode HTML
 pipeline on 2026-08-21. The pre-fix 70.0\% number
 in this section is reproduced with
-the \texttt{skip\_outage=True} default (the default in the
-build of ). The
-our fix on 2026-10-10 sets
-setting \texttt{skip\_outage=False} for the React-mode HTML
-pipeline. The reproduce command for the pre-fix
-number is
-;
-the post-fix number is
-.
-Both reproduce commands are documented in
- (supplementary).
+the \texttt{skip\_outage=True} default. Our
+fix on 2026-10-10 sets
+\texttt{skip\_outage=False} for the React-mode HTML
+pipeline. Both pre-fix and post-fix numbers are
+reproduced in the supplementary material
+(\Tblref{tab:supp-html}).
 
 \begin{itemize}
 \itemsep0pt
@@ -698,12 +696,11 @@ modes into the caches
 \centering
 \includegraphics[width=0.75\linewidth]{figs/fig_deg_stress.pdf}
 \caption{Five-mode degraded-mode stress test on
-caches. The strict-accuracy is in
+30-event ground-truth caches. The strict-accuracy is in
 $[75.9\%, 86.7\%]$; the worst case is the
 BGPStream rate-limit at $-10.8$~pp. No mode
 crashes and all verdicts remain auditable.
-Reproduce:
-\protect.}
+Reproduce: \Tblref{tab:supp-deg-stress}.}
 \label{fig:deg-stress}
 \end{figure}
 
@@ -711,10 +708,10 @@ Reproduce:
 \itemsep0pt
 \item \emph{No degradation}: 26/30 = 86.7\% (baseline).
 \item \emph{\cf{} Radar HTTP 400}: 25/30 = 82.8\%
-(same event as ; routing-only fallback).
+(same event as the North Korea miss; routing-only fallback).
 \item \emph{BGPStream rate-limit}: 23/30 = 75.9\%
 (50\% input loss; 5 events fall to
-).
+routing-only verdict).
 \item \emph{RIPE RIS lag 5min}: 24/30 = 79.3\%
 (timestamp shift; MSBD breakpoint shifts
 $\leq 1$ bucket on 27/30 events).
@@ -748,7 +745,7 @@ ablation (\Sectref{sec:uniform-prior}) shows a
 \centering
 \includegraphics[width=0.75\linewidth]{figs/fig_ch_sparsity.pdf}
 \caption{Per-channel abstention rate on
-(n=30). CSS strict-causal is the most abstaining
+the 30-event ground-truth (n=30). CSS strict-causal is the most abstaining
 channel (90.0\%) --- a structural limit of
 Pearl-PNS on 5-min Radar bucket. The five
 channels together commit a direction on every
@@ -788,12 +785,14 @@ events are in the supplementary
 BGP withdrawals per 5-min bin, concentrated at the
 MSBD breakpoint $t{=}90$~min. \emph{Middle}:
 Cloudflare Radar traffic, dropping to 40\% of
-baseline. \emph{Bottom}: 5-channel composite scoring-rule
-output committing $R\!\to\!T$ at 0.77 in the
-post-incident window. The four detectors plus the
-5-channel scoring rule are shown overlaid on a
-single 15-hour window to make the temporal
-alignment auditable. \emph{Public-source
+baseline. \emph{Bottom}: HCAF posterior
+probability over the three directional hypotheses
+($R\!\to\!T$, $T\!\to\!R$, \texttt{independent}),
+committing $R\!\to\!T$ at 0.77 in the
+post-incident window. The temporal alignment of
+the routing withdrawal, the Radar traffic drop,
+and the posterior commit is shown on a single
+15-hour window. \emph{Public-source
 timestamp}: the event's public post-mortem (Cloudflare
 Radar incident report) places the start of the
 outage at 14:23 UTC 2025-06-18, which aligns with

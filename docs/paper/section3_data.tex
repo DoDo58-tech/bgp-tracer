@@ -77,7 +77,7 @@ arbitration runs.
 \caption{The six strict curation invariants for the
 ground-truth. All 30 events satisfy all six. 169
 candidates were rejected with explicit reasons in
-\protect.}
+\protect\Tblref{tab:s17-rej}.}
 \label{tab:invariants}
 \setlength{\tabcolsep}{3pt}
 \small
@@ -95,7 +95,7 @@ candidates were rejected with explicit reasons in
 \end{table}
 
 \noindent 169 candidates were rejected with explicit
-reasons in ; the dominant
+reasons in \Tblref{tab:s17-rej}; the dominant
 rejection causes are \texttt{no\_rrc00\_parquet\_for\_date}
 (121 events), \texttt{no\_traffic\_signal} (28 events), and
 \texttt{source\_url\_unreachable} (12 events). All 30
@@ -139,11 +139,11 @@ with a measured Cohen's $\kappa$.
 \begin{figure}[t]
 \centering
 \includegraphics[width=0.75\linewidth]{figs/fig5_dataset.pdf}
-\caption{ground-truth composition. \emph{Left}: 30
+\caption{Ground-truth composition. \emph{Left}: 30
 events across 3 cause labels + 1 negative control.
 \emph{Middle}: 169 rejected candidates (top-5 reasons;
-\protect is the dominant
-rejection --- 21 events, all post-curation operational
+\Tblref{tab:s17-rej} is the dominant
+rejection --- 121 events, all post-curation operational
 events that lack a fresh BGPStream parquet at RRC00).
 \emph{Right}: 14 outage events split by root-cause
 sub-type; \emph{announced-space-loss} and
@@ -154,7 +154,7 @@ largest sub-types.}
 
 \begin{table}[t]
 \centering
-\caption{ground-truth class distribution
+\caption{Ground-truth class distribution
 ($N{=}30$).}
 \label{tab:dataset-distribution}
 \small
@@ -211,11 +211,12 @@ or \emph{traffic-only anomaly}.
 \label{sec:reproducibility}
 
 A reviewer can reproduce every number in this paper with
-two shell commands on released artifact:
- and
-. The single
+two shell commands on the released artifact:
+\texttt{reproduce\_eval.sh} (for the 86.7\% / 70.0\% /
+60.0\% numbers) and \texttt{reproduce\_casestudy.sh}
+(for the case-study timelines). The single
 event whose cache cannot be built automatically
- requires a
+(North Korea star 2025-03-18) requires a
 fresh \cf{} Radar session; the algorithmic evaluation is
 not affected. Each data source can fail independently;
 the graceful-degradation design treats each as a

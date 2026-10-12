@@ -74,13 +74,17 @@ the three dependability properties above.
 \centering
 \includegraphics[width=0.75\linewidth]{figs/fig0_motivation.pdf}
 \caption{Alert-flood profile on 30-event
-ground-truth. \emph{Left}: per-event alert volume,
-split by detector---signal (matches GT) vs noise
-(other detectors). \emph{Right}: aggregate ---
-\textbf{21.6\% of raw alerts on GT-matching detector
-are noise} when other detectors fire on same
-window. Median: 5{,}286 alerts per event; worst case:
-870{,}338 (Rostelecom-Amazon 2020 hijack).}
+ground-truth. \emph{Left}: per-event alert volume
+on log scale, sorted by total alert count;
+signal alerts (matches GT) are stacked
+alongside noise alerts (other detectors on
+the same window). \emph{Right}: aggregate
+distribution ---
+\textbf{21.6\% of raw alerts on GT-matching
+detector are noise} when other detectors fire
+on the same window. Median: 5{,}286 alerts per
+event; worst case: 870{,}338 (Rostelecom-Amazon
+2020 hijack).}
 \label{fig:motivation}
 \end{figure}
 
@@ -227,12 +231,12 @@ is the diagnostic upper bound (the LLM never overrides
 a Phase~1 verdict in our post-fix protocol); the
 60.0\% held-out is the generalization diagnostic.
 A reviewer who only remembers one number should
-remember 86.7\% post-fix operator-facing on , with
+remember 86.7\% post-fix operator-facing on 30 events, with
 the explicit caveat that the n=30 sample bounds the
 CI to $[70.3\%, 94.7\%]$ (Wilson 95\%). The
 honest claim is therefore \emph{``the system achieves
 operator-facing strict-accuracy in $[70\%, 95\%]$ on
-, with the 86.7\% point estimate as the best
+the 30-event ground-truth, with the 86.7\% point estimate as the best
 single summary''} --- not \emph{``the system achieves
 exactly 86.7\%''}, which the sample size does not
 support. The headline-vs-held-out gap (86.7\% vs

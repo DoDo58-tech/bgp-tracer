@@ -26,7 +26,7 @@ design treats each input source as a first-class
 degraded mode (\cf{} Radar HTTP~400 $\to$ traffic-only,
 RIPE RIS missing $\to$ outage-only, CAIDA stale $\to$
 relationship-inference confidence downgrade). On the
- evaluation, 1 of 30 events triggers the no-cache
+30-event ground-truth, 1 of 30 events triggers the no-cache
 degraded mode; the algorithmic evaluation is not
 affected.
 
@@ -36,7 +36,8 @@ affected.
 The deterministic Phase~1 arbitration is strict-correct on
 $\frac{26}{30}$ (86.7\%) overall (\Sectref{sec:headline}).
 The $+16.7$~percentage points over the held-out baseline is
-principled: every threshold in is
+principled: every threshold in
+\Tblref{tab:detector-ablation} is
 observable from the cache signals, no ground-truth label
 enters the arbitration logic. The negative-control
 experiment (\Sectref{sec:neg-ctrl-fixes}) bounds the
@@ -121,7 +122,7 @@ the empirical bound on bias --- 6/10 = 60.0\% on
 unseen events that have \emph{no} public post-mortem.
 
 \paragraph{T2. Fixes as over-fitting.} The ten fixes
-in (\Sectref{sec:fixes}) add
+in the principled-fix table (\Sectref{sec:fixes}) add
 ten thresholds to a deterministic decision tree. The
 negative-control experiment (\Sectref{sec:neg-ctrl-fixes})
 bounds the principled-fix claim: the no-fixes baseline
@@ -151,7 +152,7 @@ aggregate.
 
 \paragraph{T4. Operator-facing gaps.}
 We commit to a single primary headline (\Tblref{tab:headline-bound}):
-the \emph{post-fix operator-facing 86.7\%} on is the
+the \emph{post-fix operator-facing 86.7\%} on 30 events is the
 number a reader should remember; the deterministic
 Phase~1 86.7\% is the diagnostic upper bound (the LLM
 never overrides a Phase~1 verdict in our post-fix
@@ -182,7 +183,7 @@ degraded-mode stress test
 (\Sectref{sec:deg-stress}) shows the strict-accuracy in
 $[75.9\%, 86.7\%]$ under operational failure modes.
 \emph{Residual risk:} 30 events is small; the next-step
-reproduction on a held-out our held-out set is documented as the
+reproduction on a held-out set is documented as the
 natural extension in \Sectref{sec:conclusion}.
 
 \subsection{Reproducibility as a first-class design property}
