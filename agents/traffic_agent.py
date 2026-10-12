@@ -23,6 +23,7 @@ def _to_canonical_severity(items: list) -> str:
 
     Returns "none" when anomalies is empty.
     """
+    anomalies = items
     if not anomalies:
         return "none"
     rank_map = {"high": 3, "medium": 2, "low": 1}

@@ -817,6 +817,7 @@ class AutoProbeExecutor:
 def extract_as_numbers(content: str) -> List[str]:
     """ "victim ASes: 20119, 34927, 207564" AS """
     import re
+    text = content
     matches = re.findall(r"\b(?:AS)?(\d{2,6})\b", text or "")
     seen = set()
     result = []
@@ -848,6 +849,7 @@ def extract_prefixes(content: str) -> List[str]:
  dedupes via ``list(dict.fromkeys(...))`` where needed.
  """
     import re
+    text = content
     if not text:
         return []
     v4_pat = re.compile(

@@ -57,6 +57,7 @@ DEFAULT_SERVERS = ["RADB", "RIPE", "APNIC"]
 
 def _clean_whois(content: str) -> str:
     """Remove WHOIS server banners and empty lines."""
+    text = content
     lines = []
     for line in text.splitlines():
         line = line.strip()
@@ -67,6 +68,7 @@ def _clean_whois(content: str) -> str:
 
 def _parse_aut_num(content: str) -> dict[str, Any]:
     """Parse aut-num (AS registration) object from IRR."""
+    text = content
     result = {
         "asn": None,
         "as_name": None,
@@ -99,6 +101,7 @@ def _parse_aut_num(content: str) -> dict[str, Any]:
 
 def _parse_route_objects(content: str) -> list[dict]:
     """Parse route/route6 objects from IRR."""
+    text = content
     objects = []
     current = {}
     for line in text.splitlines():

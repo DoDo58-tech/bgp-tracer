@@ -66,6 +66,7 @@ def _clean(content: str) -> str:
 
 def _process_docstring(content: str) -> str:
     """Find every triple-quoted string in `content` and strip CJK within it."""
+    text = content
     # We process one triple at a time using a simple state machine to avoid
     # touching string literals in code (which may be load-bearing data).
     out = []

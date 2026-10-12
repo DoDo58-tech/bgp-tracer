@@ -55,7 +55,7 @@ def _split_llm_prose_blocks(markup: str) -> Dict[str, str]:
             rf'<h2[^>]*>\s*(?:{re.escape(name)}|{re.escape(name_html_safe)})\s*</h2>(.*?)(?=<h[1-3][^>]*>|</body\s*>)',
             re.IGNORECASE | re.DOTALL,
         )
-        match = pattern.search(html)
+        match = pattern.search(markup)
         blocks[name] = match.group(1).strip() if match else ""
     return blocks
 
@@ -296,6 +296,7 @@ def _scrub_pathological_fragments(markup: str) -> str:
 def assert_no_known_issues(markup: str) -> Tuple[bool, List[str]]:
     """Return (passed, problems). The list of problems is empty when passed."""
     problems: List[str] = []
+    html = markup
     # No TCA mechanism hallucination
     if 'Mechanism: unknown' in html:
         problems.append("TCA has 'Mechanism: unknown' hallucination")

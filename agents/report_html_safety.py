@@ -245,7 +245,7 @@ def _auto_close_unbalanced_html(markup: str) -> str:
     if m:
         return markup[:m.start()] + closer_html + markup[m.start():]
     html_close_re = re.compile(r"</html\s*>", re.IGNORECASE)
-    m = html_close_re.search(html)
+    m = html_close_re.search(markup)
     if m:
-        return html[:m.start()] + closer_html + html[m.start():]
-    return html + closer_html
+        return markup[:m.start()] + closer_html + markup[m.start():]
+    return markup + closer_html

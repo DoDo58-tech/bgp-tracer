@@ -448,6 +448,7 @@ class DetectionResultConverter:
     @staticmethod
     def hijack_to_unified(payload: dict) -> UnifiedDetectionResult:
         """ hijack """
+        hijack_result = payload
         anomalies = []
         
         # Origin hijacked ( AS )
