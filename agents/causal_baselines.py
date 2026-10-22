@@ -381,41 +381,61 @@ def transfer_entropy_baseline(
             direction="unknown", confidence=0.0, method="transfer_entropy",
             details={"reason": f"TE computation failed: {type(e).__name__}: {e}"},
         )
-    # Surrogate baseline: shuffle routing's lag-window, recompute TE(R → T).
+    # Surrogate baselines: each direction needs ITS OWN null. The null for
+    # TE(R -> T) is built by destroying R's temporal order while holding T
+    # fixed; the null for TE(T -> R) is built by destroying T's order while
+    # holding R fixed. Previously a single null -- the routing-shuffle one --
+    # gated BOTH directions, so sig_tr was tested against a distribution
+    # derived from the wrong surrogate. That systematically mis-set the
+    # significance of the T -> R channel.
     rng = np.random.default_rng(42)
-    te_null = np.empty(n_perm, dtype=float)
-    for k in range(n_perm):
-        shuffled = r_arr.copy()
-        block = shuffled[lag:]
-        rng.shuffle(block)
-        shuffled[lag:] = block
-        try:
-            te_null[k] = _transfer_entropy_scalar(shuffled, t_arr, lag=lag, bins=bins)
-        except Exception:
-            te_null[k] = 0.0
-    null_mean = float(te_null.mean())
-    null_std = float(te_null.std())
+
+    def _surrogate_null(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
+        """Null distribution for TE(src -> dst) by shuffling src's lag window."""
+        out = np.empty(n_perm, dtype=float)
+        for k in range(n_perm):
+            shuffled = src.copy()
+            block = shuffled[lag:]
+            rng.shuffle(block)
+            shuffled[lag:] = block
+            try:
+                out[k] = _transfer_entropy_scalar(shuffled, dst, lag=lag, bins=bins)
+            except Exception:
+                out[k] = 0.0
+        return out
+
+    null_rt = _surrogate_null(r_arr, t_arr)
+    null_tr = _surrogate_null(t_arr, r_arr)
+    null_rt_mean = float(null_rt.mean())
+    null_rt_std = float(null_rt.std())
+    null_tr_mean = float(null_tr.mean())
+    null_tr_std = float(null_tr.std())
 
     # Decision rule:
-    #   * Direction is decided by cross-direction comparison (TE_R→T vs
-    #     TE_T→R). The surrogate null is used only as a significance
-    #     check: if neither direction beats the null at 1·std the call
-    #     is "unknown" (no information transfer detectable).
-    #   * Confidence = clamp(|TE_R→T − TE_T→R| / max(TE_R→T, TE_T→R), 0, 1).
-    sig_rt = te_rt > null_mean + 1.0 * null_std
-    sig_tr = te_tr > null_mean + 1.0 * null_std
-    if sig_rt and te_rt > te_tr and (not sig_tr or te_rt >= te_tr):
+    #   * Each direction is tested against its OWN surrogate null.
+    #   * A direction call requires BOTH (a) that direction exceeding its own
+    #     null at 1 std AND (b) it exceeding the reverse direction. The
+    #     previous "te_rt > te_tr * 1.2" fallbacks fired even when neither
+    #     direction cleared its null, i.e. they reported a direction from
+    #     pure noise; they are removed for that reason.
+    #   * Confidence = clamp(|TE_R->T - TE_T->R| / max(TE_R->T, TE_T->R), 0, 1).
+    sig_rt = te_rt > null_rt_mean + 1.0 * null_rt_std
+    sig_tr = te_tr > null_tr_mean + 1.0 * null_tr_std
+    if sig_rt and not sig_tr and te_rt > te_tr:
         direction = "routing_to_traffic"
-    elif sig_tr and te_tr > te_rt and (not sig_rt or te_tr > te_rt):
-        direction = "traffic_to_routing"
-    elif te_rt > te_tr * 1.2:
-        direction = "routing_to_traffic"
-    elif te_tr > te_rt * 1.2:
+    elif sig_tr and not sig_rt and te_tr > te_rt:
         direction = "traffic_to_routing"
     else:
+        # Both directions significant, or neither: the surrogate cannot
+        # separate them. Abstain rather than pick the larger point estimate.
         direction = "unknown"
     denom = max(te_rt, te_tr, 1e-9)
     confidence = min(1.0, abs(te_rt - te_tr) / denom)
+    if direction == "unknown":
+        # An abstention must not carry the confidence of a committed call:
+        # with te_tr == 0 the ratio above is 1.0 even when neither direction
+        # cleared its null. Report 0.0 and keep the raw ratio in details.
+        confidence = 0.0
     return BaselineResult(
         direction=direction,
         confidence=round(float(confidence), 3),
@@ -423,10 +443,13 @@ def transfer_entropy_baseline(
         details={
             "te_routing_to_traffic": round(float(te_rt), 4),
             "te_traffic_to_routing": round(float(te_tr), 4),
-            "null_mean": round(null_mean, 4),
-            "null_std": round(null_std, 4),
+            "null_rt_mean": round(null_rt_mean, 4),
+            "null_rt_std": round(null_rt_std, 4),
+            "null_tr_mean": round(null_tr_mean, 4),
+            "null_tr_std": round(null_tr_std, 4),
             "sig_rt": bool(sig_rt),
             "sig_tr": bool(sig_tr),
+            "raw_asymmetry_ratio": round(min(1.0, abs(te_rt - te_tr) / denom), 3),
             "lag": lag,
             "bins": bins,
             "n_perm": n_perm,

@@ -79,8 +79,10 @@ def test_transfer_entropy_has_te_metrics_in_details():
     result = transfer_entropy_baseline(routing, traffic, bins=2)
     assert "te_routing_to_traffic" in result.details
     assert "te_traffic_to_routing" in result.details
-    assert "null_mean" in result.details
-    assert "null_std" in result.details
+    assert "null_rt_mean" in result.details
+    assert "null_rt_std" in result.details
+    assert "null_tr_mean" in result.details
+    assert "null_tr_std" in result.details
     # Both TE values must be ≥ 0 (TE is unsigned by construction).
     assert result.details["te_routing_to_traffic"] >= 0
     assert result.details["te_traffic_to_routing"] >= 0

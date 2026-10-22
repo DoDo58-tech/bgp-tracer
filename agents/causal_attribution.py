@@ -48,7 +48,7 @@ try:
     from config import (
         HCAF_WEIGHTS_MSBD, HCAF_WEIGHTS_CTPR, HCAF_WEIGHTS_CIC,
         HCAF_WEIGHTS_GRANGER, HCAF_MAJORITY_THRESHOLD,
-        HCAF_MIN_DIRECTION_CONFIDENCE,
+        HCAF_MIN_DIRECTION_CONFIDENCE, HCAF_MIN_POSTERIOR,
     )
     _HCAF_CFG_OK = True
 except ImportError:
@@ -57,6 +57,7 @@ except ImportError:
     HCAF_WEIGHTS_CIC, HCAF_WEIGHTS_GRANGER = 0.30, 0.15
     HCAF_MAJORITY_THRESHOLD = 2
     HCAF_MIN_DIRECTION_CONFIDENCE = 0.10
+    HCAF_MIN_POSTERIOR = 0.50
 
 
 def _hcaf_majority_vote(method_directions, threshold=HCAF_MAJORITY_THRESHOLD):
@@ -1104,36 +1105,48 @@ class CausalAttributionEngine:
         explanation = self.generate_explanation(direction, strength, routing_to_traffic, traffic_to_routing, convergence, finding_list)
         limitations = self.identify_limitations(finding_list, confounder_list, len(routing_timeline))
 
-        # ── Abstention gate (2026-10-05) ─────────────────────────────────────
+        # ── Abstention gate (rewritten 2026-10-22) ───────────────────────────
         # Do not assert a causal direction the evidence does not support.
         #
-        # When every innovation method abstains, `direction` was still being
-        # reported as a concrete value (routing_to_traffic or
-        # traffic_to_routing) with confidence ~0.06. On the v13 ground truth
-        # each of those events had `routing_withdrawal_count == 0` and no
-        # routing evidence whatsoever, so the direction was fabricated noise
-        # presented as a verdict. Review precision was 0.552.
+        # The previous gate compared `confidence` — the *blended display score*
+        # 0.6·css_conf + 0.3·innovation_strength + 0.1·te_conf, multiplied by
+        # 0.7 (or 0.95 when CSS was causal) — against a 0.55 floor.  Those two
+        # numbers are not on the same scale: with typical css≈0.1 and
+        # innovation≈0.1 the blend collapses to ≈0.07, so the gate abstained on
+        # 23 of 25 real-cache events regardless of the evidence.  The blend is
+        # a *reporting* strength, not a decision probability.
         #
-        # "unknown" is already treated as non-error by the evaluation harness
-        # (review v2 §1.3.3), so abstaining here is both more honest and scores
-        # strictly better. The gate applies only to the *direction* string; the
-        # underlying confidences, findings and evidence_support are preserved so
-        # a downstream consumer can still inspect why it abstained.
+        # The decision now uses two gates on the quantities they were defined
+        # for:
+        #   gate 1 (statistics): the committed direction must be the one whose
+        #           CSS bootstrap CI excludes zero (`is_causal`);
+        #   gate 2 (posterior): max(posterior) >= HCAF_MIN_POSTERIOR.
         abstained = False
+        abstain_reason = "supported"
         # `direction` may be the enum ("traffic_to_traffic") or its rendered
         # label ("traffic -> traffic") depending on which branch produced it,
         # so normalise before testing.
         _dir_norm = (direction or "").replace(" ", "").replace("->", "_to_")
+        posterior = convergence.get("posterior") or {}
+        max_posterior = (
+            max(float(v) for v in posterior.values())
+            if isinstance(posterior, dict) and posterior else 0.0
+        )
         if _dir_norm in ("routing_to_traffic", "traffic_to_routing"):
-            if float(confidence or 0.0) < HCAF_MIN_DIRECTION_CONFIDENCE:
+            if not bool(convergence.get("is_causal", False)):
                 abstained = True
+                abstain_reason = "css_not_significant"
+            elif max_posterior < HCAF_MIN_POSTERIOR:
+                abstained = True
+                abstain_reason = "posterior_below_floor"
             elif not (routing_to_traffic or traffic_to_routing):
                 abstained = True
+                abstain_reason = "direction_flags_disagree"
         if abstained:
             explanation = (
                 "Insufficient evidence to attribute a causal direction "
-                f"(best direction {direction} scored {float(confidence or 0.0):.3f}, "
-                f"below the {HCAF_MIN_DIRECTION_CONFIDENCE:.2f} floor). "
+                f"(best direction {direction}, max posterior {max_posterior:.3f} "
+                f"vs floor {HCAF_MIN_POSTERIOR:.2f}; reason: {abstain_reason}). "
                 "Reported as unknown rather than asserting an unsupported direction."
             )
             direction = "unknown"
@@ -1150,7 +1163,9 @@ class CausalAttributionEngine:
             explanation=explanation, limitations=limitations,
             evidence_support={
                 "abstained": abstained,
-                "abstain_reason": "confidence_below_floor" if abstained else "supported",
+                "abstain_reason": abstain_reason if abstained else "supported",
+                "max_posterior": round(max_posterior, 4),
+                "min_posterior_floor": HCAF_MIN_POSTERIOR,
                 "msbd_breakpoint_idx": breakpoint_result.get("breakpoint_idx"),
                 "msbd_scale_sync": breakpoint_result.get("scale_sync"),
                 "ctpr_path_length": path_result.get("path_length"),
@@ -1278,15 +1293,20 @@ class CausalAttributionEngine:
                 logger.debug("transfer_entropy_baseline failed: %s", e)
                 te_result = None
 
-        # Extract event_type for domain-informed prior and TE gating
-        _event_type = (routing_context or {}).get("event_type") or \
-                     (traffic_context or {}).get("event_type") or None
+        # NOTE (2026-10-22): `event_type` is no longer read here.  It is the
+        # ground-truth cause label, and the expected direction in the
+        # evaluation is derived from that same label, so injecting it into any
+        # prior or channel turns the benchmark into a label-echo test.  Only
+        # quantities measurable from the BGP/traffic streams may enter.
 
         # --- 3. Build evidence channels (likelihood ratios) ----------------
         evidence_channels: Dict[str, Dict[str, Any]] = {}
 
         # MSBD: acts as the counterfactual baseline (Pearl's "intervention
         # window"). Its likelihood ratio favours the direction MSBD sees.
+        # When MSBD abstains, it contributes nothing: the previous code
+        # injected a 1.5:1 R→T "event type" channel here, which was a copy of
+        # the ground-truth label.
         msbd_dir = (breakpoint or {}).get("direction", "unknown")
         msbd_strength = float((breakpoint or {}).get("strength", 0.0) or 0.0)
         if msbd_dir in ("routing_to_traffic", "traffic_to_routing"):
@@ -1297,22 +1317,6 @@ class CausalAttributionEngine:
                     msbd_dir: msbd_lr,
                     ("traffic_to_routing" if msbd_dir == "routing_to_traffic"
                      else "routing_to_traffic"): 1.0 / msbd_lr,
-                    "independent": 1.0,
-                },
-            }
-        elif routing_context and routing_context.get("event_type") in (
-            "route_leak", "origin_hijack_victim", "origin_hijack_attacker",
-            "roa_misconfig", "origin_hijack",
-        ):
-            # MSBD returned unknown but routing context says this is a routing-driven
-            # event type (origin hijack, route leak, ROA misconfig). Inject a weak
-            # R→T prior into the evidence channels so the Bayesian synthesis does
-            # not default to a uniform prior when all heuristic channels also abstain.
-            evidence_channels["routing_event_type"] = {
-                "direction": "routing_to_traffic",
-                "likelihood": {
-                    "routing_to_traffic": 1.5,
-                    "traffic_to_routing": 1.0,
                     "independent": 1.0,
                 },
             }
@@ -1372,33 +1376,25 @@ class CausalAttributionEngine:
                 }
 
         # Transfer Entropy: non-linear directional information flow.
-        # TE is UNRELIABLE on real-data events (conf=1.0 but wrong direction in
-        # 4/5 cases) while being correct on synth-data events. Root cause:
-        # discrete binning flips TE direction when the BGP signal is sparse
-        # (real cache has <2 event rows per channel). Fix: suppress TE
-        # entirely when it disagrees with the event-type domain prior.
-        # TE agrees with prior on synth events (LR=1.6 boosts them correctly).
-        # TE disagrees with prior on real events (conf=1.0 but wrong direction).
-        # Allowing TE only when it agrees with the prior fixes all 5 errors.
+        #
+        # FIX (2026-10-22): TE used to be admitted only when its direction
+        # agreed with a direction derived from `event_type` ("suppress TE when
+        # it disagrees with the domain prior").  That is label leakage: the
+        # prior and the ground truth are the same mapping, so disagreement
+        # suppression guaranteed the "correct" answer.  TE now contributes on
+        # its own statistical merit — the baseline exposes a permutation
+        # p-value per direction, and only a significant TE may enter.
         if te_result is not None and te_result.direction in (
             "routing_to_traffic", "traffic_to_routing"
         ):
-            # Determine domain prior direction from event_type
-            _dom_dir = None
-            if _event_type in ("route_leak", "origin_hijack", "roa_misconfig"):
-                _dom_dir = "routing_to_traffic"
-            elif _event_type == "outage":
-                _dom_dir = "traffic_to_routing"
-            # Only use TE when it agrees with the domain prior direction.
-            te_lr = 1.0
-            if _dom_dir is not None and te_result.direction == _dom_dir:
-                # TE agrees with domain prior — moderate contribution
+            te_details = getattr(te_result, "details", {}) or {}
+            te_significant = bool(te_details.get("significant", False))
+            p_te = te_details.get(
+                "p_value_rt" if te_result.direction == "routing_to_traffic" else "p_value_tr",
+                1.0,
+            )
+            if te_significant and float(p_te) < 0.05:
                 te_lr = max(1.05, 1.0 + te_result.confidence * 0.6)
-            elif _dom_dir is None:
-                # Unknown event type — reduced contribution
-                te_lr = max(1.05, 1.0 + te_result.confidence * 0.4)
-            # else: TE disagrees with domain prior → te_lr = 1.0 (suppressed)
-            if te_lr > 1.0:
                 evidence_channels["transfer_entropy"] = {
                     "direction": te_result.direction,
                     "likelihood": {
@@ -1409,67 +1405,30 @@ class CausalAttributionEngine:
                     },
                 }
 
-        # --- 4. Routing metadata: BGP withdrawal/origin evidence --------------
-        # Inject routing metadata when CSS abstains, to override heuristics that
-        # contradict strong routing ground truth.
-        #
-        # Bangladesh case: MSBD returns T→R on sparse cache data (4.5h window
-        # for a 137.5h outage → near-zero variance), but 138 BGP withdrawals
-        # are unambiguous ground-truth evidence of R→T. We MUST remove the
-        # contradictory MSBD channel so the routing_withdrawal_signal is not
-        # swamped by the MSBD T→R likelihood.
+        # --- 4. Routing metadata: an *observed* withdrawal in an outage window ---
+        # Only the observable fact "a BGP withdrawal was recorded in the event
+        # window" is used, and only for outages.  The previous branch
+        #   evt in ("route_leak", "roa_misconfig", "origin_hijack*")
+        # mapped the ground-truth cause label directly to a 10:1 R→T signal
+        # and popped the contradicting MSBD channel.  That both leaked the
+        # label (the expected direction is produced by the same mapping) and
+        # deleted evidence that disagreed with the answer.  Both are removed.
+        _routing_withdrawal_signal: Optional[str] = None
         if routing_context:
             evt = routing_context.get("event_type", "")
-            has_wd = routing_context.get("has_routing_withdrawal", False)
-            has_origin = routing_context.get("has_routing_origin", False)
-            routing_meta_says_rt = (
-                (evt in ("route_leak", "roa_misconfig") or evt.startswith("origin_hijack"))
-                or (evt == "outage" and has_wd)
-            )
-            msbd_dir = (evidence_channels.get("msbd_counterfactual") or {}).get("direction", "unknown")
-            # Inject routing metadata signal when CSS abstains and routing metadata
-            # contradicts the existing MSBD direction (or there is no MSBD direction).
-            if routing_meta_says_rt and msbd_dir != "routing_to_traffic":
-                evidence_channels.pop("msbd_counterfactual", None)
-                evidence_channels["routing_withdrawal_signal"] = {
-                    "direction": "routing_to_traffic",
-                    "likelihood": {
-                        "routing_to_traffic": 10.0,
-                        "traffic_to_routing": 1.0,
-                        "independent": 1.0,
-                    },
-                }
-            elif routing_meta_says_rt and msbd_dir == "unknown":
-                # No MSBD channel at all — inject without removing anything
-                evidence_channels["routing_withdrawal_signal"] = {
-                    "direction": "routing_to_traffic",
-                    "likelihood": {
-                        "routing_to_traffic": 10.0,
-                        "traffic_to_routing": 1.0,
-                        "independent": 1.0,
-                    },
-                }
-            elif evt == "outage" and not has_wd and not has_origin and not evidence_channels:
-                evidence_channels["traffic_only_outage"] = {
-                    "direction": "traffic_to_routing",
-                    "likelihood": {
-                        "routing_to_traffic": 1.0,
-                        "traffic_to_routing": 2.0,
-                        "independent": 1.0,
-                    },
-                }
+            has_wd = bool(routing_context.get("has_routing_withdrawal", False))
+            if evt == "outage" and has_wd:
+                # Bounded (1.5:1) weak channel inside bayesian_synthesize; it
+                # can be outweighed, not used as a veto.
+                _routing_withdrawal_signal = "routing_to_traffic"
 
         # --- 5. Bayesian synthesis -----------------------------------------
-        # Extract routing_withdrawal_signal before calling bayesian_synthesize.
-        # This is a domain-overriding signal, not a heuristic channel — it must
-        # enter the prior directly to override even a strong T→R prior.
-        _routing_withdrawal_signal: Optional[str] = None
-        if "routing_withdrawal_signal" in evidence_channels:
-            _routing_withdrawal_signal = evidence_channels.pop("routing_withdrawal_signal")["direction"]
         if _CSS_OK and bayesian_synthesize is not None and css_res is not None:
-            posterior = bayesian_synthesize(css_res, evidence_channels=evidence_channels,
-                                             event_type=_event_type,
-                                             routing_withdrawal_signal=_routing_withdrawal_signal)
+            posterior = bayesian_synthesize(
+                css_res,
+                evidence_channels=evidence_channels,
+                routing_withdrawal_signal=_routing_withdrawal_signal,
+            )
             direction = posterior["direction"]
             confidence = posterior["confidence"]
             method_label = "css_bayesian_synthesis"

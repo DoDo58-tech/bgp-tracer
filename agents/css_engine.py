@@ -78,6 +78,7 @@ Public API:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -284,30 +285,44 @@ def _align_series(
 def _find_breakpoint(
     series: List[float],
     half_window: Optional[int] = None,
+    min_effect: float = 0.0,
 ) -> int:
-    """Return the index of the largest mean-shift in ``series``.
+    """Return the index of the largest mean-shift in ``series``, or ``-1``.
 
-    Falls back to the midpoint if no meaningful shift is detectable or
-    if numpy is unavailable. Shared between the routing-defined and
-    traffic-defined intervention-window splits.
+    ``-1`` means *no detectable breakpoint*: the series is constant, all-zero,
+    too short, or its best split does not move the mean by more than
+    ``min_effect`` standard deviations.  Callers MUST treat ``-1`` as "there is
+    no intervention window" and abstain.  Returning the midpoint instead (the
+    pre-2026-10-22 behaviour) fabricated an intervention on flat series: every
+    candidate split has ``diff == 0``, the first candidate ``k = half`` won the
+    ``best_diff`` comparison, and both series ended up split at the same index,
+    so ``lead`` was always 0 and the direction fell through to a magnitude
+    comparison between two incommensurable quantities.
+
+    The effect is normalised by the series' own standard deviation so the
+    ``min_effect`` floor (when supplied by a caller) is scale-free.
     """
     n = len(series)
-    if n < 4:
-        return max(0, n // 2)
-    if not NUMPY_OK:
-        return n // 2
+    if n < 4 or not NUMPY_OK:
+        return -1
     arr = np.array(series, dtype=float)
     half = half_window or max(1, n // 4)
+    if n - 2 * half < 1:
+        half = max(1, (n - 1) // 2)
     pre_mean = arr[:half].mean()
-    best_idx = n // 2
-    best_diff = -1.0
+    scale = float(arr.std())
+    best_idx = -1
+    best_effect = 0.0
     for k in range(half, n - half):
         post_mean = arr[k:].mean()
-        diff = abs(float(post_mean) - pre_mean)
-        if diff > best_diff:
-            best_diff = diff
+        effect = abs(float(post_mean) - float(pre_mean))
+        if scale > 1e-12:
+            effect /= scale
+        # Strictly greater: an all-zero/constant series keeps best_idx == -1.
+        if effect > best_effect:
+            best_effect = effect
             best_idx = k
-    return best_idx
+    return best_idx if best_effect > min_effect else -1
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -320,17 +335,21 @@ def _split_at_breakpoint(
 ) -> Tuple[List[float], List[float], List[float], List[float], int]:
     """Return (r_pre, t_pre, r_post, t_post, breakpoint_idx).
 
-    If ``breakpoint_idx`` is None we find the largest-mean-shift point
-    in the routing series (proxy for MSBD output). If the routing series
-    has no detectable break we split at the midpoint.
+    If ``breakpoint_idx`` is None we find the largest-mean-shift point in the
+    routing series (proxy for MSBD output).  When no break is detectable the
+    function returns empty windows and ``-1`` — it never falls back to a
+    midpoint split, because a midpoint split invents a pre/post partition that
+    the data does not support (see :func:`_find_breakpoint`).
     """
     n = len(r_scores)
     if n < 4:
-        return [], [], [], [], 0
+        return [], [], [], [], -1
     if breakpoint_idx is None or breakpoint_idx < 1 or breakpoint_idx >= n - 1:
         breakpoint_idx = _find_breakpoint(r_scores)
-    pre_end = max(1, breakpoint_idx)
-    post_start = min(n - 1, breakpoint_idx)
+    if breakpoint_idx < 1 or breakpoint_idx >= n:
+        return [], [], [], [], -1
+    pre_end = breakpoint_idx
+    post_start = breakpoint_idx
     return (
         r_scores[:pre_end],
         t_scores[:pre_end],
@@ -355,22 +374,33 @@ SCARCITY_THRESHOLD = 10
 
 
 def _scarcity_aware_pns(pre, post, alpha_prior=1.0, beta_prior=1.0):
-    """Bayesian-shrinkage PNS for small samples.
+    """Bayesian-shrinkage PNS for small samples, in standardised units.
 
     Adds α-1 successes and β-1 failures to a Bernoulli model where
     each pre/post sample is "post > pre baseline". This shrinks the
     effect estimate toward the prior mean (0.5 for symmetric Jeffrey's)
     when the sample is small, and converges to the MLE when n is large.
 
+    The point estimate and the CI are both expressed as the standardised
+    mean shift (Cohen's d), so this path is directly comparable with the
+    bootstrap path used for larger samples and with the opposite direction.
+
     Returns a dict with:
-      - point: shrunk difference in means
+      - point: shrunk standardised effect
       - ci_lower / ci_upper: Beta-posterior 95% credible interval on
-        the direction-of-effect probability, mapped back to a
-        PNS-equivalent scale
+        the direction-of-effect probability, mapped back onto the
+        standardised-effect scale
       - p_value: Bayesian posterior probability that effect ≤ 0,
         two-sided via the symmetric-Beta reference
     """
     n_pre, n_post = len(pre), len(post)
+    scale = _standardisation_scale(pre, post)
+    if not np.isfinite(scale) or scale <= 1e-12:
+        return {
+            "point": 0.0, "ci_lower": 0.0, "ci_upper": 0.0,
+            "p_value": 1.0, "sufficiency": 0.0, "necessity": 0.0,
+            "estimable": False,
+        }
     threshold = float(pre.mean())
     n_post_above = int((post > threshold).sum())
     # Beta posterior: Beta(α + k, β + n - k)
@@ -381,17 +411,18 @@ def _scarcity_aware_pns(pre, post, alpha_prior=1.0, beta_prior=1.0):
     beta_samples = rng.beta(alpha_post, beta_post, size=2000)
     # Two-sided: exclude 0.5 symmetrically
     lo, hi = float(np.percentile(beta_samples, 2.5)), float(np.percentile(beta_samples, 97.5))
-    # Convert Beta-CI to PNS-equivalent scale:
-    # Map [0.5, 1] → [0, max|point|] (positive effect).
-    # Map [0, 0.5] → [min|point|, 0] (negative effect).
-    point_raw = float(post.mean() - pre.mean())
-    max_abs = max(abs(float(post.mean())), abs(float(pre.mean())), 1e-9)
+    # Convert the Beta CI (a probability-scale interval) to the standardised
+    # effect scale by anchoring it at the observed |d|.  A CI that sits on 0.5
+    # (no sign information) collapses to zero effect; a CI at the boundary maps
+    # to the full observed effect.
+    point_raw = float((post.mean() - pre.mean()) / scale)
+    point_abs = abs(point_raw)
     if point_raw >= 0:
-        ci_lower = (max(lo, 0.5) - 0.5) * 2.0 * max_abs
-        ci_upper = (max(hi, 0.5) - 0.5) * 2.0 * max_abs
+        ci_lower = (max(lo, 0.5) - 0.5) * 2.0 * point_abs
+        ci_upper = (max(hi, 0.5) - 0.5) * 2.0 * point_abs
     else:
-        ci_lower = -(max(hi, 0.5) - 0.5) * 2.0 * max_abs
-        ci_upper = -(max(lo, 0.5) - 0.5) * 2.0 * max_abs
+        ci_lower = -(max(hi, 0.5) - 0.5) * 2.0 * point_abs
+        ci_upper = -(max(lo, 0.5) - 0.5) * 2.0 * point_abs
     # Shrinkage: alpha + beta → n_post + α + β - 2
     shrinkage = (alpha_prior + beta_prior) / (alpha_post + beta_post)
     point_shrunk = point_raw * (1.0 - shrinkage)
@@ -400,18 +431,38 @@ def _scarcity_aware_pns(pre, post, alpha_prior=1.0, beta_prior=1.0):
     p_null = 2.0 * min(float((beta_samples < 0.5).mean()),
                       float((beta_samples > 0.5).mean()))
     p_value = max(0.0, min(1.0, 1.0 - (1.0 - p_null)))
-    pre_std = float(pre.std())
-    sufficiency = abs(point_shrunk) / max(pre_std, 1e-9)
+    sufficiency = min(abs(point_shrunk), 5.0)
     necessity = float(n_post_above / max(n_post, 1))
     return {
         "point": point_shrunk,
         "ci_lower": float(ci_lower),
         "ci_upper": float(ci_upper),
         "p_value": p_value,
-        "sufficiency": min(sufficiency, 5.0),
+        "sufficiency": sufficiency,
         "necessity": necessity,
         "method": "scarcity_aware",
+        "estimable": True,
     }
+
+
+def _standardisation_scale(pre, post) -> float:
+    """Return a finite, scale-free denominator for a difference in means.
+
+    Uses the within-arm pooled standard deviation (Cohen's d denominator).
+    When both arms are internally constant — e.g. a clean step function — the
+    pooled within-arm variance is zero and d would be infinite, so we fall back
+    to the total standard deviation of the pooled sample, which is finite
+    whenever the two arms differ.  Returns ``0.0`` when *both* are zero, which
+    callers must treat as "effect not estimable".
+    """
+    n_pre, n_post = len(pre), len(post)
+    var_pre = float(pre.var(ddof=1)) if n_pre > 1 else 0.0
+    var_post = float(post.var(ddof=1)) if n_post > 1 else 0.0
+    denom = max(n_pre + n_post - 2, 1)
+    within = ((n_pre - 1) * var_pre + (n_post - 1) * var_post) / denom
+    if within > 1e-18:
+        return float(np.sqrt(within))
+    return float(np.concatenate([pre, post]).std())
 
 
 def _pns_estimate(
@@ -420,42 +471,65 @@ def _pns_estimate(
     n_bootstrap: int = 1000,
     seed: int = 42,
 ) -> Dict[str, float]:
-    """Estimate PNS: E[post] − E[pre], with bootstrap CI and p-value.
+    """Estimate PNS as a **standardised** pre→post mean shift.
+
+    ``point = (mean(post) − mean(pre)) / pooled_sd`` — i.e. Cohen's d.
+
+    Why standardised: the two CSS directions are computed on *different*
+    variables (R→T measures a shift in traffic, T→R measures a shift in
+    routing).  A raw difference in means therefore carries the units and the
+    variance of whichever series it was computed on, and comparing
+    ``|CSS(R→T)|`` with ``|CSS(T→R)|`` compared traffic-count units against
+    BGP-update-count units.  Routing series are sparse spikes (std dominated by
+    a single burst) while traffic series are dense, so the raw comparison was
+    decided almost entirely by which series had the larger variance.  Dividing
+    by each variable's own dispersion puts both directions on one ruler.
 
     For small samples (n<SCARCITY_THRESHOLD per arm) we fall back to
-    Bayesian-shrinkage PNS (Beta-Binomial, Jeffrey's prior) which
-    gives stable CIs in the n<10 regime.
+    Bayesian-shrinkage PNS (Beta-Binomial, Jeffrey's prior), also expressed in
+    the standardised unit.
 
     Returns:
         dict(
-                point=point estimate (difference in means),
-                ci_lower, ci_upper (95% bootstrap CI),
-                p_value (two-sided bootstrap p),
-                sufficiency (|point| / max(pre_std, 1e-9)),
+                point=standardised effect (Cohen's d),
+                ci_lower, ci_upper (95% bootstrap CI, same unit),
+                p_value (two-sided permutation p),
+                sufficiency (|point|, already σ-normalised, capped at 5),
                 necessity (fraction of post where the intervention is "on"),
+                estimable (False when the scale is degenerate),
             )
     """
     if not NUMPY_OK or len(pre_values) < 2 or len(post_values) < 2:
         return {
             "point": 0.0, "ci_lower": 0.0, "ci_upper": 0.0,
             "p_value": 1.0, "sufficiency": 0.0, "necessity": 0.0,
+            "estimable": False,
         }
     pre = np.array(pre_values, dtype=float)
     post = np.array(post_values, dtype=float)
+    scale = _standardisation_scale(pre, post)
+    if not np.isfinite(scale) or scale <= 1e-12:
+        # Both arms are flat at the *same* value: no effect to estimate.
+        return {
+            "point": 0.0, "ci_lower": 0.0, "ci_upper": 0.0,
+            "p_value": 1.0, "sufficiency": 0.0, "necessity": 0.0,
+            "estimable": False,
+        }
     # Scarcity-aware fallback: when both arms are tiny, the bootstrap
     # percentile CI is not trustworthy (n_bootstrap resamples from
     # essentially the same handful of points).
     if min(len(pre), len(post)) < SCARCITY_THRESHOLD:
         return _scarcity_aware_pns(pre, post)
     rng = np.random.default_rng(seed)
-    point = float(post.mean() - pre.mean())
-    pre_std = float(pre.std())
-    # Bootstrap CI: resample both pre and post, recompute difference.
+    point = float((post.mean() - pre.mean()) / scale)
+    # Bootstrap CI: resample both arms, recompute the *standardised* difference.
+    # The scale is held at its observed value so the interval quantifies the
+    # sampling variability of the means, not of the dispersion estimate.
     boot_diffs = np.empty(n_bootstrap, dtype=float)
     for k in range(n_bootstrap):
         b_pre = pre[rng.integers(0, len(pre), size=len(pre))]
         b_post = post[rng.integers(0, len(post), size=len(post))]
-        boot_diffs[k] = float(b_post.mean() - b_pre.mean())
+        boot_diffs[k] = float((b_post.mean() - b_pre.mean()) / scale)
     ci_lower, ci_upper = float(np.percentile(boot_diffs, 2.5)), float(np.percentile(boot_diffs, 97.5))
     # p-value: null is "no intervention" — pool pre and post values and
     # compute the difference under random reassignment. This is the
@@ -465,22 +539,23 @@ def _pns_estimate(
     perm_diffs = np.empty(n_bootstrap, dtype=float)
     for k in range(n_bootstrap):
         idx = rng.permutation(len(pooled))
-        perm_diffs[k] = float(pooled[idx[:n_pre]].mean() - pooled[idx[n_pre:]].mean())
+        perm_diffs[k] = float((pooled[idx[:n_pre]].mean() - pooled[idx[n_pre:]].mean()) / scale)
     abs_point = abs(point)
     p_value = float((np.abs(perm_diffs) >= abs_point).mean())
     # Necessity: fraction of post values where the signal is "active"
     # (above the pre mean). In BGP context "active" means routing/traffic
     # anomaly is detected.
-    threshold = float(pre.mean() + max(pre_std, 1e-9))
+    threshold = float(pre.mean() + max(float(pre.std()), 1e-9))
     necessity = float((post > threshold).mean())
-    sufficiency = abs(point) / max(pre_std, 1e-9)
+    sufficiency = min(abs_point, 5.0)  # already in σ units
     return {
         "point": point,
         "ci_lower": ci_lower,
         "ci_upper": ci_upper,
         "p_value": p_value,
-        "sufficiency": min(sufficiency, 5.0),  # cap at 5σ
+        "sufficiency": sufficiency,
         "necessity": necessity,
+        "estimable": True,
     }
 
 
@@ -537,8 +612,11 @@ def css_score(
     if not r_pre or not r_post:
         return CSSResult(
             direction="unknown",
-            explanation="breakpoint detection produced empty pre/post window.",
-            details={"reason": "empty breakpoint window"},
+            explanation=(
+                "no detectable breakpoint in the routing series; without an "
+                "intervention window CSS cannot estimate PNS and abstains."
+            ),
+            details={"reason": "no detectable breakpoint", "breakpoint_idx": bp_idx},
         )
 
     # Precondition: routing series must show a non-trivial shift between
@@ -664,50 +742,59 @@ def css_score(
     # PNS(T → R): split at the *traffic* breakpoint (traffic defines the
     # intervention). The traffic-breakpoint split is computed independently
     # so each PNS estimator uses the right pre/post window for its claim.
+    # If traffic has no break, T→R is not identified: we mark it
+    # non-estimable instead of slicing at an invented index.
     t_bp_idx = _find_breakpoint(t_aligned)
-    tr_pre = r_aligned[:t_bp_idx]
-    tr_post = r_aligned[t_bp_idx:]
-    tr = _pns_estimate(tr_pre, tr_post, n_bootstrap=n_bootstrap, seed=23)
+    if t_bp_idx < 1 or t_bp_idx >= len(r_aligned):
+        tr = {
+            "point": 0.0, "ci_lower": 0.0, "ci_upper": 0.0,
+            "p_value": 1.0, "sufficiency": 0.0, "necessity": 0.0,
+            "estimable": False,
+        }
+    else:
+        tr = _pns_estimate(
+            r_aligned[:t_bp_idx], r_aligned[t_bp_idx:],
+            n_bootstrap=n_bootstrap, seed=23,
+        )
 
     css_rt = rt["point"]
     css_tr = tr["point"]
 
-# Temporal precedence tiebreaker (Pearl: cause precedes effect).
+    # Temporal precedence tiebreaker (Pearl: cause precedes effect).
     # If routing's intervention onset strictly precedes traffic's, we
     # *only* consider CSS(R→T) — the symmetric CSS(T→R) is structurally
     # implausible because routing's intervention window cannot begin
     # after traffic's already started. This is the standard
     # potential-outcomes identifiability constraint.
-    if NUMPY_OK:
-        r_bp = _find_breakpoint(r_aligned)
-        t_bp = _find_breakpoint(t_aligned)
-        lead = r_bp - t_bp  # negative ⇒ routing precedes
-    else:
-        lead = 0
+    #
+    # ``lead`` is None when either series has no detectable breakpoint: we
+    # cannot order two onsets when one of them was never observed.
+    r_bp = _find_breakpoint(r_aligned) if NUMPY_OK else -1
+    t_bp = _find_breakpoint(t_aligned) if NUMPY_OK else -1
+    lead = (r_bp - t_bp) if (r_bp >= 0 and t_bp >= 0) else None
 
     # Compute absolute magnitudes up front so the decision branches below
     # can compare them without redefining (and shadowing) the names.
+    # Both values are standardised effects (Cohen's d) on the variable they
+    # describe, so the comparison is finally dimensionally valid.
     abs_css_rt = abs(css_rt)
     abs_css_tr = abs(css_tr)
+    rt_est = bool(rt.get("estimable", True))
+    tr_est = bool(tr.get("estimable", True))
+    rt_abs_ci_pos = rt_est and (rt["ci_lower"] > 0 or rt["ci_upper"] < 0)
+    tr_abs_ci_pos = tr_est and (tr["ci_lower"] > 0 or tr["ci_upper"] < 0)
 
-    if lead < -1:
+    if lead is not None and lead < -1:
         # Routing clearly precedes traffic — T→R is structurally implausible.
-        rt_significant = (
-            rt["p_value"] < p_threshold
-            and (rt["ci_lower"] > 0 or rt["ci_upper"] < 0)
-        )
+        rt_significant = (rt["p_value"] < p_threshold and rt_abs_ci_pos)
         tr_significant = False
-    elif lead > 1:
+    elif lead is not None and lead > 1:
         # Traffic clearly precedes routing — R→T is structurally implausible.
-        tr_significant = (
-            tr["p_value"] < p_threshold
-            and (tr["ci_lower"] > 0 or tr["ci_upper"] < 0)
-        )
+        tr_significant = (tr["p_value"] < p_threshold and tr_abs_ci_pos)
         rt_significant = False
     else:
-        # Simultaneous / ambiguous — fall back to magnitude comparison.
-        rt_abs_ci_pos = (rt["ci_lower"] > 0 or rt["ci_upper"] < 0)
-        tr_abs_ci_pos = (tr["ci_lower"] > 0 or tr["ci_upper"] < 0)
+        # Simultaneous / ambiguous / unknown precedence — fall back to the
+        # standardised magnitude comparison (now on a shared scale).
         rt_significant = (
             rt["p_value"] < p_threshold and rt_abs_ci_pos and abs_css_rt > abs_css_tr
         )
@@ -725,31 +812,30 @@ def css_score(
         ci_lower = tr["ci_lower"]
         ci_upper = tr["ci_upper"]
         p_value = tr["p_value"]
-    elif lead < -1 and (rt["ci_lower"] > 0 or rt["ci_upper"] < 0):
-        # Routing precedes — choose R→T regardless of magnitude.
-        direction = "routing_to_traffic"
-        ci_lower = rt["ci_lower"]
-        ci_upper = rt["ci_upper"]
-        p_value = rt["p_value"]
-    elif lead > 1 and (tr["ci_lower"] > 0 or tr["ci_upper"] < 0):
-        # Traffic precedes — choose T→R regardless of magnitude.
-        direction = "traffic_to_routing"
-        ci_lower = tr["ci_lower"]
-        ci_upper = tr["ci_upper"]
-        p_value = tr["p_value"]
-    elif abs_css_rt > abs_css_tr:
-        # Simultaneous onset: pick dominant magnitude as the best guess.
-        direction = "routing_to_traffic"
-        ci_lower = rt["ci_lower"]
-        ci_upper = rt["ci_upper"]
-        p_value = rt["p_value"]
-    elif abs_css_tr > abs_css_rt:
-        direction = "traffic_to_routing"
-        ci_lower = tr["ci_lower"]
-        ci_upper = tr["ci_upper"]
-        p_value = tr["p_value"]
-    else:
+    elif rt_significant and tr_significant:
+        # Both directions clear their own null (possible when neither the
+        # precedence constraint nor the magnitude comparison can separate
+        # them). Keep the larger standardised effect — a like-for-like
+        # comparison now that both are Cohen's d.
+        if abs_css_rt >= abs_css_tr:
+            direction = "routing_to_traffic"
+            ci_lower, ci_upper, p_value = rt["ci_lower"], rt["ci_upper"], rt["p_value"]
+        else:
+            direction = "traffic_to_routing"
+            ci_lower, ci_upper, p_value = tr["ci_lower"], tr["ci_upper"], tr["p_value"]
+    elif abs_css_rt > 0 and abs_css_tr > 0 and abs(abs_css_rt - abs_css_tr) <= 1e-12:
+        # Exactly equal standardised effects and neither significant: the
+        # data cannot order the two directions.
         direction = "independent"
+        ci_lower = min(rt["ci_lower"], tr["ci_lower"])
+        ci_upper = max(rt["ci_upper"], tr["ci_upper"])
+        p_value = max(rt["p_value"], tr["p_value"])
+    else:
+        # Neither direction survives its null. The previous code picked the
+        # larger |effect| as a "best guess" here, which manufactured a
+        # directional verdict out of two statistically indistinguishable
+        # quantities. CSS abstains instead.
+        direction = "unknown"
         ci_lower = min(rt["ci_lower"], tr["ci_lower"])
         ci_upper = max(rt["ci_upper"], tr["ci_upper"])
         p_value = max(rt["p_value"], tr["p_value"])
@@ -810,6 +896,8 @@ def css_score(
         0.5 * min(1.0, abs(separation) / max(abs(dominant_pt), 1e-9))
         + 0.5 * min(1.0, abs(dominant_pt) / max(ci_width, 1e-9)),
     )
+    if direction not in ("routing_to_traffic", "traffic_to_routing"):
+        confidence = 0.0
 
     explanation = (
         f"CSS(R→T)={css_rt:+.3f} [CI {rt['ci_lower']:+.3f},{rt['ci_upper']:+.3f}], p={rt['p_value']:.3f}; "
@@ -854,129 +942,141 @@ def bayesian_synthesize(
     event_type: Optional[str] = None,
     routing_withdrawal_signal: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Bayesian synthesis of CSS with up to 4 evidence channels.
+    """Bayesian synthesis of CSS with the other evidence channels.
 
-    Each channel (MSBD counterfactual, CTPR sufficiency, CIC scope,
-    Granger linearity) provides a likelihood ratio:
+    Each channel (CSS itself, MSBD counterfactual, CTPR sufficiency, CIC
+    scope, Granger, transfer entropy) supplies a likelihood ratio:
 
         LR_d = P(channel_evidence | direction=d)
 
-    The posterior is:
+    and the posterior is
 
-        P(direction=d | all evidence) ∝ prior(d) · Π_ch LR_d(d)
+        P(direction=d | evidence) ∝ prior(d) · Π_clusters mean(LR_d)
 
-    The **prior is set from CSS**: if CSS gives a non-"unknown" verdict,
-    the prior is sharply tilted toward that direction. This is the
-    principled integration: CSS is the *anchor* (Pearl PNS is a paper-
-    grade causal claim) and the other channels refine it.
+    Two deliberate design changes from the previous version:
 
-    **Domain-informed fallback prior**: when CSS is silent (uniform prior),
-    we apply a weak domain prior from the event type to break ties.
-    Evaluated on the 18-event ground truth:
-      - route_leak / origin_hijack → R→T domain prior 2.0
-        (routing anomaly is the primary cause by construction)
-      - outage → T→R domain prior 2.0
-        (traffic disruption is the primary cause)
-    This prevents weak heuristic channels (combined LR ≈ 1.05–1.22)
-    from overriding a uniform prior and making wrong predictions, as
-    observed in the eval where TE LR=1.6 single-handedly produced
-    5 wrong predictions on real data.
+    1. **Uniform prior.**  CSS used to enter as a 10:1 (or 4:1) *prior*,
+       i.e. before any channel was read.  That made the "posterior" a
+       restatement of CSS's own verdict plus decoration, and it also meant
+       the two directions were compared using CSS's raw (unstandardised)
+       effect.  Here the prior is uniform and CSS is one channel among
+       several, so the posterior reflects all the evidence and nothing is
+       anchored in advance.
 
-    Returns a dict with ``direction`` (argmax posterior), ``posterior``
-    (the three-direction posterior mass), and ``confidence`` (max
-    posterior mass).
+    2. **Correlated channels are pooled, not multiplied.**  MSBD, CTPR, CIC,
+       Granger and TE all read the same two time series (and previously all
+       consumed ``event_type``), so they are not independent observations.
+       Multiplying five likelihood ratios treats five copies of one signal as
+       five independent confirmations and drives the posterior to a spurious
+       0.99.  Channels that point the same way are therefore grouped into one
+       cluster and the cluster contributes the *geometric mean* of its
+       members' likelihoods: repetition does not create evidence.
 
-    Args:
-        css: the CSSResult from ``css_score``.
-        evidence_channels: each value is a dict with at least
-            ``direction`` (one of routing_to_traffic / traffic_to_routing
-            / independent / unknown) and ``likelihood`` (LR for that
-            direction vs alternative, e.g. ``{"routing_to_traffic":
-            3.5, "traffic_to_routing": 1.0}``).
-        prior: optional explicit prior; defaults to CSS-derived prior.
-        event_type: optional event type label (e.g. "route_leak",
-            "origin_hijack", "outage") for domain-informed prior.
-        routing_withdrawal_signal: domain-overriding signal from evaluate_convergence;
-            when set, bypasses CSS/domain priors and uses a 50:1 prior directly.
+    ``event_type`` is accepted for API compatibility and deliberately
+    ignored.  It is the ground-truth cause label; the expected direction is
+    derived from the same label, so using it as a prior is label leakage
+    (``route_leak`` → prior R→T → "predicted" R→T).
+
+    ``routing_withdrawal_signal`` is likewise no longer a prior override.  It
+    is folded into the channel set with a bounded likelihood, so it can be
+    outweighed by contrary evidence instead of vetoing it.
+
+    Returns a dict with ``direction`` (argmax posterior), ``posterior`` (the
+    three-direction posterior mass), ``confidence`` (max posterior mass) and
+    diagnostics: ``n_channels``, ``n_clusters`` and ``redundancy``
+    (``n_channels / n_clusters``; > 1 means channels were duplicated).
     """
-    # Routing-withdrawal signal: injected by CausalAttributionEngine.evaluate_convergence
-    # when BGP withdrawal metadata contradicts the CSS-domain prior. This is a
-    # domain-overriding signal, NOT a heuristic channel — it bypasses channel
-    # discounting and enters the prior directly so it can override even a strong
-    # T→R outage prior (prior LR=5.0) without needing a larger channel LR.
-    if routing_withdrawal_signal == "routing_to_traffic":
-        prior = {"routing_to_traffic": 50.0, "traffic_to_routing": 1.0, "independent": 1.0}
-        css_prior_weight = 0.0  # CSS is abstaining, don't use its direction
-    elif routing_withdrawal_signal == "traffic_to_routing":
-        prior = {"routing_to_traffic": 1.0, "traffic_to_routing": 50.0, "independent": 1.0}
-        css_prior_weight = 0.0
-    else:
-        # Derive prior from CSS: if CSS has a clear direction, weight its
-        # prior sharply; otherwise fall back to domain-informed prior.
-        # CSS is the *Pearl-anchored* estimator — channels are heuristics that
-        # should not be able to override a clear CSS direction unless they
-        # collectively point the opposite way with overwhelming evidence.
-        if css.direction in ("routing_to_traffic", "traffic_to_routing"):
-            css_prior_weight = 10.0 if css.is_causal else 4.0
-            css_prior = {"routing_to_traffic": 1.0, "traffic_to_routing": 1.0, "independent": 1.0}
-            css_prior[css.direction] = css_prior_weight
-            prior = css_prior
-        elif event_type and event_type.startswith("origin_hijack"):
-            # Domain prior: routing change is the causal origin for origin hijacks.
-            prior = {"routing_to_traffic": 5.0, "traffic_to_routing": 1.0, "independent": 1.0}
-            css_prior_weight = 0.0
-        elif event_type == "route_leak" or event_type == "roa_misconfig":
-            # Domain prior: routing change is the causal origin for routing-driven events.
-            prior = {"routing_to_traffic": 5.0, "traffic_to_routing": 1.0, "independent": 1.0}
-            css_prior_weight = 0.0
-        elif event_type == "outage":
-            # Domain prior: traffic disruption is the primary manifestation for outages.
-            # (BGP-withdrawal override handled above via routing_withdrawal_signal.)
-            prior = {"routing_to_traffic": 1.0, "traffic_to_routing": 5.0, "independent": 1.0}
-            css_prior_weight = 0.0
-        else:
-            prior = prior or {"routing_to_traffic": 1.0, "traffic_to_routing": 1.0, "independent": 1.0}
-            css_prior_weight = 0.0
-    posteriors = {d: prior.get(d, 1.0) for d in prior}
-    for name, ch in evidence_channels.items():
-        if not isinstance(ch, dict):
-            continue
-        lr = ch.get("likelihood", {})
-        if not isinstance(lr, dict):
-            continue
-        ch_dir = ch.get("direction", "unknown")
-        # Channel-weight discount: a channel *disagreeing* with the CSS
-        # anchor is treated as weaker than one that *agrees*. This
-        # implements Pearl's "no information without corroboration":
-        # channels that disagree with the causal anchor are
-        # systematically under-weighted to prevent heuristic channels
-        # from overriding a Pearl-anchored direction.
-        # FIX: When CSS is abstain/unknown, ALL channels receive 0.4 discount
-        # (not just those disagreeing with CSS). This prevents weak MSBD/Granger
-        # heuristics (LR≈1.05) from overturning the strengthened domain prior
-        # on events where CSS cannot produce a confident direction (the majority
-        # of real-data events with sparse event logs).
-        css_is_abstain = css.direction in ("unknown", "independent", "insufficient")
-        if css_is_abstain:
-            # CSS abstain: all channels discounted so domain prior dominates
-            discount = 0.4
-        elif css.direction in ("routing_to_traffic", "traffic_to_routing") and ch_dir in (
-            "routing_to_traffic", "traffic_to_routing"
-        ):
-            # CSS has a confident direction: disagreement discount 0.5×
-            discount = 1.0 if ch_dir == css.direction else 0.4
-        else:
-            discount = 1.0
-        for k, v in lr.items():
-            if k in posteriors and v > 0:
-                # Apply discount multiplicatively (sqrt to soften)
-                posteriors[k] *= float(v) ** discount
+    # Uniform prior: no channel — including CSS — is privileged before the
+    # evidence is read.  ``event_type`` is intentionally unused (see docstring).
+    _ = event_type
+    base_prior = prior or {
+        "routing_to_traffic": 1.0,
+        "traffic_to_routing": 1.0,
+        "independent": 1.0,
+    }
+    posteriors = {
+        d: float(base_prior.get(d, 1.0))
+        for d in ("routing_to_traffic", "traffic_to_routing", "independent")
+    }
+
+    # Collect the channels that actually carry a likelihood.
+    channels: Dict[str, Dict[str, Any]] = {}
+    for name, ch in (evidence_channels or {}).items():
+        if isinstance(ch, dict) and isinstance(ch.get("likelihood"), dict):
+            channels[str(name)] = ch
+
+    # CSS enters as a channel, and only when it is statistically supported.
+    # A CSS verdict with p ≥ threshold or a CI crossing zero carries no
+    # directional evidence, so it gets LR = 1 (i.e. it is not added).
+    if css.direction in ("routing_to_traffic", "traffic_to_routing") and css.is_causal:
+        effect = (
+            abs(css.css_routing_to_traffic)
+            if css.direction == "routing_to_traffic"
+            else abs(css.css_traffic_to_routing)
+        )
+        css_lr = 1.0 + min(4.0, float(effect))  # bounded: |d| ∈ [0, 5] → LR ≤ 5
+        opposite = (
+            "traffic_to_routing"
+            if css.direction == "routing_to_traffic"
+            else "routing_to_traffic"
+        )
+        channels["css_pns"] = {
+            "direction": css.direction,
+            "likelihood": {css.direction: css_lr, opposite: 1.0 / css_lr, "independent": 1.0},
+        }
+
+    # A withdrawal observed in-window is a *measured* control-plane fact (not a
+    # label), so it may enter as a weak channel.  It is bounded and can be
+    # outweighed: an outage withdrawal is often the effect of the traffic
+    # disruption rather than its cause.
+    if routing_withdrawal_signal in ("routing_to_traffic", "traffic_to_routing"):
+        opposite = (
+            "traffic_to_routing"
+            if routing_withdrawal_signal == "routing_to_traffic"
+            else "routing_to_traffic"
+        )
+        channels["routing_withdrawal_observed"] = {
+            "direction": routing_withdrawal_signal,
+            "likelihood": {
+                routing_withdrawal_signal: 1.5,
+                opposite: 1.0 / 1.5,
+                "independent": 1.0,
+            },
+        }
+
+    # Pool channels by the direction they vote for.  Within a cluster the
+    # contribution is the geometric mean, so N copies of the same signal count
+    # as one observation rather than N independent confirmations.
+    clusters: Dict[str, List[Dict[str, float]]] = {}
+    for ch in channels.values():
+        ch_dir = str(ch.get("direction", "unknown"))
+        clusters.setdefault(ch_dir, []).append(ch["likelihood"])
+
+    for lrs in clusters.values():
+        k = len(lrs)
+        for d in posteriors:
+            vals = [float(lr[d]) for lr in lrs if d in lr and float(lr[d]) > 0]
+            if not vals:
+                continue
+            if k == 1 or len(vals) == 1:
+                factor = vals[0]
+            else:
+                factor = math.exp(sum(math.log(v) for v in vals) / len(vals))
+            posteriors[d] *= factor
     total = sum(posteriors.values()) or 1.0
     norm = {k: v / total for k, v in posteriors.items()}
     dominant = max(norm, key=norm.get)
+    n_channels = len(channels)
+    n_clusters = len(clusters)
     return {
         "direction": dominant if norm[dominant] > 0.34 else "unknown",
         "posterior": {k: round(v, 4) for k, v in norm.items()},
         "confidence": round(norm[dominant], 3),
         "method": "css_bayesian_synthesis",
+        # Diagnostics for the honest ablation: how many channels were read and
+        # how many were collapsed into a single cluster because they agreed.
+        "n_channels": n_channels,
+        "n_clusters": n_clusters,
+        "redundancy": round(n_channels / n_clusters, 3) if n_clusters else 0.0,
+        "channels": {k: ch.get("direction", "unknown") for k, ch in channels.items()},
     }

@@ -110,8 +110,22 @@ HCAF_MAJORITY_THRESHOLD = int(os.environ.get("BGP_TRACER_HCAF_MAJORITY", "2"))
 # harness, so abstaining on genuinely evidence-free input is strictly more
 # honest and strictly scores better. Raise the floor to force a direction only
 # when the evidence supports one.
+# DEPRECATED (2026-10-22): this floor was applied to the *blended display
+# score* (0.6*css_conf + 0.3*innovation + 0.1*TE, times a 0.7/0.95 causal
+# factor), which lives on a different scale from the quantity it was meant to
+# threshold.  It is kept only so old callers/imports keep working and MUST NOT
+# be used as a decision gate.  See HCAF_MIN_POSTERIOR below.
 HCAF_MIN_DIRECTION_CONFIDENCE = float(
     os.environ.get("BGP_TRACER_HCAF_MIN_DIRECTION_CONF", "0.55")
+)
+
+# Abstention floor for causal *direction*, applied to the Bayesian posterior
+# mass of the dominant hypothesis (the quantity the synthesis actually
+# produces).  A direction is only committed when max(posterior) reaches this
+# value; the three-way posterior sums to 1, so 0.50 means "the dominant
+# hypothesis outweighs the other two combined".
+HCAF_MIN_POSTERIOR = float(
+    os.environ.get("BGP_TRACER_HCAF_MIN_POSTERIOR", "0.50")
 )
 
 # ── Detector thresholds ────────────────────────────────────────────────────
