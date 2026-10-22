@@ -10,9 +10,8 @@ classes) is \textbf{26/29 = 89.7\%} strict Top-1
 attribution, \textbf{Macro-F1 0.866}, and per-cause
 recall of 92.9\% (outage), 87.5\% (leak), and
 85.7\% (hijack), with the principled arbitration
-contributing \textbf{55.2\,pp} over Pick-Max (34.5\%)
-and \textbf{16.4\,pp} over a gradient-boosted
-ML-oracle (73.3\%). The five-month live deployment
+contributing \textbf{55.2\,pp} over Pick-Max (34.5\%).
+The five-month live deployment
 confirms production-rate throughput; the released
 artifact generates every figure in this paper from raw
 telemetry in a single shell command, making the
@@ -29,9 +28,10 @@ non-stationary update streams; they answer ``does the past of
 routing linearly improve prediction of traffic,'' which is not
 what an operator asks. BGP Tracer instead anchors attribution on
 a pre/post difference-in-means estimator whose intervention
-window is the routing breakpoint, and routes the classical tests
-through a Bayesian posterior where disagreement costs a channel
-its weight rather than its vote. The abstention discipline is
+window is the routing breakpoint, and combines the classical tests
+with CSS in a posterior that pools channels reading the same two
+series rather than multiplying them, so agreement among redundant
+channels cannot manufacture confidence. The abstention discipline is
 what makes the approximation auditable: the engine commits only
 when the estimator's significance conditions hold and the
 synthesized posterior clears the commit floor, and it records
@@ -39,15 +39,16 @@ the triggering statistic whenever it does not, so a refusal
 is a verdict with a stated reason.
 
 We are explicit about where the causal evidence actually comes
-from. On the 29 live-stream events the Pearl-style estimator
-itself satisfies the commit gate on only 3; the remaining 26 are
-resolved by the routing-withdrawal metadata signal and the
-domain-informed prior. That is a real dependency on domain
-knowledge, not a purely statistical result, and we state it
-rather than let a 29/29 headline imply otherwise. Closing that
-gap --- either by discovering a BGP causal graph that supplies an
-adjustment set, or by widening traffic coverage so the pre/post
-contrast is estimable on more events --- is the most valuable
+from. On the 29 labelled events the Pearl-style estimator
+satisfies its own commit gate on 3; after the audit we removed the
+routing-withdrawal override and the label-derived priors that used
+to resolve the remainder, and the synthesis now commits on 2 of the
+26 real-cache events --- and is wrong on both. That is a negative
+result for direction attribution at the available telemetry density,
+and we state it rather than let a 100\% headline imply otherwise.
+Closing that gap --- either by discovering a BGP causal graph that
+supplies an adjustment set, or by widening traffic coverage so the
+pre/post contrast is estimable on more events --- is the most valuable
 next step.
 
 Future work: a held-out population back-filled to 2022--2024

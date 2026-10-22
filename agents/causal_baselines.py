@@ -64,21 +64,20 @@ def _to_aligned_series(
     routing_timeline: List[dict],
     traffic_timeline: List[dict],
 ) -> Tuple[List[float], List[float]]:
-    """Normalize timelines to two parallel scalar lists, padding to common length.
+    """Normalize timelines to two parallel scalar lists on the common window.
 
     Each input timeline is a list of dicts with at least ``score`` and
-    ``timestamp``. We extract ``score`` in order and pad the shorter
-    one with zeros so the two series have equal length. This is
-    crude but matches what a single-statistical baseline would do.
+    ``timestamp``. We extract ``score`` in order. When the two series have
+    different lengths we **truncate to the shorter** one: both are produced on
+    the same bucket grid, so index ``i`` is the same interval in both, and
+    padding the shorter one with zeros (the previous behaviour) invented
+    "measured, no anomaly" buckets that never existed — which drags the post
+    mean down and biases every lag-based baseline.
     """
     r = [float(p.get("score", 0) or 0) for p in routing_timeline]
     t = [float(p.get("score", 0) or 0) for p in traffic_timeline]
-    n = max(len(r), len(t))
-    if len(r) < n:
-        r = r + [0.0] * (n - len(r))
-    if len(t) < n:
-        t = t + [0.0] * (n - len(t))
-    return r, t
+    n = min(len(r), len(t))
+    return r[:n], t[:n]
 
 
 def _safe_first_timestamp(timeline: List[dict]):

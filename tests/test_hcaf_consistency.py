@@ -7,8 +7,9 @@ synthesises a minimal routing + traffic timeline from each row's
 and asserts:
 
     1. HCAF returns a verdict for every event (no crashes).
-    2. The direction precision against ground truth is >= 0.80
-       (counting "unknown" as a non-error per review v2 §1.3.3).
+    2. An abstention is *not* a correct answer: precision is measured over
+       the directions the engine actually commits to, and coverage is
+       reported alongside it.
     3. Per-event verdict table is dumped to JSON for the paper.
 
 Direction mapping (v9 ground-truth → expected HCAF direction):
@@ -98,15 +99,16 @@ def _expected_direction(cause_label, withdrawal_count, routing_event_in_window="
 
 
 def _expected_dir_set(cause_label: str, withdrawal_count: int, routing_event_in_window: str = "") -> set[str]:
-    """Return the set of acceptable HCAF direction strings for this row.
+    """Return the acceptable HCAF direction strings for this row.
 
-    Acceptable = the expected direction OR "unknown" (review v2 §1.3.3
-    treats unknown as a non-error).
+    Only the expected direction is acceptable.  ``unknown`` used to be added
+    to this set, which made every abstention count as a correct answer and
+    turned the consistency test into a test that the engine refuses to answer.
     """
     expected = _expected_direction(cause_label, withdrawal_count, routing_event_in_window)
     if expected is None:
-        return {"unknown"}
-    return {expected, "unknown"}
+        return set()
+    return {expected}
 
 
 def _parse_int(s, default=0):
@@ -312,32 +314,29 @@ def test_hcaf_runs_on_all_events():
     assert not failures, f"HCAF crashed on {len(failures)} events:\n{failures[:5]}"
 
 
-def test_hcaf_precision_meets_threshold():
-    """HCAF direction precision against ground truth must be ≥ 0.85.
+def test_direction_precision_is_measured_on_committed_answers():
+    """Metric-contract test for the v9 synthetic harness.
 
-    Per review v2 §1.3.3, "unknown" is NOT counted as wrong. Tier C
-    attacker_view rows are excluded from the precision denominator
-    because they are derived test variants, not independent ground
-    truth.
+    This harness synthesises a timeline from two scalar columns, so it is a
+    crash/consistency harness rather than a performance benchmark.  What it
+    must enforce is the scoring contract: an abstention is neither correct
+    nor wrong, and it never enters the denominator of directional accuracy.
+    (It previously counted ``unknown`` as correct, which is how "100%
+    precision" was reported for an engine that answered nothing.)
 
-    Two metrics are reported:
-        1. review_precision = correct / total     (includes 'unknown'
-           verdicts as non-errors per §1.3.3)
-        2. strict_precision = correct / non-unknown  (only counts
-           events where HCAF actually emitted a direction)
-
-    The threshold (0.80) is enforced on (1); (2) is informational
-    and dumped into the results JSON for the paper.
+    If the engine commits to at least one direction, its selective precision
+    must clear ``PRECISION_THRESHOLD``.  If it commits to nothing, that is
+    recorded as coverage 0 — an honest abstention, not a perfect score.
     """
     rows = _load_v9_rows()
     engine = CausalAttributionEngine()
     verdicts: list[dict[str, Any]] = []
 
     correct = 0
+    wrong = 0
+    abstain = 0
     total = 0
     skipped = 0
-    strict_correct = 0
-    strict_total = 0
 
     for r in rows:
         eid = r["event_id"]
@@ -361,7 +360,8 @@ def test_hcaf_precision_meets_threshold():
 
         hcaf_dir = _norm_hcaf_direction(result.direction)
         expected_set = _expected_dir_set(cause, withdrawal_count, routing_event_in_window)
-        is_correct = hcaf_dir in expected_set
+        is_correct = bool(expected_set) and hcaf_dir in expected_set
+        is_abstain = hcaf_dir == "unknown"
 
         verdicts.append({
             "event_id": eid,
@@ -372,6 +372,7 @@ def test_hcaf_precision_meets_threshold():
             "hcaf_direction": hcaf_dir,
             "expected_set": sorted(expected_set),
             "is_correct": is_correct,
+            "is_abstain": is_abstain,
             "confidence": (
                 None if (isinstance(result.confidence, float)
                           and np.isnan(result.confidence))
@@ -384,37 +385,49 @@ def test_hcaf_precision_meets_threshold():
             continue
 
         total += 1
-        if is_correct:
+        if is_abstain:
+            abstain += 1
+        elif is_correct:
             correct += 1
+        else:
+            wrong += 1
 
-        # Strict precision denominator: only events where HCAF actually
-        # emitted a direction (not "unknown" abstention).
-        if hcaf_dir != "unknown":
-            strict_total += 1
-            if is_correct:
-                strict_correct += 1
+    committed = correct + wrong
+    coverage = committed / total if total else 0.0
+    selective_precision = correct / committed if committed else 0.0
 
-    review_precision = correct / max(total, 1)
-    strict_precision = strict_correct / max(strict_total, 1)
+    assert correct + wrong + abstain == total, (
+        "every event must be counted exactly once as correct, wrong, or abstain"
+    )
 
     # Persist per-event verdicts for the paper / calibration doc.
     RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     RESULTS_PATH.write_text(json.dumps({
-        "review_precision": review_precision,
-        "review_correct": correct,
-        "review_total": total,
-        "strict_precision": strict_precision,
-        "strict_correct": strict_correct,
-        "strict_total": strict_total,
+        "total": total,
+        "correct": correct,
+        "wrong": wrong,
+        "abstain": abstain,
+        "committed": committed,
+        "coverage": coverage,
+        "selective_precision": selective_precision,
+        "strict_precision": selective_precision,  # historical alias
+        "strict_correct": correct,
+        "strict_total": committed,
         "skipped_derived": skipped,
         "verdicts": verdicts,
     }, indent=2, ensure_ascii=False))
 
-    assert review_precision >= PRECISION_THRESHOLD, (
-        f"HCAF review-precision {review_precision:.3f} ({correct}/{total}) "
-        f"< threshold {PRECISION_THRESHOLD}. "
-        f"Per-event verdicts: {RESULTS_PATH}"
-    )
+    if committed:
+        assert selective_precision >= PRECISION_THRESHOLD, (
+            f"HCAF selective precision {selective_precision:.3f} "
+            f"({correct}/{committed}) < threshold {PRECISION_THRESHOLD}. "
+            f"Per-event verdicts: {RESULTS_PATH}"
+        )
+    else:
+        # No committed direction on a harness built from two scalar columns.
+        # This is the honest outcome; the guard is that abstention was not
+        # scored as a success.
+        assert correct == 0 and wrong == 0 and abstain == total
 
 
 def test_per_event_verdicts_documented():
@@ -426,12 +439,15 @@ def test_per_event_verdicts_documented():
     if not RESULTS_PATH.exists():
         pytest.skip(
             f"{RESULTS_PATH} not produced — ensure "
-            "test_hcaf_precision_meets_threshold runs first."
+            "test_direction_precision_is_measured_on_committed_answers runs first."
         )
     payload = json.loads(RESULTS_PATH.read_text())
     assert "verdicts" in payload
-    assert "review_precision" in payload
-    assert "strict_precision" in payload
+    assert "selective_precision" in payload
+    assert "coverage" in payload
+    assert "review_precision" not in payload, (
+        "abstentions must not be scored as correct; the review metric is gone"
+    )
     assert len(payload["verdicts"]) >= 10, (
         f"Expected ≥10 verdicts in {RESULTS_PATH}, got {len(payload['verdicts'])}"
     )

@@ -1,34 +1,187 @@
 \section{Introduction}
 \label{sec:intro}
 
-The Border Gateway Protocol (BGP) is the de facto inter-domain routing protocol of the Internet: it propagates route announcements across more than seventy-three thousand autonomous systems (ASes) and is responsible for telling each network which prefixes are reachable and through which path~\cite{rfc4271}. What makes BGP practical, however, is also what makes it fragile. BGP was designed without any built-in authentication or authorization mechanism, and its trust model assumes that every AS truthfully announces only the prefixes it owns or is entitled to transit. As a result, any AS can announce any prefix, and the global routing system must honour the announcement until the operator community manually intervenes. This absence of endogenous security has made BGP incidents frequent and costly: in August~2022 a cryptocurrency exchange lost \$2.3M in user funds when a BGP route leak diverted withdrawal traffic to a malicious AS for 90~minutes~\cite{krenc-2023-bgp-hijack}. Principled defences do exist, including cryptographic extensions (BGPsec, RPKI with ROV~\cite{cooper-2013-rpki}) and the MANRS operator practices~\cite{manrs}, but their deployment is incremental and the coordination overhead limits adoption at scale. Consequently, BGP security problems persist, and anomaly attribution remains the operator's responsibility for the foreseeable future.
+The Border Gateway Protocol (BGP) is the de facto inter-domain
+routing protocol of the Internet. It exchanges prefix reachability
+information between autonomous systems (ASes) and determines which
+prefixes each network can reach and through which path
+\cite{rfc4271}. BGP was designed around local routing policy and
+administrative autonomy, which allows independently operated networks
+to make their own routing decisions. The protocol itself, however,
+does not establish that an AS that advertises a prefix is authorised
+to originate it, nor does it guarantee that an AS-path is consistent
+with the commercial relationships between ASes. Consequently, invalid
+announcements can propagate across multiple networks before they are
+detected or filtered.
 
-In practice, this responsibility falls on operators who are already saturated. To detect routing anomalies, they rely on BGP monitoring platforms that ingest public telemetry and raise alerts whenever an announcement deviates from an expected baseline. These platforms are effective at surfacing something, but they surface far too much: a single operator may receive thousands of alerts per day, of which fewer than one percent are ultimately confirmed as actionable. The triage that stands between this stream and a decision still rests on static thresholds and heuristic rules, which cannot tell a routing anomaly that matters from one that does not. The consequence is an alert storm: genuinely high-impact incidents are buried in noise, and the operator's attention—the scarcest resource in the loop—is spent on events that never affect the business.
+Routing security mechanisms, including RPKI with Route Origin
+Validation and the operational practices promoted by MANRS, can
+prevent or limit some classes of invalid announcements
+\cite{cooper-2017-rpki,manrs}. Their deployment nevertheless remains
+incomplete and uneven, and even correctly detected routing anomalies
+must still be interpreted in the context of their operational impact.
+Routing changes can remove reachability, redirect traffic through
+unintended paths, or expose prefixes to networks that should not
+transit them. These changes may result from prefix hijacks, route
+leaks, large withdrawal events, or legitimate traffic engineering.
+Anomaly detection therefore addresses only the first part of the
+operator's problem: a routing alert does not by itself establish
+whether the event affects service or business traffic.
 
-The root cause of this failure is not a lack of detectors, but a \textbf{disconnect between the routing signal and the traffic signal}. Existing work typically examines these signals in isolation: routing monitors characterize announcements, and traffic monitors characterize usage, but neither answers the fundamental question the operator actually faces---\emph{did this routing change affect the business?} Concretely, the operator must simultaneously determine the nature of the announcement (an outage, a leak, a hijack, or a benign change), whether it produced a traffic anomaly, and crucially, whether that anomaly was a direct consequence of the routing event rather than an independent phenomenon. Answering these questions requires the two signals to be joined on a common time grid and interpreted causally at minute-level latency. Unfortunately, the scientific literature has produced detectors that are highly capable on their own isolated signals~\cite{artemis}, but they emit unsorted alert streams that the operator must still arbitrate by hand. Neither the existing operational tooling nor the current scientific literature provides a unified system that answers these correlated questions together at the required minute-level latency.
+Operators rely on BGP monitoring platforms to detect routing
+anomalies. These platforms compare observed announcements, origins,
+and paths with maintained policies or baselines, and generate alerts
+when deviations occur. Data-plane monitoring systems provide
+complementary evidence in the form of traffic volumes, request rates,
+and service-level measurements. This combination is necessary, but it
+also creates a substantial triage burden. Monitoring platforms can
+emit far more alerts than operators can review individually, and an
+alert indicates only that a monitored signal deviated from its
+baseline; it does not establish that the event affects service or
+business traffic. An alert may reflect legitimate traffic
+engineering, temporary routing churn, maintenance activity, or a
+traffic change caused by independent user or application behaviour.
+The resulting \emph{alert flood} can delay the detection of high-impact
+incidents and consume operator attention with events that have no
+business impact.
 
-The motivation for this work follows directly from this gap. We aim to build a system that bridges the routing and traffic signals on a common time grid, deterministically arbitrates the evidence from multiple detectors, and returns an auditable verdict at minute-level latency. The primary benefit of this approach is the transformation of the operator's workflow: replacing a slow, manual, and non-reproducible diagnostic process with a reproducible verdict that an operator can read in a minute rather than reconstruct over hours. Consequently, the system drastically reduces the operator's daily review load from $\mathcal{O}(10^3)$ unsorted alarms to a mere $\mathcal{O}(10)$ actionable verdicts, filtering out the overwhelming noise and surfacing only falsifiable hypotheses. The core contribution of this paper is therefore a comprehensive, end-to-end system for joint traffic-routing analysis, rather than just another isolated anomaly detector.
+The difficulty is not confined to excessive alert volume. Routing and
+traffic signals are generally analysed in isolation. Routing monitors
+describe path changes, prefix withdrawals, and policy violations,
+whereas traffic monitors describe volume deviations and service-level
+changes. Neither type of monitor directly answers the question an
+operator actually faces: \emph{did this routing change affect traffic,
+and is the observed impact attributable to routing?} A routing
+anomaly may produce no measurable traffic change when the affected
+prefix carries little traffic, while an observed traffic drop may be
+caused by a non-routing failure. Conversely, hundreds of routing
+alerts can arise from a single root event, and several routing changes
+may overlap with a traffic anomaly without being causally related to
+it. Manual post-mortem analysis across routing and traffic teams is
+therefore slow, difficult to reproduce, and poorly suited to
+minute-level triage.
 
-Realizing such a system, however, is not a matter of simply assembling existing detectors. Three technical challenges stand between the current state of the art and a practical, minute-level solution.
+These observations motivate a system that joins control-plane and
+data-plane evidence at the point of triage, rather than leaving their
+interpretation to a manual post-mortem. The system should preserve the
+evidence behind each verdict, distinguish an anomaly from an absence
+of telemetry, and represent uncertainty explicitly. Its objective is
+to identify the small set of events that warrant operator attention
+without making unsupported causal claims from weak or conflicting
+evidence. This shift from independent alerts to auditable incident
+hypotheses defines the research problem addressed in this paper.
 
-\paragraph{C1 --- Scale vs.\ real-time constraints.} In real operations, operators cannot afford to wait hours for an exact, post-hoc report. When an alert triggers, they need an immediate, high-level assessment to know whether it deserves urgent attention, deferring deep analysis to later. However, public BGP telemetry and traffic data are massive. Performing full-scan analysis over the complete data stream is computationally prohibitive and far too slow. The challenge is to process massive datasets and rapidly deliver an answer under strict minute-level latency.
+Realising this objective requires addressing three technical
+challenges.
 
-\paragraph{C2 --- Anomaly detection on heterogeneous AS traffic.} Detecting traffic anomalies is fundamentally difficult because not all ASes are suitable for statistical detection. In real networks, the traffic of some ASes fluctuates sharply and lacks stable regularity; applying detection to them yields only noise. The challenge is to dynamically identify which ASes are genuinely detectable and to accurately judge anomalies within a minute-level window, without being overwhelmed by the inherent noise of irregular traffic.
+\paragraph{C1 --- Responsiveness versus evidence depth.}
+Operators need a rapid assessment when an alert arrives, but a
+reliable joint verdict requires traffic baselines, routing updates,
+multiple detectors, temporal alignment, and heterogeneous evidence.
+Running the complete analysis path for every alert increases both
+latency and computational cost, precisely when a quick triage
+decision is most valuable.
 
-\paragraph{C3 --- Causal attribution across routing and traffic.} The relationship between routing and traffic is not simply linear. Because routing anomalies propagate, a single fault at one AS can manifest as multiple anomalies across the routing graph, making the causal chain difficult to trace. Granger causality requires stationary residuals, which bursty BGP streams systematically violate; PC answers conditional independence, not sufficiency. Pearl's probability of necessity and sufficiency (PNS)~\cite{pearl-causality-2009} asks sufficiency directly, but BGP telemetry carries no a priori causal graph. We adopt a graph-free identification: a pre/post partition at the routing breakpoint anchors the Pearl-PNS estimator, and Granger, transfer entropy, and PC are demoted to evidence channels in a Bayesian synthesis. This demotion is the design choice that most distinguishes this system from prior work.
+\paragraph{C2 --- Heterogeneous and data-dependent traffic behaviour.}
+AS-level traffic differs substantially across networks. Large ISPs
+often exhibit regular daily and weekly patterns, whereas content
+networks, enterprise networks, and networks with sparse measurement
+coverage can be highly bursty or irregular. A fixed baseline may
+therefore produce frequent false positives for volatile networks and
+miss genuine outages in series that lack stable periodicity.
 
-These three challenges directly dictate the design of BGP Tracer. We address them with three corresponding solutions.
+\paragraph{C3 --- Directional attribution without a causal graph.}
+Temporal proximity between routing and traffic anomalies does not
+establish causality. Both may result from a common operational event,
+and their observation times may differ because of propagation,
+aggregation, and collection delays. Classical methods also rely on
+restrictive assumptions: Granger causality depends on predictive
+structure and stationarity \cite{granger-1969}, transfer entropy
+requires sufficient samples for reliable dependency estimation
+\cite{schreiber-2000-te}, and PC addresses conditional independence
+rather than directly testing sufficiency \cite{spirtes-cps-2000}.
+Pearl's probability of necessity and sufficiency (PNS) provides a
+counterfactual formulation, but its identification generally requires
+a known causal graph or additional structural assumptions
+\cite{pearl-causality-2009,tian-pearl-2000}. BGP telemetry provides no
+such graph, and many incident windows are short, sparse, and affected
+by unobserved operational decisions.
 
-\paragraph{S1 --- Two-stage coarse-to-fine framework (Addresses C1).} We design a ``coarse-to-fine'' two-stage strategy whose two stages are deliberately asymmetric in cost. The coarse stage pays for two cheap statistics only---the relative shift in mean traffic against the same window one and two weeks earlier, and the ratio of in-window to baseline dispersion---and never fits a periodic baseline or instantiates a detector, so screening an AS costs a constant that is independent of the analysis it may thereby avoid. Only candidates that clear this screen reach the fine stage, where the periodic baseline, the control-plane detectors, and the correlation arbitration run. The screen admits 32.7\% of candidates, and because the shared cache amortises the traffic fetch, the expensive path is entered for 408 of an initial 1{,}247 ASes---this cost asymmetry, not any single detector, is what makes a minute-level verdict affordable at fleet scale.
+We address these challenges with three corresponding design
+decisions.
 
-\paragraph{S2 --- Context-aware detection for regular large ASes (Addresses C2).} Since irregular ASes yield only noise, we deliberately exclude them and focus on Tier-1-level large ASes that exhibit strong periodic regularity. The system first establishes a periodic baseline for these targets, and then judges anomalies by combining current context with historical traffic patterns. This approach markedly improves detection accuracy and significantly reduces false positives caused by natural traffic volatility.
+\paragraph{S1 --- A two-phase quick-to-deep analysis pipeline
+(Addresses C1).}
+BGP Tracer separates time-critical triage from deeper evidence
+synthesis. Phase~1 collects and aligns routing and traffic telemetry,
+runs deterministic detectors, and stores the resulting evidence in an
+auditable cache. It produces one of five core verdicts:
+\texttt{real\_incident}, \texttt{silent\_alert},
+\texttt{traffic\_only}, \texttt{correlation\_uncertain}, or
+\texttt{no\_clear\_anomaly}. Missing telemetry is reported separately
+from an observed absence of anomalies. Phase~2 can consume this cache
+for deeper causal synthesis and report generation without repeating
+the complete data-collection path. This division allows routine
+triage to follow a lightweight path while preserving the evidence
+needed for follow-up analysis.
 
-\paragraph{S3 --- Pearl-PNS-anchored causal attribution (Addresses C3).} Given the limitations of Granger causality and the PC algorithm, we adopt a graph-free Pearl-PNS identification: a pre/post partition at the routing breakpoint anchors two Pearl-PNS-anchored estimators; Granger, transfer entropy, and PC become three of five evidence channels in a Bayesian synthesis whose abstention threshold $\tau=0.34$ is the natural boundary at which the dominant hypothesis outweighs the other two combined. The core contribution is not the individual channels but the synthesis and the auditable abstention mechanism.
+\paragraph{S2 --- Reliability-aware traffic anomaly detection
+(Addresses C2).}
+Rather than excluding irregular or non-Tier-1 ASes, BGP Tracer selects
+its traffic baseline according to the available historical data.
+When repeated observations support a stable daily or weekly pattern,
+the detector constructs a periodic baseline on a shared normalisation
+scale. Otherwise, it uses a non-periodic detection path based on
+robust statistics. The detector combines these comparisons with
+multi-scale and contextual checks, so that ordinary periodic variation
+is treated differently from a sustained deviation. This design retains
+coverage of heterogeneous networks while reducing false alarms caused
+by normal traffic variability.
 
-The main contributions of this paper are as follows:
+\paragraph{S3 --- PNS-inspired causal evidence synthesis
+(Addresses C3).}
+BGP Tracer uses a breakpoint-anchored pre/post comparison as a
+PNS-inspired intervention proxy. The routing breakpoint defines the
+pre-event reference and post-event window for routing-to-traffic
+attribution, while the corresponding traffic breakpoint is used for
+the reverse direction. Bootstrap confidence intervals and permutation
+tests quantify the stability of the directional estimates. These
+estimates are combined with five evidence channels---multi-scale
+breakpoint detection, routing-path reconstruction, cascade-scope
+estimation, Granger prediction, and transfer entropy---through
+likelihood ratios. Granger and transfer entropy therefore provide
+supporting evidence rather than acting as sole adjudicators. Temporal
+precedence and consistency checks constrain the possible direction,
+and the engine can abstain when the evidence is insufficient or
+conflicting. We report the outcome of this design rather than assume
+it: on the 25 real-cache events with a verified direction, the
+synthesis commits on 2 and is wrong on both, while CSS alone and
+transfer entropy commit on 24 each. Direction attribution at the
+available telemetry density is therefore a negative result, and
+Section~\ref{sec:evaluation} reports it under a protocol that counts
+abstention as a cost rather than a correct answer.
+
+The main contributions of this paper are as follows.
 
 \begin{enumerate}
-\item \textbf{A two-stage, cache-mediated analysis tool.} We separate screening from analysis by cost, not by convenience: the coarse stage commits to two cheap statistics and never fits a baseline or instantiates a detector, so the cost of screening is independent of the analysis it avoids, and the fine stage runs only for admitted candidates. Evidence from specialised traffic, routing, and reasoning agents flows through a versioned, content-addressed cache under an adaptive confidence gate, which makes the verdict replayable bit for bit and confines the LLM to narrative rendering rather than adjudication.
-\item \textbf{Context-aware anomaly detection for regular ASes.} By establishing a periodic baseline and incorporating historical context, the system effectively reduces false alarms and improves accuracy for Tier-1 ASes.
-\item \textbf{A Pearl-PNS-anchored causal attribution method.} By anchoring two Pearl-PNS estimators to a graph-free pre/post partition, the system synthesises five evidence channels into an auditable Bayesian posterior with explicit abstention.
+\item \textbf{A two-phase routing--traffic analysis system.} We design
+and implement BGP Tracer, which aligns control-plane and data-plane
+evidence, produces an early five-class triage verdict, and preserves a
+reusable evidence cache for deeper causal analysis and reporting.
+
+\item \textbf{A reliability-aware traffic detection method for
+heterogeneous ASes.} Our detector adapts its baseline to periodic or
+non-periodic traffic behaviour, avoiding the blanket exclusion of
+irregular ASes while reducing false alarms from ordinary temporal
+variation.
+
+\item \textbf{A PNS-inspired causal attribution method with explicit
+abstention.} We combine breakpoint-anchored pre/post estimation,
+significance testing, and five likelihood-ratio evidence channels to
+assess causal direction. Each verdict is traceable to its component
+evidence, and the method abstains when the available data do not
+justify a causal conclusion. On the real-cache evaluation it abstains
+on 23 of 25 events and is wrong on both commitments; we report this
+negative result rather than present the synthesis as a validated
+directional method.
 \end{enumerate}

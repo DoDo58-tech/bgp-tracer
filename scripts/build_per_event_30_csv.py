@@ -22,26 +22,18 @@ METHODS = [
 ]
 
 
-def is_review_correct(pred, expected):
-    """LEGACY review metric -- kept only to reproduce historical artefacts.
-
-    This counts an abstention ("unknown") as correct. That is defensible for
-    ALERT TRIAGE, where declining to escalate is a legitimate outcome, but it
-    is invalid for DIRECTION ATTRIBUTION, where the entire value of the task
-    is naming the correct direction. Every headline number in the paper came
-    from this function and must be treated as void. Use ``is_strict_correct``
-    for any directional claim.
-    """
-    return pred == expected or pred == "unknown"
-
-
 def is_strict_correct(pred, expected):
     """Strict metric: only an exact direction match counts. Abstain != correct."""
     return pred == expected
 
 
 def is_abstain(pred):
-    return pred == "unknown"
+    return pred in ("unknown", "insufficient")
+
+
+def is_wrong(pred, expected):
+    """A committed direction that does not match is wrong; abstention is neither."""
+    return not is_abstain(pred) and not is_strict_correct(pred, expected)
 
 
 def main():
@@ -70,8 +62,8 @@ def main():
             for short, key in METHODS:
                 pred = rec.get(key, "unknown") or "unknown"
                 row[f"{short}_pred"] = pred
-                row[f"{short}_review"] = int(is_review_correct(pred, expected))
-                row[f"{short}_strict"] = int(is_strict_correct(pred, expected))
+                row[f"{short}_correct"] = int(is_strict_correct(pred, expected))
+                row[f"{short}_wrong"] = int(is_wrong(pred, expected))
                 row[f"{short}_abstain"] = int(is_abstain(pred))
             rows.append(row)
 
@@ -87,22 +79,32 @@ def main():
     print(f"Wrote {len(rows)} rows → {OUT_CSV.relative_to(ROOT)}")
     print()
     n = len(rows)
-    real = [r for r in rows if 'synthetic' not in r['cache_source']]
-    print(f"Real-cache events: {len(real)}/{n}")
+    def _is_real(r):
+        src = (r.get("cache_source") or "").lower()
+        return "synthetic" not in src and not src.startswith("no data")
+
+    real = [r for r in rows if _is_real(r)]
+    nodata = [r for r in rows if (r.get("cache_source") or "").lower().startswith("no data")]
+    print(f"Real-cache events: {len(real)}/{n}"
+          + (f"  (no-data rows excluded from every denominator: {len(nodata)})" if nodata else ""))
     print()
-    print(f"{'Method':<20} {'review%':>8} {'strict%':>8} {'abstain%':>9}  "
-          f"{'real review%':>12} {'real strict%':>12} {'real abst%':>10}")
-    print("-" * 96)
+    print("Strict directional scoring: an abstention is a cost, never a correct answer.")
+    print(f"{'Method':<20} {'corr':>5} {'wrong':>6} {'abs':>5} {'cov':>6} {'sel':>6}  "
+          f"{'real corr':>9} {'real wrong':>10} {'real abs':>8}")
+    print("-" * 86)
     for short, _ in METHODS:
-        rev = sum(r[f"{short}_review"] for r in rows) / n * 100
-        strict = sum(r[f"{short}_strict"] for r in rows) / n * 100
-        abst = sum(r[f"{short}_abstain"] for r in rows) / n * 100
+        c = sum(r[f"{short}_correct"] for r in rows)
+        w = sum(r[f"{short}_wrong"] for r in rows)
+        a = sum(r[f"{short}_abstain"] for r in rows)
+        cov = (c + w) / n if n else 0.0
+        sel = c / (c + w) if (c + w) else 0.0
         n_real = len(real)
-        rev_r = sum(r[f"{short}_review"] for r in real) / n_real * 100 if n_real else 0
-        strict_r = sum(r[f"{short}_strict"] for r in real) / n_real * 100 if n_real else 0
-        abst_r = sum(r[f"{short}_abstain"] for r in real) / n_real * 100 if n_real else 0
-        print(f"{short:<20} {rev:>8.1f} {strict:>8.1f} {abst:>9.1f}  "
-              f"{rev_r:>12.1f} {strict_r:>12.1f} {abst_r:>10.1f}")
+        cr = sum(r[f"{short}_correct"] for r in real)
+        wr = sum(r[f"{short}_wrong"] for r in real)
+        ar = sum(r[f"{short}_abstain"] for r in real)
+        print(f"{short:<20} {c:>5} {w:>6} {a:>5} {cov:>6.3f} {sel:>6.3f}  "
+              f"{cr:>9} {wr:>10} {ar:>8}"
+              + (f"   (n={n_real})" if short == METHODS[0][0] else ""))
 
 
 if __name__ == "__main__":

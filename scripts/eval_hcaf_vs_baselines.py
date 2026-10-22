@@ -50,6 +50,14 @@ from agents.causal_baselines import run_all_baselines                # noqa: E40
 from agents.causal_attribution import CausalAttributionEngine        # noqa: E402
 from agents.css_engine import css_score                              # noqa: E402
 
+# Reporting cutoff for the paper's "CSS alone" row: the posterior mass the
+# dominant hypothesis must exceed for the *ungated* row to commit.  It is
+# deliberately generous to CSS (it sits just above the 1/3 uniform baseline)
+# and is NOT the decision threshold — the engine's own gate is
+# `HCAF_MIN_POSTERIOR`.  Kept as a named constant because it used to be a
+# bare `0.34` in the comparison, which also hid a first-key bias.
+CSS_ALONE_POSTERIOR_FLOOR = 0.34
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Ground-truth → expected direction mapping
@@ -371,6 +379,39 @@ def find_quick_cache(
     return None
 
 
+def posterior_to_css_direction(posterior: Dict[str, float]) -> str:
+    """Return the ungated CSS-dominant direction from a synthesis posterior.
+
+    This is the "CSS alone" row of the ablation: the direction the posterior
+    favours *without* the abstention gate, which is deliberately generous to
+    CSS.  Two properties matter and were both violated before:
+
+    * it must be a strict **argmax** — the previous implementation tested
+      ``routing_to_traffic > 0.34`` first, so {R→T: 0.35, T→R: 0.40} reported
+      R→T, i.e. the *losing* hypothesis;
+    * the winning mass must clear the uniform baseline, otherwise "the
+      dominant hypothesis" is whichever key happens to be compared first.
+
+    ``CSS_ALONE_POSTERIOR_FLOOR`` keeps the paper's pre-registered generous
+    cutoff so the published row stays comparable.  It is a *reporting*
+    threshold, not a decision rule: the real decision uses
+    ``HCAF_MIN_POSTERIOR``.  The row is threshold-sensitive — on the 26
+    real-cache events the tallies are 15/9/2 at 0.34, 15/11/0 at 1/3 and
+    2/7/17 at 0.40 — so it must not be read as a precise estimate.
+    """
+    post = {
+        d: float((posterior or {}).get(d, 0.0) or 0.0)
+        for d in ("routing_to_traffic", "traffic_to_routing", "independent")
+    }
+    best = max(post, key=post.get)
+    if (
+        best in ("routing_to_traffic", "traffic_to_routing")
+        and post[best] > CSS_ALONE_POSTERIOR_FLOOR
+    ):
+        return best
+    return "unknown"
+
+
 def split_merged_timeline(
     merged: List[dict],
     bucket_seconds: int = 30,
@@ -442,15 +483,21 @@ def split_merged_timeline(
 
     total_seconds = int((t_max - t_min).total_seconds())
     if total_seconds <= 0:
-        # All events collapse to one bucket — still emit a 2-row series
-        # so Granger has 2 observations.
+        # All events collapse into a single instant.  Emit two *distinct*
+        # buckets one second apart so the result is still a valid uniform grid.
+        # The old branch emitted the same timestamp twice and used the routing
+        # count for the traffic series, so the "traffic" timeline was a copy of
+        # the routing one and its direction was guaranteed to be undecidable.
+        from datetime import timedelta
         routing_score = sum(1.0 for _, e in parsed_events if e.get("source") == "routing")
         traffic_score = sum(1.0 for _, e in parsed_events if e.get("source") == "traffic")
+        ts0 = t_min.isoformat() + "Z"
+        ts1 = (t_min + timedelta(seconds=1)).isoformat() + "Z"
         return (
-            [{"timestamp": t_min.isoformat() + "Z", "score": routing_score},
-             {"timestamp": (t_min.isoformat() + "Z"), "score": max(routing_score, 1e-9)}],
-            [{"timestamp": t_min.isoformat() + "Z", "score": traffic_score},
-             {"timestamp": (t_min.isoformat() + "Z"), "score": max(traffic_score, 1e-9)}],
+            [{"timestamp": ts0, "score": max(routing_score, 1e-9)},
+             {"timestamp": ts1, "score": 1e-9}],
+            [{"timestamp": ts0, "score": max(traffic_score, 1e-9)},
+             {"timestamp": ts1, "score": 1e-9}],
         )
 
     n_buckets = max(8, min(120, total_seconds // bucket_seconds + 1))
@@ -529,12 +576,20 @@ def synth_timeline(
     else:
         traffic_pattern = [traffic_baseline] * n_points
 
+    # Timestamps: both series are 60 one-minute points.  The traffic series is
+    # offset by 10 minutes (it is index-aligned downstream, so the offset is
+    # cosmetic), but the offset must be applied with timedelta — the old
+    # f-string `00:{i + 10:02d}:00` produced invalid minutes 60–69 for i ≥ 50,
+    # which silently dropped the last ten traffic points once timestamps began
+    # to be parsed.
+    from datetime import timedelta
+    base = datetime(2026, 9, 29, 0, 0, 0)
     routing_timeline = [
-        {"timestamp": f"2026-09-29T00:{i:02d}:00Z", "score": routing_pattern[i]}
+        {"timestamp": (base + timedelta(minutes=i)).isoformat(), "score": routing_pattern[i]}
         for i in range(min(n_points, len(routing_pattern)))
     ]
     traffic_timeline = [
-        {"timestamp": f"2026-09-29T00:{i + 10:02d}:00Z", "score": traffic_pattern[i]}
+        {"timestamp": (base + timedelta(minutes=i + 10)).isoformat(), "score": traffic_pattern[i]}
         for i in range(min(n_points, len(traffic_pattern)))
     ]
     return routing_timeline, traffic_timeline
@@ -652,9 +707,25 @@ def evaluate_row(
                 f"synthetic (no cache: AS{asn or '?'}, {start or '?'} → {end or '?'})"
             )
     if not routing_tl and not traffic_tl:
-        routing_tl, traffic_tl = synth_timeline(origin, withdrawal, pct)
-        if cache_used is None:
-            cache_used = "synthetic"
+        if origin == 0 and withdrawal == 0:
+            # No cache, and the label row carries no routing signal either
+            # (`routing_origin_count` and `routing_withdrawal_count` are empty
+            # for every row of the 30-event CSV).  Fabricating a flat routing
+            # series here makes every directional method abstain *by
+            # construction*, so scoring it measures nothing — the old
+            # "synthetic" table was therefore not a measurement.  Leave the
+            # timelines empty and label the row as no-data.
+            # Overrides the earlier "synthetic (no cache: ...)" label, which
+            # would otherwise put these rows in the synthetic bucket.
+            cache_used = (
+                "no data (no cache; flat routing signal: "
+                f"AS{_resolve_asn(row) or '?'}, "
+                f"{row.get('start_time_utc', '?')} → {row.get('end_time_utc', '?')})"
+            )
+        else:
+            routing_tl, traffic_tl = synth_timeline(origin, withdrawal, pct)
+            if cache_used is None:
+                cache_used = "synthetic"
 
     # Map ground-truth cause label to event_type for Bayesian domain prior.
     # Also include routing metadata so bayesian_synthesize can distinguish:
@@ -726,13 +797,18 @@ def evaluate_row(
     # CSS / evidence_support come back as dataclass attributes; pull
     # the dict explicitly so JSON serialisation is clean.
     evidence = hcaf_out.evidence_support if hasattr(hcaf_out, "evidence_support") else {}
+    # Two different quantities live here and must not be conflated:
+    #   * `css_direction` (historical name) is the argmax of the *posterior*
+    #     without the abstention gate. It is the "CSS-dominant" baseline that
+    #     the paper table reports; it is generous to CSS, because it commits on
+    #     the same evidence the synthesis sees.
+    #   * `css_direction_engine` is the CSS estimator's own verdict, which
+    #     abstains unless its bootstrap interval excludes zero.
+    # The second is what a true single-channel CSS baseline should use.
     posterior = evidence.get("posterior", {}) if isinstance(evidence, dict) else {}
-    if posterior.get("routing_to_traffic", 0) > 0.34:
-        css_direction = "routing_to_traffic"
-    elif posterior.get("traffic_to_routing", 0) > 0.34:
-        css_direction = "traffic_to_routing"
-    else:
-        css_direction = "unknown"
+    # Strict argmax, uniform → unknown.  See posterior_to_css_direction().
+    css_direction = posterior_to_css_direction(posterior)
+    css_direction_engine = evidence.get("css_direction", "unknown") if isinstance(evidence, dict) else "unknown"
     # Compute hcaf_correct: matches unit-test expected_set logic (unknown is non-error
     # per review §1.3.3). This field was missing in all prior eval runs — every
     # event showed hcaf_correct=None, making all prior v13/v17 "eval results" useless.
@@ -753,6 +829,7 @@ def evaluate_row(
         "hcaf_correct": hcaf_correct,
         # CSS (Pearl PNS) — the paper's primary contribution.
         "css_direction": css_direction,
+        "css_direction_engine": css_direction_engine,
         "css_is_causal": evidence.get("css_is_causal", False),
         "css_routing_to_traffic": evidence.get("css_routing_to_traffic"),
         "css_traffic_to_routing": evidence.get("css_traffic_to_routing"),
@@ -830,54 +907,112 @@ def main():
         ("Granger",      "granger_direction"),
         ("Ts-Distance",  "ts_distance_direction"),
         ("Transfer Entropy", "transfer_entropy_direction"),
+        # Majority-class control. 18 of the 26 real-cache events expect R→T,
+        # so "always R→T" is right 69.2% of the time without reading any
+        # telemetry. A directional method that does not beat this control has
+        # demonstrated no skill, whatever its selective accuracy looks like.
+        ("Always R→T",   "__always_rt__"),
     ]
-    table = []
-    for label, key in methods:
-        # An abstention ("unknown") is NOT correct for a direction task:
-        # the entire value of the task is naming the right direction.
-        correct = sum(1 for r in scored if r.get(key) == r["expected_direction"])
-        abstained = sum(1 for r in scored if (r.get(key) or "unknown") == "unknown")
-        wrong = len(scored) - correct - abstained
-        n = len(scored)
-        # Coverage = answered at all. Selective accuracy = correct when answered.
-        coverage = (n - abstained) / n if n else 0.0
-        selective = correct / (correct + wrong) if (correct + wrong) else 0.0
-        table.append((label, correct, wrong, abstained, n, coverage, selective))
+    # `css_direction` is the CSS-dominant posterior without the abstention
+    # gate (generous to CSS). Newer runs also record the CSS estimator's own,
+    # significance-gated verdict; add it as a separate row when present.
+    if any("css_direction_engine" in r for r in scored):
+        methods.insert(2, ("CSS gated", "css_direction_engine"))
 
-    print()
-    print(f"{'Method':<18} {'Correct':>8} {'Wrong':>7} {'Abstain':>8} {'Total':>6} "
-          f"{'Coverage':>9} {'Sel.Acc':>8}")
-    print("─" * 70)
-    for label, c, w, a, n, cov, sel in table:
-        print(f"{label:<18} {c:>8} {w:>7} {a:>8} {n:>6} {cov:>9.3f} {sel:>8.3f}")
+    def _pred(row, key):
+        if key == "__always_rt__":
+            return "routing_to_traffic"
+        return row.get(key) or "unknown"
 
-    # Honest ablation: split into real-cache vs synthetic-fallback events.
-    # The 100% headline number from prior eval runs was driven by domain
-    # priors on synthetic timelines. We report precision separately to
-    # distinguish "model reads the cache" from "model reads the label".
-    real_rows = [r for r in scored if "synthetic" not in r.get("cache_source", "").lower()]
-    synth_rows = [r for r in scored if "synthetic" in r.get("cache_source", "").lower()]
-    print()
-    print("=" * 70)
-    print("HONEST ABLATION — split by cache source")
-    print("=" * 70)
-    print(f"{'':18} {'Real-cache':>22} {'Synthetic':>22}")
-    print(f"{'Method':<18} {'Corr':>4}/{'Tot':<4} {'Prec':>7}   {'Corr':>4}/{'Tot':<4} {'Prec':>7}")
-    print("─" * 70)
-    for label, key in methods:
-        rc = sum(1 for r in real_rows if r.get(key) == r["expected_direction"])
-        sc = sum(1 for r in synth_rows if r.get(key) == r["expected_direction"])
-        rn, sn = len(real_rows), len(synth_rows)
-        rp = rc / rn if rn else 0.0
-        sp = sc / sn if sn else 0.0
-        print(f"{label:<18} {rc:>4}/{rn:<4} {rp:>7.3f}   {sc:>4}/{sn:<4} {sp:>7.3f}")
+    def _wilson(k, n, z=1.96):
+        """Wilson score interval for a binomial proportion."""
+        if n == 0:
+            return (0.0, 0.0)
+        p = k / n
+        denom = 1 + z * z / n
+        centre = (p + z * z / (2 * n)) / denom
+        half = (z / denom) * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5)
+        return (max(0.0, centre - half), min(1.0, centre + half))
+
+    def _tally(rows, key):
+        n = len(rows)
+        correct = sum(1 for r in rows if _pred(r, key) == r["expected_direction"])
+        abstained = sum(1 for r in rows if _pred(r, key) in ("unknown", "insufficient"))
+        wrong = n - correct - abstained
+        committed = correct + wrong
+        return {
+            "correct": correct,
+            "wrong": wrong,
+            "abstain": abstained,
+            "n": n,
+            "coverage": committed / n if n else 0.0,
+            "selective": correct / committed if committed else 0.0,
+            "risk": wrong / n if n else 0.0,
+            "ci": _wilson(correct, committed),
+        }
+
+    def _print_table(rows, title):
+        print()
+        print("=" * 104)
+        print(title)
+        print("=" * 104)
+        print(f"{'Method':<18} {'Corr':>5} {'Wrong':>6} {'Abs':>5} {'N':>4} "
+              f"{'Cov':>6} {'SelAcc':>7} {'95% CI':>16} {'Risk':>6}")
+        print("─" * 104)
+        for label, key in methods:
+            t = _tally(rows, key)
+            lo, hi = t["ci"]
+            print(f"{label:<18} {t['correct']:>5} {t['wrong']:>6} {t['abstain']:>5} {t['n']:>4} "
+                  f"{t['coverage']:>6.3f} {t['selective']:>7.3f} "
+                  f"  [{lo:.2f}, {hi:.2f}] {t['risk']:>6.3f}")
+
+    def _provenance(row):
+        """Classify where a row's timelines came from.
+
+        ``no data`` rows have neither a cache nor a routing signal, so they are
+        abstentions by construction and must never be folded into the real-cache
+        table (the old check — ``"synthetic" not in cache_source`` — would have
+        counted them as real once the label changed).
+        """
+        src = (row.get("cache_source") or "").lower()
+        if src.startswith("no data"):
+            return "nodata"
+        if "synthetic" in src:
+            return "synthetic"
+        return "real"
+
+    real_rows = [r for r in scored if _provenance(r) == "real"]
+    synth_rows = [r for r in scored if _provenance(r) == "synthetic"]
+    nodata_rows = [r for r in scored if _provenance(r) == "nodata"]
+    _print_table(
+        real_rows,
+        f"REAL CACHE ONLY (n={len(real_rows)}) — abstention is a cost, not a correct answer",
+    )
+    if synth_rows:
+        _print_table(
+            synth_rows,
+            f"SYNTHETIC TIMELINES (n={len(synth_rows)}) — NOT comparable to the real-cache table",
+        )
+    if nodata_rows:
+        print()
+        print(
+            f"NO DATA: {len(nodata_rows)} events had neither a cache nor a routing "
+            "signal column. They are excluded from both tables: their abstention "
+            "is forced by the absent input, so they are not a measurement of any "
+            "method's skill."
+        )
+
+    # Real-cache vs synthetic provenance is already reported as two separate
+    # tables above; they must never be pooled into one headline number.
     print()
     # CSS-contributing events only: where css_is_causal=True.
     css_contrib = [r for r in real_rows if r.get("css_is_causal")]
     print(f"CSS-causal verdicts on real data: {len(css_contrib)}/{len(real_rows)}")
     if css_contrib:
         c = sum(1 for r in css_contrib if r.get("hcaf_direction") == r["expected_direction"])
-        print(f"  HCAF accuracy on CSS-causal subset: {c}/{len(css_contrib)} ({100*c/len(css_contrib):.1f}%)")
+        ab = sum(1 for r in css_contrib if (r.get("hcaf_direction") or "unknown") == "unknown")
+        print(f"  HCAF on CSS-causal subset: {c} correct, "
+              f"{len(css_contrib) - c - ab} wrong, {ab} abstain")
     # HCAF confidence distribution on real data
     hcaf_confs_real = [r["hcaf_confidence"] for r in real_rows if isinstance(r.get("hcaf_confidence"), (int, float))]
     hcaf_confs_real = [c for c in hcaf_confs_real if not (c != c)]  # drop NaN

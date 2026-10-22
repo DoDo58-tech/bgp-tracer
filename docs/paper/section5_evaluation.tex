@@ -39,44 +39,41 @@ We compare the full system against four classes of baselines on the 30-event gro
 \caption{System-level comparison on the 30-event ground truth.}
 \label{tab:baseline}
 \small
-\begin{tabular}{l r r r r}
+\begin{tabular}{l r r r}
 \hline
-\textbf{System} & \textbf{Top-1} & \textbf{F1} & \textbf{Caus.\,F1} & \textbf{Latency} \\
+\textbf{System} & \textbf{Top-1} & \textbf{F1} & \textbf{Caus.\,F1} \\
 \hline
-Pick-Max (single detector)         & 34.5\% & 0.28 & 0.21 & 0.6\,min \\
-Routing-only (no traffic signal)    & 51.7\% & 0.41 & 0.31 & 1.8\,min \\
-Traffic-only (no routing signal)    & 41.2\% & 0.46 & 0.34 & 2.1\,min \\
-ML-oracle (gradient-boosted, LOO)   & 73.3\% & 0.71 & 0.55 & 3.4\,min \\
+Pick-Max (single detector)         & 34.5\% & 0.28 & 0.21 \\
+Routing-only (no traffic signal)    & 51.7\% & 0.41 & 0.31 \\
+Traffic-only (no routing signal)    & 41.2\% & 0.46 & 0.34 \\
 \hline
-\textbf{BGP Tracer (full)}          & \textbf{89.7\%} & \textbf{0.866} & \textbf{0.91} & \textbf{0.9\,min} \\
+\textbf{BGP Tracer (full)}          & \textbf{89.7\%} & \textbf{0.866} & \textbf{0.91} \\
 \hline
 \end{tabular}
 \end{table}
 
-The full system contributes \textbf{55.2\,pp} over Pick-Max on Top-1 and \textbf{0.58} on F1 at lower latency than either single-signal variant: the shared cache amortises the traffic fetch and the coarse screen rejects $\sim 70\%$ of candidates before detection runs.
+The full system contributes \textbf{55.2\,pp} over Pick-Max on Top-1 and \textbf{0.58} on F1. We report no latency advantage over the single-signal variants: the full system's measured median is 3.8\,min on the alert replay (Table~\ref{tab:latency}), while the ablations were timed on a separate 23-event run, so the columns are not comparable. We also removed the gradient-boosted ``ML-oracle'' row: it was produced by the same review-metric pipeline that counted abstentions as correct, and we have not re-derived it under the strict protocol.
 
 % -----------------------------------------------------------------------------
 \subsection{Per-component baseline comparison}
 
 \textbf{Traffic-side baselines.} Against three traffic-anomaly detectors (a \emph{$3\sigma$} rule on the de-trended series, an \emph{isolation-forest} detector, and a \emph{rolling-z-score}), BGP Tracer achieves \textbf{F1 0.91} against 0.62, 0.69, and 0.74 respectively. The gap validates the context-aware detection principle.
 
-\textbf{Causation-side baselines.} Table~\ref{tab:hcaf-4way} reports direction commitments on 29 live-stream RRC00 events with verified expected directions. HCAF and CSS commit on all 29 events and are correct on all 29. Transfer entropy commits on 25/29 (12 correct, 13 wrong, 4 abstain). Granger and Pearson abstain on 28--29/29 events. The commitment gap (HCAF 100\% vs.\ Granger 3\%) is the relevant metric for an operator who needs a direction, not a refusal.
+\textbf{Causation-side baselines.} Table~\ref{tab:hcaf-4way} reports directional verdicts on the 26 real-cache events that carry a verified expected direction. Under the strict protocol, abstention is a cost rather than a correct answer: the synthesis commits on 2 events and is wrong on both, CSS alone commits on 24 and is right on 15, and transfer entropy commits on 24 and is right on 20. The majority-class baseline---always answering R$\to$T---is right on 18 of 26 (69.2\%) without reading any telemetry. Only transfer entropy exceeds that baseline, by 14.1\,pp, and its Wilson 95\% interval on 20/24 overlaps the baseline rate, so the margin is not statistically distinguishable at this sample size. The earlier ``29/29 = 100\%'' result does not survive: it came from scoring every baseline on the subset the synthesis itself was willing to answer and from counting \texttt{unknown} as correct. One provenance caveat applies to the synthesis row: it is a strict recount of the last complete run, which used the pre-audit gate, whereas the current gate (uniform prior plus a posterior floor of $0.50$) is strictly more conservative; on the 143 unlabelled real caches retained in the artifact the current engine commits once, so two commitments is an upper bound rather than a fresh estimate.
 
 \begin{table}[t]
 \centering
-\caption{Direction commitments on 29 live-stream RRC00 events with verified expected directions.}
+\caption{Directional verdicts on the 26 real-cache events with verified expected directions. Coverage $=$ committed$/N$; selective accuracy is correct over committed answers. Abstention is a cost, not a correct answer. The 4 events without a cache are excluded rather than scored: their label rows carry no routing signal, so a synthetic fallback cannot produce an intervention and every method abstains by construction (they are no-data, not negative results). ``CSS alone'' is the CSS-dominant posterior without the abstention gate (deliberately generous to CSS); its commit cutoff is $0.34$, and because the posterior mass on these events sits in the $0.33$--$0.36$ band the row is threshold-sensitive ($15/11/0$ at the $1/3$ uniform baseline, $2/7/17$ at $0.40$), so it is reported as a diagnostic rather than as an estimate. On the 25 non-control events the strict recount is synthesis 0/2/23, CSS 14/10/1, transfer entropy 19/4/2.}
 \label{tab:hcaf-4way}
 \small
-\begin{tabular}{l r r l}
+\begin{tabular}{l r r r r r}
 \hline
-\textbf{Method} & \textbf{Commits} & \textbf{Rate} & \textbf{Result} \\
+\textbf{Method} & \textbf{Correct} & \textbf{Wrong} & \textbf{Abstain} & \textbf{Coverage} & \textbf{Sel.\ acc.} \\
 \hline
-\textbf{HCAF (Pearl-PNS)} & 29/29 & 100\% & all correct \\
-CSS (Pearl-PNS)           & 29/29 & 100\% & all correct \\
-Transfer entropy          & 25/29 & 48\%  & 12 correct, 13 wrong \\
-Granger causality         &  1/29 &  3\%  & 1 wrong \\
-Pearson lag               &  0/29 &  0\%  & always abstains \\
-PC cond.\ indep.         &  0/29 &  0\%  & always abstains \\
+Synthesis (CSS + channels) & 0  & 2 & 24 & 7.7\%  & 0.0\% \\
+CSS alone                  & 15 & 9 & 2  & 92.3\% & 62.5\% \\
+Transfer entropy           & 20 & 4 & 2  & 92.3\% & 83.3\% \\
+Majority class (always R$\to$T) & 18 & 8 & 0 & 100\% & 69.2\% \\
 \hline
 \end{tabular}
 \end{table}
@@ -164,38 +161,31 @@ Small ($<$20\%) & 66.7\% & -- & 9 \\
 
 % -----------------------------------------------------------------------------
 \subsection{Decision latency and convergence analysis}
-The coarse-to-fine architecture enables fast decisions: the coarse screen filters candidates before expensive analysis runs. We measure the latency breakdown and convergence behavior.
+We measure end-to-end latency on the alert replay rather than a per-stage decomposition: the coarse screen is a documented placeholder in the evaluated build, so any per-stage number attributed to it would be a measurement of the placeholder, not of the architecture.
 
-\textbf{Latency breakdown.} Table~\ref{tab:latency} decomposes per-event latency into four stages: coarse screen (baseline comparison + quick score), routing detector run, arbitration, and Phase 2 causal analysis (when invoked). The coarse screen runs in median 2.3\,s; routing detectors run in parallel, adding median 4.1\,s; arbitration is sub-second; Phase 2 adds median 8.2\,s when invoked. Total median latency is 0.9\,min, well within the ten-minute budget. The candidate funnel in the same table shows what this buys: the coarse screen rejects 67.3\% of candidates before fine-grained analysis runs, so the expensive path is entered for 408 of an initial 1,247 ASes.
+\textbf{End-to-end latency.} Table~\ref{tab:latency} reports the wall-clock latency recorded for every submitted alert. Median latency is 225.6\,s and p95 is 783.7\,s over 192 submissions (130 completed). This is slower than a one-minute target and we do not claim otherwise; a per-stage decomposition is left to future work because the placeholder screen has no measured cost.
 
 \begin{table}[t]
 \centering
-\caption{Per-event latency breakdown (median, 16-core host) and candidate
-reduction at the coarse screen (23-event replay).}
+\caption{End-to-end latency measured on the Cloudflare Radar alert replay
+($n=192$ submitted, 130 completed). Median and 95th percentile are
+computed over the recorded \texttt{elapsed\_s} of every submitted alert.}
 \label{tab:latency}
 \small
 \begin{tabular}{l r r}
 \hline
-\textbf{Latency stage} & \textbf{Median} & \textbf{95th percentile} \\
+\textbf{Statistic} & \textbf{Latency} & \textbf{Notes} \\
 \hline
-Coarse screen (baseline + quick score) & 2.3\,s & 5.8\,s \\
-Routing detectors (parallel) & 4.1\,s & 12.4\,s \\
-Arbitration & 0.3\,s & 0.9\,s \\
-Phase 2 causal engine & 8.2\,s & 18.7\,s \\
-\hline
-\textbf{Total (with Phase 2)} & \textbf{0.9\,min} & \textbf{7.8\,min} \\
+Median            & 225.6\,s & 3.8\,min \\
+95th percentile   & 783.7\,s & 13.1\,min \\
+Maximum           & 1039.0\,s & 17.3\,min \\
 \hline
 \end{tabular}
 \vspace{2pt}
-\begin{tabular}{l r r}
-\hline
-\textbf{Candidate funnel} & \textbf{Candidates} & \textbf{Reduction} \\
-\hline
-Initial AS set & 1,247 & -- \\
-After coarse screen & 408 & 67.3\% \\
-After fine-grained pass & 23 & 98.2\% \\
-\hline
-\end{tabular}
+\parbox{0.92\linewidth}{\footnotesize We do not report a candidate-reduction
+funnel: the coarse screening stage is a placeholder in the evaluated
+implementation and admits every candidate (Section~\ref{sec:intro}), so no
+reduction is measured.}
 \end{table}
 
 % -----------------------------------------------------------------------------
@@ -204,7 +194,7 @@ Understanding when the system fails is as important as reporting aggregate accur
 
 \textbf{Error taxonomy.} The 3 errors have distinct root causes. Event E17 is a route leak on a Tier-2 AS misclassified as an origin hijack, because the traffic detector fired on a coincident content shift. Event E23 is a small-magnitude outage on an irregular-traffic AS misclassified as normal, because it fell below the regularity threshold. Event E31 is a multi-party leak where the system attributed the cause to the wrong AS, because the cascade scope was ambiguous.
 
-\textbf{Error mitigation pathways.} Each error class has a clear mitigation: E17 is mitigated by the Phase 2 causal engine (the routing-withdrawal signal correctly identified R$\to$T); E23 is mitigated by the routing-only fallback when traffic regularity fails; E31 requires cascade-scope expansion, planned for the deployment roadmap.
+\textbf{Error mitigation pathways.} Each error class has a candidate mitigation, but we do not claim any of them is validated: E17 (a route leak misclassified as a hijack) would need a traffic-side check that distinguishes a coincident content shift from a leak effect, and the Phase-2 direction engine cannot supply it — the engine abstains on the real-cache events in this set. E23 is mitigated by the routing-only fallback when traffic regularity fails. E31 requires cascade-scope expansion, planned for the deployment roadmap.
 
 % -----------------------------------------------------------------------------
 \subsection{What we do not claim about alert volume}
@@ -224,18 +214,15 @@ Every comparison above is paired. The appropriate test is the McNemar exact two-
 \textbf{Comparison} & \textbf{n} & \textbf{$\Delta$} & \textbf{A-only} & \textbf{B-only} & \textbf{$p$} \\
 \hline
 BGP Tracer vs. Pick-Max           & 29 & +55.2 pp & 21 &  5 & \textbf{0.003} \\
-HCAF vs. Transfer entropy         & 29 & +59 pp   & 17 &  0 & \textbf{$<10^{-5}$} \\
-HCAF vs. Granger                 & 29 & +97 pp   & 29 &  0 & \textbf{$<10^{-5}$} \\
-BGP Tracer vs. ML-oracle (LOO) & 30 & +16.4 pp &  5 &  1 & 0.2188 \\
 \hline
 \end{tabular}
 \end{table}
 
-The reliable claim is the Bayesian synthesis, not any single channel; BGP Tracer vs.\ Pick-Max ($p=0.003$) is the single robustly significant comparison on this set.
+The only robustly significant comparison on this set is the Phase-1 detector ablation against Pick-Max ($p=0.003$). We deliberately report no direction-level p-value: on the 26 real-cache events the synthesis abstains on 24, and the two commitments are both wrong, so a paired test on direction would be testing an empty commitment set. The earlier ``+59\,pp vs.\ transfer entropy'' and ``+97\,pp vs.\ Granger'' rows were computed with an abstention-as-correct metric on an HCAF-selected denominator and are withdrawn; the corrected per-method counts are in Table~\ref{tab:hcaf-4way}.
 
 % -----------------------------------------------------------------------------
 \subsection{Calibration, ranking, and per-cause breakdown}
-The seven-tier dashboard gives T1 Top-1 = 0.90 and F1 = 0.866, T2 outage/leak/hijack recall = 93/88/86\%, T3 NDCG@3 = MRR = 1.00, T4 ECE = 0.092. The system is well calibrated at the high-confidence end (correct rate $\ge 90\%$ above 0.85) with misclassifications concentrated in the $0.6$--$0.8$ band. Latency: median 0.9\,min, worst observed 7.8\,min, both inside the ten-minute budget.
+The seven-tier dashboard gives T1 Top-1 = 0.90 and F1 = 0.866, T2 outage/leak/hijack recall = 93/88/86\%, T3 NDCG@3 = MRR = 1.00, T4 ECE = 0.092. The system is well calibrated at the high-confidence end (correct rate $\ge 90\%$ above 0.85) with misclassifications concentrated in the $0.6$--$0.8$ band. Latency: median 3.8\,min and p95 13.1\,min on the alert replay (Table~\ref{tab:latency}); we do not describe this as a minute-level verdict.
 
 LLM layer factual audit. Phase 2 renders narrative reports with an LLM, but the LLM never overwrites the Phase 1 verdict. On representative events, the LLM achieves high ASN recall (83.3\%) and perfect verdict consistency (100\%: 3/3) but struggles on traffic-percentage recall (0\%).
 
@@ -264,7 +251,7 @@ Operator decision-loop cost. Pre-BGP Tracer, the cross-check step consumed 60--1
 
 Failure mode atlas. Six categories were observed across the held-out set and live deployment. \textbf{F1} sparse Cloudflare Radar coverage (3/9 held-out events; mitigated by routing-only fallback); \textbf{F2} multi-prefix events missed (1/9; mitigated by multi-prefix pipeline); \textbf{F3} stale BGPStream cache (2/9; mitigated by freshness-stamped caches); \textbf{F4} multi-party leak attribution (1/9; mitigated by cascade-scope expansion); \textbf{F5} prior over-fit on super-major ASes (1/9; mitigated by AS-class-conditioned prior); and \textbf{F6} a new event class not represented in ground truth (1/9; mitigated by detector on-call extension).
 
-Sensitivity analysis. Three experiments on the 29-event set. Varying the HCAF prior, removing any single causal channel causes at most 1 direction flip; only removing the CSS prior causes 37.9\% flips and a 3x L1 shift, confirming the Pearl-PNS anchor is the critical structural element. When CSS abstains and BGP withdrawal metadata contradicts MSBD's direction (3 events), the routing-withdrawal signal injects a 50:1 prior toward R$\to$T; on these events the override corrects 3 direction errors with zero impact elsewhere, giving a net 10.3 pp improvement.
+Sensitivity analysis. Three experiments on the 29-event set, re-read after the Phase-2 audit. Removing MSBD, CTPR, CIC, Granger, or transfer entropy individually changes the direction on \textbf{0\%} of events, and removing the CSS channel changes it on 37.9\%. The earlier draft read the first number as robustness and the second as proof that CSS is the critical anchor. Both readings are wrong. Zero flips means those five channels never independently voted: they all read the same two time series (and, before the audit, MSBD/CTPR/CIC also consumed the \texttt{event\_type} label), so they are five views of one signal rather than five pieces of evidence. The 37.9\% flip rate therefore measures how much the old CSS-anchored prior was doing, not how much causal information CSS carries. The synthesis now starts from a uniform prior, adds CSS as one channel among others, and pools agreeing channels with a geometric mean so that repetition cannot multiply into confidence; the label-derived priors and the 50:1 withdrawal override have been deleted. A channel-level ablation is consequently a dependence diagnostic, not a robustness claim.
 
 Held-out evaluation (9 new events). The held-out set adds 9 further events (39 total), independent of the design labels. The system attains 6/9 = 66.7\% Top-1, a 23-point drop from the curated set. Three structural factors explain the gap: distribution shift (held-out events favour longer-tail types absent from curated set), sparse traffic data (5 of 9 land on ASes without Cloudflare Radar coverage), and stale BGP caches (two events have a routing cache predating the event by more than 30 days). Each factor is a known, addressable failure mode. The 23-point gap is a scope condition rather than a fundamental accuracy limitation.
 

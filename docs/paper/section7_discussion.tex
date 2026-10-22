@@ -6,7 +6,7 @@ We structure the discussion along three lines: headline operational reading, lim
 
 \subsection{What BGP Tracer achieves}
 
-The headline reads along three axes. \emph{Operational}: an auditable verdict replaces the post-mortem analyst on the cross-check step, so action can begin before the operator finishes reading the first chart. \emph{Methodological}: Pearl-PNS anchoring makes attribution falsifiable, and the abstention discipline preserves the high-precision corner. \emph{Empirical}: 26/29 = 89.7\% Top-1 on the curated set, and 14 genuine incidents recovered from 130 adjudicated live alerts, confirm minute-level verification of multi-detector evidence.
+The headline reads along three axes. \emph{Operational}: an auditable verdict replaces the post-mortem analyst on the cross-check step, so action can begin before the operator finishes reading the first chart. \emph{Methodological}: the arbitration is falsifiable because every committed direction must clear a statistical gate and a posterior gate, and abstention is reported with its triggering reason --- but the PNS-style estimator itself does not identify a direction on sparse real telemetry, and we report that negative result rather than claim it as a success. \emph{Empirical}: 26/29 = 89.7\% Top-1 on the curated cause-classification set, and 14 genuine incidents recovered from 130 adjudicated live alerts.
 
 \subsection{Limitations and threats to validity}
 
@@ -23,7 +23,7 @@ The headline reads along three axes. \emph{Operational}: an auditable verdict re
 
 \textit{(L7) Harness coverage on the live replay.} The 192-alert replay completed 130/192 (67.7\%); 62 alerts failed in the harness rather than being adjudicated. This is a harness property, not an arbitration property. We therefore quote the replay only as a precision result over the 130 alerts that were actually adjudicated.
 
-\textit{(L8) Headline inflation.} We removed an earlier 100\% headline once the per-event paired data showed it came from a cherry-picked subset. The corrected figure from the live-stream evaluation is 29/29 = 100\% direction commitment on the 29-event RRC00-verified set.
+\textit{(L8) Headline inflation.} We removed an earlier 100\% headline once the per-event paired data showed it came from a cherry-picked subset. The corrected figure on the 26 real-cache events with a verified direction is \textbf{0 correct / 2 wrong / 24 abstain} for the synthesis: the two commitments are both wrong. The earlier ``29/29 = 100\%'' was produced by scoring every baseline only on the events the synthesis answered and by counting \texttt{unknown} as correct, and it must not be cited.
 
 \subsection{Reproducibility, artifact, and ethics}
 

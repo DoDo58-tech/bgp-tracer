@@ -1,40 +1,40 @@
 #!/usr/bin/env python3
-"""
-Summarise the 150-alert Cloudflare Radar replay (2026-10-20 run).
+"""Summarise the Cloudflare Radar alert replay from ``per_alert_verdict.jsonl``.
 
 Why this script exists
 ----------------------
-The paper's five-month deployment section originally claimed an
-"18.8:1 reduction" from a 150-alert replay. This script recomputes
-that claim from the completed run and reports it *together with*
-the two confounders that the earlier version omitted:
+Earlier versions of this summary hard-coded the size of the replay
+(150 enqueued, 130 written, 84 processed, 5 actionable) while the
+per-alert verdict log it was supposed to summarise had since grown to
+192 submitted records.  A summary that disagrees with its own source
+file is worse than no summary, so every count below is now derived from
+the JSONL at run time.
 
-  1. Coverage. 130/150 alerts were processed; 33 timed out and
-     13 hit a subprocess error (64.6% success). Any reduction
-     ratio computed over the 150-alert denominator implicitly
-     counts timeouts as "correctly suppressed", which is not a
-     measurement of the arbitration -- it is a measurement of
-     the harness running out of time.
+The three confounders that any alert-reduction claim must disclose:
 
-  2. Source confound. All 5 actionable verdicts came from
-     source=annotation (curated Cloudflare post-mortems, i.e.
-     known-real incidents by construction). The 80 hijack-source
-     alerts -- the ones where the question "is this a real
-     incident?" is actually open -- produced 0 actionable
-     verdicts. Reporting a pooled 18.8:1 hides this entirely.
+  1. Coverage.  Only records with ``status == "ok"`` were actually
+     adjudicated.  Timeouts and subprocess errors are *harness
+     failures*, not suppressed alerts, so a raw-submitted denominator
+     silently counts them as correct suppressions.
 
-Both numbers are computed here so the paper can cite the honest
-version.
+  2. Source confound.  Alerts drawn from curated post-mortems
+     (``source == "annotation"``) are known-real incidents by
+     construction; the hijack/leak alerts are the ones where the
+     incident question is genuinely open.  Pooled and per-source rates
+     are both reported.
+
+  3. Precision, not reduction, is the reportable quantity: we report
+     "of the alerts actually adjudicated, how many were real
+     incidents", with a Wilson interval, and give the reduction ratio
+     only alongside the denominator it uses.
 
 Outputs:
   results/cloudflare_alerts/replay_summary.json
-
-Usage:
-  python3 scripts/summarize_alert_replay.py
 """
 from __future__ import annotations
 
 import json
+import statistics
 from collections import Counter
 from pathlib import Path
 
@@ -63,7 +63,9 @@ def main() -> None:
     by_verdict = Counter(r.get("quick_verdict") for r in rows)
 
     processed = [r for r in rows if r.get("status") == "ok"]
+    failed = [r for r in rows if r.get("status") != "ok"]
     actionable = [r for r in rows if r.get("bgpt_actionable")]
+    real_incidents = [r for r in rows if r.get("quick_verdict") == "real_incident"]
 
     # --- Per-source breakdown (this is where the confound shows) ---
     per_source = {}
@@ -74,6 +76,7 @@ def main() -> None:
         per_source[src] = {
             "alerts": len(src_rows),
             "processed_ok": len(src_ok),
+            "failed": len(src_rows) - len(src_ok),
             "processed_rate": round(len(src_ok) / len(src_rows), 4)
             if src_rows else None,
             "actionable": len(src_act),
@@ -87,62 +90,86 @@ def main() -> None:
     # --- Timing ---
     elapsed = sorted(r["elapsed_s"] for r in rows if r.get("elapsed_s"))
 
+    def _pct(values, q):
+        if not values:
+            return None
+        idx = min(len(values) - 1, max(0, int(round(q * (len(values) - 1)))))
+        return values[idx]
+
     payload = {
-        "run_completed": "2026-10-20T07:41:42Z",
-        "raw_alerts_enqueued": 150,
+        # Derived from the source file, never hard-coded.  `alerts_written`
+        # and `raw_alerts_enqueued` are retained as aliases so older scripts
+        # reading this file keep working.
+        "alerts_submitted": total,
         "alerts_written": total,
+        "raw_alerts_enqueued": total,
+        "completed": len(processed),
+        "failed": len(failed),
+        "processed_ok": len(processed),
         "by_status": dict(by_status),
         "by_source": dict(by_source),
         "by_verdict": dict(by_verdict),
         "per_source": per_source,
-        "processed_ok": len(processed),
-        "coverage_rate": round(len(processed) / total, 4),
+        "coverage_rate": round(len(processed) / total, 4) if total else None,
         "actionable_total": len(actionable),
-        "actionable_rate_of_written": round(len(actionable) / total, 4),
-        "actionable_rate_of_processed": round(len(actionable) / len(processed), 4),
-        "actionable_wilson_ci95": [
-            round(v, 4) for v in wilson_ci(len(actionable), total)
+        "real_incident_verdicts": len(real_incidents),
+        # Precision over what was actually adjudicated (reportable), and the
+        # conservative lower bound that counts every harness failure as a miss.
+        "precision_of_completed": round(len(actionable) / len(processed), 4)
+        if processed else None,
+        "precision_of_completed_wilson_ci95": [
+            round(v, 4) for v in wilson_ci(len(actionable), len(processed))
         ],
-        "reduction_ratio_raw_to_actionable": round(total / len(actionable), 1)
+        "actionable_rate_of_written": round(len(actionable) / total, 4)
+        if total else None,
+        "actionable_rate_of_processed": round(len(actionable) / len(processed), 4)
+        if processed else None,
+        "reduction_ratio_submitted_to_actionable": round(total / len(actionable), 1)
         if actionable else None,
-        "reduction_ratio_processed_to_actionable": round(
+        "reduction_ratio_completed_to_actionable": round(
             len(processed) / len(actionable), 1) if actionable else None,
         "elapsed_s": {
             "min": elapsed[0] if elapsed else None,
-            "median": elapsed[len(elapsed) // 2] if elapsed else None,
+            "median": round(statistics.median(elapsed), 2) if elapsed else None,
+            "p95": _pct(elapsed, 0.95),
             "max": elapsed[-1] if elapsed else None,
+            "n": len(elapsed),
         },
         "interpretation": (
-            "This replay does NOT support a pooled alert-reduction "
-            "claim, and the paper quotes none. Three confounders: "
-            "(1) coverage is "
-            f"{len(processed)}/{total} = "
-            f"{100*len(processed)/total:.1f}%; the timeouts and "
-            "subprocess errors are harness failures, not suppressions, "
-            "so a raw-alert denominator overstates the arbitration. "
-            "(2) actionable verdicts from source=annotation are real "
-            "by construction; the hijack-source alerts, where the "
-            "incident question is genuinely open, are the "
-            "informative ones. (3) the per-record counts the routing "
-            "detectors emit are truncated per-event observations, not "
-            "operator-facing alarms. The reportable result is a "
-            "precision result over the alerts actually adjudicated."
+            "Coverage is "
+            f"{len(processed)}/{total} = {100*len(processed)/total:.1f}%: "
+            f"{len(failed)} records are harness failures (timeout / "
+            "subprocess error), not suppressed alerts, so any reduction "
+            "ratio over the submitted denominator must say so. The "
+            "reportable quantity is precision over the adjudicated set "
+            f"({len(actionable)}/{len(processed)} = "
+            f"{100*len(actionable)/max(len(processed), 1):.1f}%). "
+            "Alerts from source=annotation are known-real by construction; "
+            "the hijack/leak alerts are the ones where the incident "
+            "question is genuinely open, and are reported separately above."
         ),
     }
 
     out = RESULTS / "replay_summary.json"
     out.write_text(json.dumps(payload, indent=2))
 
-    print(f"alerts written        : {total}")
-    print(f"processed ok          : {len(processed)} "
-          f"({100*len(processed)/total:.1f}%)")
+    print(f"alerts submitted      : {total}")
+    print(f"completed / failed    : {len(processed)} / {len(failed)} "
+          f"({100*len(processed)/total:.1f}% coverage)")
     print(f"actionable            : {len(actionable)}")
+    if processed:
+        lo, hi = wilson_ci(len(actionable), len(processed))
+        print(f"precision (completed) : {len(actionable)}/{len(processed)} = "
+              f"{100*len(actionable)/len(processed):.1f}% "
+              f"[{100*lo:.1f}, {100*hi:.1f}]")
     for src, d in per_source.items():
         print(f"  {src:<11} alerts={d['alerts']:>3} "
               f"ok={d['processed_ok']:>3} "
               f"({100*(d['processed_rate'] or 0):.1f}%) "
               f"actionable={d['actionable']:>2} "
               f"asns={d['actionable_asns']}")
+    print(f"elapsed median / p95  : {payload['elapsed_s']['median']} / "
+          f"{payload['elapsed_s']['p95']} s")
     print(f"\nwrote {out}")
 
 

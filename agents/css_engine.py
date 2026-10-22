@@ -63,10 +63,11 @@ claim, not a heuristic vote.
 CSS replaces ``evaluate_convergence`` in
 ``CausalAttributionEngine``. The other methods (MSBD, CTPR, CIC,
 Granger, Transfer Entropy) become **evidence channels** that feed into
-the Bayesian synthesis, not voting inputs. MSBD specifically serves as
-the **counterfactual baseline** — it tells CSS where the intervention
-starts. CTPR/CIC contribute as **sufficiency checks** (Pearl's PNS
-condition).
+the Bayesian synthesis, not voting inputs. CSS detects its own
+intervention breakpoint on the routing series (MSBD's multi-scale
+sync does not yield a sample-domain index, so it cannot anchor the
+window; it contributes scale-sync as a channel). CTPR/CIC contribute
+as **sufficiency checks** (Pearl's PNS condition).
 
 Public API:
     css_score(routing_timeline, traffic_timeline, msbd_breakpoint_idx=None)
@@ -131,108 +132,150 @@ class CSSResult:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Timeline utilities (mirror causal_baselines._to_aligned_series but
-# kept local so the engine is independent)
+# Timeline utilities: turn a pre-bucketed series or a raw event log into
+# two index-aligned per-bucket series on one shared clock
 # ─────────────────────────────────────────────────────────────────────
-def _bucketize_events(
-    timeline: List[dict],
-    bucket_minutes: int = 5,
-) -> List[float]:
-    """Bucket a raw event list into a per-bucket anomaly score series.
+_TS_FORMATS = (
+    "%Y-%m-%dT%H:%M:%S",
+    "%Y-%m-%dT%H:%M",
+    "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M",
+    "%m/%d/%y %H:%M:%S",
+    "%m/%d/%y %H:%M",
+)
 
-    Phase 1's correlation analyzer produces a merged timeline of
-    individual events ``[{timestamp, source, severity, ...}, ...]``
-    rather than a pre-bucketed score series. CSS's
-    ``_extract_scores`` then sees an unsummarised list where every
-    event has the same severity (1.0 for routing, 0.4–1.0 for
-    traffic), which produces a flat series and triggers the
-    flat-series abstention.
 
-    This function buckets events into ``bucket_minutes``-sized
-    windows and returns one score per bucket. The score is the
-    mean severity of events in the bucket, capped at 1.0. Empty
-    buckets contribute 0.0, which preserves the "no events"
-    baseline. The number of buckets is derived from the timeline
-    span (≥ 4 buckets to satisfy CSS's ``min_samples`` gate).
-    """
-    if not timeline:
-        return []
-    parsed = []
-    for p in timeline:
-        if not isinstance(p, dict):
-            continue
-        ts = p.get("timestamp")
-        if not ts:
-            continue
+def _parse_timestamp(ts: Any) -> Optional[datetime]:
+    """Parse the timestamp spellings that appear in caches and live runs."""
+    if isinstance(ts, datetime):
+        return ts
+    if not ts:
+        return None
+    raw = str(ts).strip().replace("Z", "")
+    # ``fromisoformat`` handles fractional seconds and ``+00:00`` offsets.
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        pass
+    for fmt in _TS_FORMATS:
         try:
-            # Accept both "2024-01-03T14:45:00Z" and "01/03/24 14:54:29".
-            iso = str(ts).replace("Z", "")
-            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%m/%d/%y %H:%M:%S", "%m/%d/%y %H:%M"):
-                try:
-                    dt = datetime.strptime(iso, fmt)
-                    break
-                except ValueError:
-                    continue
-            else:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _is_prequantised(timeline: List[dict]) -> bool:
+    """True when ``timeline`` is already one score per bucket on a uniform grid.
+
+    Two very different inputs reach :func:`css_score`:
+
+    * **pre-bucketed** series (``eval_hcaf_vs_baselines.split_merged_timeline``):
+      one entry per bucket, timestamps on a *uniform* grid, score = event count;
+    * **raw event logs** (``workflow_engine.build_hcaf_timelines``): one entry
+      per detected anomaly, irregular timestamps, score = detector confidence.
+
+    The old detector only counted *distinct* timestamps, so a raw log with one
+    event per minute was classified as pre-bucketed.  ``_extract_scores`` then
+    returned the detector score repeated once per event (0.9, 0.7, …), i.e. a
+    near-constant series, ``_find_breakpoint`` correctly reported "no
+    breakpoint", and CSS abstained on **every** live run.  Two signals
+    separate the shapes:
+
+    * **schema** — a raw event carries ``raw_event`` / ``event_type`` (the
+      live workflow and the merged correlation timeline both write them),
+      whereas a pre-bucketed entry carries only ``timestamp`` + ``score``;
+    * **grid uniformity** — a pre-bucketed series has constant inter-bucket
+      spacing.
+
+    Returns ``False`` when any timestamp is unparseable, because an event log
+    with irregular/mixed formats must be bucketed rather than passed through.
+    """
+    if not timeline or not all(isinstance(p, dict) for p in timeline):
+        return False
+    if not any(p.get("timestamp") for p in timeline):
+        # No timestamps at all: a bare score vector can only be a per-bucket
+        # series (a raw event log is *defined* by its event timestamps, and
+        # there is nothing to bucket it by).
+        return True
+    if any(("raw_event" in p) or ("event_type" in p) for p in timeline):
+        return False
+    stamps = [_parse_timestamp(p.get("timestamp")) for p in timeline]
+    if any(s is None for s in stamps):
+        return False
+    if len(set(stamps)) != len(stamps):
+        return False
+    if len(stamps) < 3:
+        return True
+    gaps = [(b - a).total_seconds() for a, b in zip(stamps, stamps[1:])]
+    return (max(gaps) - min(gaps)) <= 1e-6
+
+
+def _bucketize_pair(
+    routing_timeline: List[dict],
+    traffic_timeline: List[dict],
+    bucket_minutes: int = 5,
+) -> Tuple[List[float], List[float]]:
+    """Bucket two raw event logs onto **one shared** time grid.
+
+    Bucketing each timeline independently (the old behaviour) produced two
+    different grids — one anchored at the first routing event, one at the first
+    traffic event — with different bucket counts.  Aligning them by list index
+    then compared routing bucket 3 with traffic bucket 3 even when they covered
+    different wall-clock intervals, and the shorter series was zero-padded.
+
+    Here both logs share ``t0 = min(timestamp)`` over the union and one bucket
+    width over the union span, so index ``i`` always means the same interval in
+    both series.  The per-bucket score is the mean severity of the events in
+    that bucket (capped at 1.0), or ``0.0`` when no event was recorded; the
+    empty-bucket floor of ``1e-9`` matches ``split_merged_timeline`` so that
+    downstream dispersion estimates never divide by an exact zero.
+
+    Returns two equal-length lists, or ``([], [])`` when neither timeline has
+    a parseable timestamp.
+    """
+    events: List[Tuple[datetime, str, float]] = []
+    for source, tl in (("routing", routing_timeline), ("traffic", traffic_timeline)):
+        for p in tl or []:
+            if not isinstance(p, dict):
                 continue
-            sev = p.get("severity", p.get("score", p.get("z_score", 0)))
+            dt = _parse_timestamp(p.get("timestamp"))
+            if dt is None:
+                continue
+            sev = p.get("severity", p.get("score", p.get("z_score", 0.0)))
             try:
                 sev = float(sev)
             except (TypeError, ValueError):
                 sev = 0.0
-            parsed.append((dt, sev))
-        except Exception:
-            continue
-    if not parsed:
-        return []
-    parsed.sort(key=lambda x: x[0])
-    t0, t1 = parsed[0][0], parsed[-1][0]
-    span_min = max((t1 - t0).total_seconds() / 60.0, bucket_minutes)
-    if NUMPY_OK:
-        n_buckets = max(4, int(np.ceil(span_min / bucket_minutes)))
-    else:
-        n_buckets = max(4, -(-int(span_min) // bucket_minutes))  # ceil div without numpy
-    scores = [0.0] * n_buckets
-    counts = [0] * n_buckets
-    for dt, sev in parsed:
-        idx = min(int((dt - t0).total_seconds() / 60.0 // bucket_minutes), n_buckets - 1)
-        if 0 <= idx < n_buckets:
-            scores[idx] += sev
-            counts[idx] += 1
-    bucketed = [min(s / c, 1.0) if c else 0.0 for s, c in zip(scores, counts)]
-    return bucketed
-
-
-def _to_score_series(timeline: List[dict]) -> List[float]:
-    """Return a per-bucket score series from either raw events or a
-    pre-bucketed Phase-2 timeline.
-
-    Detection rule: if the majority of entries are dicts with a
-    ``timestamp`` field, treat the input as a raw event list and
-    bucketise via :func:`_bucketize_events`. Otherwise treat it as a
-    pre-bucketed Phase-2 timeline and pass through
-    :func:`_extract_scores`.
-
-    Pre-bucketed detection (preferred when both signals are available):
-    if every entry has a *distinct* timestamp AND the entries are
-    uniformly spaced (typical of split_merged_timeline output), they
-    are already per-bucket scores — pass them through to avoid the
-    "mean of severity" flattening bug that turned real pre-bucketed
-    routing series into constant scores.
-    """
-    if not timeline:
-        return []
-    ts_count = sum(1 for p in timeline if isinstance(p, dict) and p.get("timestamp"))
-    if ts_count < max(1, len(timeline) // 2):
-        return _extract_scores(timeline)
-    # Heuristic: count unique timestamps. If each entry has a distinct
-    # bucket timestamp, this is a pre-bucketed Phase-2 series (one
-    # entry per bucket), not a raw event log (many entries per bucket).
-    distinct_ts = {p.get("timestamp") for p in timeline if isinstance(p, dict)}
-    if len(distinct_ts) >= 0.9 * len(timeline):
-        # All entries have distinct timestamps → pre-bucketed, pass through.
-        return _extract_scores(timeline)
-    return _bucketize_events(timeline)
+            events.append((dt, source, sev))
+    if not events:
+        # No parseable timestamps anywhere (e.g. bare {"score": x} vectors from
+        # a library caller).  There is no clock to bucket on, so fall back to
+        # index alignment of the two score vectors.
+        r = _extract_scores(routing_timeline)
+        t = _extract_scores(traffic_timeline)
+        n = min(len(r), len(t))
+        return r[:n], t[:n]
+    t0 = min(e[0] for e in events)
+    t1 = max(e[0] for e in events)
+    span_min = max((t1 - t0).total_seconds() / 60.0, float(bucket_minutes))
+    n_buckets = max(4, min(240, int(math.ceil(span_min / bucket_minutes))))
+    width_s = max((t1 - t0).total_seconds() / n_buckets, 1e-9)
+    r_sum = [0.0] * n_buckets
+    r_cnt = [0] * n_buckets
+    t_sum = [0.0] * n_buckets
+    t_cnt = [0] * n_buckets
+    for dt, source, sev in events:
+        idx = min(n_buckets - 1, max(0, int((dt - t0).total_seconds() / width_s)))
+        if source == "routing":
+            r_sum[idx] += sev
+            r_cnt[idx] += 1
+        else:
+            t_sum[idx] += sev
+            t_cnt[idx] += 1
+    routing = [min(s / c, 1.0) if c else 0.0 for s, c in zip(r_sum, r_cnt)]
+    traffic = [min(s / c, 1.0) if c else 0.0 for s, c in zip(t_sum, t_cnt)]
+    return ([max(v, 1e-9) for v in routing], [max(v, 1e-9) for v in traffic])
 
 
 def _extract_scores(timeline: List[dict]) -> List[float]:
@@ -276,10 +319,24 @@ def _align_series(
     r_scores: List[float],
     t_scores: List[float],
 ) -> Tuple[List[float], List[float]]:
-    n = max(len(r_scores), len(t_scores))
-    r = list(r_scores) + [0.0] * (n - len(r_scores))
-    t = list(t_scores) + [0.0] * (n - len(t_scores))
-    return r, t
+    """Align two per-bucket series on their common window.
+
+    The previous implementation *zero-padded* the shorter series at the end.
+    That fabricates "quiet" buckets that were never observed: if routing has
+    12 buckets and traffic 10, the last two traffic buckets become 0.0, which
+    is indistinguishable from "traffic was measured and did not move".  On a
+    post-event window this drags the post mean down and manufactures a traffic
+    drop; it also shifts the traffic breakpoint.  Truncating to the common
+    prefix keeps every value a real observation (the two series are produced
+    on the same bucket grid, so index i is the same wall-clock bucket).
+
+    Returns ``([], [])`` when either input is empty — callers already treat an
+    empty series as "cannot estimate".
+    """
+    n = min(len(r_scores), len(t_scores))
+    if n <= 0:
+        return [], []
+    return list(r_scores[:n]), list(t_scores[:n])
 
 
 def _find_breakpoint(
@@ -426,11 +483,15 @@ def _scarcity_aware_pns(pre, post, alpha_prior=1.0, beta_prior=1.0):
     # Shrinkage: alpha + beta → n_post + α + β - 2
     shrinkage = (alpha_prior + beta_prior) / (alpha_post + beta_post)
     point_shrunk = point_raw * (1.0 - shrinkage)
-    # Bayesian two-sided p: P(|effect| > 0 | data) lower-tail on |effect-0|
-    # P(direction is null) = 2 * min(P(theta<0.5), P(theta>0.5))
-    p_null = 2.0 * min(float((beta_samples < 0.5).mean()),
-                      float((beta_samples > 0.5).mean()))
-    p_value = max(0.0, min(1.0, 1.0 - (1.0 - p_null)))
+    # Bayesian two-sided p: P(direction is null) = 2·min(P(θ<0.5), P(θ>0.5)),
+    # with the add-one correction so a decisive posterior cannot report p = 0
+    # from a finite number of draws (the previous expression,
+    # ``1 - (1 - p_null)``, was also a no-op that just returned p_null).
+    n_draws = int(beta_samples.size)
+    left = int((beta_samples < 0.5).sum())
+    right = n_draws - left
+    p_value = 2.0 * min(left + 1, right + 1) / (n_draws + 1)
+    p_value = max(0.0, min(1.0, p_value))
     sufficiency = min(abs(point_shrunk), 5.0)
     necessity = float(n_post_above / max(n_post, 1))
     return {
@@ -541,7 +602,11 @@ def _pns_estimate(
         idx = rng.permutation(len(pooled))
         perm_diffs[k] = float((pooled[idx[:n_pre]].mean() - pooled[idx[n_pre:]].mean()) / scale)
     abs_point = abs(point)
-    p_value = float((np.abs(perm_diffs) >= abs_point).mean())
+    # Add-one correction: with a finite number of permutations the empirical
+    # p-value can be exactly 0, which is not a probability that can be observed
+    # and understates the uncertainty at n_bootstrap=1000.  (1 + hits)/(1 + B)
+    # is the standard estimator and is never 0.
+    p_value = float((1 + int((np.abs(perm_diffs) >= abs_point).sum())) / (n_bootstrap + 1))
     # Necessity: fraction of post values where the signal is "active"
     # (above the pre mean). In BGP context "active" means routing/traffic
     # anomaly is detected.
@@ -590,13 +655,25 @@ def css_score(
             explanation="numpy missing or empty timeline; CSS cannot estimate.",
             details={"reason": "numpy missing or empty timeline"},
         )
-    # Detect raw-event vs pre-bucketed timelines. If the timeline
-    # entries carry a timestamp field AND there's more than one entry
-    # per score repetition, it's a Phase-1 raw event list — bucketise
-    # it before extracting scores. This is what fixes the
-    # "point=0 on real BGP data" bug for Phase-1 callers.
-    routing_scores = _to_score_series(routing_timeline)
-    traffic_scores = _to_score_series(traffic_timeline)
+    # Normalise the two inputs onto ONE time grid.
+    #
+    # Two shapes reach this function and they need different handling:
+    #   * pre-bucketed series (one score per bucket, uniform timestamps) are
+    #     passed through — bucketising them again would average away the
+    #     per-bucket counts that carry the signal;
+    #   * raw event logs (one entry per detected anomaly, irregular timestamps)
+    #     are bucketed onto a *shared* grid so that index i refers to the same
+    #     wall-clock interval in both series.
+    # The old code bucketed each timeline independently and aligned the two by
+    # padding the shorter one with zeros, so a live run compared different
+    # intervals and fabricated quiet buckets.
+    if _is_prequantised(routing_timeline) and _is_prequantised(traffic_timeline):
+        routing_scores = _extract_scores(routing_timeline)
+        traffic_scores = _extract_scores(traffic_timeline)
+    else:
+        routing_scores, traffic_scores = _bucketize_pair(
+            routing_timeline, traffic_timeline
+        )
     r_aligned, t_aligned = _align_series(routing_scores, traffic_scores)
     if len(r_aligned) < min_samples:
         return CSSResult(
@@ -695,15 +772,16 @@ def css_score(
     # not bipartite — CSS abstains. We only run this when routing has an
     # intervention; otherwise the routing check above already returned.
     #
-    # FIX (real-data branch): for BGP events we often have routing signal
-    # but no traffic signal (Cloudflare Radar CSV doesn't cover the event
-    # window, or the destination AS isn't in our traffic dataset). In that
-    # case we cannot do a *bipartite* PNS test, but the routing-only
-    # signal is still meaningful for direction attribution if routing
-    # precedes traffic (lead < -1, established by routing breakpoint).
-    # We therefore proceed to PNS estimation with an empty traffic series,
-    # and rely on the lead-based tiebreaker in the decision logic below
-    # to commit to R→T (routing precedes → R→T) rather than abstaining.
+    # Real BGP events often have a routing signal but no traffic signal
+    # (Cloudflare Radar does not cover the window, or the AS is not in the
+    # traffic dataset).  CSS(R→T) is then *not estimable*: the outcome variable
+    # is constant, so there is nothing to attribute the routing change to.  The
+    # earlier comment claimed the lead-based tiebreaker would "commit to R→T"
+    # in this case; it never did, because `rt` is non-estimable and its CI is
+    # [0, 0], so the direction stays `unknown`.  Keep that behaviour — a
+    # missing outcome is a missing outcome, not evidence for one direction —
+    # and keep `traffic_available` only to pick the right significance test and
+    # to label the abstention.
     traffic_available = True
     if NUMPY_OK and len(t_pre) >= 2 and len(t_post) >= 2:
         t_pre_arr = np.array(t_pre, dtype=float)
@@ -824,9 +902,12 @@ def css_score(
             direction = "traffic_to_routing"
             ci_lower, ci_upper, p_value = tr["ci_lower"], tr["ci_upper"], tr["p_value"]
     elif abs_css_rt > 0 and abs_css_tr > 0 and abs(abs_css_rt - abs_css_tr) <= 1e-12:
-        # Exactly equal standardised effects and neither significant: the
-        # data cannot order the two directions.
-        direction = "independent"
+        # Two non-zero but numerically identical standardised effects and
+        # neither clears its null.  The data cannot order the two directions.
+        # This used to return "independent", which is a *causal claim* ("no
+        # link") drawn from an inability to distinguish — the same over-claim
+        # the rest of this function was rewritten to avoid.  Abstain instead.
+        direction = "unknown"
         ci_lower = min(rt["ci_lower"], tr["ci_lower"])
         ci_upper = max(rt["ci_upper"], tr["ci_upper"])
         p_value = max(rt["p_value"], tr["p_value"])
@@ -915,8 +996,12 @@ def css_score(
         ci_upper=round(ci_upper, 4),
         p_value=round(p_value, 4),
         is_causal=is_causal,
-        sufficiency=round(rt["sufficiency"], 3),
-        necessity=round(rt["necessity"], 3),
+        sufficiency=round(
+            (tr if direction == "traffic_to_routing" else rt)["sufficiency"], 3
+        ),
+        necessity=round(
+            (tr if direction == "traffic_to_routing" else rt)["necessity"], 3
+        ),
         explanation=explanation,
         details={
             "breakpoint_idx": bp_idx,

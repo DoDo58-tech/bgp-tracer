@@ -372,7 +372,15 @@ def estimate_counterfactual_cascade(intervention_as, intervention_type, routing_
     impacts = [cic_node_impact(n, intervention_type, traffic_baseline) for n in cascade]
     total = cic_aggregate(impacts)
     strength, sig = cic_strength(total, impacts)
-    return {"direction": "routing_to_traffic", "strength": strength, "significant": sig,
+    # The propagation model expands a *routing* change along the AS graph, so
+    # its direction is "routing -> traffic" **by construction**.  Reporting that
+    # as the cascade's direction turned an assumption into evidence: the
+    # `cic_scope` channel then contributed a 1+log1p(N) likelihood ratio in
+    # favour of R→T on every run that had a topology, regardless of what the
+    # two time series did.  The cascade measures *scope*, not direction, so it
+    # now says so and the synthesis does not use it as a directional channel.
+    return {"direction": "unknown", "strength": strength, "significant": sig,
+            "direction_note": "routing->traffic assumed by the propagation model",
             "cascade_chain": cascade, "impact_estimates": impacts, "total_impact": total,
             "affected_as_count": len(cascade),
             "relation_mix": cic_relation_mix(cascade),
@@ -1121,8 +1129,6 @@ class CausalAttributionEngine:
         #   gate 1 (statistics): the committed direction must be the one whose
         #           CSS bootstrap CI excludes zero (`is_causal`);
         #   gate 2 (posterior): max(posterior) >= HCAF_MIN_POSTERIOR.
-        abstained = False
-        abstain_reason = "supported"
         # `direction` may be the enum ("traffic_to_traffic") or its rendered
         # label ("traffic -> traffic") depending on which branch produced it,
         # so normalise before testing.
@@ -1132,6 +1138,23 @@ class CausalAttributionEngine:
             max(float(v) for v in posterior.values())
             if isinstance(posterior, dict) and posterior else 0.0
         )
+        abstained = _dir_norm not in ("routing_to_traffic", "traffic_to_routing")
+        if abstained:
+            # Distinguish the two ways "no direction" arises:
+            #   * the synthesis already applied the same posterior floor and
+            #     returned "unknown" — then `posterior_below_floor` is the
+            #     honest reason (this is the overwhelmingly common case on
+            #     real caches: 143/145 in the unlabelled sweep);
+            #   * there is no posterior at all (CSS unavailable / degenerate).
+            # The previous label said `no_supported_direction` for both, which
+            # hid the fact that the floor, not missing evidence, was deciding.
+            abstain_reason = (
+                "posterior_below_floor"
+                if posterior and max_posterior < HCAF_MIN_POSTERIOR
+                else "no_supported_direction"
+            )
+        else:
+            abstain_reason = "supported"
         if _dir_norm in ("routing_to_traffic", "traffic_to_routing"):
             if not bool(convergence.get("is_causal", False)):
                 abstained = True
@@ -1223,8 +1246,10 @@ class CausalAttributionEngine:
         """Bayesian causal-attribution synthesis (replaces weighted-vote).
 
         Pipeline:
-            1. Compute CSS (Pearl PNS) on the two timelines with the
-               MSBD breakpoint as the intervention point.
+            1. Compute CSS (Pearl PNS) on the two timelines. CSS detects its
+               own intervention breakpoint on the routing series; MSBD's
+               multi-scale sync does not produce a sample-domain index, so it
+               cannot supply that point.
             2. Run Transfer Entropy baseline (non-linear / non-Gaussian
                directional information flow).
             3. Feed each evidence channel as a likelihood ratio into
@@ -1240,25 +1265,18 @@ class CausalAttributionEngine:
         """
         # --- 1. CSS (PNS) ---------------------------------------------------
         css_res = None
+        # MSBD does NOT supply the intervention index.  `scale_results` entries
+        # carry {"scale", "sync_score", "energy"} — the wavelet *coefficient*
+        # indices from `msbd_find_bp` are never converted back to sample
+        # positions — so the old loop looked up a `breakpoint_idx` key that no
+        # producer writes and always produced None.  It read as "MSBD anchors
+        # the counterfactual window" while in fact CSS always ran its own
+        # mean-shift detector.  Rather than invent a coefficient→sample mapping
+        # (which would put an unvalidated index into the intervention point),
+        # the anchor is left to `css_score`, which detects the breakpoint on the
+        # series it is about to split, and MSBD contributes its scale-sync as an
+        # evidence channel only.
         msbd_breakpoint_idx = None
-        try:
-            if isinstance(breakpoint, dict):
-                scale_results = breakpoint.get("scale_results") or []
-                # The largest-mean-shift scale's breakpoint is the natural
-                # counterfactual intervention point. Fall back to None
-                # which lets css_engine do its own breakpoint detection.
-                best = None
-                best_diff = -1.0
-                for s in scale_results:
-                    idx = s.get("breakpoint_idx")
-                    strength = float(s.get("strength", 0.0) or 0.0)
-                    if idx is None or strength < best_diff:
-                        continue
-                    best_diff = strength
-                    best = int(idx)
-                msbd_breakpoint_idx = best
-        except (TypeError, ValueError):
-            msbd_breakpoint_idx = None
 
         if (
             _CSS_OK
@@ -1405,29 +1423,33 @@ class CausalAttributionEngine:
                     },
                 }
 
-        # --- 4. Routing metadata: an *observed* withdrawal in an outage window ---
-        # Only the observable fact "a BGP withdrawal was recorded in the event
-        # window" is used, and only for outages.  The previous branch
-        #   evt in ("route_leak", "roa_misconfig", "origin_hijack*")
-        # mapped the ground-truth cause label directly to a 10:1 R→T signal
-        # and popped the contradicting MSBD channel.  That both leaked the
-        # label (the expected direction is produced by the same mapping) and
-        # deleted evidence that disagreed with the answer.  Both are removed.
-        _routing_withdrawal_signal: Optional[str] = None
-        if routing_context:
-            evt = routing_context.get("event_type", "")
-            has_wd = bool(routing_context.get("has_routing_withdrawal", False))
-            if evt == "outage" and has_wd:
-                # Bounded (1.5:1) weak channel inside bayesian_synthesize; it
-                # can be outweighed, not used as a veto.
-                _routing_withdrawal_signal = "routing_to_traffic"
+        # --- 4. No "event type" channel ------------------------------------
+        # Two label-derived channels have been removed from this pipeline:
+        #
+        #   * the old 10:1 prior keyed on evt in ("route_leak",
+        #     "roa_misconfig", "origin_hijack*"), which also popped the
+        #     contradicting MSBD channel (the expected direction is produced by
+        #     the same mapping, so it guaranteed the "right" answer);
+        #   * a 1.5:1 "withdrawal observed" channel keyed on
+        #     evt == "outage" and has_routing_withdrawal.
+        #
+        # The second one was a bug even after the first was removed: in the
+        # evaluation `routing_context` carries no `event_type`, so it never
+        # fired, while in the live workflow `event_type` is derived from the
+        # detected event (defaulting to "hijack"/"outage"), so it fired on every
+        # full run.  Eval and production were therefore running different
+        # models, and the production one had an unconditional R→T nudge.  A BGP
+        # withdrawal is *routing activity*, not evidence about which side caused
+        # which: an outage withdrawal is frequently the effect of the traffic
+        # disruption.  The channel is gone; `bayesian_synthesize` keeps the
+        # parameter for API compatibility but is always called with None.
 
         # --- 5. Bayesian synthesis -----------------------------------------
         if _CSS_OK and bayesian_synthesize is not None and css_res is not None:
             posterior = bayesian_synthesize(
                 css_res,
                 evidence_channels=evidence_channels,
-                routing_withdrawal_signal=_routing_withdrawal_signal,
+                routing_withdrawal_signal=None,
             )
             direction = posterior["direction"]
             confidence = posterior["confidence"]
@@ -1444,6 +1466,7 @@ class CausalAttributionEngine:
                 "is_causal": is_causal,
                 "css_routing_to_traffic": float(css_res.css_routing_to_traffic),
                 "css_traffic_to_routing": float(css_res.css_traffic_to_routing),
+                "css_direction": css_res.direction,
                 "css_confidence": float(css_res.confidence),
                 "css_p_value": float(css_res.p_value),
                 "css_ci_lower": float(css_res.ci_lower),
@@ -1605,39 +1628,35 @@ class CausalAttributionEngine:
         "unknown/none/0%". +  drop_ratio
          ( quick_cascade_estimate ).
         """
-        event_type = (routing_context or {}).get("event_type", "unknown") if side == "routing_only" \
-            else "unknown"
         affected_as = (routing_context or {}).get("affected_as_count", 0)
         traffic_drop_ratio = (traffic_context or {}).get("traffic_drop_ratio", 0.0)
-        factor = {"outage": 0.9, "hijack": 0.8, "leak": 0.5, "withdrawal": 0.9, "normal": 0.0}
-        event_factor = factor.get(event_type, 0.3)
         as_factor = min(affected_as / 10.0, 1.0) if affected_as else 0.0
         drop_factor = min(traffic_drop_ratio, 1.0)
-        strength = event_factor * (as_factor + drop_factor) / 2 if (as_factor or drop_factor) else 0.0
+        strength = (as_factor + drop_factor) / 2 if (as_factor or drop_factor) else 0.0
 
-        # When routing_only and event is hijack/outage with drop_ratio > 0.1, infer routing_to_traffic.
-        if side == "routing_only" and event_type in ("hijack", "outage", "withdrawal") and drop_factor > 0.1:
-            direction = "routing_to_traffic"
-            explanation = (
-                f"Only routing timeline available ({len(routing_timeline) if routing_timeline else 0} entries), "
-                f"event_type={event_type}, traffic drop ratio={traffic_drop_ratio:.0%}. "
-                f"Inferred direction=routing_to_traffic (weak evidence)."
-            )
-            routing_to_traffic = True
-        elif side == "traffic_only":
-            direction = "unknown"
+        # A single-sided analysis can measure *that* something happened, never
+        # *which side caused it*.  This branch used to commit
+        # direction="routing_to_traffic" whenever event_type was
+        # hijack/outage/withdrawal and the traffic drop exceeded 10% — i.e. it
+        # turned the ground-truth cause label (workflow_engine passes it in
+        # routing_context) into a directional answer, and it bypassed the
+        # abstention gate entirely, because `analyze()` returns here before the
+        # gate runs.  Direction is now always "unknown"; strength and the drop
+        # ratio remain as diagnostics so the report can say "routing activity
+        # detected, direction not identifiable without a traffic timeline".
+        direction = "unknown"
+        routing_to_traffic = False
+        if side == "traffic_only":
             explanation = (
                 f"Only traffic timeline available ({len(traffic_timeline) if traffic_timeline else 0} entries), "
-                f"cannot infer causal direction without routing data."
+                "cannot infer causal direction without routing data."
             )
-            routing_to_traffic = False
         else:
-            direction = "unknown"
             explanation = (
-                f"Only {('routing' if side == 'routing_only' else 'traffic')} timeline available, "
-                f"traffic drop ratio={traffic_drop_ratio:.0%}, insufficient to infer causal direction."
+                f"Only routing timeline available ({len(routing_timeline) if routing_timeline else 0} entries), "
+                f"traffic drop ratio={traffic_drop_ratio:.0%}; a single side cannot identify "
+                "causal direction, so the verdict is unknown."
             )
-            routing_to_traffic = False
 
         data_points = (len(routing_timeline) if routing_timeline else 0) + (len(traffic_timeline) if traffic_timeline else 0)
         confidence = min(0.5, 0.2 + 0.1 * drop_factor + 0.1 * as_factor)  #  50%
