@@ -343,17 +343,29 @@ def transfer_entropy_baseline(
         * Compute joint counts for the 3-variable joint distribution.
         * Compute conditional counts.
         * Convert to probabilities via Laplace smoothing.
-        * Surrogate baseline: shuffle routing lag-window `n_perm` times,
-          recompute TE, use mean ± 2·std as the null distribution.
+        * Surrogate baseline: shuffle the *source* series' lag window
+          `n_perm` times and recompute TE.  A separate null is built for
+          each direction — TE(R→T) against a routing-shuffle null and
+          TE(T→R) against a traffic-shuffle null — because the two
+          statistics are computed on different variables.
 
-    Decision rule (significance threshold 0.05 on the permutation test):
-        * TE(R → T) > μ_null + 2·σ_null  AND  TE(R → T) > TE(T → R)
-          → routing_to_traffic
-        * TE(T → R) > μ_null + 2·σ_null  AND  TE(T → R) > TE(R → T)
-          → traffic_to_routing
-        * otherwise → unknown
+    Decision rule (per direction ``d``, with ``¬d`` the opposite):
+        * commit to ``d`` iff
+              p_d < 0.05                     (empirical permutation test)
+          AND TE(d) > μ_null_d + 2·σ_null_d
+          AND TE(d) > 1.2 · TE(¬d)
+        * otherwise → unknown.
 
-    Confidence = clamp(|TE(R → T) − TE(T → R)| / max(TE), 0, 1).
+    Two defects this rule fixes relative to the earlier implementation:
+      (1) a single routing-shuffle null was used to test *both* directions,
+          so TE(T→R) was compared against a distribution belonging to
+          TE(R→T);
+      (2) two fallback branches committed on a bare ``TE(d) > 1.2·TE(¬d)``
+          ratio without any significance check, which reported a direction
+          from noise.
+
+    Confidence = clamp(|TE(R → T) − TE(T → R)| / max(TE), 0, 1) when a
+    direction is committed, else 0.
     """
     if not NUMPY_OK or not routing_timeline or not traffic_timeline:
         return BaselineResult(
@@ -411,31 +423,28 @@ def transfer_entropy_baseline(
     null_tr_mean = float(null_tr.mean())
     null_tr_std = float(null_tr.std())
 
-    # Decision rule:
-    #   * Each direction is tested against its OWN surrogate null.
-    #   * A direction call requires BOTH (a) that direction exceeding its own
-    #     null at 1 std AND (b) it exceeding the reverse direction. The
-    #     previous "te_rt > te_tr * 1.2" fallbacks fired even when neither
-    #     direction cleared its null, i.e. they reported a direction from
-    #     pure noise; they are removed for that reason.
-    #   * Confidence = clamp(|TE_R->T - TE_T->R| / max(TE_R->T, TE_T->R), 0, 1).
-    sig_rt = te_rt > null_rt_mean + 1.0 * null_rt_std
-    sig_tr = te_tr > null_tr_mean + 1.0 * null_tr_std
-    if sig_rt and not sig_tr and te_rt > te_tr:
+    # Empirical permutation p-values, with the standard add-one correction so
+    # p can never be exactly 0 with a finite number of surrogates.
+    p_rt = float((1 + int((null_rt >= te_rt).sum())) / (n_perm + 1))
+    p_tr = float((1 + int((null_tr >= te_tr).sum())) / (n_perm + 1))
+
+    # Decision rule (see docstring):
+    #   * each direction is tested against its OWN surrogate null;
+    #   * significance requires p < 0.05 AND a 2σ margin over the null mean;
+    #   * the significant direction must also dominate the opposite one by
+    #     20%.  The old code committed on the 1.2x ratio alone when
+    #     significance failed — that is a direction produced by noise.
+    sig_rt = bool(p_rt < 0.05 and te_rt > null_rt_mean + 2.0 * null_rt_std)
+    sig_tr = bool(p_tr < 0.05 and te_tr > null_tr_mean + 2.0 * null_tr_std)
+    if sig_rt and te_rt > 1.2 * max(te_tr, 1e-12):
         direction = "routing_to_traffic"
-    elif sig_tr and not sig_rt and te_tr > te_rt:
+    elif sig_tr and te_tr > 1.2 * max(te_rt, 1e-12):
         direction = "traffic_to_routing"
     else:
-        # Both directions significant, or neither: the surrogate cannot
-        # separate them. Abstain rather than pick the larger point estimate.
         direction = "unknown"
     denom = max(te_rt, te_tr, 1e-9)
-    confidence = min(1.0, abs(te_rt - te_tr) / denom)
-    if direction == "unknown":
-        # An abstention must not carry the confidence of a committed call:
-        # with te_tr == 0 the ratio above is 1.0 even when neither direction
-        # cleared its null. Report 0.0 and keep the raw ratio in details.
-        confidence = 0.0
+    asymmetry = min(1.0, abs(te_rt - te_tr) / denom)
+    confidence = asymmetry if direction != "unknown" else 0.0
     return BaselineResult(
         direction=direction,
         confidence=round(float(confidence), 3),
@@ -443,13 +452,20 @@ def transfer_entropy_baseline(
         details={
             "te_routing_to_traffic": round(float(te_rt), 4),
             "te_traffic_to_routing": round(float(te_tr), 4),
+            # Deprecated aliases (historical key names): these now refer
+            # explicitly to the R→T null.  Use the per-direction keys below.
+            "null_mean": round(null_rt_mean, 4),
+            "null_std": round(null_rt_std, 4),
             "null_rt_mean": round(null_rt_mean, 4),
             "null_rt_std": round(null_rt_std, 4),
             "null_tr_mean": round(null_tr_mean, 4),
             "null_tr_std": round(null_tr_std, 4),
-            "sig_rt": bool(sig_rt),
-            "sig_tr": bool(sig_tr),
-            "raw_asymmetry_ratio": round(min(1.0, abs(te_rt - te_tr) / denom), 3),
+            "p_value_rt": round(p_rt, 4),
+            "p_value_tr": round(p_tr, 4),
+            "sig_rt": sig_rt,
+            "sig_tr": sig_tr,
+            "significant": bool(sig_rt or sig_tr),
+            "raw_asymmetry_ratio": round(asymmetry, 3),
             "lag": lag,
             "bins": bins,
             "n_perm": n_perm,

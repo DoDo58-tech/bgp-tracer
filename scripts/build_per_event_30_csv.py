@@ -23,10 +23,20 @@ METHODS = [
 
 
 def is_review_correct(pred, expected):
+    """LEGACY review metric -- kept only to reproduce historical artefacts.
+
+    This counts an abstention ("unknown") as correct. That is defensible for
+    ALERT TRIAGE, where declining to escalate is a legitimate outcome, but it
+    is invalid for DIRECTION ATTRIBUTION, where the entire value of the task
+    is naming the correct direction. Every headline number in the paper came
+    from this function and must be treated as void. Use ``is_strict_correct``
+    for any directional claim.
+    """
     return pred == expected or pred == "unknown"
 
 
 def is_strict_correct(pred, expected):
+    """Strict metric: only an exact direction match counts. Abstain != correct."""
     return pred == expected
 
 

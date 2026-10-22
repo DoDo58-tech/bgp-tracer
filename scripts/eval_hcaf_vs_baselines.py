@@ -815,11 +815,16 @@ def main():
             f.write(json.dumps(pr, ensure_ascii=False) + "\n")
     print(f"Wrote {len(per_row)} rows to {out_path}")
 
-    # Ablation table — use precomputed hcaf_correct field.
-    evaluable = [r for r in per_row if r["hcaf_correct"] is not None]
+    # Ablation table. Every method is scored on the SAME event set -- the full
+    # set of rows carrying an expected_direction. The previous code derived
+    # `evaluable` from `hcaf_correct is not None`, i.e. it restricted the
+    # comparison to the events HCAF itself was willing to answer, so every
+    # baseline was silently scored on a subset chosen by the method under
+    # test. That is what produced "HCAF 29/29 = 100%".
+    scored = [r for r in per_row if r.get("expected_direction")]
 
     methods = [
-        ("HCAF (CSS+B)", "hcaf_correct"),
+        ("HCAF (CSS+B)", "hcaf_direction"),
         ("CSS only",     "css_direction"),
         ("Pearson",      "pearson_direction"),
         ("Granger",      "granger_direction"),
@@ -828,26 +833,30 @@ def main():
     ]
     table = []
     for label, key in methods:
-        if key == "hcaf_correct":
-            correct = sum(1 for r in evaluable if r.get(key) is True)
-        else:
-            correct = sum(1 for r in evaluable if r.get(key) == r["expected_direction"])
-        n = len(evaluable)
-        precision = correct / n if n else 0.0
-        table.append((label, correct, n, precision))
+        # An abstention ("unknown") is NOT correct for a direction task:
+        # the entire value of the task is naming the right direction.
+        correct = sum(1 for r in scored if r.get(key) == r["expected_direction"])
+        abstained = sum(1 for r in scored if (r.get(key) or "unknown") == "unknown")
+        wrong = len(scored) - correct - abstained
+        n = len(scored)
+        # Coverage = answered at all. Selective accuracy = correct when answered.
+        coverage = (n - abstained) / n if n else 0.0
+        selective = correct / (correct + wrong) if (correct + wrong) else 0.0
+        table.append((label, correct, wrong, abstained, n, coverage, selective))
 
     print()
-    print(f"{'Method':<18} {'Correct':>8} {'Total':>6} {'Precision':>10}")
-    print("─" * 46)
-    for label, c, n, p in table:
-        print(f"{label:<18} {c:>8} {n:>6} {p:>9.3f}")
+    print(f"{'Method':<18} {'Correct':>8} {'Wrong':>7} {'Abstain':>8} {'Total':>6} "
+          f"{'Coverage':>9} {'Sel.Acc':>8}")
+    print("─" * 70)
+    for label, c, w, a, n, cov, sel in table:
+        print(f"{label:<18} {c:>8} {w:>7} {a:>8} {n:>6} {cov:>9.3f} {sel:>8.3f}")
 
     # Honest ablation: split into real-cache vs synthetic-fallback events.
     # The 100% headline number from prior eval runs was driven by domain
     # priors on synthetic timelines. We report precision separately to
     # distinguish "model reads the cache" from "model reads the label".
-    real_rows = [r for r in evaluable if "synthetic" not in r.get("cache_source", "").lower()]
-    synth_rows = [r for r in evaluable if "synthetic" in r.get("cache_source", "").lower()]
+    real_rows = [r for r in scored if "synthetic" not in r.get("cache_source", "").lower()]
+    synth_rows = [r for r in scored if "synthetic" in r.get("cache_source", "").lower()]
     print()
     print("=" * 70)
     print("HONEST ABLATION — split by cache source")
@@ -856,12 +865,8 @@ def main():
     print(f"{'Method':<18} {'Corr':>4}/{'Tot':<4} {'Prec':>7}   {'Corr':>4}/{'Tot':<4} {'Prec':>7}")
     print("─" * 70)
     for label, key in methods:
-        if key == "hcaf_correct":
-            rc = sum(1 for r in real_rows if r.get(key) is True)
-            sc = sum(1 for r in synth_rows if r.get(key) is True)
-        else:
-            rc = sum(1 for r in real_rows if r.get(key) == r["expected_direction"])
-            sc = sum(1 for r in synth_rows if r.get(key) == r["expected_direction"])
+        rc = sum(1 for r in real_rows if r.get(key) == r["expected_direction"])
+        sc = sum(1 for r in synth_rows if r.get(key) == r["expected_direction"])
         rn, sn = len(real_rows), len(synth_rows)
         rp = rc / rn if rn else 0.0
         sp = sc / sn if sn else 0.0
@@ -871,7 +876,7 @@ def main():
     css_contrib = [r for r in real_rows if r.get("css_is_causal")]
     print(f"CSS-causal verdicts on real data: {len(css_contrib)}/{len(real_rows)}")
     if css_contrib:
-        c = sum(1 for r in css_contrib if r["hcaf_correct"] is True)
+        c = sum(1 for r in css_contrib if r.get("hcaf_direction") == r["expected_direction"])
         print(f"  HCAF accuracy on CSS-causal subset: {c}/{len(css_contrib)} ({100*c/len(css_contrib):.1f}%)")
     # HCAF confidence distribution on real data
     hcaf_confs_real = [r["hcaf_confidence"] for r in real_rows if isinstance(r.get("hcaf_confidence"), (int, float))]
@@ -888,18 +893,21 @@ def main():
     correct_by_cause: Counter = Counter()
     css_correct_by_cause: Counter = Counter()
     abstain_by_cause: Counter = Counter()
-    for r in evaluable:
+    for r in scored:
         cause = r["ground_truth_cause_label"]
         by_cause[cause] += 1
-        if r.get("hcaf_correct") is True:
+        if r.get("hcaf_direction") == r.get("expected_direction"):
             correct_by_cause[cause] += 1
         if r.get("css_direction") == r.get("expected_direction"):
             css_correct_by_cause[cause] += 1
-    # Also count abstain events per cause
+    # Also count abstain events per cause. An abstention is HCAF reporting
+    # "unknown", not a missing record -- use the direction string, not the
+    # nullable hcaf_correct field, which was None for unanswerable events and
+    # so silently excluded them from this table.
     all_evaluable = [r for r in per_row if r.get("expected_direction") is not None]
     for r in all_evaluable:
         cause = r["ground_truth_cause_label"]
-        if r.get("hcaf_correct") is None:
+        if (r.get("hcaf_direction") or "unknown") == "unknown":
             abstain_by_cause[cause] += 1
     print()
     print("HCAF per-cause precision (with abstain count):")
