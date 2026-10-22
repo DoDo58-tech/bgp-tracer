@@ -1068,8 +1068,19 @@ def bayesian_synthesize(
     dominant = max(norm, key=norm.get)
     n_channels = len(channels)
     n_clusters = len(clusters)
+    # The gate lives here, on the posterior mass of the dominant hypothesis --
+    # the quantity this function actually produces. It used to be a hardcoded
+    # 0.34, which was neither the config floor nor derived from anything; a
+    # three-way posterior makes 0.50 the natural boundary ("the dominant
+    # hypothesis outweighs the other two combined"). HCAF_MIN_POSTERIOR is
+    # imported defensively so this module still loads if config fails.
+    try:
+        from config import HCAF_MIN_POSTERIOR as _POSTERIOR_FLOOR
+    except Exception:  # pragma: no cover - config always present in practice
+        _POSTERIOR_FLOOR = 0.50
     return {
-        "direction": dominant if norm[dominant] > 0.34 else "unknown",
+        "direction": dominant if norm[dominant] >= _POSTERIOR_FLOOR else "unknown",
+        "posterior_floor": _POSTERIOR_FLOOR,
         "posterior": {k: round(v, 4) for k, v in norm.items()},
         "confidence": round(norm[dominant], 3),
         "method": "css_bayesian_synthesis",
