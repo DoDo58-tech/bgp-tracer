@@ -48,11 +48,8 @@ class ChiefExpertAgent:
     Mode selection:
       traffic_first: state machine workflow (default); deterministic and stable.
       react:         LLM-driven ReAct loop with 18 tools; supports streaming.
-      --enhanced:    adds debate, online evaluation, reactive decisions on top of traffic_first.
 
-    Attributes:
-      analysis_mode: "traffic_first" | "react"
-      # enhanced mode removed 2026-09-29 (paper-grade cleanup)
+    (Enhanced mode removed 2026-09-29 — paper-grade cleanup.)
     """
 
     def __init__(
@@ -65,18 +62,15 @@ class ChiefExpertAgent:
         debate_rounds: int = 1,
         evaluation_retries: int = 2,
     ):
-        # enhanced mode removed 2026-09-29 — analysis_mode is now always
-        # one of the base values.
+        # Legacy alias: strip "_enhanced" suffix (enhanced mode removed 2026-09-29).
         if analysis_mode.endswith("_enhanced"):
-            # legacy alias — strip the suffix; enhanced is always False now.
             analysis_mode = analysis_mode.replace("_enhanced", "")
         self.model = model
         self.api_key = api_key
         self.base_url = base_url
         self.analysis_mode = analysis_mode
         self.enable_mitm = enable_mitm
-        # Stored for backward compat with code paths that still consult these
-        # (e.g. agent pipeline components created lazily via debate branches).
+        # Stored for backward compat with old callers passing these kwargs.
         self.debate_rounds = debate_rounds
         self.evaluation_retries = evaluation_retries
         self.llm = None
@@ -88,7 +82,7 @@ class ChiefExpertAgent:
         self._workflow_engine = None
         self._streaming_callback = None
     
-    def _detect_output_language(self, user_input: Optional[str]) -> str:
+    def _detect_output_language(self, user_input):
         """Detect output language from user input."""
         if not user_input:
             return "en"
@@ -112,7 +106,7 @@ class ChiefExpertAgent:
             return "zh"
         return "en"
 
-    def _format_language_instruction(self, language: str) -> str:
+    def _format_language_instruction(self, language):
         """Return language instruction for downstream prompts."""
         return "Respond in English only." if language == "en" else "Reply in Chinese only."
 
@@ -255,7 +249,7 @@ class ChiefExpertAgent:
     # ── React Mode (v4.0) ─────────────────────────────────────────────────────
 
     @staticmethod
-    def _extract_react_token_count(result) -> int:
+    def _extract_react_token_count(result):
         """Sum token usage across all ReAct LLM calls recorded in the trace.
 
         The LLM factory maintains a process-wide TokenBudget; we read it via
@@ -293,10 +287,8 @@ class ChiefExpertAgent:
         """
         React-mode analysis (Reasoning + Acting).
 
-        When enhanced=True these extra capabilities are enabled:
-        - LLMDebateAgent (three-role adversarial debate on contested conclusions)
-        - MultiAgentReportAgent (multi-expert joint report with conflict resolution)
-        - OnlineEvaluationAgent (per-stage quality gating)
+        (Enhanced mode removed 2026-09-29 — `enhanced` arg kept for backward
+        compatibility with old callers.)
         """
         logger.info(f"Using React Agent for AS{asn} analysis (enhanced={enhanced})")
         logger.info(f"Analysis mode: react (streaming: {self._streaming_callback is not None})")
@@ -702,7 +694,7 @@ class ChiefExpertAgent:
 
         return result
 
-    def _extract_token_count(self, context: WorkflowContext):
+    def _extract_token_count(self, context):
         """Extract total token count from context + TokenBudget."""
         tokens = 0
 
@@ -760,7 +752,7 @@ class ChiefExpertAgent:
 
     # ── Quality derivation helpers (Bug fix: token/quality previously N/A) ──
     @staticmethod
-    def _derive_verdict(context: WorkflowContext) -> str:
+    def _derive_verdict(context):
         """Best-effort verdict string from the evidence chain."""
         ec = getattr(context, "evidence_chain", None)
         if isinstance(ec, dict):
@@ -770,7 +762,7 @@ class ChiefExpertAgent:
         return "unknown"
 
     @staticmethod
-    def _derive_confidence_score(context: WorkflowContext) -> float:
+    def _derive_confidence_score(context):
         """Best-effort confidence score in [0, 1]."""
         ec = getattr(context, "evidence_chain", None)
         if isinstance(ec, dict):
@@ -793,7 +785,7 @@ class ChiefExpertAgent:
             return 0.0
 
     @staticmethod
-    def _derive_data_quality(context: WorkflowContext) -> str:
+    def _derive_data_quality(context):
         """High/medium/low based on data availability + verdict."""
         ec = getattr(context, "evidence_chain", None)
         if isinstance(ec, dict):
@@ -815,7 +807,7 @@ class ChiefExpertAgent:
         return "low"
 
     @staticmethod
-    def _count_routing_anomalies(context: WorkflowContext) -> int:
+    def _count_routing_anomalies(context):
         rr = context.routing_result or {}
         try:
             count = int(rr.get("anomaly_count") or 0)
@@ -835,7 +827,7 @@ class ChiefExpertAgent:
         except Exception:
             return 0
 
-    def _build_trace(self, context: WorkflowContext):
+    def _build_trace(self, context):
         """Build execution trace from context transitions."""
         trace = []
         for i, transition in enumerate(context.transitions):
@@ -1331,17 +1323,24 @@ async def analyze_traffic_outage_async(
 
     return result
 
-async def _async_quick_routing(asn, start_time, end_time, enable_mitm, skip_outage=True):
+async def _async_quick_routing(asn, start_time, end_time, enable_mitm,
+                               skip_outage=None,
+                               skip_leak=None):
     """Quick routing analysis without LLM (Phase 1).
 
     Defaults to a light pass that:
       * skips slow forge / MITM detection (needs full-day pre-load + ES lookup)
       * skips path-leak detection (the slowest step at high announcement rates)
-      * optionally skips outage detection (24h baseline re-reads 200+ txt files
+      * skips outage detection (24h baseline re-reads 200+ txt files
         and dominates quick-phase wall time)
 
-    Use `skip_outage=False` only when you specifically want outage scoring in
-    the Phase-1 result.
+    ``skip_outage`` / ``skip_leak`` override the ``BGPT_RUN_OUTAGE`` /
+    ``BGPT_RUN_LEAK`` env vars when not None. Both env vars remain honoured
+    by default so the batch/cache drivers keep producing leak+outage-inclusive
+    caches; the cache drivers pass explicit ``True`` for both skips anyway.
+
+    Light-mode cost is dominated by the single-pass origin hijack detector
+    (~3-5 s for a 3 h window), keeping Phase 1 inside its ~60 s wall budget.
     """
     from agents.routing_agent import run_routing_agent_async
 
@@ -1359,26 +1358,34 @@ async def _async_quick_routing(asn, start_time, end_time, enable_mitm, skip_outa
     # streaming hijack detector (we already produced origin_hijacked /
     # origin_hijacking above in a single pass). Leak/outage follow the
     # same skip_* flags as before.
+    #
+    # Round-26: per-event leak detector toggle.  The leak detector
+    # is the only one whose cost is genuinely unbounded by the
+    # AS prefix count, because it scans every BGP-update chunk in
+    # the window after filtering to target_asns.
+    #
+    # `skip_leak=None` → honour BGPT_RUN_LEAK (batch/cache default: leak ON).
+    # An explicit True/False from the caller wins over the env var.
+    if skip_leak is None:
+        skip_leak = os.environ.get("BGPT_RUN_LEAK", "1") == "0"
+    if skip_outage is None:
+        skip_outage = os.environ.get("BGPT_RUN_OUTAGE", "1") == "0"
+
+    # Phase-1 default skips both leak and outage so the foreground command
+    # stays inside the ~60 s budget. Cache/batch drivers explicitly pass
+    # ``skip_leak=False`` / ``skip_outage=False`` to opt back in.
     rest = await run_routing_agent_async(
         asn=asn, start_time=start_time, end_time=end_time,
         use_llm=False,
         enable_mitm=enable_mitm,
-        # Round-26: per-event leak detector toggle.  The leak detector
-        # is the only one whose cost is genuinely unbounded by the
-        # AS prefix count, because it scans every BGP-update chunk in
-    # Leak detection cost: scans every BGP-update chunk in the window after
-    # filtering to target_asns. Default ON (1). Set BGPT_RUN_LEAK=0 only when
-    # the user explicitly wants to cut detector cost (e.g. CI smoke run).
-    # The detector itself does NOT look at event_type — it just runs on every
-    # BGP update in the window. v17 ground-truth labels are NEVER consulted
-    # here.
-    skip_leak = os.environ.get("BGPT_RUN_LEAK", "1") == "0",
-    skip_forge=True,       # light mode skips forge / MITM (needs full-day pre-load)
-    # Outage detection: scans 24h baseline → re-reads 200+ txt files. Default ON (1).
-    # Set BGPT_RUN_OUTAGE=0 only when the user explicitly wants to cut detector cost.
-    skip_outage=(os.environ.get("BGPT_RUN_OUTAGE", "1") == "0"),
-    skip_hijack_streaming=True,  # single-pass detector already filled origin_hijacked/ing
-)
+        # The detector itself does NOT look at event_type — it just runs on
+        # every BGP update in the window. v17 ground-truth labels are NEVER
+        # consulted here.
+        skip_leak=skip_leak,
+        skip_forge=True,       # light mode skips forge / MITM (needs full-day pre-load)
+        skip_outage=skip_outage,
+        skip_hijack_streaming=True,  # single-pass detector already filled origin_hijacked/ing
+    )
 
     # Merge quick hijack counts into the routing result.
     if isinstance(rest, dict) and quick_hijack:
@@ -1391,7 +1398,7 @@ async def _async_quick_routing(asn, start_time, end_time, enable_mitm, skip_outa
         )
     return rest
 
-def _light_origin_hijack(asn, start_time, end_time) -> dict:
+def _light_origin_hijack(asn, start_time, end_time):
     """Single-pass vectorized origin hijack detection.
 
     Bypasses the streaming `detect_hijacks_batch` pipeline. Loads all 5-min
@@ -1511,7 +1518,7 @@ def _light_origin_hijack(asn, start_time, end_time) -> dict:
         logger.warning(f"[light-hijack] failed (fallback to streaming): {_e}")
         return {"origin_hijacked": [], "origin_hijacking": []}
 
-def build_quick_summary(traffic: dict, routing: dict, correlation: dict) -> dict:
+def build_quick_summary(traffic, routing, correlation):
     """Build a human-readable anomaly summary from raw agent outputs.
 
     Summary fields:
@@ -1630,19 +1637,19 @@ def build_quick_summary(traffic: dict, routing: dict, correlation: dict) -> dict
     # strength is exactly 0 we still surface the temporal-proximity
     # string as an advisory floor (mapped to the same buckets the
     # renderer uses), so the verdict logic below keeps working.
-    def _bucket_from_strength(score: float) -> str:
-        if s >= 0.65:
+    def _bucket_from_strength(score):
+        if score >= 0.65:
             return "high"
-        if s >= 0.35:
+        if score >= 0.35:
             return "medium"
-        if s >= 0.15:
+        if score >= 0.15:
             return "low"
         return "none"
 
-    def _bucket_from_temporal(label: str) -> str:
-        if t in ("strong", "moderate", "high", "medium"):
+    def _bucket_from_temporal(label):
+        if label in ("strong", "moderate", "high", "medium"):
             return "high"
-        if t == "weak":
+        if label == "weak":
             return "low"
         return "none"
 
@@ -1765,6 +1772,8 @@ def _run_quick_analysis_async(
     enable_mitm: bool = MITM_DETECTION_ENABLED,
     cache_dir: Optional[Path] = None,
     event_id: Optional[str] = None,
+    skip_leak: Optional[bool] = None,
+    skip_outage: Optional[bool] = None,
 ) -> dict:
     """Phase 1 sync driver. 0 LLM. ~60 s. Returns the quick-phase result dict.
 
@@ -1819,7 +1828,8 @@ def _run_quick_analysis_async(
         routing_raw = asyncio.run(_async_quick_routing(
             asn=asn, start_time=start_time, end_time=end_time,
             enable_mitm=enable_mitm,
-            skip_outage=(os.environ.get("BGPT_RUN_OUTAGE", "1") == "0"),
+            skip_leak=skip_leak,
+            skip_outage=skip_outage,
         ))
         if not isinstance(routing_raw, dict):
             routing_raw = {"success": False, "error": f"routing returned non-dict: {type(routing_raw).__name__}"}
@@ -1918,6 +1928,8 @@ def analyze_quick(
     enable_mitm: bool = MITM_DETECTION_ENABLED,
     cache_dir: Optional[Path] = None,
     event_id: Optional[str] = None,
+    skip_leak: Optional[bool] = None,
+    skip_outage: Optional[bool] = None,
 ) -> dict:
     """**Phase 1** of the two-phase diagnosis. Sync. 0 LLM. ~60 s.
 
@@ -1934,6 +1946,16 @@ def analyze_quick(
         >>> result = analyze_quick('12479', '2024-01-03 14:45', '2024-01-03 18:00',
         ...                        event_id='hijack_orange_spain_rpki_2024')
         >>> print(result['quick_verdict'], result['anomaly_summary']['traffic_signal_present'])
+
+    ``skip_leak`` / ``skip_outage`` control the path-leak and outage
+    detectors. Both are expensive at high announcement rates (leak scans
+    every BGP-update chunk in the window; outage re-reads 200+ txt files for
+    its 24h baseline) and historically pushed the foreground command past
+    the documented ~60 s Phase-1 budget. Both default to honouring the
+    ``BGPT_RUN_LEAK`` / ``BGPT_RUN_OUTAGE`` env vars (both ON by default),
+    so the batch/cache drivers keep producing leak+outage-inclusive caches;
+    pass ``skip_leak=True`` / ``skip_outage=True`` (or set the env vars to
+    ``0``) to opt out — what the interactive ``--mode auto`` path does.
     """
     return _run_quick_analysis_async(
         asn=asn, start_time=start_time, end_time=end_time,
@@ -1941,6 +1963,8 @@ def analyze_quick(
         enable_mitm=enable_mitm,
         cache_dir=cache_dir,
         event_id=event_id,
+        skip_leak=skip_leak,
+        skip_outage=skip_outage,
     )
 
 def analyze_deep_from_quick(
@@ -2058,9 +2082,9 @@ async def _deep_only_pipeline(
         end_time=end_time,
     )
 
-def load_quick_cache(cache_path_str: str) -> Optional[dict]:
+def load_quick_cache(cache_path_str):
     """Load a Phase-1 result from disk for a Phase-2 follow-up."""
-    p = Path(cache_path)
+    p = Path(cache_path_str)
     if not p.exists():
         return None
     try:
@@ -2077,7 +2101,7 @@ if __name__ == "__main__":
         description="BGP Anomaly Analysis - Multi-Agent System (Two-Phase)",
         usage=(
             "python chief_agent.py --asn <ASN> --start <TIME> --end <TIME> "
-            "[--mode quick|deep|traffic_first|react] [--enhanced] "
+            "[--mode quick|deep|traffic_first|react] "
             "[--quick-cache <path>]"
         ),
     )
@@ -2095,8 +2119,6 @@ if __name__ == "__main__":
             "traffic_first/react (single-phase legacy)"
         ),
     )
-    # enhanced mode (--enhanced, --debate-rounds, --evaluation-retries) was
-    # removed 2026-09-29 (paper-grade cleanup). Use --mode deep instead.
     parser.add_argument(
         "--quick-cache",
         help="Path to a quick-phase result JSON; run Phase 2 without re-detecting routing/traffic.",
@@ -2337,7 +2359,7 @@ if __name__ == "__main__":
     else:
         print(f"Unexpected result. Keys: {list(result.keys())[:5]}")
 
-def _run_auto_mode(args) -> int:
+def _run_auto_mode(args):
     """Two-phase diagnosis: Phase 1 sync, Phase 2 detached subprocess.
 
     Round-22 (bottleneck elimination): the chief_agent CLI had ``--mode auto``
@@ -2363,12 +2385,23 @@ def _run_auto_mode(args) -> int:
     print(f"AS: AS{args.asn} | window: {args.start} → {args.end}")
 
     # Phase 1
+    #
+    # Phase 1 runs in "light" mode: the path-leak and outage detectors are
+    # skipped because their cost is unbounded by the AS prefix count (leak
+    # re-reads every BGP-update chunk in the window; outage re-reads 200+
+    # txt files for its 24h baseline) and together pushed the foreground
+    # command past the ~60 s Phase-1 budget. Leak and outage detection
+    # still run in the batch/cache drivers (which keep ``BGPT_RUN_LEAK`` /
+    # ``BGPT_RUN_OUTAGE`` set to ``1``) and in the Phase-2 deep phase, so
+    # nothing is lost from the report.
     quick = analyze_quick(
         asn=args.asn,
         start_time=args.start,
         end_time=args.end,
         user_input=args.user_input,
         enable_mitm=MITM_DETECTION_ENABLED,
+        skip_leak=True,
+        skip_outage=True,
     )
     cache_path = quick.get("cache_path")
     summary = quick.get("anomaly_summary") or {}
@@ -2390,7 +2423,6 @@ def _run_auto_mode(args) -> int:
         "--start", str(args.start),
         "--end", str(args.end),
     ]
-    # (--enhanced removed 2026-09-29)
     if args.user_input:
         cmd += ["--user-input", args.user_input]
 

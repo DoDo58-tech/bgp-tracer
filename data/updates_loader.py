@@ -22,7 +22,7 @@ SCRIPT_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 BGPDUMP_BIN = "/usr/bin/bgpdump"
 
 
-def is_valid_gz_file(filepath: Path, min_size = GZ_MIN_SIZE):
+def is_valid_gz_file(filepath, min_size = GZ_MIN_SIZE):
     if not isinstance(filepath, Path):
         filepath = Path(filepath)
     if not filepath.exists():
@@ -42,7 +42,7 @@ def _convert_timestamp(line):
     return line
 
 
-def decode_gz_to_txt(gz_path: Path, txt_path: Path):
+def decode_gz_to_txt(gz_path, txt_path):
     """ bgpdump  MRT gz  decoded ，。"""
     proc = None
     try:
@@ -441,7 +441,7 @@ def _to_utc_naive(dt):
     return dt
 
 
-def _bucket_start_from_path(filepath) -> datetime:
+def _bucket_start_from_path(filepath):
     """Parse updates.YYYYMMDD.HHMM.{txt,gz} -> datetime at bucket start (UTC)."""
     from datetime import datetime as _dt
     name = Path(filepath).name

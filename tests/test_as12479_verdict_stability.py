@@ -15,7 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def _as12479_payload(truncate_timestamps: bool):
+def _as12479_payload(truncate_timestamps):
     traffic = {
         "anomaly_count": 12,
         "anomalies": [

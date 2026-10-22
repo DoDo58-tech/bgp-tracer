@@ -393,7 +393,7 @@ def _make_json_serializable(data):
             return repr(data)
 
 
-def _assess_as_severity(result: Dict[str, Any]) -> str:
+def _assess_as_severity(result: Dict[str, Any]):
     """Assess severity level for an individual AS."""
     try:
         routing_anomalies = len(result.get("routing_anomalies", []))
@@ -409,7 +409,7 @@ def _assess_as_severity(result: Dict[str, Any]) -> str:
         return "unknown"
 
 
-def _generate_as_section_html(asn_id, result: Dict[str, Any], template: str) -> str:
+def _generate_as_section_html(asn_id, result: Dict[str, Any], template):
     """Generate HTML section for individual AS in batch report."""
     try:
         routing_anomalies = len(result.get("routing_anomalies", []))

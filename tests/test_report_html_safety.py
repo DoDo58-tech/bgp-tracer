@@ -259,7 +259,7 @@ def test_validate_html_balance_void_tags_are_not_pushed():
 
 
 # ---------------------------------------------------------------------------
-def _fake_b64_png() -> str:
+def _fake_b64_png():
     """1x1 transparent PNG encoded as base64."""
     return base64.b64encode(
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"

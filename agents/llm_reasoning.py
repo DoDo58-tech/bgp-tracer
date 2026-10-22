@@ -275,7 +275,7 @@ If multiple types are possible, provide alternative classifications with confide
                 "source": "rule"
             }
 
-    def parse_llm_response(self, response: str) -> Dict[str, Any]:
+    def parse_llm_response(self, response) -> Dict[str, Any]:
         """ LLM """
         try:
             # Use brace-balanced extraction so values containing
@@ -538,7 +538,7 @@ Assess the severity of this incident based on:
             "source": "rule"
         }
 
-    def parse_llm_response(self, response: str) -> Dict[str, Any]:
+    def parse_llm_response(self, response) -> Dict[str, Any]:
         """ LLM """
         try:
             snippet = _extract_json_object(response)
@@ -791,7 +791,7 @@ Consider timing, intensity, and possible alternative explanations.
             "source": "rule"
         }
 
-    def parse_llm_response(self, response: str) -> Dict[str, Any]:
+    def parse_llm_response(self, response) -> Dict[str, Any]:
         """ LLM """
         try:
             snippet = _extract_json_object(response)

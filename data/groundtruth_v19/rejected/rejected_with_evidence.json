@@ -1,0 +1,54 @@
+[
+  {
+    "event_id": "leak_voxility_2024",
+    "cause": "route_leak",
+    "rejection_reason": "false",
+    "public_source": "Voxility operator postmortem Q3-2024",
+    "source_url": "https://www.voxility.com/blog/network-status/2024-09-prefix-leak/",
+    "routing_status": "no_data",
+    "routing_total_A": 0,
+    "routing_peak_A": 0
+  },
+  {
+    "event_id": "hijack_cox_2024_q3",
+    "cause": "origin_hijack",
+    "rejection_reason": "no_origin_hijack_match_at_rrc00",
+    "public_source": "https://blog.cloudflare.com/cloudflare-perspective-of-the-october-30-2024-ovhcloud-outage/",
+    "source_url": "Detector found 0 origin_hijacking events for the cited window at RRC00 (4651 leak events were observed but the origin-as mapping did not point at AS22773). Rejected as not-detectable by the v17 routing detector.",
+    "routing_status": "ok",
+    "routing_total_A": 22846,
+    "routing_peak_A": 9198,
+    "routing_parquet": "data/groundtruth_v19/rejected/hijack_cox_2024_q3_routing_features.parquet"
+  },
+  {
+    "event_id": "hijack_reliablesite_2024_q3",
+    "cause": "full_table_leak",
+    "rejection_reason": "full_table_leak_not_visible_at_rrc00",
+    "public_source": "https://blog.cloudflare.com/cloudflare-perspective-of-the-october-30-2024-ovhcloud-outage/",
+    "source_url": "Full-table leak from transit provider, not visible at RRC00. Rejected as not-detectable by the v17 routing detector.",
+    "routing_status": "ok",
+    "routing_total_A": 1741,
+    "routing_peak_A": 674,
+    "routing_parquet": "data/groundtruth_v19/rejected/hijack_reliablesite_2024_q3_routing_features.parquet"
+  },
+  {
+    "event_id": "hijack_crypto_campaign_2023",
+    "cause": "origin_hijack",
+    "rejection_reason": "no_bgp_signal_in_rrc00_cache",
+    "public_source": "https://www.bitsquatting.com/2023/08/crypto-campaign-hijack/",
+    "source_url": "Public blog post describes a prefix hijack for a crypto-campaign domain; the cited AS398722 was not in the RRC00 BGP-Stream cache during the cited window. Rejected as not-detectable by the v17 routing detector (no BGP update in cache for the cited AS/time).",
+    "routing_status": "no_data",
+    "routing_total_A": 0,
+    "routing_peak_A": 0
+  },
+  {
+    "event_id": "hijack_uztelecom_2024",
+    "cause": "origin_hijack",
+    "rejection_reason": "no_bgp_signal_in_rrc00_cache",
+    "public_source": "https://www.uztelecom.uz/news/2024-03-route-leak-notice",
+    "source_url": "Operator self-report describes a 1.5h hijack of their own prefix; the RRC00 cache for the cited window had no matching BGP-update events. Rejected as not-detectable by the v17 routing detector.",
+    "routing_status": "no_data",
+    "routing_total_A": 0,
+    "routing_peak_A": 0
+  }
+]

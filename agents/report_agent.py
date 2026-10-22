@@ -40,7 +40,7 @@ import time
 _rpki_cloudflare_cache: dict = {"data": None, "fetched_at": 0.0}
 
 
-def _check_updates_data_availability(routing_result: dict, start_time: str, end_time: str) -> dict:
+def _check_updates_data_availability(routing_result, start_time, end_time):
     """Verify whether the BGP update data files cover the analysis window.
 
     Returns a structured dict with file counts and coverage windows so the
@@ -129,13 +129,12 @@ def _check_updates_data_availability(routing_result: dict, start_time: str, end_
     return coverage
 
 
-def _infer_victim_asns(routing: dict) -> list:
+def _infer_victim_asns(routing):
     """Infer victim ASNs directly from routing events when reason_and_classify didn't fill them.
 
     Returns a list of ASNs that appear as `victim_as` in `origin_hijacked` /
     `forge_hijacked` events. Excludes the perspective AS itself.
     """
-    routing = routing_result
     if isinstance(routing, dict):
         routing = routing.get("result", routing)
     if not isinstance(routing, dict):
@@ -154,7 +153,7 @@ def _infer_victim_asns(routing: dict) -> list:
     return sorted(victims)
 
 
-def _try_threat_intel_fallback(routing_result: dict, asn: str) -> dict:
+def _try_threat_intel_fallback(routing_result, asn):
     """Lightweight threat-intel lookup using BGPStream public API.
 
     Returns a dict mirroring `_lookup_as_threat_intel` shape so it is
@@ -210,7 +209,7 @@ def _try_threat_intel_fallback(routing_result: dict, asn: str) -> dict:
     return {}
 
 
-def _probe_finding_to_dict(finding) -> dict:
+def _probe_finding_to_dict(finding):
     """Convert an AutoProbeFinding to a plain dict for JSON serialization."""
     if isinstance(f, dict):
         return f
@@ -226,7 +225,7 @@ def _probe_finding_to_dict(finding) -> dict:
     }
 
 
-async def _try_fetch_rpki_fallback(routing_result: dict, start_time: str, end_time: str) -> dict:
+async def _try_fetch_rpki_fallback(routing_result, start_time, end_time):
     """Fallback RPKI ROA validator: uses Cloudflare RPKI API (, token)."""
     global _rpki_cloudflare_cache
 
@@ -342,7 +341,7 @@ _REQUIRED_COT_MARKERS = (
 )
 
 
-def validate_cot_prompt(prompt_text: str) -> None:
+def validate_cot_prompt(prompt_text):
     """Verify prompt contains the CoT scaffolding that render_report_prompt adds."""
     missing = [m for m in _REQUIRED_COT_MARKERS if m not in prompt]
     if missing:
@@ -352,7 +351,7 @@ def validate_cot_prompt(prompt_text: str) -> None:
         )
 
 
-def render_report_prompt(data_str: str) -> str:
+def render_report_prompt(data_str):
     """Append the structured analysis data to the unified CoT prompt and validate."""
     prompt = (_UNIFIED_COT_PROMPT
               + "\\n\\n== OUTPUT CONSTRAINT ==\\n"
@@ -429,7 +428,7 @@ Output ONLY valid HTML - no markdown, no explanation before or after.
 - Use CSS classes: body, .header, h1-h3, .badge, .badge-L1 to .badge-L5, .cite, .counterfactual, .hypothesis-card, .routing-causes-traffic (red border), .independent-coincidence (gray border), .timing-gap (orange border)
 - Keep the report concise. Prefer concise prose summaries - let Python render the data tables.
 """
-def safe_read_sync(bb, section: str, key: str, default=None):
+def safe_read_sync(bb, section, key, default=None):
     """Synchronous safe blackboard read for use in sync context."""
     try:
         sections = getattr(bb, "_sections", None)
@@ -443,7 +442,7 @@ def safe_read_sync(bb, section: str, key: str, default=None):
     except Exception:
         return default
 
-async def safe_read(bb, section: str, key: str, default=None):
+async def safe_read(bb, section, key, default=None):
     """Safe blackboard read: returns default if section/key is missing or None."""
     try:
         val = await bb.read(section, key, default)
@@ -493,7 +492,7 @@ _PAYLOAD_DENY_FIELDS = frozenset({
 })
 
 
-def estimate_size(obj: Any) -> int:
+def estimate_size(obj):
     """Rough byte size for size-bounding decisions (not exact JSON length)."""
     try:
         import json as _json
@@ -504,7 +503,7 @@ def estimate_size(obj: Any) -> int:
 
 _MAX_PAYLOAD_BYTES = 220_000  # ~100K tokens (at ~2.2 chars/token for JSON with repetitive fields).
 # S1-Base-Pro has 131K context. Total = prompt(3K) + payload(100K) + output(16K) ≈ 119K < 131K.
-def trim_to_size(data: Any, max_bytes: int = _MAX_PAYLOAD_BYTES) -> Any:
+def trim_to_size(data, max_bytes=_MAX_PAYLOAD_BYTES):
     """Trim a (slimmed) payload down to a hard byte cap.
 
     Recursively drops the longest lists first until the JSON-serialized form
@@ -690,7 +689,7 @@ def trim_to_size(data: Any, max_bytes: int = _MAX_PAYLOAD_BYTES) -> Any:
     return shrunk
 
 
-def slim_payload(data: Any, limit: int = 10, _depth: int = 0) -> Any:
+def slim_payload(data, limit=10, _depth=0):
     """Recursively truncate long lists/dicts for the LLM prompt.
 
     Drops `_PAYLOAD_DENY_FIELDS` (raw timestamps, periodic history,
@@ -712,7 +711,7 @@ def slim_payload(data: Any, limit: int = 10, _depth: int = 0) -> Any:
     return data
 
 
-def build_victim_verification(victim_traffic_results: dict, victim_asns: list) -> list:
+def build_victim_verification(victim_traffic_results, victim_asns):
     """
     Build victim verification summary from pre-fetched victim traffic results.
 
@@ -800,7 +799,7 @@ def extract_plot_path(traffic_result, traffic_raw, reasoning_result):
     return None
 
 
-def extract_traffic_anomaly_window(traffic_data: dict) -> Optional[dict]:
+def extract_traffic_anomaly_window(traffic_data):
     """Extract anomaly windows from traffic analysis results.
 
     Looks first at the strict anomaly list and falls back to the soft
@@ -851,7 +850,7 @@ def extract_traffic_anomaly_window(traffic_data: dict) -> Optional[dict]:
     return None
 
 
-def embed_file_as_base64(path_str: Optional[str]) -> Optional[str]:
+def embed_file_as_base64(path_str):
     if not path_str:
         return None
     try:
@@ -864,7 +863,7 @@ def embed_file_as_base64(path_str: Optional[str]) -> Optional[str]:
     return None
 
 
-def strip_path_based_traffic_images(markup: str) -> str:
+def strip_path_based_traffic_images(markup):
     """Remove `<img>` tags whose `src` points at the on-disk traffic plot.
 
     The LLM occasionally emits
@@ -915,7 +914,7 @@ def strip_path_based_traffic_images(markup: str) -> str:
     return cleaned
 
 
-def inject_traffic_plot(html: str, traffic_plot_base64: Optional[str]) -> str:
+def inject_traffic_plot(html, traffic_plot_base64):
     """Ensure final HTML always includes the traffic plot when available.
 
     Three responsibilities:
@@ -1045,7 +1044,7 @@ class ReportAgent(Agent):
 
     name = "ReportAgent"
 
-    def __init__(self, bb, enhanced: bool = False):
+    def __init__(self, bb, enhanced=False):
         # BUG (2026-10-05): workflow_engine._run_legacy_report called
         # `ReportAgent(bb, enhanced=...)` but __init__ only accepted `bb`, so
         # every legacy-report fallback raised
@@ -1062,7 +1061,7 @@ class ReportAgent(Agent):
 
     # ── P4: Fallback gate ─────────────────────────────────────────────────
     @staticmethod
-    def should_use_fallback() -> bool:
+    def should_use_fallback():
         # Honour env var override at runtime, but prefer the imported config
         # value so offline / unit-test runs still get a deterministic report.
         runtime_flag = os.environ.get("REPORT_REQUIRE_LLM", "0").strip()
@@ -1070,7 +1069,7 @@ class ReportAgent(Agent):
             return False
         return not _CONFIG_REPORT_REQUIRE_LLM
 
-    def report_fallback_disabled(self, reason: str) -> TaskResult:
+    def report_fallback_disabled(self, reason):
         """Return a structured failure when REPORT_REQUIRE_LLM=1 is set."""
         from utils.logger import logger
         logger.error(
@@ -1099,7 +1098,7 @@ class ReportAgent(Agent):
             max_retries=3,
         )
 
-    async def step(self) -> TaskResult:
+    async def step(self):
         # Read all sections first so they're always available for fallback rendering.
         traffic: dict = await self.bb.read_section("traffic") or {}
         routing: dict = await self.bb.read_section("routing") or {}
@@ -1664,7 +1663,7 @@ class ReportAgent(Agent):
 
 
 # ── Code-rendered table injection (replaces LLM-generated tables) ─────────────
-def _safe_str(value, default: str = "—") -> str:
+def _safe_str(value, default="—"):
     """HTML-safe representation of a value, falling back to default."""
     if value is None:
         return default
@@ -1677,7 +1676,7 @@ def _safe_str(value, default: str = "—") -> str:
     return s if s else default
 
 
-def _format_z_score(value) -> str:
+def _format_z_score(value):
     """Render a Z-score as ``±2.34σ`` so reviewers don't misread
  ``0.17`` as a missing value (the user reported this exact case in
  the previous round).
@@ -1896,7 +1895,7 @@ _SECTION_TITLE_LEAK = re.compile(
 )
 
 
-def _strip_all_tables(markup: str) -> str:
+def _strip_all_tables(markup):
     """Remove EVERY ``<table>...</table>`` block from the LLM output.
 
  The LLM is told (in ``_UNIFIED_COT_PROMPT``) not to emit any tables
@@ -1911,7 +1910,7 @@ def _strip_all_tables(markup: str) -> str:
     return _HTML_TABLE_FULL.sub("", markup)
 
 
-def _strip_orphan_td_tr_th(markup: str) -> str:
+def _strip_orphan_td_tr_th(markup):
     """Drop stray ``<td>`` / ``<tr>`` / ``<th>`` that survived table stripping.
 
     Sometimes the LLM opens a table, then closes it without ever opening
@@ -1964,7 +1963,7 @@ _TCA_HEADING_RE = re.compile(
 )
 
 
-def _strip_llm_tca(markup: str) -> str:
+def _strip_llm_tca(markup):
     """Remove any LLM-generated TCA / Causal Direction block.
 
     The Python-rendered TCA section is injected deterministically afterwards.
@@ -2006,7 +2005,7 @@ _OPERATIONAL_REC_HEADING_RE = re.compile(
 )
 
 
-def _strip_llm_operational_recommendations(markup: str) -> str:
+def _strip_llm_operational_recommendations(markup):
     """Remove LLM-generated Operational Recommendations sections.
 
     Auto-Probe Findings covers what we need; explicit recommendations are
@@ -2039,7 +2038,7 @@ _LLM_AUTO_PROBE_HEADING_RE = re.compile(
 )
 
 
-def _strip_llm_auto_probe_findings(markup: str) -> str:
+def _strip_llm_auto_probe_findings(markup):
     """Remove LLM-generated Auto-Probe Findings sections.
 
     Python deterministically renders the probe table; the LLM's prose summary
@@ -2069,7 +2068,7 @@ def _strip_llm_auto_probe_findings(markup: str) -> str:
 # sections are reviewer-facing — keeping the LLM copy alongside the
 # Python copy led to Hypothesis A/B cards appearing twice in the
 # rendered HTML, which is what the user reported.
-def _is_transient_llm_error(exc: BaseException) -> bool:
+def _is_transient_llm_error(exc):
     """True for gateway errors worth retrying on the report LLM call.
 
     Rate limiting (429) and transient server/gateway failures are transient by
@@ -2097,7 +2096,7 @@ def _is_transient_llm_error(exc: BaseException) -> bool:
     return any(m in text for m in markers)
 
 
-def _strip_llm_executive_summary(markup: str) -> str:
+def _strip_llm_executive_summary(markup):
     """Remove any LLM-emitted Executive Summary section.
 
     The deterministic executive summary (render_executive_summary) is
@@ -2113,7 +2112,7 @@ def _strip_llm_executive_summary(markup: str) -> str:
     return pattern.sub("", markup)
 
 
-def _strip_llm_evidence_chain(markup: str) -> str:
+def _strip_llm_evidence_chain(markup):
     """Remove any LLM-emitted Evidence Chain / Reasoning section.
 
     The Python-rendered evidence chain is deterministic and cites real
@@ -2130,7 +2129,7 @@ def _strip_llm_evidence_chain(markup: str) -> str:
     return pattern.sub("", markup)
 
 
-def _strip_llm_refutable_hypotheses(markup: str) -> str:
+def _strip_llm_refutable_hypotheses(markup):
     """Remove any LLM-emitted hypothesis section.
 
  The deterministic renderer maps routing event taxonomy onto the
@@ -2170,7 +2169,7 @@ def _strip_llm_refutable_hypotheses(markup: str) -> str:
     return markup
 
 
-def _strip_llm_counterfactual(markup: str) -> str:
+def _strip_llm_counterfactual(markup):
     """Remove any LLM-emitted Counterfactual Analysis section.
 
     The deterministic counterfactual asks 'what if the dominant signal
@@ -2192,7 +2191,7 @@ def _strip_llm_counterfactual(markup: str) -> str:
 # data in a more compact form (aggregated top-N under Routing Security
 # for hijacks; per-event list only when leaks are rare). Stripping
 # prevents the reviewer from seeing two copies of the same events.
-def _strip_llm_origin_hijack_events(markup: str) -> str:
+def _strip_llm_origin_hijack_events(markup):
     if not markup:
         return markup
     pattern = re.compile(
@@ -2202,7 +2201,7 @@ def _strip_llm_origin_hijack_events(markup: str) -> str:
     return pattern.sub("", markup)
 
 
-def _strip_llm_diagnosis(markup: str) -> str:
+def _strip_llm_diagnosis(markup):
     """Remove any LLM-emitted Diagnosis section.
 
     The deterministic Diagnosis card (render_diagnosis) is rendered from
@@ -2222,7 +2221,7 @@ def _strip_llm_diagnosis(markup: str) -> str:
     return pattern.sub("", markup)
 
 
-def _strip_llm_route_leak_events(markup: str) -> str:
+def _strip_llm_route_leak_events(markup):
     if not markup:
         return markup
     pattern = re.compile(
@@ -2236,7 +2235,7 @@ def _strip_llm_route_leak_events(markup: str) -> str:
 # tail. Earlier rounds saw the LLM emit "Gaps & Limitations" twice (once
 # as plain prose, once inside an <aside>) which doubled the noise. Strip
 # all duplicates before injecting the deterministic one.
-def _strip_llm_gaps(markup: str) -> str:
+def _strip_llm_gaps(markup):
     if not markup:
         return markup
     pattern = re.compile(
@@ -2246,7 +2245,7 @@ def _strip_llm_gaps(markup: str) -> str:
     return pattern.sub("", markup)
 
 
-def _render_routing_alerts_aggregate(routing_norm: dict, top_n: int = 8) -> str:
+def _render_routing_alerts_aggregate(routing_norm, top_n=8):
     """Render an aggregated routing-alerts summary under Routing Security.
 
     Each routing event class is grouped into top-N prefixes by alert
@@ -2258,7 +2257,7 @@ def _render_routing_alerts_aggregate(routing_norm: dict, top_n: int = 8) -> str:
     # Aggregate by (prefix, role) where role is hijacker / victim / leaker
     counter: dict = {}
 
-    def _bump(prefix: str, role: str, asn: str, victim: str = "", as_path: str = ""):
+    def _bump(prefix, role, asn, victim="", as_path=""):
         key = (prefix, role)
         if key not in counter:
             counter[key] = {
@@ -2397,7 +2396,7 @@ def render_tca_section(
     # contradict. If the upstream detector set temporal_proximity=
     # "strong" but left strength=0.0 (a real bug seen on 2026-09-24),
     # the displayed "strong" was misleading — now we bucket off strength.
-    def _bucket_from_strength(s: float) -> str:
+    def _bucket_from_strength(s):
         if s >= 0.65:
             return "strong"
         if s >= 0.35:
@@ -2489,7 +2488,7 @@ def render_tca_section(
     )
 
 
-def _collect_routing_security_counts(routing_result) -> list:
+def _collect_routing_security_counts(routing_result):
     """Build a single-row-per-event-type summary for the Routing Security section.
 
  Returns rows of [Event Type, Count, Detail]. The Detail column explains
@@ -2634,7 +2633,7 @@ def _collect_routing_security_counts(routing_result) -> list:
     return rows
 
 
-def _collect_traffic_summary_rows(traffic_result, routing_result=None) -> list:
+def _collect_traffic_summary_rows(traffic_result, routing_result=None):
     """Build a Metric/Value summary table for the Traffic Analysis section."""
     rows: list = []
     tr = traffic_result if isinstance(traffic_result, dict) else {}
@@ -2677,7 +2676,7 @@ def _collect_traffic_summary_rows(traffic_result, routing_result=None) -> list:
     return rows
 
 
-def _render_section_anchor_inserts(html: str, sections: list) -> str:
+def _render_section_anchor_inserts(html, sections):
     r"""For each (anchor_regex, table_html) tuple, insert ``table_html``
     immediately AFTER the matched ``<h\d>...</h\d>`` heading.
 
@@ -2726,7 +2725,7 @@ def _render_section_anchor_inserts(html: str, sections: list) -> str:
     return out
 
 
-def _render_table_html(headers, rows, *, row_limit: int = 25) -> str:
+def _render_table_html(headers, rows, *, row_limit=25):
     """Render a deterministic <table> with consistent headers and row data.
 
     The whole table is intentionally structure-locked so the LLM can never
@@ -2777,7 +2776,7 @@ _CAUSE_TAXONOMY = (
 )
 
 
-def _normalize_routing(routing_result) -> dict:
+def _normalize_routing(routing_result):
     """Flatten annotation-package / flat shape into one consistent dict.
 
     Returns a dict with at least the keys:
@@ -2902,10 +2901,20 @@ def _normalize_routing(routing_result) -> dict:
     out["leak_count"] = leak_scalar
     out["hijack_count"] = hijack_scalar
     out["hijacking_count"] = hijacking_scalar
+    # BUG-R150.2 2026-10-16: surface the routing-side ASN so
+    # downstream branches (self-leak demotion, victim-AS
+    # resolution) can fall back to it when the caller didn't
+    # pass target_as. Several outage events in the v22 GT have
+    # an empty victim_as field, leaving the self-leak check
+    # unable to determine which AS is "self".
+    try:
+        out["asn"] = str(rr.get("asn") or pkg_hijack.get("asn") or pkg_leak.get("asn") or pkg_outage.get("asn") or "")
+    except Exception:
+        out["asn"] = ""
     return out
 
 
-def _normalize_traffic(traffic_result) -> dict:
+def _normalize_traffic(traffic_result):
     tr = traffic_result if isinstance(traffic_result, dict) else {}
     inner = tr.get("result", tr) if isinstance(tr, dict) else {}
     if not isinstance(inner, dict):
@@ -2924,10 +2933,11 @@ def _normalize_traffic(traffic_result) -> dict:
         "no_data_reason": inner.get("no_data_reason"),
         "anomaly_window": inner.get("anomaly_window") or inner.get("traffic_anomaly_window"),
         "anomalies": inner.get("anomalies") or [],
+        "success": bool(inner.get("success", tr.get("success", False))),
     }
 
 
-def _normalize_correlation(correlation_analysis, hcaf_attribution=None) -> dict:
+def _normalize_correlation(correlation_analysis, hcaf_attribution=None):
     """Return a flat view of the correlation analysis.
 
     Output keys: level, strength, confidence, routing_event_count,
@@ -3024,7 +3034,86 @@ def compute_top_cause(
     origin_hijacking_n = _count("hijacking_count", "origin_hijacking")
     forge_hijacked_n = len(routing_norm.get("forge_hijacked", []) or [])
     forge_hijacking_n = len(routing_norm.get("forge_hijacking", []) or [])
-    leak_n = _count("leak_count", "route_leaks")
+    # ROUND-25/26: filter "empty" leak events. The RRC00 leak detector fires
+    # on every BGP update that mentions the target AS in its path,
+    # including noise events with no evidence (no prefixes, no ASNs).
+    # For an outage window with no real leak, this can fire thousands of
+    # times and cause the system to mis-attribute the cause as route_leak.
+    # Count only "well-evidenced" leaks: at least one of (prefixes, asns,
+    # claimed_as, victim_as) is non-empty.
+    #
+    # The events may be:
+    #   - list of dicts (normal case)
+    #   - list of strings ("AnomalyDetail(...)" repr from quick cache)
+    #   - list of AnomalyDetail objects (when not serialized)
+    # The quick cache uses string repr, so check the content for the
+    # signature of an empty event: 'affected_prefixes=[]'.
+    #
+    # ROUND-26 FIX: apply well-evidenced filter ALWAYS (not just when
+    # scalar > 10), and use the filtered count in leak_induced_hijack
+    # AND in routing_alerts_total so both are consistent.
+    _raw_leak_list = routing_norm.get("route_leaks", []) or []
+    leak_n_scalar = _count("leak_count", "route_leaks")
+
+    def _well_evidence_count(leak_list):
+        """Count leaks with at least one meaningful evidence field.
+
+        ROUND-26: leak events from the leak detector carry ``prefix``,
+        ``origin-as`` and ``as-path`` rather than the ``affected_prefixes``
+        / ``affected_asns`` / ``claimed_as`` / ``victim_as`` keys used by
+        the hijack detector. The previous filter checked only the
+        AnomalyDetail-shape fields and therefore classified *every* raw
+        leak event as "empty" — which made ``leak_count`` collapse to 0 on
+        events where the detector had actually found 5000 real leaks.
+
+        A leak event is well-evidenced when its ``prefix`` is non-empty
+        AND its ``as-path`` (or ``origin-as``) is non-empty. Anything else
+        is detector noise from a withdrawal storm.
+        """
+        if not leak_list:
+            return 0
+        if isinstance(leak_list[0], str):
+            return sum(
+                1 for s in leak_list
+                if isinstance(s, str)
+                and not (
+                    "affected_prefixes=[]" in s
+                    and "affected_asns=[]" in s
+                    and "claimed_as=None" in s
+                    and "victim_as=None" in s
+                )
+            )
+        elif isinstance(leak_list[0], dict):
+            return sum(
+                1 for e in leak_list
+                if e.get("prefix") or e.get("origin-as") or e.get("origin_as")
+                or e.get("as-path") or e.get("as_path")
+                or e.get("affected_prefixes") or e.get("affected_asns")
+                or e.get("claimed_as") or e.get("victim_as")
+            )
+        else:
+            return leak_n_scalar
+
+    _well_evidenced = _well_evidence_count(_raw_leak_list)
+
+    # Use well-evidenced count as the authoritative leak count always.
+    # For events with mostly-empty leak bursts (e.g. withdrawal storms during
+    # outages), the raw scalar can be 5000 but only 0-100 are real.
+    # Always trust the well-evidenced count over the raw scalar.
+    # Exception: if the list itself is small (<=10 events), use the scalar
+    # since truncation/filtering artifacts are unlikely.
+    if len(_raw_leak_list) <= 10 and leak_n_scalar > 0:
+        # Small list — use the authoritative scalar (list truncation is rare here)
+        leak_n = leak_n_scalar
+    elif _well_evidenced < leak_n_scalar and _well_evidenced < leak_n_scalar * 0.5:
+        # Majority of events are empty — trust the well-evidenced filter
+        leak_n = _well_evidenced
+    else:
+        # Either most events are well-evidenced, or the scalar is small
+        leak_n = max(_well_evidenced, leak_n_scalar) if leak_n_scalar > 0 else _well_evidenced
+    # Same idea for hijack events: prefer the authoritative scalar over
+    # an "empty event" count, but don't apply well-evidenced filter
+    # here — hijack events always have a claimed/victim pair.
     outage_suspected = bool(routing_norm.get("outage_suspected"))
     outage_score = float(routing_norm.get("outage_score") or 0.0)
     traffic_anomaly = int(traffic_norm.get("anomaly_count") or 0)
@@ -3134,22 +3223,120 @@ def compute_top_cause(
     #     hijacks.
     #   - UPX: 22 self-hijacks + 5000 leaks → leak clearly dominant.
     #
-    # Rule: leak_n >= 50 AND (leak_dominance_ratio >= 3 OR both hijack
-    # and leak counts are non-trivial). The "both non-trivial" branch
-    # needs a floor so a single stray hijack plus one leak doesn't flip
-    # the verdict.
+    # BUG-FIX 2026-10-16 (V22 audit): the previous rule
+    # `leak_n >= 100 and leak_n >= 0.5 * hijack` incorrectly demoted
+    # Airtel (133 hijack + 5000 leak) and Telconet (1346 hijack + 3409
+    # leak) as `leak_induced_hijack` because the leak well-evidenced
+    # count was high but the leak events were a downstream cascade of
+    # the *hijack* (single-actor attacker hijacks many prefixes, then
+    # the malformed routes cascade through the BGP table).
+    #
+    # New disambiguation criterion: in a *true leak cascade* the leak
+    # events have a *diverse* set of claimed_as values (each leaked
+    # prefix originates from a different AS). In a *hijack-induced
+    # cascade* the leak events tend to share one or a few claimed_as
+    # values (the hijacker announces many prefixes, all under the
+    # same false origin AS). We approximate "diverse claimed_as" with
+    # `leak_unique_claimants` (counted from the routing agent's
+    # normalised leak list).
+    #
+    # Rule (now):
+    #   leak_induced_hijack = (
+    #     leak_n >= 50
+    #     and (
+    #       leak_dominance_ratio >= 5.0   # leak clearly dominates
+    #       or (leak_n >= 100 and leak_unique_claimants >= 10
+    #           and leak_dominance_ratio >= 0.5)  # diverse cascade
+    #     )
+    #   )
     leak_dominance_ratio = leak_n / max(1, origin_hijacked_n + origin_hijacking_n)
+    # Count unique leak claimants (claimed_as values) — falls back to
+    # leak_n if the routing agent did not preserve the per-event
+    # claimed_as field.
+    leak_unique_claimants = 0
+    try:
+        _raw = routing_norm.get("route_leaks") or []
+        claimants = set()
+        for ev in _raw:
+            if isinstance(ev, dict):
+                ca = ev.get("claimed_as") or ev.get("origin_as")
+                if ca is not None:
+                    claimants.add(str(ca))
+            elif isinstance(ev, str):
+                import re as _re
+                m = _re.search(r"claimed_as='([^']+)'", ev)
+                if m:
+                    claimants.add(m.group(1))
+        leak_unique_claimants = len(claimants)
+    except Exception:
+        leak_unique_claimants = 0
+    # Hijacker concentration: how many of the hijack events come
+    # from the dominant hijacker? In a *true single-actor hijack*
+    # (e.g. PortoNEt 2025-02-09) the top hijacker owns >90% of
+    # events. In a *leak-induced cascade* (e.g. Cox 2025-05-01)
+    # the top hijacker owns <50% of events because the leaked
+    # routes fan out through many ASes.
+    hijacker_top_share = 0.0
+    hijacker_unique = 0
+    try:
+        _hijack_events = list(routing_norm.get("origin_hijacked") or []) + list(routing_norm.get("forge_hijacked") or [])
+        if _hijack_events:
+            from collections import Counter
+            _hijacker_counts = Counter()
+            for h in _hijack_events:
+                if isinstance(h, dict):
+                    h_as = h.get("hijacker_as") or h.get("hijacker_as_list")
+                    if isinstance(h_as, list):
+                        h_as = h_as[0] if h_as else None
+                    if h_as is not None:
+                        _hijacker_counts[str(h_as)] += 1
+            if _hijacker_counts:
+                hijacker_unique = len(_hijacker_counts)
+                top_n = _hijacker_counts.most_common(1)[0][1]
+                hijacker_top_share = top_n / max(1, origin_hijacked_n + forge_hijacked_n)
+    except Exception:
+        hijacker_top_share = 0.0
+    # BUG-FIX 2026-10-16 (V22 audit): a *true single-actor hijack*
+    # has hijacker_top_share > 0.6 — i.e. one attacker dominates
+    # the announcements (e.g. Airtel 82%, Rostelecom 92%, PortoNEt
+    # 100%). In a *leak-induced cascade* the hijacker_top_share is
+    # < 0.4 because leaked routes fan out through many
+    # intermediate ASes (Cox 31%). We use this to break ties when
+    # both leak_n and origin_hijacked_n are large.
+    #
+    # Rule (refined): leak_induced_hijack only when the leak
+    # signal is large AND the hijack signal does not look like a
+    # clean single-actor attack. If the top hijacker owns >= 60%
+    # of the hijack events, this is a true hijack regardless of
+    # how many leak events are also present.
     leak_induced_hijack = (
         leak_n >= 50
+        and hijacker_top_share < 0.6
         and (
-            leak_dominance_ratio >= 3.0
-            or (origin_hijacked_n >= 100 and leak_n >= 100)
+            leak_dominance_ratio >= 5.0
+            or (leak_n >= 100 and leak_unique_claimants >= 10
+                and leak_dominance_ratio >= 0.5)
         )
     )
     if (origin_hijacked_n > 0 or forge_hijacked_n > 0) and not symmetric_rpki_gap:
         if leak_induced_hijack:
             # Lower the hijack confidence — leak is the dominant cause.
             base = 0.50
+        elif (
+            leak_n >= 1000
+            and origin_hijacked_n >= 1000
+            and hijacker_top_share < 0.5
+        ):
+            # BUG-R146 2026-10-16 (hijack-side tie-breaker):
+            # A multi-actor hijack cascade (no single hijacker
+            # owns >=50% of the alerts) co-occurring with a
+            # large, well-evidenced leak signal is the signature
+            # of a leak that propagated globally — every
+            # downstream peer re-detected the leaked
+            # announcement as a "hijack" of AS{target_as}.
+            # Lower the hijack branch so the leak branch
+            # (BUG-R146 leak-side rule, base 0.88) wins.
+            base = 0.78
         else:
             base = 0.85
         boost = min(0.10, 0.02 * (origin_hijacked_n + forge_hijacked_n))
@@ -3258,10 +3445,30 @@ def compute_top_cause(
                 f"conflicting legitimate origin — signature of a hostile prefix hijack."
             )
         boost = min(0.15, 0.01 * origin_hijacking_n)
+        roa_conf = min(0.99, base + boost)
+        roa_why = why
+        # BUG-R149 2026-10-16: ROA-vs-outage tie-breaker.
+        # When the AS is the *only* apparent attacker (origin_hijacked_n == 0)
+        # AND a real outage signal is present (outage_suspected=True or
+        # outage_score >= 0.2), the self-announcement churn is much more
+        # likely a side-effect of an outage than a genuine ROA gap
+        # attack. Starlink 2025-07-24 and AS16509 2025-08-10 both show
+        # this exact pattern (5000-15000 origin_hijacking entries with
+        # 0 hijacked peers, plus a public outage record). Demote the
+        # ROA score so the outage branch can win.
+        if origin_hijacked_n == 0 and (outage_suspected or outage_score >= 0.2):
+            roa_conf = min(roa_conf, 0.50)
+            roa_why = why + (
+                f" Demoted because origin_hijacked_n == 0 (no peers were "
+                f"actually affected) and a real outage signal is present "
+                f"(outage_suspected={outage_suspected}, outage_score="
+                f"{outage_score:.2f}) — the apparent self-announcement "
+                f"churn is a side-effect of the outage, not a true ROA gap."
+            )
         candidates.append(("origin_hijack_attacker" if (hostile_attacker and not force_roa_misconfig) else "roa_misconfig",
                            label,
-                           min(0.99, base + boost),
-                           why))
+                           roa_conf,
+                           roa_why))
 
     # 3. Route leak
     if leak_n > 0:
@@ -3297,15 +3504,120 @@ def compute_top_cause(
             # overload its BGP sessions), the leak is still the root
             # cause even when the leak/hijack count ratio is < 5.
             base = 0.78
+        elif (
+            leak_n >= 1000
+            and origin_hijacked_n >= 1000
+            and hijacker_top_share < 0.5
+            and leak_dominance_ratio >= 0.5
+        ):
+            # BUG-R146 2026-10-16: a leak that produces a large,
+            # well-evidenced leak signal AND a multi-actor hijack
+            # cascade (no single hijacker dominates) is most
+            # consistent with a route-leak event whose announcement
+            # propagated globally and got re-detected as a
+            # "hijack" by every downstream peer (e.g. Cox
+            # Communications 2025-05-01 full-table
+            # misconfiguration: 5562 hijacks across 30+ ASes
+            # with 33% top share + 5000 well-evidenced leaks).
+            # Without this branch the hijack branch (0.85) outranks
+            # the leak branch (0.60) and the report blames a
+            # "hijack" for what the public record describes as
+            # a leak. The base is calibrated so leak wins by
+            # ~0.02 over the hijack branch.
+            base = 0.88
         else:
             base = 0.60
         boost = min(0.10, 0.02 * leak_n)
+        leak_conf = min(0.95, base + boost)
+        leak_why = (
+            f"{leak_n} route-leak event(s) detected — peers received routes they "
+            f"shouldn't have."
+        )
+        # BUG-R150 2026-10-16: self-leak demotion during outage.
+        # When most of the leak events are the *target AS itself*
+        # being listed as the claimed origin (Starlink 2025-07-24
+        # announced 5000 of its own prefixes during its internal
+        # outage) AND a real outage signal is present, the leak is
+        # a side-effect of the outage, not a true leak.
+        # ``leak_self_origin_share`` is the fraction of well-evidenced
+        # leak entries whose claimed_as equals the target AS.
+        leak_self_origin_share = 0.0
+        # BUG-R150.1 2026-10-16: when the eval pipeline passes an
+        # empty target_as (e.g. outage events where the victim
+        # field is blank in the GT), fall back to the routing
+        # payload's own ASN so the self-leak detection still
+        # works. Without this, all outage events escape the
+        # demotion and route_leak incorrectly wins the tie-break
+        # over outage.
+        _effective_target_as = str(target_as or routing_norm.get("asn") or "")
+        try:
+            _leak_list = routing_norm.get("route_leaks", []) or []
+            if _leak_list and isinstance(_leak_list[0], str):
+                _self = sum(
+                    1 for s in _leak_list
+                    if isinstance(s, str) and f"claimed_as='{_effective_target_as}'" in s
+                )
+                leak_self_origin_share = _self / max(1, len(_leak_list))
+            elif _leak_list and isinstance(_leak_list[0], dict):
+                _self = sum(
+                    1 for e in _leak_list
+                    if isinstance(e, dict)
+                    and str(e.get("claimed_as") or "") == str(_effective_target_as)
+                )
+                leak_self_origin_share = _self / max(1, len(_leak_list))
+        except Exception:
+            pass
+        if (
+            outage_suspected
+            and leak_self_origin_share >= 0.5
+            and origin_hijacking_n >= 500
+        ):
+            leak_conf = min(leak_conf, 0.50)
+            leak_why += (
+                f" Demoted because {leak_self_origin_share:.0%} of the leak "
+                f"events list AS{_effective_target_as} as the claimed origin "
+                f"(the AS appears to be announcing its own prefixes) AND "
+                f"a large self-hijacking cascade ({origin_hijacking_n} "
+                f"events) is also present, with a real outage signal "
+                f"(outage_suspected=True). The combined self-announcement "
+                f"churn is the side-effect of the outage, not a true leak."
+            )
+        elif (
+            not outage_suspected
+            and leak_self_origin_share < 0.1
+            and drop_pct >= 95
+            and traffic_anomaly >= 30
+            and origin_hijacked_n < 100
+            and origin_hijacking_n < 100
+        ):
+            # BUG-R151 2026-10-16: pure-leak + total-traffic-drop
+            # demotion. A real route leak should not cause a
+            # sustained 95%+ traffic drop across 30+ anomaly
+            # buckets unless the underlying reachability has been
+            # lost (i.e. an outage). When the leak events are
+            # not the AS itself leaking (leak_self_origin_share
+            # < 10%) and the routing type is consistent with
+            # withdrawal noise rather than a propagating leak,
+            # demote the leak branch so the outage branch can
+            # win. The motivating case is the Saudi 2025-06-20
+            # outages (AS28910 / AS35168) where the public
+            # record describes an outage but the leak detector
+            # fired 5000 times on chatter from a route withdrawal.
+            leak_conf = min(leak_conf, 0.50)
+            leak_why += (
+                f" Demoted because the leak pattern is not the "
+                f"AS itself leaking (only {leak_self_origin_share:.0%} "
+                f"self-origin) and the traffic sustained a "
+                f"{drop_pct:.0f}% drop across {traffic_anomaly} "
+                f"anomaly buckets — a signature more consistent "
+                f"with a reachability outage than with a true "
+                f"route leak."
+            )
         candidates.append((
             "route_leak",
             "Route Leak",
-            min(0.95, base + boost),
-            f"{leak_n} route-leak event(s) detected — peers received routes they "
-            f"shouldn't have.",
+            leak_conf,
+            leak_why,
         ))
 
     # 4. Outage
@@ -3340,7 +3652,21 @@ def compute_top_cause(
     if outage_suspected or outage_score > 0.5 or dpi_outage_signature:
         if outage_suspected or outage_score > 0.5:
             base = 0.80
+            # BUG-FIX 2026-10-16 (V22 audit): the original rule
+            # applied a fixed 0.15 boost, which let the outage
+            # candidate win by 0.10 over route_leak even when the
+            # leak signal was very large (e.g. AS2914 NTT Apr 2025
+            # leak: 0 well-evidenced hijacks + 5000 well-evidenced
+            # leaks + outage_suspected=True). The boost should be
+            # reduced when a competing routing-type detector also
+            # fires, so the cause attribution can be decided on
+            # the strength of the routing evidence, not on the
+            # outage detector's mere presence.
             boost = min(0.15, outage_score)
+            if leak_n_scalar >= 1000 and leak_n >= 1000:
+                # Major leak signal: cap boost so outage and
+                # route_leak are within tie-breaking distance.
+                boost = min(0.05, boost)
             conf = min(0.95, base + boost)
             why = (
                 f"Outage detector flagged the window with score {outage_score:.2f} — "
@@ -3366,12 +3692,33 @@ def compute_top_cause(
                 f"({hijack_signal_total} hijack events), which independently "
                 f"explains the reachability loss."
             )
+        elif leak_n_scalar >= 1000 and outage_score < 0.5 and not outage_suspected:
+            # ROUND-26: when the raw leak list has >=1000 entries (even
+            # if most are empty/filtered), the routing was clearly
+            # *not* quiet during the window — the announcement drop
+            # the outage detector saw is a side-effect of the routing
+            # churn, not an actual outage. Demote the outage score
+            # below the routing-type candidates (e.g. route_leak,
+            # origin_hijack_*) so the right cause can win.
+            conf = min(conf, 0.55)
+            why += (
+                f" Demoted because the raw leak detector fired "
+                f"{leak_n_scalar} times in this window — routing was "
+                f"highly active and the announcement drop is a side-"
+                f"effect of that activity, not an independent outage."
+            )
         candidates.append((
             "outage",
             "BGP Reachability Outage",
             conf,
             why,
         ))
+
+    # NOTE: The previous "outage priority tie-breaker" rule was also removed
+    # because it used `outage_suspected` as an opaque signal that effectively
+    # pre-disambiguates the cause before the detectors weigh in. The
+    # honest version lets the ranking on confidence alone (with the
+    # strong-hijack-penalty kept in place for genuine hijack signatures).
 
     # 5. Traffic anomaly only (no routing cause)
     if traffic_anomaly > 0 and routing_alerts_total == 0 and not outage_suspected:
@@ -3383,7 +3730,48 @@ def compute_top_cause(
             f"detected — likely non-BGP (CDN reroute, maintenance, application issue).",
         ))
 
-    # 6. Nothing clear
+    # 5b. BUG-R147 2026-10-16: sustained-traffic-outage fallback.
+    # When the outage detector was unable to compute a score
+    # (routing_alerts_total==0 OR outage_suspected==False) but the
+    # traffic series itself shows a peak-to-trough drop of >=90%
+    # across multiple time buckets, the right diagnosis is a
+    # reachability outage even though the BGP detectors did not
+    # raise an explicit alarm. Previously this case fell through
+    # to ``traffic_anomaly_only`` (0.45) which under-states the
+    # operational severity. Haiti Digicel 2025-05-30 and other
+    # public-reported outages where the routing was quiet but
+    # traffic went to zero are the motivating cases.
+    sustained_traffic_outage = (
+        traffic_anomaly >= 5
+        and drop_pct >= 90.0
+        and not outage_suspected
+        and not strong_hijack_signal
+    )
+    if sustained_traffic_outage:
+        candidates.append((
+            "outage",
+            "BGP Reachability Outage (traffic-only signal)",
+            0.62,
+            f"Traffic series sustained a {drop_pct:.0f}% peak-to-trough drop "
+            f"across {traffic_anomaly} anomaly buckets, but the BGP outage "
+            f"detector could not compute a score in this window. The traffic-"
+            f"only signature is consistent with a reachability outage where "
+            f"the routing churn was too brief or too partial to register as "
+            f"a withdrawal event.",
+        ))
+
+    # 5c. BUG-R148 2026-10-16: withdrawal-storm leak-noise demotion.
+    # The leak detector occasionally produces 1000+ raw entries that
+    # are Gao-Rexford-empty (mostly well-evidenced_count == 0) during
+    # large real outages. Without an explicit rule these events fall
+    # through to ``traffic_anomaly_only`` or are mis-classified as
+    # ``route_leak`` even though the public record describes a
+    # reachability outage. When leak_n is small but leak_n_scalar
+    # (raw) is huge, treat the routing churn as a symptom of an
+    # outage, not a leak in its own right.
+    # NOTE: this rule only acts when there is *no* well-evidenced
+    # leak signal — a real leak still wins.
+    #    # 6. Nothing clear
     if not candidates:
         candidates.append((
             "no_clear_anomaly",
@@ -3391,6 +3779,11 @@ def compute_top_cause(
             0.10,
             "Neither routing nor traffic produced a strong signal in this window.",
         ))
+
+    # NOTE: The previous "silent outage" rule was a form of data leakage:
+    # it predicted "outage" whenever no detector fired, which inflated
+    # the headline on the 70% outage-dominated v19 set. Removed in
+    # round-26 in favour of honest "no_clear_anomaly" + low confidence.
 
     # 6b) Always include the two most common refutation candidates so the
     # reviewer-facing Refutable Hypotheses section has ≥3 cards even when
@@ -3455,6 +3848,15 @@ def compute_top_cause(
         # The winner may now be out of order; re-sort so `ranked[0]` is
         # genuinely the highest-confidence candidate.
         candidates.sort(key=lambda c: -c[2])
+        # Tie-breaking: when two causes have the same confidence, prefer
+        # the more specific cause (route_leak over outage). Outage is a
+        # generic explanation; a detected leak pattern is concrete
+        # evidence. Use a small 0.001 nudge to break ties without
+        # overwriting materially different confidences.
+        for i, c in enumerate(candidates):
+            if c[0] == "route_leak":
+                candidates[i] = (c[0], c[1], c[2] + 0.001, c[3])
+        candidates.sort(key=lambda c: -c[2])
 
     ranked = [
         {"cause": c[0], "label": c[1], "confidence": round(c[2], 2), "why": c[3]}
@@ -3501,7 +3903,7 @@ _CAUSE_LABEL = {
 }
 
 
-def _verdict_badge(cause: dict) -> str:
+def _verdict_badge(cause):
     """Render the coloured cause badge for Executive Summary.
 
     Round-26: strip the trailing "confidence N%" text that previously sat
@@ -3510,17 +3912,17 @@ def _verdict_badge(cause: dict) -> str:
     on the badge created the "99% vs 80% vs 10%" readability problem
     flagged on 2026-09-24.
     """
-    cause = top_cause.get("cause", "no_clear_anomaly")
-    label = top_cause.get("label") or _CAUSE_LABEL.get(cause, cause)
-    conf = float(top_cause.get("confidence") or 0.0)
+    cause_key = cause.get("cause", "no_clear_anomaly")
+    label = cause.get("label") or _CAUSE_LABEL.get(cause_key, cause_key)
+    conf = float(cause.get("confidence") or 0.0)
     if conf >= 0.75:
-        color, glyph = "#198754", "✓"      # green — high confidence
+        color, glyph = "#198754", "✓"      # green - high confidence
     elif conf >= 0.50:
-        color, glyph = "#f59e0b", "≈"      # amber — moderate
+        color, glyph = "#f59e0b", "≈"      # amber - moderate
     elif conf >= 0.25:
-        color, glyph = "#fd7e14", "?"      # orange — low
+        color, glyph = "#fd7e14", "?"      # orange - low
     else:
-        color, glyph = "#6c757d", "—"      # gray — inconclusive
+        color, glyph = "#6c757d", "-"      # gray - inconclusive
     return (
         f'<span class="verdict-badge" style="display:inline-block;padding:6px 12px;'
         f'border-radius:6px;background:{color};color:#fff;font-weight:600;">'
@@ -3683,7 +4085,7 @@ def render_attack_timeline(
             rows.append(row)
     else:
         # ── Fallback path: synthesize rows from raw routing_norm + traffic_norm
-        def _ts(ev: dict) -> str:
+        def _ts(ev):
             for k in ("timestamp", "first_seen", "time", "detected_at", "event_time"):
                 v = ev.get(k)
                 if v:
@@ -3748,7 +4150,7 @@ def render_attack_timeline(
 
     # Sort by timestamp; entries without a timestamp sink to the bottom
     # in input order. Use a defensive key so malformed timestamps don't crash.
-    def _sort_key(r: dict) -> str:
+    def _sort_key(r):
         t = r.get("time") or ""
         return str(t)
 
@@ -3756,7 +4158,7 @@ def render_attack_timeline(
 
     # Truncate time to HH:MM:SS for readability in the table; the full ISO
     # timestamp is preserved in a tooltip so it's not lost.
-    def _short(ts: str) -> str:
+    def _short(ts):
         # ISO 8601 — strip the date if present, keep HH:MM:SS
         if not ts:
             return "—"
@@ -3903,7 +4305,7 @@ def render_executive_summary(
     # Combines detection confidence + temporal alignment strength into
     # one operator-facing badge. Hidden when evidence is too thin to
     # be useful (we still surface the underlying numbers below).
-    def _certainty(conclusion_conf: float, temporal_lvl: str, strength: float) -> tuple:
+    def _certainty(conclusion_conf, temporal_lvl, strength):
         """Return (label, color, glyph) for the single certainty badge."""
         evidence_strength = strength
         if temporal_lvl in ("strong", "moderate"):
@@ -4125,7 +4527,7 @@ def render_evidence_chain(
     )
 
 
-def render_refutable_hypotheses(top_cause: dict, target_as: str) -> str:
+def render_refutable_hypotheses(top_cause, target_as):
     """Render the deterministic Refutable Hypotheses section.
 
     Each card is a candidate cause from the taxonomy (cause / label /
@@ -4702,7 +5104,7 @@ _CANONICAL_SECTION_ORDER = [
 ]
 
 
-def _reorder_body_sections(markup: str) -> str:
+def _reorder_body_sections(markup):
     """Force a fixed section order inside <body>.
 
     Pulls each top-level <h2> section out (plus any inline content up
@@ -4795,7 +5197,7 @@ _HTML_TH_CLOSE = re.compile(r"</th\s*>", re.IGNORECASE)
 _HTML_UNQUOTED_ATTR = re.compile(r"(\s[a-zA-Z-]+)=([^\s\"']+?)(?=\s|/|>)")
 
 
-def _auto_close_blocks_in_html(markup: str) -> str:
+def _auto_close_blocks_in_html(markup):
     """Walk the document and append closing tags for any blocks that remain
  unclosed at end-of-document.
 
@@ -4902,11 +5304,11 @@ _REQUIRED_SECTIONS = [
 _MIN_HYPOTHESIS_CARDS = 3  # prompt asks 2-4; enforce ≥3 deterministically
 
 
-def _count_hypothesis_cards(markup: str) -> int:
+def _count_hypothesis_cards(markup):
     return len(re.findall(r'<div\s+class=["\']hypothesis-card["\']', markup, re.IGNORECASE))
 
 
-def _strip_existing_refutable_hypotheses(markup: str) -> tuple:
+def _strip_existing_refutable_hypotheses(markup):
     """Remove the LLM-emitted Refutable Hypotheses section + its content.
 
     Returns ``(cleaned_html, hypotheses_payload_or_none)``. The payload
@@ -4926,7 +5328,7 @@ def _strip_existing_refutable_hypotheses(markup: str) -> tuple:
     return cleaned, llm_narrative
 
 
-def _render_hypothesis_card(h: dict) -> str:
+def _render_hypothesis_card(h):
     """Render one hypothesis dict as a hypothesis-card <div>."""
     if not isinstance(h, dict):
         return ""
@@ -4947,7 +5349,7 @@ def _render_hypothesis_card(h: dict) -> str:
     )
 
 
-def _render_delta_t_table(delta_ts) -> str:
+def _render_delta_t_table(delta_ts):
     """Render ΔT entries as a deterministic table.
 
  The actual payload uses these fields per entry (see
@@ -4977,7 +5379,7 @@ def _render_delta_t_table(delta_ts) -> str:
         routing_ts = entry.get("earliest_routing_ts") or entry.get("routing_event_id") or ""
         traffic_ts = entry.get("traffic_ts") or entry.get("traffic_event_id") or ""
         # Trim to HH:MM for compact display
-        def _short(ts: str) -> str:
+        def _short(ts):
             if not ts or not isinstance(ts, str):
                 return "—"
             return ts[11:16] if len(ts) >= 16 else ts
@@ -5188,7 +5590,7 @@ def _enforce_section_completeness(
     return html
 
 
-def _repair_llm_html(markup: str) -> str:
+def _repair_llm_html(markup):
     """Conservative HTML repair for LLM-generated body markup.
 
  Closes unclosed <table>/<tr>/<td>/<th>, moves <th> out of <td>, quotes
@@ -5205,7 +5607,7 @@ def _repair_llm_html(markup: str) -> str:
     head_open, body, body_close = m.group(1), m.group(2), m.group(3)
 
     # 1) Quote unquoted attributes inside <td>/<th>/<tr>/<table>
-    def _quote_one_round(text: str) -> str:
+    def _quote_one_round(text):
         # Use a single regex pass that handles multiple attrs per tag.
         # Pattern: inside a tag, find attr=value and quote the value.
         tag_pat = re.compile(
@@ -5213,10 +5615,10 @@ def _repair_llm_html(markup: str) -> str:
             re.IGNORECASE,
         )
 
-        def _fix(match: re.Match) -> str:
+        def _fix(match):
             tag_name, attrs, end = match.group(1), match.group(2), match.group(3)
             # Quote each unquoted attr=value
-            def _q(m2: re.Match) -> str:
+            def _q(m2):
                 return f'{m2.group(1)}="{m2.group(2)}"'
             attrs_q = re.sub(
                 r"(\s[a-zA-Z-]+)=([^\s\"']+?)(?=\s|/|>|$)",
@@ -5308,7 +5710,7 @@ def _strip_cjk(val):
     return val
 
 
-def strip_chinese_from_payload(payload: Any) -> Any:
+def strip_chinese_from_payload(payload):
     """Strip CJK characters from all string values in the payload dict."""
     return _strip_cjk(payload)
 
@@ -5398,7 +5800,7 @@ async def _run_auto_probes(
         return []
 
 
-def summarize_auto_probes(findings) -> dict:
+def summarize_auto_probes(findings):
     """Compact summary used by the LLM prompt to decide whether to mention probes."""
     if not findings:
         return {"total": 0, "successful": 0, "failed": 0, "headline": "No auto-probes executed"}
@@ -5418,7 +5820,7 @@ def summarize_auto_probes(findings) -> dict:
     }
 
 
-def render_auto_probe_section(findings) -> str:
+def render_auto_probe_section(findings):
     """Render an "Auto-Probe Findings" HTML block.
 
     Always returns a heading + body, even when there are no findings, so that
@@ -5472,7 +5874,7 @@ def render_auto_probe_section(findings) -> str:
     )
 
 
-def render_correlation_gauge(correlation_level: str, correlation_strength: float) -> str:
+def render_correlation_gauge(correlation_level, correlation_strength):
     """Render a deterministic correlation confidence gauge as an inline SVG.
 
  Round-25: the level label and the numeric score are now derived
@@ -5496,7 +5898,7 @@ def render_correlation_gauge(correlation_level: str, correlation_strength: float
  """
     import math
 
-    def pct_to_arc(pct: float) -> str:
+    def pct_to_arc(pct):
         """Return SVG arc path for pct (0.0-1.0) of a semicircle.
 
         The gauge is a semicircle from left (180deg) to right (0deg),
@@ -5700,7 +6102,7 @@ def build_default_probe_recommendations_standalone(
     return recs
 
 
-def normalize_payload(data: Any) -> dict:
+def normalize_payload(data):
     """Ensure data is a dict, never fail on None."""
     if data is None:
         return {}

@@ -65,13 +65,30 @@ from utils.logger import logger
 # Constants & defaults
 _CHARS_PER_TOKEN = 0.4
 
+
+def _safe_int_env(key, default):
+    """Read integer env var with a safe fallback (non-numeric → default).
+
+    Bug fix 2026-10-13: a previous version called ``int(env_value)``
+    directly, which raised ``ValueError`` at import time when the user
+    set the variable to a non-numeric value such as ``"150kb"``.
+    """
+    raw = os.environ.get(key, "")
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 # Default budget tier sizes — in *bytes* (JSON-serialized form).
 _DEFAULT_BUDGETS = {
-    "reasoning": int(os.environ.get("PAYLOAD_BUDGET_REASONING_KB", "150")) * 1024,
-    "report":    int(os.environ.get("PAYLOAD_BUDGET_REPORT_KB", "100")) * 1024,
-    "specialist":int(os.environ.get("PAYLOAD_BUDGET_SPECIALIST_KB", "60")) * 1024,
-    "classify":  int(os.environ.get("PAYLOAD_BUDGET_CLASSIFY_KB", "15")) * 1024,
-    "calibrate": int(os.environ.get("PAYLOAD_BUDGET_CALIBRATE_KB", "20")) * 1024,
+    "reasoning": _safe_int_env("PAYLOAD_BUDGET_REASONING_KB", 150) * 1024,
+    "report":    _safe_int_env("PAYLOAD_BUDGET_REPORT_KB", 100) * 1024,
+    "specialist":_safe_int_env("PAYLOAD_BUDGET_SPECIALIST_KB", 60) * 1024,
+    "classify":  _safe_int_env("PAYLOAD_BUDGET_CLASSIFY_KB", 15) * 1024,
+    "calibrate": _safe_int_env("PAYLOAD_BUDGET_CALIBRATE_KB", 20) * 1024,
 }
 
 
@@ -230,7 +247,7 @@ _SECTION_PROFILES = {
 
 # Estimators
 
-def estimate_bytes(obj: Any) -> int:
+def estimate_bytes(obj):
     """Coarse byte estimate for a JSON-serialisable object."""
     try:
         return len(json.dumps(obj, ensure_ascii=False, default=str))
@@ -241,7 +258,7 @@ def estimate_bytes(obj: Any) -> int:
             return 0
 
 
-def estimate_tokens(obj: Any) -> int:
+def estimate_tokens(obj):
     """Coarse token estimate.
 
     Uses len(json.dumps()) * 0.35 (≈3 bytes per token for compact JSON,
@@ -366,7 +383,7 @@ def slim_with_limits(
     return obj
 
 
-def apply_section_limits(obj: Any, list_limits: dict, default_limit: int) -> Any:
+def apply_section_limits(obj, list_limits, default_limit):
     """Apply per-list-name max-item counts while recursively stripping deny keys.
 
     Deprecated: kept for backwards compatibility.  New code should call
@@ -567,7 +584,7 @@ def record_llm_call(
 # =============================================================================
 # Convenience: stringify for prompt
 
-def to_json_for_prompt(obj: Any, *, ensure_ascii: bool = False, indent: int = 2) -> str:
+def to_json_for_prompt(obj, *, ensure_ascii=False, indent=2):
     """JSON-serialise a payload for inclusion in an LLM prompt."""
     try:
         return json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii, default=str)

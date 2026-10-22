@@ -1,11 +1,12 @@
 """Generate paper figures for §6 (evaluation).
 
 Inputs:
-  results/eval/per_event_v36.csv  (built by build_per_event_csv.py)
+  results/eval/per_event_30.csv  (built by build_per_event_30_csv.py)
+  --- 30-event v17 ground-truth with HCAF vs baselines
 Outputs:
   docs/paper/figs/fig7_eval_overview.pdf      (review vs strict precision, 6 methods)
   docs/paper/figs/fig8_per_cause.pdf          (HCAF strict precision by cause)
-  docs/paper/figs/fig9_event_direction_heatmap.pdf  (29 events × 6 methods)
+  docs/paper/figs/fig9_event_direction_heatmap.pdf  (30 events × 6 methods)
 """
 from __future__ import annotations
 
@@ -19,7 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-CSV = ROOT / "results" / "eval" / "per_event_v36.csv"
+CSV = ROOT / "results" / "eval" / "per_event_30.csv"
 FIG_DIR = ROOT / "docs" / "paper" / "figs"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -189,7 +190,7 @@ def fig9_event_direction_heatmap(rows: list[dict]) -> Path:
     return out
 
 
-def main() -> None:
+def main():
     rows = load_rows()
     print(f"Loaded {len(rows)} events from {CSV.relative_to(ROOT)}")
     print()

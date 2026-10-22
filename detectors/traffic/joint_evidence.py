@@ -25,7 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional
 _TIER_THRESHOLDS = (0.66, 0.40)
 
 
-def _parse_ts(value: Any) -> Optional[datetime]:
+def _parse_ts(value):
     """Parse a timestamp value (str, datetime, or None) into datetime."""
     if value is None:
         return None
@@ -237,7 +237,7 @@ def _card_falsification(
     }
 
 
-def _tier_from_score(score: float) -> str:
+def _tier_from_score(score):
     """Map an average 0–1 score to a tier label."""
     if avg_score >= _TIER_THRESHOLDS[0]:
         return "C3"

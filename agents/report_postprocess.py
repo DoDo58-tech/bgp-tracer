@@ -29,7 +29,7 @@ _CJK_CHAR = re.compile(r"[\u4e00-\u9fff]")
 _EMPTY_TD = re.compile(r"<td[^>]*>\s*(?:&nbsp;|\s)*\s*</td>", re.IGNORECASE)
 
 
-def _cell_has_nodata(cell: str) -> bool:
+def _cell_has_nodata(cell):
     """True if every visible token in the cell is one of the (no data) variants."""
     text = re.sub(r"<[^>]+>", "", cell).strip()
     if not text:
@@ -39,7 +39,7 @@ def _cell_has_nodata(cell: str) -> bool:
     return not text
 
 
-def _strip_table_nodata_rows(table: str) -> str:
+def _strip_table_nodata_rows(table):
     """Drop <tr> rows where every cell is a (no data)/(N/A) placeholder,
     AND drop rows whose *first data* cell (typically Value column) is a
     no-data placeholder even if other columns have real values.
@@ -111,7 +111,7 @@ def _substitute_field_references(
             if ek not in payload_root and ev is not None:
                 payload_root[ek] = ev
 
-    def _tokenise(filepath: str):
+    def _tokenise(filepath):
         tokens: list = []
         buf = ""
         i = 0
@@ -152,7 +152,7 @@ def _substitute_field_references(
                 return None
         return cur
 
-    def _summarise_collection(value, max_items: int = 3, max_len: int = 60) -> str:
+    def _summarise_collection(value, max_items=3, max_len=60):
         if isinstance(value, list):
             n = len(value)
             if n == 0:
@@ -177,7 +177,7 @@ def _substitute_field_references(
             return f"{{{preview}}} ({n} keys)"
         return str(value)
 
-    def _resolve_path(filepath: str):
+    def _resolve_path(filepath):
         tokens = _tokenise(filepath)
         if not tokens:
             return None
@@ -260,7 +260,7 @@ def _substitute_field_references(
     return bracket_re.sub(_repl, html)
 
 
-def _format_scalar(value) -> str:
+def _format_scalar(value):
     """Format a scalar for display in the report HTML.
 
     Floats that are exactly integer-valued render as ``"100.0"`` (not

@@ -91,7 +91,7 @@ class ConfidenceComponents:
     prior: float = 0.5
     residual: float = 1.0
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         for name in ("rule_based", "llm_based", "prior", "residual"):
             v = getattr(self, name)
             if not isinstance(v, (int, float)):
@@ -104,7 +104,7 @@ class ConfidenceComponents:
                 )
 
     @property
-    def total(self) -> float:
+    def total(self):
         """Weighted total in ``[0, 1]``.
 
         Weights are fixed by design — the gate is deterministic. If the
@@ -171,10 +171,10 @@ class ConfidenceReport:
     extras: dict = field(default_factory=dict)
 
     @property
-    def total(self) -> float:
+    def total(self):
         return self.score.total
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         d = asdict(self)
         d["score"] = asdict(self.score)
         d["total"] = self.total
@@ -201,7 +201,7 @@ class GateConfig:
     token_budget_per_stage: int = 50_000
     enabled: bool = False
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         # Threshold ordering sanity check. We require enter > exit to make
         # hysteresis meaningful; otherwise the gate would oscillate.
         if self.enter_skip < self.exit_skip:
@@ -250,7 +250,7 @@ class GateDecision:
     stage: str = ""
     estimated_token_savings: int = 0
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         d = asdict(self)
         d["action"] = self.action.value
         return d
@@ -275,11 +275,11 @@ class ConfidenceGate:
     prevents oscillation when a stage's score is right at the threshold.
     """
 
-    def __init__(self, config: Optional[GateConfig] = None) -> None:
+    def __init__(self, config=None):
         self.config = config or GateConfig()
         self._skipping: dict[str, bool] = {}
 
-    def reset(self) -> None:
+    def reset(self):
         """Clear per-run state. Call at the start of each workflow run."""
         self._skipping.clear()
 

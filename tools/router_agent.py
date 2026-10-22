@@ -65,7 +65,7 @@ class RouterAgent:
         print(response)
     """
 
-    def __init__(self, model: Optional[str] = None, temperature: Optional[float] = None):
+    def __init__(self, model=None, temperature=None):
         self.model = model or MODEL
         # Default to the project's reasoning temperature (0.1) instead of 1.0 to
         # keep routing analysis outputs deterministic enough for security use.
@@ -256,7 +256,7 @@ Now, what is your next step?"""
             logger.error(f"[ReAct] LLM think failed: {e}")
             return "Thought: I encountered an error. Let me try to generate a report with what we have.\nAction: Answer\nAction Input: {}"
 
-    def _parse_react_response(self, response: str) -> Dict[str, Any]:
+    def _parse_react_response(self, response) -> Dict[str, Any]:
         """Parse LLM's ReAct response into thought, action, and input."""
 
         # Extract Thought
@@ -312,7 +312,7 @@ Now, what is your next step?"""
             "input": action_input,
         }
 
-    def _build_context(self, session: SessionManager, user_message: str) -> str:
+    def _build_context(self, session, user_message):
         """Build the context string for ReAct prompt."""
 
         tools = REGISTRY.list_tools()
@@ -377,7 +377,7 @@ Now, what is your next step?"""
 
     # ── Final report ───────────────────────────────────────────────────────────
 
-    async def _generate_final_report(self, session: SessionManager) -> str:
+    async def _generate_final_report(self, session):
         """Call generate_report and return the result path."""
         inp = {
             "asn": session.asn or "",
@@ -406,7 +406,7 @@ Now, what is your next step?"""
 
     # ── Utilities ──────────────────────────────────────────────────────────────
 
-    def _parse_user_input(self, text: str) -> dict:
+    def _parse_user_input(self, text):
         """
         Extract AS number(s) and time window from natural language.
         """
@@ -453,7 +453,7 @@ Now, what is your next step?"""
             "end": end,
         }
 
-    def _inject_defaults(self, inp: dict, session: SessionManager) -> dict:
+    def _inject_defaults(self, inp, session):
         """Fill in session context if not already present."""
         inp = dict(inp)
         if not inp.get("asn") and session.asn:

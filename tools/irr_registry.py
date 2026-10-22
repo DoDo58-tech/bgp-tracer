@@ -55,7 +55,7 @@ IRR_SERVERS = {
 DEFAULT_SERVERS = ["RADB", "RIPE", "APNIC"]
 
 
-def _clean_whois(content: str) -> str:
+def _clean_whois(content):
     """Remove WHOIS server banners and empty lines."""
     text = content
     lines = []
@@ -122,7 +122,7 @@ def _parse_route_objects(content: str) -> list[dict]:
     return objects
 
 
-async def _whois_query(server: str, query: str, timeout: int = 10) -> str:
+async def _whois_query(server, query, timeout=10):
     """Execute a WHOIS query against an IRR server."""
     reader = writer = None
     try:

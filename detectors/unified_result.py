@@ -65,7 +65,7 @@ class AnomalyDetail:
     # 
     severity: Optional[str] = None
     
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             'type': self.type,
             'subtype': self.subtype,
@@ -82,7 +82,7 @@ class AnomalyDetail:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> AnomalyDetail:
+    def from_dict(cls, data):
         return cls(
             type=data.get('type', 'unknown'),
             subtype=data.get('subtype'),
@@ -122,7 +122,7 @@ class DetectionMetadata:
     detection_threshold: float = 0.5
     sensitivity: str = "normal"
     
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             'analysis_start': self.analysis_start,
             'analysis_end': self.analysis_end,
@@ -164,7 +164,7 @@ class ConfidenceAssessment:
     # 
     alternative_hypotheses: List[Dict[str, Any]] = field(default_factory=list)
     
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             'raw_confidence': self.raw_confidence,
             'calibrated_confidence': self.calibrated_confidence,
@@ -242,7 +242,7 @@ class UnifiedDetectionResult:
     # （）
     raw_data: Dict[str, Any] = field(default_factory=dict)
     
-    def to_dict(self) -> dict:
+    def to_dict(self):
         """"""
         # Build base dict from standard fields
         result = {
@@ -273,7 +273,7 @@ class UnifiedDetectionResult:
                     result[_k] = _v
         return result
     
-    def to_legacy_dict(self) -> dict:
+    def to_legacy_dict(self):
         """
  ()
 
@@ -312,7 +312,7 @@ class UnifiedDetectionResult:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict) -> UnifiedDetectionResult:
+    def from_dict(cls, data):
         """"""
         # 
         # Parse anomalies
@@ -408,11 +408,11 @@ class UnifiedDetectionResult:
             no_data_reason=data.get('no_data_reason', ''),
         )
 
-    def to_json(self) -> str:
+    def to_json(self):
         """ JSON """
         return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
 
-    def summary(self) -> str:
+    def summary(self):
         """"""
         if not self.success:
             return f"[ERROR] {self.error or 'Unknown error'}"
@@ -446,7 +446,7 @@ class DetectionResultConverter:
  """
     
     @staticmethod
-    def hijack_to_unified(payload: dict) -> UnifiedDetectionResult:
+    def hijack_to_unified(payload):
         """ hijack """
         hijack_result = payload
         anomalies = []
@@ -528,8 +528,9 @@ class DetectionResultConverter:
         )
 
     @staticmethod
-    def leak_to_unified(payload: dict) -> UnifiedDetectionResult:
+    def leak_to_unified(payload):
         """ leak """
+        leak_result = payload
         anomalies = []
 
         for item in leak_result.get('route_leaks', []):
@@ -559,8 +560,9 @@ class DetectionResultConverter:
         )
 
     @staticmethod
-    def outage_to_unified(payload: dict) -> UnifiedDetectionResult:
+    def outage_to_unified(payload):
         """ outage """
+        outage_result = payload
         anomalies = []
 
         if outage_result.get('is_outage_suspected'):
@@ -587,8 +589,9 @@ class DetectionResultConverter:
         )
 
     @staticmethod
-    def traffic_to_unified(payload: dict) -> UnifiedDetectionResult:
+    def traffic_to_unified(payload):
         """ traffic """
+        traffic_result = payload
         anomalies = []
 
         for item in traffic_result.get('anomalies', []):
@@ -623,7 +626,7 @@ class DetectionResultConverter:
         )
 
 
-def merge_detection_results(results: List[UnifiedDetectionResult]) -> UnifiedDetectionResult:
+def merge_detection_results(results: List[UnifiedDetectionResult]):
     """
  
  

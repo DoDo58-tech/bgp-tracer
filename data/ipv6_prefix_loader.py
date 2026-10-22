@@ -28,14 +28,14 @@ _HIT_LOGGED = False
 _MISS_LOGGED = False
 
 
-def _strip_asn(asn) -> str:
+def _strip_asn(asn):
     s = str(asn).strip().upper()
     if s.startswith("AS"):
         s = s[2:]
     return s
 
 
-def _cache_path(asn_id: str) -> str:
+def _cache_path(asn_id):
     return os.path.join(_CACHE_DIR, f"ipv6_prefixes_AS{asn}.json")
 
 

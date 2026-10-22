@@ -48,7 +48,7 @@ def summarize(rows: list[dict]) -> dict[str, dict[str, float]]:
     return out
 
 
-def fig10_real_vs_synthetic() -> Path:
+def fig10_real_vs_synthetic():
     """Two-panel bar: full v14 (left) vs real-cache subset (right), per method.
     HCAF's strict-precision is stable across both; baselines flip."""
     full = summarize(load(CSV_FULL))
@@ -92,7 +92,7 @@ def fig10_real_vs_synthetic() -> Path:
     return out
 
 
-def fig11_abstention_audit() -> Path:
+def fig11_abstention_audit():
     """Stacked bar of abstention causes per method, broken down by cause."""
     full_rows = load(CSV_FULL)
     real_rows = load(CSV_REAL)
@@ -148,7 +148,7 @@ def fig11_abstention_audit() -> Path:
     return out
 
 
-def main() -> None:
+def main():
     print("Generating §6 supplementary figures ...")
     fig10_real_vs_synthetic()
     fig11_abstention_audit()

@@ -44,7 +44,7 @@ class Tool:
     handler: Optional[Callable] = None  # async def(tool_input: dict, session) -> dict
     enabled: bool = True
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             "name": self.name,
             "description": self.description,
@@ -71,7 +71,7 @@ class ToolResult:
     error: str = ""
     observation: str = ""  # Human-readable summary for the LLM
 
-    def to_llm_dict(self) -> dict:
+    def to_llm_dict(self):
         """Format suitable for injection into the LLM prompt."""
         return {
             "tool": self.tool_name,
@@ -81,7 +81,7 @@ class ToolResult:
             "error": self.error,
         }
 
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key, default=None):
         """Allow dict-like access to data fields for backward compatibility."""
         return self.data.get(key, default)
 
@@ -99,16 +99,16 @@ class ToolRegistry:
     def __init__(self):
         self._tools: Dict[str, Tool] = {}
 
-    def register(self, tool: Tool) -> None:
+    def register(self, tool):
         if tool.name in self._tools:
             logger.warning(f"Tool '{tool.name}' already registered — overwriting")
         self._tools[tool.name] = tool
         logger.info(f"[ToolRegistry] Registered: {tool.name}")
 
-    def unregister(self, name: str) -> bool:
+    def unregister(self, name):
         return self._tools.pop(name, None) is not None
 
-    def get(self, name: str) -> Optional[Tool]:
+    def get(self, name):
         return self._tools.get(name)
 
     def list_tools(self) -> List[dict]:
@@ -200,7 +200,7 @@ def tool(
             ...
     """
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func):
         t = Tool(
             name=name,
             description=description,

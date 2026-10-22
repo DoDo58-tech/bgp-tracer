@@ -1,0 +1,1018 @@
+[
+  {
+    "event_id": "leak_worldstream_ovhcloud_2024",
+    "date": "2024-10-30",
+    "name": "Worldstream (AS49981) 2024-10-30 outbound prefix leak",
+    "ground_truth_cause": "route_leak",
+    "ground_truth_subtype": "leak_to_upstream",
+    "victim_as": 22773,
+    "attacker_as": 49981,
+    "leak_as": 49981,
+    "window_start_utc": "2024-10-30 13:21",
+    "window_end_utc": "2024-10-30 13:40",
+    "window_start_naive": "2024-10-30T13:21:00",
+    "window_end_naive": "2024-10-30T13:40:00",
+    "n_buckets": 4,
+    "totals": {
+      "announcement_count": 925968,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 771390,
+      "unique_origin_count": 66419
+    },
+    "peak_announce_per_5m": 777890,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "22773": {
+        "total_announce": 11639,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 4576,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 4
+      },
+      "49981": {
+        "total_announce": 27785,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 18427,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 4
+      }
+    }
+  },
+  {
+    "event_id": "outage_pakistan_2024",
+    "date": "2024-07-31",
+    "name": "Pakistan PTCL and Telenor firewall misconfiguration",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "firewall_misconfiguration",
+    "victim_as": 17557,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2024-07-31 08:30",
+    "window_end_utc": "2024-07-31 10:30",
+    "window_start_naive": "2024-07-31T08:30:00",
+    "window_end_naive": "2024-07-31T10:30:00",
+    "n_buckets": 25,
+    "totals": {
+      "announcement_count": 193649,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 4908,
+      "unique_origin_count": 198
+    },
+    "peak_announce_per_5m": 16869,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "17557": {
+        "total_announce": 3234,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 1705,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 24
+      }
+    }
+  },
+  {
+    "event_id": "outage_rogers_canada_2022",
+    "date": "2022-07-08",
+    "name": "Rogers Communications Canada nationwide outage (July 8 2022)",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "core_router_config_error",
+    "victim_as": 812,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2022-07-08 08:44",
+    "window_end_utc": "2022-07-08 11:00",
+    "window_start_naive": "2022-07-08T08:44:00",
+    "window_end_naive": "2022-07-08T11:00:00",
+    "n_buckets": 28,
+    "totals": {
+      "announcement_count": 388275,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 1131,
+      "unique_origin_count": 97
+    },
+    "peak_announce_per_5m": 90216,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "812": {
+        "total_announce": 301916,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 67713,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 28
+      }
+    }
+  },
+  {
+    "event_id": "outage_starlink_2025",
+    "date": "2025-07-24",
+    "name": "Starlink global outage",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "internal_failure_non_bgp",
+    "victim_as": 14593,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2025-07-24 19:13",
+    "window_end_utc": "2025-07-24 21:40",
+    "window_start_naive": "2025-07-24T19:13:00",
+    "window_end_naive": "2025-07-24T21:40:00",
+    "n_buckets": 31,
+    "totals": {
+      "announcement_count": 83323,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 1415,
+      "unique_origin_count": 10
+    },
+    "peak_announce_per_5m": 14981,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "14593": {
+        "total_announce": 49009,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 4043,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 31
+      }
+    }
+  },
+  {
+    "event_id": "outage_russia_isp_2025_01_14",
+    "date": "2025-01-14",
+    "name": "Russian ISP brief disruption (MTS, Rostelecom, Beeline, MegaFon)",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "announced_space_loss",
+    "victim_as": 12389,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2025-01-14 14:00",
+    "window_end_utc": "2025-01-14 14:30",
+    "window_start_naive": "2025-01-14T14:00:00",
+    "window_end_naive": "2025-01-14T14:30:00",
+    "n_buckets": 7,
+    "totals": {
+      "announcement_count": 36128,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 22613,
+      "unique_origin_count": 5414
+    },
+    "peak_announce_per_5m": 23673,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "12389": {
+        "total_announce": 188,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 131,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 2
+      }
+    }
+  },
+  {
+    "event_id": "outage_haiti_digicel_2025_01_15",
+    "error": "no data"
+  },
+  {
+    "event_id": "outage_sri_lanka_2025_02_09",
+    "date": "2025-02-09",
+    "name": "Sri Lanka island-wide power outage",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "power_loss",
+    "victim_as": 18001,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2025-02-09 06:00",
+    "window_end_utc": "2025-02-09 15:30",
+    "window_start_naive": "2025-02-09T06:00:00",
+    "window_end_naive": "2025-02-09T15:30:00",
+    "n_buckets": 114,
+    "totals": {
+      "announcement_count": 67799,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 415,
+      "unique_origin_count": 15
+    },
+    "peak_announce_per_5m": 1808,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "18001": {
+        "total_announce": 67420,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 1806,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 114
+      }
+    }
+  },
+  {
+    "event_id": "outage_syria_damascus_homs_2025",
+    "date": "2025-01-23",
+    "name": "Syria Damascus-Homs cable sabotage",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "announced_space_loss",
+    "victim_as": 29256,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2025-01-23 21:30",
+    "window_end_utc": "2025-01-24 06:00",
+    "window_start_naive": "2025-01-23T21:30:00",
+    "window_end_naive": "2025-01-24T06:00:00",
+    "n_buckets": 68,
+    "totals": {
+      "announcement_count": 40924,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 219,
+      "unique_origin_count": 2
+    },
+    "peak_announce_per_5m": 6603,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "29256": {
+        "total_announce": 40838,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 6603,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 68
+      }
+    }
+  },
+  {
+    "event_id": "hijack_cloudflare_1.1.1.0_jul2025",
+    "date": "2025-07-14",
+    "name": "1.1.1.0/24 origin hijack by Tata Communications India (AS4755) exposed by Cloudflare's 1.1.1.1 withdrawal",
+    "ground_truth_cause": "origin_hijack_victim",
+    "ground_truth_subtype": "origin_asn_hijack_opportunistic_during_outage",
+    "victim_as": 13335,
+    "attacker_as": 4755,
+    "leak_as": null,
+    "window_start_utc": "2025-07-14 21:54",
+    "window_end_utc": "2025-07-14 22:24",
+    "window_start_naive": "2025-07-14T21:54:00",
+    "window_end_naive": "2025-07-14T22:24:00",
+    "n_buckets": 7,
+    "totals": {
+      "announcement_count": 19147,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 8747,
+      "unique_origin_count": 496
+    },
+    "peak_announce_per_5m": 9986,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "13335": {
+        "total_announce": 11257,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 3915,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 7
+      },
+      "4755": {
+        "total_announce": 22,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 12,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 4
+      }
+    }
+  },
+  {
+    "event_id": "hijack_cloudflare_1.1.1.1_2024",
+    "date": "2024-06-27",
+    "name": "Cloudflare 1.1.1.1/32 BGP hijack by AS395747 (June 27 2024)",
+    "ground_truth_cause": "origin_hijack_victim",
+    "ground_truth_subtype": "origin_asn_hijack_more_specific",
+    "victim_as": 13335,
+    "attacker_as": 395747,
+    "leak_as": null,
+    "window_start_utc": "2024-06-27 18:51",
+    "window_end_utc": "2024-06-28 02:28",
+    "window_start_naive": "2024-06-27T18:51:00",
+    "window_end_naive": "2024-06-28T02:28:00",
+    "n_buckets": 92,
+    "totals": {
+      "announcement_count": 144363,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 4538,
+      "unique_origin_count": 676
+    },
+    "peak_announce_per_5m": 10007,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "13335": {
+        "total_announce": 116344,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 4002,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 92
+      },
+      "395747": {
+        "total_announce": 656,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 36,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 56
+      }
+    }
+  },
+  {
+    "event_id": "hijack_orange_spain_rpki_2024",
+    "date": "2024-01-03",
+    "name": "Orange Spain (AS12479) RPKI credential compromise invalidating ~2M IPs",
+    "ground_truth_cause": "origin_hijack_victim",
+    "ground_truth_subtype": "rpki_credential_takeover_misorigin",
+    "victim_as": 12479,
+    "attacker_as": 5511,
+    "leak_as": null,
+    "window_start_utc": "2024-01-03 14:20",
+    "window_end_utc": "2024-01-03 18:00",
+    "window_start_naive": "2024-01-03T14:20:00",
+    "window_end_naive": "2024-01-03T18:00:00",
+    "n_buckets": 45,
+    "totals": {
+      "announcement_count": 516474,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 8649,
+      "unique_origin_count": 872
+    },
+    "peak_announce_per_5m": 47793,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "12479": {
+        "total_announce": 114385,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 40077,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 43
+      },
+      "5511": {
+        "total_announce": 620,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 268,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 10
+      }
+    }
+  },
+  {
+    "event_id": "origin_hijack_myetherwallet_2018",
+    "date": "2018-04-24",
+    "name": "MyEtherWallet Amazon Route 53 DNS hijack",
+    "ground_truth_cause": "origin_hijack_victim",
+    "ground_truth_subtype": "origin_asn_hijack_more_specific",
+    "victim_as": 16509,
+    "attacker_as": 10297,
+    "leak_as": null,
+    "window_start_utc": "2018-04-24 11:00",
+    "window_end_utc": "2018-04-24 13:00",
+    "window_start_naive": "2018-04-24T11:00:00",
+    "window_end_naive": "2018-04-24T13:00:00",
+    "n_buckets": 13,
+    "totals": {
+      "announcement_count": 5046,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 2252,
+      "unique_origin_count": 5
+    },
+    "peak_announce_per_5m": 2777,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "16509": {
+        "total_announce": 4024,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 2660,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 11
+      },
+      "10297": {
+        "total_announce": 908,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 868,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 6
+      }
+    }
+  },
+  {
+    "event_id": "route_leak_cloudflare_internal_2022",
+    "date": "2022-02-01",
+    "name": "Cloudflare internal BGP route leak Feb 2022",
+    "ground_truth_cause": "route_leak",
+    "ground_truth_subtype": "internal_leak_to_upstream",
+    "victim_as": 13335,
+    "attacker_as": 13335,
+    "leak_as": 13335,
+    "window_start_utc": "2022-02-01 11:00",
+    "window_end_utc": "2022-02-01 12:00",
+    "window_start_naive": "2022-02-01T11:00:00",
+    "window_end_naive": "2022-02-01T12:00:00",
+    "n_buckets": 11,
+    "totals": {
+      "announcement_count": 10304,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 957,
+      "unique_origin_count": 53
+    },
+    "peak_announce_per_5m": 3335,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "13335": {
+        "total_announce": 6926,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 1321,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 11
+      }
+    }
+  },
+  {
+    "event_id": "route_leak_telstra_2020",
+    "date": "2020-09-29",
+    "name": "Telstra misorigination Sep 2020",
+    "ground_truth_cause": "route_leak",
+    "ground_truth_subtype": "misorigination_during_provisioning",
+    "victim_as": 1221,
+    "attacker_as": 1221,
+    "leak_as": 1221,
+    "window_start_utc": "2020-09-29 18:00",
+    "window_end_utc": "2020-09-29 21:00",
+    "window_start_naive": "2020-09-29T18:00:00",
+    "window_end_naive": "2020-09-29T21:00:00",
+    "n_buckets": 36,
+    "totals": {
+      "announcement_count": 75661,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 824,
+      "unique_origin_count": 215
+    },
+    "peak_announce_per_5m": 23040,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "1221": {
+        "total_announce": 51934,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 22223,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 35
+      }
+    }
+  },
+  {
+    "event_id": "hijack_twnic_quad101_2019",
+    "date": "2019-05-08",
+    "name": "TWNIC Quad101 (101.101.101.0/24) origin hijack by AS268869",
+    "ground_truth_cause": "origin_hijack_victim",
+    "ground_truth_subtype": "origin_asn_hijack",
+    "victim_as": 131621,
+    "attacker_as": 268869,
+    "leak_as": null,
+    "window_start_utc": "2019-05-08 15:08",
+    "window_end_utc": "2019-05-08 15:12",
+    "window_start_naive": "2019-05-08T15:08:00",
+    "window_end_naive": "2019-05-08T15:12:00",
+    "n_buckets": 2,
+    "totals": {
+      "announcement_count": 491,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 7,
+      "unique_origin_count": 2
+    },
+    "peak_announce_per_5m": 408,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "131621": {
+        "total_announce": 37,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 31,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 2
+      },
+      "268869": {
+        "total_announce": 454,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 377,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 2
+      }
+    }
+  },
+  {
+    "event_id": "hijack_celer_bridge_2022",
+    "date": "2022-08-17",
+    "name": "Celer Bridge 44.235.216.0/22 sub-prefix hijack detected via AS14618 announcements",
+    "ground_truth_cause": "origin_hijack_victim",
+    "ground_truth_subtype": "subprefix_hijack",
+    "victim_as": 16509,
+    "attacker_as": 14618,
+    "leak_as": null,
+    "window_start_utc": "2022-08-17 20:00",
+    "window_end_utc": "2022-08-17 21:00",
+    "window_start_naive": "2022-08-17T20:00:00",
+    "window_end_naive": "2022-08-17T21:00:00",
+    "n_buckets": 13,
+    "totals": {
+      "announcement_count": 38200,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 2476,
+      "unique_origin_count": 4
+    },
+    "peak_announce_per_5m": 5076,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "16509": {
+        "total_announce": 34876,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 4773,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 13
+      },
+      "14618": {
+        "total_announce": 2156,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 352,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 12
+      }
+    }
+  },
+  {
+    "event_id": "hijack_rostelecom_amazon_2020",
+    "date": "2020-04-01",
+    "name": "Rostelecom (AS12389) misorigination of Amazon DNS prefixes",
+    "ground_truth_cause": "origin_hijack_victim",
+    "ground_truth_subtype": "misorigination_by_tier1",
+    "victim_as": 16509,
+    "attacker_as": 12389,
+    "leak_as": null,
+    "window_start_utc": "2020-04-01 19:28",
+    "window_end_utc": "2020-04-01 19:38",
+    "window_start_naive": "2020-04-01T19:28:00",
+    "window_end_naive": "2020-04-01T19:38:00",
+    "n_buckets": 3,
+    "totals": {
+      "announcement_count": 2225367,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 33293,
+      "unique_origin_count": 2883
+    },
+    "peak_announce_per_5m": 991402,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "16509": {
+        "total_announce": 23202,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 16058,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 3
+      },
+      "12389": {
+        "total_announce": 1953422,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 850137,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 3
+      }
+    }
+  },
+  {
+    "event_id": "leak_mainone_cloudflare_2018",
+    "date": "2018-11-12",
+    "name": "MainOne (AS37282) leaks Cloudflare prefixes to upstream",
+    "ground_truth_cause": "route_leak",
+    "ground_truth_subtype": "leak_to_upstream",
+    "victim_as": 13335,
+    "attacker_as": 37282,
+    "leak_as": 37282,
+    "window_start_utc": "2018-11-12 21:12",
+    "window_end_utc": "2018-11-12 22:32",
+    "window_start_naive": "2018-11-12T21:12:00",
+    "window_end_naive": "2018-11-12T22:32:00",
+    "n_buckets": 14,
+    "totals": {
+      "announcement_count": 6928,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 319,
+      "unique_origin_count": 38
+    },
+    "peak_announce_per_5m": 1579,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "13335": {
+        "total_announce": 249,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 71,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 10
+      },
+      "37282": {
+        "total_announce": 62,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 50,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 2
+      }
+    }
+  },
+  {
+    "event_id": "leak_safhost_chinatecom_2019",
+    "date": "2019-06-06",
+    "name": "SafeHost (AS21217) leaks China Telecom prefixes",
+    "ground_truth_cause": "route_leak",
+    "ground_truth_subtype": "leak_to_upstream",
+    "victim_as": 4134,
+    "attacker_as": 21217,
+    "leak_as": 21217,
+    "window_start_utc": "2019-06-06 09:43",
+    "window_end_utc": "2019-06-06 13:30",
+    "window_start_naive": "2019-06-06T09:43:00",
+    "window_end_naive": "2019-06-06T13:30:00",
+    "n_buckets": 47,
+    "totals": {
+      "announcement_count": 1408150,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 16221,
+      "unique_origin_count": 698
+    },
+    "peak_announce_per_5m": 185480,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "4134": {
+        "total_announce": 88721,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 12230,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 45
+      },
+      "21217": {
+        "total_announce": 20,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 10,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 3
+      }
+    }
+  },
+  {
+    "event_id": "leak_allegheny_verizon_2019",
+    "date": "2019-06-24",
+    "name": "Allegheny Technologies (AS396531) leaks Verizon (AS701) prefixes",
+    "ground_truth_cause": "route_leak",
+    "ground_truth_subtype": "misconfiguration_by_customer",
+    "victim_as": 701,
+    "attacker_as": 396531,
+    "leak_as": 396531,
+    "window_start_utc": "2019-06-24 10:34",
+    "window_end_utc": "2019-06-24 12:39",
+    "window_start_naive": "2019-06-24T10:34:00",
+    "window_end_naive": "2019-06-24T12:39:00",
+    "n_buckets": 26,
+    "totals": {
+      "announcement_count": 1145402,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 13476,
+      "unique_origin_count": 1754
+    },
+    "peak_announce_per_5m": 187154,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "701": {
+        "total_announce": 164885,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 31180,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 26
+      },
+      "396531": {
+        "total_announce": 19,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 18,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 2
+      }
+    }
+  },
+  {
+    "event_id": "leak_angola_cables_2023",
+    "date": "2023-05-09",
+    "name": "Angola Cables (AS37468) leaks Cloudflare prefixes",
+    "ground_truth_cause": "route_leak",
+    "ground_truth_subtype": "leak_to_upstream",
+    "victim_as": 13335,
+    "attacker_as": 37468,
+    "leak_as": 37468,
+    "window_start_utc": "2023-05-09 11:21",
+    "window_end_utc": "2023-05-09 12:41",
+    "window_start_naive": "2023-05-09T11:21:00",
+    "window_end_naive": "2023-05-09T12:41:00",
+    "n_buckets": 17,
+    "totals": {
+      "announcement_count": 135165,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 5449,
+      "unique_origin_count": 860
+    },
+    "peak_announce_per_5m": 12668,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "13335": {
+        "total_announce": 85425,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 7339,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 17
+      },
+      "37468": {
+        "total_announce": 129,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 14,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 17
+      }
+    }
+  },
+  {
+    "event_id": "outage_moov_africa_tchad_2024",
+    "date": "2024-01-10",
+    "name": "Moov Africa Tchad (AS327802) fiber-cut outage",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "cable_cut",
+    "victim_as": 327802,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2024-01-10 12:00",
+    "window_end_utc": "2024-01-11 01:00",
+    "window_start_naive": "2024-01-10T12:00:00",
+    "window_end_naive": "2024-01-11T01:00:00",
+    "n_buckets": 107,
+    "totals": {
+      "announcement_count": 67991,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 12,
+      "unique_origin_count": 1
+    },
+    "peak_announce_per_5m": 1986,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "327802": {
+        "total_announce": 67991,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 1986,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 107
+      }
+    }
+  },
+  {
+    "event_id": "outage_mtn_rwanda_2024",
+    "date": "2024-10-01",
+    "name": "MTN Rwanda (AS36890) nationwide outage",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "announced_space_loss",
+    "victim_as": 36890,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2024-10-01 10:45",
+    "window_end_utc": "2024-10-01 17:00",
+    "window_start_naive": "2024-10-01T10:45:00",
+    "window_end_naive": "2024-10-01T17:00:00",
+    "n_buckets": 29,
+    "totals": {
+      "announcement_count": 30913,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 113,
+      "unique_origin_count": 12
+    },
+    "peak_announce_per_5m": 16559,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "36890": {
+        "total_announce": 19571,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 10145,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 15
+      }
+    }
+  },
+  {
+    "event_id": "outage_grameenphone_2024_07_17",
+    "date": "2024-07-17",
+    "name": "Grameenphone Bangladesh (AS24389) national internet shutdown during student protests",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "government_mandated_shutdown",
+    "victim_as": 24389,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2024-07-17 19:30",
+    "window_end_utc": "2024-07-17 23:59",
+    "window_start_naive": "2024-07-17T19:30:00",
+    "window_end_naive": "2024-07-17T23:59:00",
+    "n_buckets": 26,
+    "totals": {
+      "announcement_count": 4445,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 14,
+      "unique_origin_count": 2
+    },
+    "peak_announce_per_5m": 1569,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "24389": {
+        "total_announce": 4443,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 1569,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 25
+      }
+    }
+  },
+  {
+    "event_id": "outage_cantv_venezuela_2024_08_01",
+    "date": "2024-08-01",
+    "name": "CANTV Venezuela (AS8048) post-election internet disruption",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "government_mandated_shutdown",
+    "victim_as": 8048,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2024-08-01 08:45",
+    "window_end_utc": "2024-08-01 09:45",
+    "window_start_naive": "2024-08-01T08:45:00",
+    "window_end_naive": "2024-08-01T09:45:00",
+    "n_buckets": 11,
+    "totals": {
+      "announcement_count": 259286,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 495,
+      "unique_origin_count": 23
+    },
+    "peak_announce_per_5m": 83773,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "8048": {
+        "total_announce": 226875,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 72330,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 10
+      }
+    }
+  },
+  {
+    "event_id": "leak_cox_communications_2025_05_01",
+    "date": "2025-05-01",
+    "name": "Cox Communications (AS22773) full-table announcement on 2025-05-01",
+    "ground_truth_cause": "route_leak",
+    "ground_truth_subtype": "misconfiguration_full_table",
+    "victim_as": 22773,
+    "attacker_as": 22773,
+    "leak_as": 22773,
+    "window_start_utc": "2025-05-01 16:45",
+    "window_end_utc": "2025-05-01 20:00",
+    "window_start_naive": "2025-05-01T16:45:00",
+    "window_end_naive": "2025-05-01T20:00:00",
+    "n_buckets": 39,
+    "totals": {
+      "announcement_count": 67063,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 4706,
+      "unique_origin_count": 36
+    },
+    "peak_announce_per_5m": 36794,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "22773": {
+        "total_announce": 61457,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 36712,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 26
+      }
+    }
+  },
+  {
+    "event_id": "outage_north_korea_star_2025_03_18",
+    "date": "2025-03-18",
+    "name": "North Korea (AS131279 Star JV) nationwide internet outage on 2025-03-18",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "government_mandated_shutdown",
+    "victim_as": 131279,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2025-03-18 09:00",
+    "window_end_utc": "2025-03-18 21:00",
+    "window_start_naive": "2025-03-18T09:00:00",
+    "window_end_naive": "2025-03-18T21:00:00",
+    "n_buckets": 11,
+    "totals": {
+      "announcement_count": 284,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 4,
+      "unique_origin_count": 1
+    },
+    "peak_announce_per_5m": 121,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "131279": {
+        "total_announce": 284,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 121,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 11
+      }
+    }
+  },
+  {
+    "event_id": "outage_9121_20240212_x15",
+    "date": "2024-02-12",
+    "name": "T\u00fcrk Telekom (AS9121) mass BGP withdrawal 2024-02-12",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "announced_space_loss",
+    "victim_as": 9121,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2024-02-12 07:00",
+    "window_end_utc": "2024-02-12 08:30",
+    "window_start_naive": "2024-02-12T07:00:00",
+    "window_end_naive": "2024-02-12T08:30:00",
+    "n_buckets": 16,
+    "totals": {
+      "announcement_count": 35850,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 4801,
+      "unique_origin_count": 385
+    },
+    "peak_announce_per_5m": 12533,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "9121": {
+        "total_announce": 2886,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 1046,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 9
+      }
+    }
+  },
+  {
+    "event_id": "outage_44244_20250622_x17",
+    "date": "2025-06-22",
+    "name": "Iran AS44244 (MCI/IranCell) national internet shutdown 2025-06-22",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "government_mandated_shutdown",
+    "victim_as": 44244,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2025-06-22 08:00",
+    "window_end_utc": "2025-06-22 12:00",
+    "window_start_naive": "2025-06-22T08:00:00",
+    "window_end_naive": "2025-06-22T12:00:00",
+    "n_buckets": 48,
+    "totals": {
+      "announcement_count": 31145,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 400,
+      "unique_origin_count": 2
+    },
+    "peak_announce_per_5m": 3440,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "44244": {
+        "total_announce": 31037,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 3416,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 48
+      }
+    }
+  },
+  {
+    "event_id": "outage_16509_20250810_x18",
+    "date": "2025-08-10",
+    "name": "AWS us-east-1 (AS16509) routing anomaly 2025-08-10",
+    "ground_truth_cause": "outage",
+    "ground_truth_subtype": "data_center_routing_fault",
+    "victim_as": 16509,
+    "attacker_as": null,
+    "leak_as": null,
+    "window_start_utc": "2025-08-10 14:30",
+    "window_end_utc": "2025-08-10 15:15",
+    "window_start_naive": "2025-08-10T14:30:00",
+    "window_end_naive": "2025-08-10T15:15:00",
+    "n_buckets": 10,
+    "totals": {
+      "announcement_count": 96087,
+      "withdrawal_count": 0,
+      "unique_prefix_count": 15109,
+      "unique_origin_count": 85
+    },
+    "peak_announce_per_5m": 21372,
+    "peak_withdraw_per_5m": 0,
+    "by_target": {
+      "16509": {
+        "total_announce": 79072,
+        "total_withdraw": 0,
+        "peak_announce_per_5m": 18777,
+        "peak_withdraw_per_5m": 0,
+        "n_active_buckets": 10
+      }
+    }
+  }
+]

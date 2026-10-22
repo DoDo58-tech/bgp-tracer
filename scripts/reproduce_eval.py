@@ -31,7 +31,7 @@ ROOT = Path(__file__).resolve().parent.parent
 GT = ROOT / "data_check/ground_truth_collection" / "final_balanced_dataset_v17.csv"
 
 
-def announce(stage: str) -> None:
+def announce(stage):
     print(f"\n==> {step}")
 
 
@@ -71,28 +71,32 @@ def phase1(gt_rows: list[dict], skip: bool, dry: bool) -> None:
         run(cmd, dry)
 
 
-def phase2(dry: bool) -> None:
+def phase2(dry):
     announce("Step 2: Phase 2 (LLM narrative HTML reports)")
     run(["bash", str(ROOT / "scripts" / "launch_4mode_eval.sh")], dry)
 
 
-def phase3(dry: bool) -> None:
-    announce("Step 3: HCAF vs baselines ablation")
-    out = ROOT / "results" / "eval" / "hcaf_vs_baselines_v36.jsonl"
+def phase3(dry):
+    announce("Step 3: HCAF vs baselines ablation (30-event v17 ground-truth)")
+    out = ROOT / "results" / "eval" / "hcaf_vs_baselines_30.jsonl"
     out.parent.mkdir(parents=True, exist_ok=True)
+    # Use the 30-event dataset that has routing_event_in_window populated
+    # (the original v17 dataset left this column empty, which made the
+    # expected_direction fallback infer traffic_to_routing on every outage).
+    gt_30 = ROOT / "data_check" / "ground_truth_collection" / "final_balanced_dataset_v17_30.csv"
     cmd = ["python3", str(ROOT / "scripts" / "eval_hcaf_vs_baselines.py"),
-           "--csv", str(GT),
+           "--csv", str(gt_30),
            "--quick-dir", str(ROOT / "results" / "quick"),
            "--out", str(out)]
     run(cmd, dry)
 
 
-def phase4(dry: bool) -> None:
+def phase4(dry):
     announce("Step 4: Build per-event CSV")
     run(["python3", str(ROOT / "scripts" / "build_per_event_csv.py")], dry)
 
 
-def phase5(dry: bool) -> None:
+def phase5(dry):
     announce("Step 5: Generate paper §6 figures + supplementary artifacts")
     run(["python3", str(ROOT / "scripts" / "render_paper_figs.py")], dry)
     run(["python3", str(ROOT / "scripts" / "render_paper_figs_p1.py")], dry)
@@ -105,7 +109,7 @@ def phase5(dry: bool) -> None:
     run(["python3", str(ROOT / "scripts" / "benchmark_timing.py")], dry)
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--skip-phase1", action="store_true",
                     help="reuse existing results/quick/*.json")

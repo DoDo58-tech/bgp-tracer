@@ -21,19 +21,19 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 QUICK = ROOT / "results" / "quick" / "quick_44244_2025-06-18T1200_2025-06-19T1200.json"
-JSONL = ROOT / "results" / "eval" / "hcaf_vs_baselines_v36.jsonl"
+JSONL = ROOT / "results" / "eval" / "hcaf_vs_baselines_30.jsonl"
 FIG_DIR = ROOT / "docs" / "paper" / "figs"
 
 
-def load_event(eid: str) -> dict:
+def load_event(eid):
     for line in JSONL.open():
         r = json.loads(line)
-        if r["event_id"] == event_id:
+        if r["event_id"] == eid:
             return r
-    raise KeyError(event_id)
+    raise KeyError(eid)
 
 
-def main() -> None:
+def main():
     rec = load_event("outage_iran_2025")
     p = json.loads(QUICK.read_text())
     start = p["start_time"]

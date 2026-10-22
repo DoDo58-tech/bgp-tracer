@@ -33,7 +33,7 @@ from config import CLOUDFLARE_API_TOKEN, CLOUDFLARE_RADAR_NORMALIZATION
 RADAR_AS_URL = "https://api.cloudflare.com/client/v4/radar/entities/as/summaries"
 
 
-async def _long_term_baseline(tool_input: dict, session) -> dict:
+async def _long_term_baseline(tool_input, session):
     """
     Analyze 90-day traffic baseline and flag anomalous days.
 
@@ -177,7 +177,7 @@ async def _long_term_baseline(tool_input: dict, session) -> dict:
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-async def _fetch_daily_traffic(asn: str, days: int = 90) -> List[dict]:
+async def _fetch_daily_traffic(asn, days=90) -> List[dict]:
     """
     Fetch daily traffic summary for an AS from Cloudflare Radar API.
     Returns list of {date, value} sorted oldest-first.
@@ -215,7 +215,7 @@ async def _fetch_daily_traffic(asn: str, days: int = 90) -> List[dict]:
         return []
 
 
-def _compute_dow_pattern(daily_data: List[dict]) -> dict:
+def _compute_dow_pattern(daily_data: List[dict]):
     """
     Compute average traffic by day of week (0=Monday ... 6=Sunday).
     Used to understand weekly seasonality.

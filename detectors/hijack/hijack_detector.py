@@ -2,6 +2,7 @@ import os
 import sys
 import gc
 import json
+import time
 import polars as pl
 from collections import deque
 from datetime import datetime
@@ -711,7 +712,7 @@ def detect_hijacks_batch(
         # Serial path (legacy behaviour). Kept for debugging; gated by
         # BGP_TRACER_PARALLEL_CHUNKS=0.
         for df_chunk in get_updates_streaming(start_time, end_time, workers=MAX_WORKERS, io_busy_threshold=IO_BUSY_THRESHOLD, auto_download=True):
-            import time
+            # `time` is now imported at module level; using it for chunk timing
             chunk_start_time = time.time()
 
             chunk_count += 1
@@ -998,8 +999,13 @@ def detect_hijacks_batch(
 
         #  batch_results  AS 
         del batch_results[asn]
-        gc.collect()
-    
+
+    # Bug fix 2026-10-13: gc.collect() was previously called once per AS
+    # inside the cleaned_as_list loop, wasting ~50-200ms per call. Move
+    # the single collection AFTER the loop so we sweep once after all
+    # per-AS state is released.
+    gc.collect()
+
     logger.info(f"Batch detection completed for {len(cleaned_as_list)} AS")
 
     if processing_times:
@@ -1026,6 +1032,15 @@ def detect_hijacks_batch(
         "analysis_period": f"{start_time} to {end_time}",
         "analysis_timestamp": datetime.now().isoformat(),
         "data_source": "csv_streaming",
+        # The CAIDA as-relationship snapshot this run was configured with.
+        # Downstream consumers (the HCAF cascade estimator) need the *path*
+        # to the file, not the in-memory dict, because they resolve
+        # provider/peer/customer edges by ASN at analysis time. Without this
+        # key the as-rel data never leaves the detector and the cascade
+        # estimator silently degrades to a single-node graph.
+        "as_rel_file": asrel_result if isinstance(asrel_result, str) and asrel_result else None,
+        "prefix2as_file": prefix2as_path if prefix2as_path else None,
+        "asorg_file": asorg_path if asorg_path else None,
         "performance_stats": {
             "total_chunks": len(processing_times) if 'processing_times' in locals() else 0,
             "total_rows": total_processed_rows if 'total_processed_rows' in locals() else 0,

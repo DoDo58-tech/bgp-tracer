@@ -30,7 +30,7 @@ pytestmark = pytest.mark.fast
 # ─── Helpers ────────────────────────────────────────────────────────────
 
 
-def _make_timeline(n: int, anomaly_start: int, anomaly_end: int, baseline: float = 0.1, peak: float = 1.0):
+def _make_timeline(n, anomaly_start, anomaly_end, baseline=0.1, peak=1.0):
     return [
         {"timestamp": f"2026-09-29T00:{i:02d}:00",
          "score": float(peak if anomaly_start <= i <= anomaly_end else baseline)}

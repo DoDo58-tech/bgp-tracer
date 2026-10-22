@@ -207,7 +207,7 @@ Based on the evidence collected, identify:
             logger.warning(f"LLM hypothesis identification failed: {e}, using defaults")
             return self._get_default_identification(traffic_result, routing_result)
 
-    def _format_traffic_evidence(self, traffic_result: dict) -> str:
+    def _format_traffic_evidence(self, traffic_result):
         """"""
         if not traffic_result:
             return "No traffic data available"
@@ -221,7 +221,7 @@ Based on the evidence collected, identify:
         else:
             return "No traffic anomalies detected"
 
-    def _format_routing_evidence(self, routing_result: dict) -> str:
+    def _format_routing_evidence(self, routing_result):
         """"""
         if not routing_result:
             return "No routing data available"
@@ -243,7 +243,7 @@ Based on the evidence collected, identify:
         
         return ", ".join(parts) if parts else "No routing anomalies detected"
 
-    def _format_multi_scale_evidence(self, multi_scale: Optional[dict]) -> str:
+    def _format_multi_scale_evidence(self, multi_scale):
         """"""
         if not multi_scale:
             return "Multi-scale analysis not available"
@@ -256,7 +256,7 @@ Based on the evidence collected, identify:
         
         return f"Multi-scale anomaly: {is_anomaly}. {reasoning}" if reasoning else f"Multi-scale anomaly: {is_anomaly}"
 
-    def _format_causal_evidence(self, causal: Optional[dict]) -> str:
+    def _format_causal_evidence(self, causal):
         """"""
         if not causal:
             return "Causal analysis not available"
@@ -272,7 +272,7 @@ Based on the evidence collected, identify:
         else:
             return "No causal link detected"
 
-    def _parse_llm_response(self, response: str) -> Dict[str, Any]:
+    def _parse_llm_response(self, response) -> Dict[str, Any]:
         """ LLM """
         try:
             # Use brace-balanced extraction to avoid the previous
@@ -375,7 +375,7 @@ class EvidenceChainBuilder:
         "external": 0.6,
     }
 
-    def __init__(self, use_llm: bool = False):
+    def __init__(self, use_llm=False):
         """
  Args:
  use_llm: LLM 
@@ -479,7 +479,7 @@ class EvidenceChainBuilder:
             llm_analysis=llm_analysis,
         )
 
-    def _extract_routing_evidence(self, routing_result: dict) -> list:
+    def _extract_routing_evidence(self, routing_result):
         """"""
         evidence = []
         if not routing_result or not routing_result.get("data_available", routing_result.get("success", False)):
@@ -549,7 +549,7 @@ class EvidenceChainBuilder:
 
         return evidence
 
-    def _extract_traffic_evidence(self, traffic_result: dict) -> list:
+    def _extract_traffic_evidence(self, traffic_result):
         """"""
         evidence = []
         if not traffic_result or not traffic_result.get("data_available", True):
@@ -592,7 +592,7 @@ class EvidenceChainBuilder:
 
         return evidence
 
-    def _extract_multi_scale_evidence(self, traffic_result: dict) -> list:
+    def _extract_multi_scale_evidence(self, traffic_result):
         """"""
         evidence = []
         multi_scale = traffic_result.get("multi_scale_analysis")
@@ -625,7 +625,7 @@ class EvidenceChainBuilder:
 
         return evidence
 
-    def _extract_causal_evidence(self, causal_analysis: dict) -> list:
+    def _extract_causal_evidence(self, causal_analysis):
         """"""
         evidence = []
         if not causal_analysis:
@@ -817,7 +817,7 @@ class EvidenceChainBuilder:
 
         return gaps
 
-    def _has_routing_anomaly(self, routing_result: dict) -> bool:
+    def _has_routing_anomaly(self, routing_result):
         routing_result = routing_result or {}
         return any([
             bool(routing_result.get("origin_hijacked") or routing_result.get("origin_hijack")),
@@ -903,7 +903,7 @@ class EvidenceChainBuilder:
         else:
             return "no_anomaly"
 
-    def to_dict(self, chain: EvidenceChain) -> dict:
+    def to_dict(self, chain):
         """"""
         return {
             "verdict": chain.verdict,
@@ -928,7 +928,7 @@ class EvidenceChainBuilder:
             "llm_analysis_source": chain.llm_analysis.get("source") if chain.llm_analysis else "none",
         }
 
-    def to_natural_language(self, chain: EvidenceChain) -> str:
+    def to_natural_language(self, chain):
         """"""
         lines = []
 
@@ -979,7 +979,7 @@ class EvidenceChainBuilder:
 
         return "\n".join(lines)
 
-    def _format_verdict(self, verdict: str) -> str:
+    def _format_verdict(self, verdict):
         """"""
         formats = {
             "correlated_observations": "",
@@ -993,7 +993,7 @@ class EvidenceChainBuilder:
         }
         return formats.get(verdict, verdict)
 
-    def _format_hypothesis(self, hypothesis: str) -> str:
+    def _format_hypothesis(self, hypothesis):
         """"""
         formats = {
             "correlated": "",
@@ -1004,7 +1004,7 @@ class EvidenceChainBuilder:
         }
         return formats.get(hypothesis, hypothesis)
 
-    def _get_evidence_icon(self, evidence_type: str) -> str:
+    def _get_evidence_icon(self, evidence_type):
         """"""
         icons = {
             "anomaly": "[!]",

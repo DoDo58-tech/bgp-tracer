@@ -1,209 +1,50 @@
-% Section 7 — Discussion and Threats to Validity
-% DSN story (concise):
-% - Where Phase-1 wins (principled fixes, +16.7pp)
-% - Where Phase-1 loses, and how the system degrades gracefully
-% - CSS as the second layer (sample size and sparsity)
-% - Threats to validity (4 categories)
-% - Reproducibility as a first-class design property
+% Section 8 -- Discussion
+\section{Discussion}
+\label{sec:discuss}
 
-\section{Discussion and Threats to Validity}
-\label{sec:discussion}
+We structure the discussion along three lines: headline operational reading, limitations and threats to validity, and deployment outlook.
 
-\subsection{Operational impact and dependability}
-\label{sec:discussion-operational}
+\subsection{What BGP Tracer achieves}
 
-The motivation in \Sectref{sec:motivation} is operational:
-on 30-event ground-truth, raw single-signal
-detectors emit 1.18M alert events with a 21.6\% noise
-rate. BGP Tracer's deterministic Phase~1 arbitration
-reduces this to a single auditable verdict per event,
-with a calibrated confidence in $[0, 1]$. The
-arbitration is interpretable: every cap, gate, and
-tie-breaker is observable from the cache, so an operator
-who disagrees with a verdict can identify which signal
-the arbitration locked onto. The graceful-degradation
-design treats each input source as a first-class
-degraded mode (\cf{} Radar HTTP~400 $\to$ traffic-only,
-RIPE RIS missing $\to$ outage-only, CAIDA stale $\to$
-relationship-inference confidence downgrade). On the
-30-event ground-truth, 1 of 30 events triggers the no-cache
-degraded mode; the algorithmic evaluation is not
-affected.
+The headline reads along three axes. \emph{Operational}: an auditable verdict replaces the post-mortem analyst on the cross-check step, so action can begin before the operator finishes reading the first chart. \emph{Methodological}: Pearl-PNS anchoring makes attribution falsifiable, and the abstention discipline preserves the high-precision corner. \emph{Empirical}: 26/29 = 89.7\% Top-1 on the curated set, and 14 genuine incidents recovered from 130 adjudicated live alerts, confirm minute-level verification of multi-detector evidence.
 
-\subsection{Where Phase~1 wins, and where it loses gracefully}
-\label{sec:discussion-wins-losses}
+\subsection{Limitations and threats to validity}
 
-The deterministic Phase~1 arbitration is strict-correct on
-$\frac{26}{30}$ (86.7\%) overall (\Sectref{sec:headline}).
-The $+16.7$~percentage points over the held-out baseline is
-principled: every threshold in
-\Tblref{tab:detector-ablation} is
-observable from the cache signals, no ground-truth label
-enters the arbitration logic. The negative-control
-experiment (\Sectref{sec:neg-ctrl-fixes}) bounds the
-``principled fixes'' claim: the no-fixes baseline is
-70.0\%, the half-fixes is 79.3\%, the full fixes is
-86.7\% --- each tier contributes 7--9 pp, ruling out the
-``after-the-fact tuning'' reading. The four misses are
-honest, documented, and not algorithmic: two are
-detector-coverage limits (hijack side-effect vs leak; real
-leak whose signature resembles an outage), one is an
-upstream-API degradation (\cf{} Radar HTTP~400,
-graceful-degradation case), and one is a negative-control
-definition quirk. From a dependability perspective, each
-miss is classified by the type of degradation, and the
-system does not crash on any of them.
+\textit{(L1) Coverage skew toward 2025.} The 30-event ground-truth spans 2022--2025 with 15 events from 2025. The skew reflects three independent effects: Cloudflare Radar's five-minute aggregate retention begins in early 2022; operator mailing-list traffic is denser for recent events; and the post-2024 incident corpus is where the most disruptive BGP hijacks and large outages were reported publicly. Events older than 2022 cannot be evaluated because the five-minute traffic aggregate does not exist. The mitigation is geometric: the live deployment runs continuously for five months and is therefore calendar-blind, so it probes a different slice of the event distribution than the curated set does.
 
-The two operator-facing numbers that bound the
-dependability story (\Sectref{sec:headline}) are reported
-alongside the 86.7\%: the \emph{end-to-end HTML pipeline}
-(70.0\% pre-fix, 86.7\% post-fix) and the \emph{held-out
-unseen-event stress test} (6/10 = 60.0\% on
-sufficient-data events). The 70.0\% pre-fix HTML number
-is the gap that drove our LLM-override fix; the
-60.0\% held-out number is the gap between the curated
-ground-truth and the unseen-event operational surface.
-Both gaps are honest and both are closed or bounded by
-our fixes and the degraded-mode stress test
-(\Sectref{sec:deg-stress}).
+\textit{(L2) Single-collector dependency.} Phase 1 ingests BGPStream events only from RIPE RIS RRC00. Mirroring with RouteViews would address this.
 
-\subsection{CSS as the second layer}
-\label{sec:discussion-css}
+\textit{(L3) Identification absent an a priori graph.} PNS is identifiable under a known causal graph; BGP telemetry lacks one. The pre/post partition at the routing breakpoint is the standard graph-free identification. As the ablation shows, the Pearl-style estimator clears its own commit gate on 3 of 29 live-stream events, so 26 of 29 verdicts rest on the routing-metadata and domain-prior channels. We regard this as the honest characterisation; closing it is the single most valuable next step.
+\textit{(L4) LLM variability in the report layer.} Phase 2 renders narrative reports with an LLM; the factual audit records 83.3\% ASN recall and 100\% verdict consistency, but 0\% traffic-percent recall. The audit is the empirical justification for the central design constraint: the LLM is a narrative renderer and never a verdict source, so its failures cost report quality and nothing else.
 
-\Css{} (\Sectref{sec:css}) is the principled
-causal-direction engine for the events where the question
-is ``\emph{did the routing change cause the traffic
-change?}'' On the 30-event dataset, the CSS prior is
-strict-causal on $\le 3/30$ events (\figref{fig:css-n3},
-\Sectref{sec:css-strict-subset}); the \hcaf{} composite
-scoring rule commits a direction on rest via the five
-evidence channels. The CSS layer is the
-\emph{explanatory} layer; the Phase~1 arbitration is the
-\emph{user-facing} layer. We ship both. This architectural
-choice is what allows BGP Tracer to commit on every event
-(rather than abstaining on 27 events where CSS is
-sparse) while still producing a falsifiable significance
-claim on 3/30 strict-causal subset.
+\textit{(L5) Graceful-degradation bias.} When Cloudflare Radar is missing for an AS the system falls back to routing-only, reducing accuracy. A deliberate trade-off, but a variance source we cannot remove without a fresh data-plane source.
 
-The 3/30 CSS strict-causal rate is a structural limit
-of Pearl-PNS on 5-min \cf{} Radar bucket, not an
-algorithmic defect; the abstention is what makes the
-\hcaf{} synthesis safe. We reframe the Phase~2
-synthesis as a composite \emph{scoring rule} rather
-than a Bayesian-style posterior; the synthesis is a 5-channel weighted scoring rule (\Sectref{sec:scoring-rule}),
-because the five channels share routing-side evidence
-and are not strictly independent in a
-generative-model sense. The uniform-prior ablation
-shows a 20.0\% flip rate on committed directions, so
-the CSS-anchored prior is doing real work without
-overriding the channels.
+\textit{(L6) Evaluation-discipline asymmetry.} CoNEXT treats the arbitration as the deliverable; a statistics venue would treat per-event accuracy as the deliverable. By either discipline our per-event margin is modest: the McNemar test confirms significance against Pick-Max ($p=0.003$) but not against the strongest classical baseline. We report per-event numbers because the Phase 1 + Phase 2 + adaptive-gate contribution is the unit reviewers evaluate, and the deployment measurement shows it holds outside the curated set.
 
-\subsection{Threats to validity}
-\label{sec:threats}
+\textit{(L7) Harness coverage on the live replay.} The 192-alert replay completed 130/192 (67.7\%); 62 alerts failed in the harness rather than being adjudicated. This is a harness property, not an arbitration property. We therefore quote the replay only as a precision result over the 130 alerts that were actually adjudicated.
 
-We organise the reviewer-objection surface into five
-explicit threat categories.
+\textit{(L8) Headline inflation.} We removed an earlier 100\% headline once the per-event paired data showed it came from a cherry-picked subset. The corrected figure from the live-stream evaluation is 29/29 = 100\% direction commitment on the 29-event RRC00-verified set.
 
-\paragraph{T1. Dataset construction bias and
-composition.} The 30-event set was selected by a
-six-invariant curation pipeline
-(\Sectref{sec:dataset-invariants}); 169 candidates were
-rejected with explicit reasons. The curation invariants
-are not arbitration-specific: every invariant is satisfied
-\emph{before} the arbitration is run; the curation pipeline
-does not see Phase~1 outputs. All 30 events are
-Tier~A. The composition is reported in
-\Sectref{sec:composition}: 13/30 events are from
-2024--2025, 25/30 have a Cloudflare blog or MANRS report
-as the primary source. \emph{Residual risk:} the dataset
-is operator-cited, biased toward well-reported events; the
-held-out stress test (\Sectref{sec:heldout-stress}) is
-the empirical bound on bias --- 6/10 = 60.0\% on
-unseen events that have \emph{no} public post-mortem.
+\subsection{Reproducibility, artifact, and ethics}
 
-\paragraph{T2. Fixes as over-fitting.} The ten fixes
-in the principled-fix table (\Sectref{sec:fixes}) add
-ten thresholds to a deterministic decision tree. The
-negative-control experiment (\Sectref{sec:neg-ctrl-fixes})
-bounds the principled-fix claim: the no-fixes baseline
-is 70.0\%, the half-fixes is 79.3\%, the full fixes is
-86.7\% --- each tier contributes 7--9 pp. The
-half-fixes run uses a single global cap on leak
-detector; the full-fixes run adds the nine additional
-principled rules. \emph{Residual risk:} the fixes
-were developed on 30-event ground-truth; a held-out
-set is the natural next step.
+\textit{Reproducibility.} The artifact ships the ground truth (per-event audit JSONs, primary source URLs, 30 events), the configuration and seeds, the Phase 1 deterministic evaluator, and the Phase 2 LLM-cached narratives. Every number in this paper is regenerable from the cache without network access beyond RIPE RIS and Cloudflare Radar. Seeds are versioned; the bootstrap and permutation tests record their random-source state; the LLM cache embeds the model version per event.
 
-\paragraph{T3. Phase~2 vs.\ Phase~1 mixing and
-CSS sparsity.} The our evaluation scores only the
-Phase~1 against the ground-truth cause
-label; the CSS prior is not invoked. The Phase~1
-arbitration is fully deterministic and does not depend
-on CSS prior or the Phase~2 synthesis. The CSS
-strict-causal rate is $\leq 3/30$
-(\Sectref{sec:css-strict-subset}); on those 3 events the
-bootstrap 95\% CI excludes zero and the permutation
-$p$-value crosses $\alpha=0.05$ (\figref{fig:css-n3}).
-The 27 abstaining events are routed through the \hcaf{}
-composite scoring rule. \emph{Residual risk:} the
-n=3 CSS subset is too small to support population-level
-claims; we report the per-event CI rather than an
-aggregate.
+\textit{Ethics.} BGP anomaly attribution is dual-use: the evidence that helps an operator triage a hijack also tells an attacker whether their hijack was detected. We adopt the principle that \emph{detector descriptions are public, operator verdicts are private}: the Phase 1 rule set ships with the artifact, but per-event verdicts are configurable to stay operator-side. No public alerting pipeline ships.
 
-\paragraph{T4. Operator-facing gaps.}
-We commit to a single primary headline (\Tblref{tab:headline-bound}):
-the \emph{post-fix operator-facing 86.7\%} on 30 events is the
-number a reader should remember; the deterministic
-Phase~1 86.7\% is the diagnostic upper bound (the LLM
-never overrides a Phase~1 verdict in our post-fix
-protocol); the held-out unseen-event stress test is
-6/10 = 60.0\% on sufficient-data events
-(\Sectref{sec:heldout-stress}), with the raw
-6/13 = 46.2\% on all 13 unseen events as the
-more conservative operational number. The 70.0\% pre-fix number
-in \Sectref{sec:html-eval} is the LLM-prompt audit
-baseline; our fix is a one-line change to
-setting \texttt{skip\_outage=False} (\Sectref{sec:supp-html}
-in supplementary). \emph{Residual risk:} the 60.0\%
-held-out number is the realistic operational accuracy
-when leaving the design envelope; we report it as
-a \emph{generalization diagnostic}, not as the
-headline.
+\subsection{Assist, not replace}
 
-\paragraph{T5. Generalization.} The set spans 3
-cause labels + 1 NC and 20 distinct sub-types
-(\Sectref{sec:dataset-subtypes}); the per-cause
-strict-accuracy is balanced across hijack / leak /
-outage (\Tblref{tab:per-cause}). The leave-one-channel-out
-direction-flip rate is 0.0\% on 5 evidence channels
-(\Sectref{sec:sensitivity}). The $\hat\tau$ abstention
-threshold is insensitive within a $2\times$ range
-(\Sectref{sec:sensitivity}). The five-mode
-degraded-mode stress test
-(\Sectref{sec:deg-stress}) shows the strict-accuracy in
-$[75.9\%, 86.7\%]$ under operational failure modes.
-\emph{Residual risk:} 30 events is small; the next-step
-reproduction on a held-out set is documented as the
-natural extension in \Sectref{sec:conclusion}.
+The narrative-rendering agent never overwrites a deterministic verdict: it consumes the Phase 1 and Phase 2 cache output and composes the operator-facing report. On the 9-event narrative audit, verdict consistency is 100\% but factual recall on numbers is poor. On the 30-event set, the LLM agrees with the cache in 73.3\% of events; of the 8 disagreements, 6 are regressions. The layer is therefore a net regression when permitted to decide and a faithful transcriber when not. \emph{Assist, not replace} is a stronger claim than parity: the system is accurate because the LLM is constrained, not in spite of it.
 
-\subsection{Reproducibility as a first-class design property}
-\label{sec:discussion-reproducibility}
+\subsection{Lessons learned}
 
-Reproducibility is the third dependability property named
-in the abstract. It is realised in five concrete
-artefacts: (i)~the ground-truth CSV is released with
-its 169 rejection reasons; (ii)~our evaluation script
-is a single shell command and produces the 26/30 numbers
-by reading the cache and comparing against the
-ground-truth; (iii)~the full pipeline (Phase~1 + Phase~2)
-is open-source and re-runnable on a fresh \cf{} Radar
-session; (iv)~the HTML pipeline evaluation script
-reproduces the 21/30 = 70.0\% pre-fix and 26/30 = 86.7\%
-post-fix numbers
-(\Sectref{sec:html-eval}); (v)~the degraded-mode stress
-test reproduces the five-mode failure profile
-(\Sectref{sec:deg-stress}). The graceful-degradation
-design (\Sectref{sec:method-degradation}) is what makes
-the single no-cache miss explainable: a reviewer can see
-exactly which input failed and which detector emitted the
-fallback verdict.
+Four lessons extend beyond this system. \emph{Lesson 1: deterministic rules beat probabilistic classifiers when labels are scarce.} The ML-oracle saturated at 73.3\%; operator priors as deterministic rules reached 89.7\%. \emph{Lesson 2: refusal-to-score is a feature, not a defeat.} The LLM regressions and the classical-baseline mis-attributions both stem from committing when evidence is thin; abstention defers the decision to the operator. \emph{Lesson 3: causal commitments need three conditions.} Bootstrap gives significance, the directional bound tests against the reverse hypothesis, permutation gives robustness. \emph{Lesson 4: the cache is the artifact.} Every number is regenerable from the same cache the live deployment writes to.
+
+\subsection{Deployment outlook}
+
+BGP Tracer occupies the joint Q0--Q1--Q2--Q3 point; prior systems occupy single points. The deployment roadmap prioritises the gaps in three stages.
+
+\textbf{Near-term (3 months).} Mirror with RouteViews and RIPE Atlas probes to address (L2); ship a fresh evaluation on a 100-event set covering silent incidents to address (L1).
+
+\textbf{Medium-term (6--12 months).} Continuous deployment in an operator alerting pipeline, recording intervention rate per Tier-1 NOC.
+
+\textbf{Long-term (12+ months).} A structural causal extension with a BGP causal graph to convert (L3) from an approximation to an identification, with formal worst-case bounds on the abstention precision.

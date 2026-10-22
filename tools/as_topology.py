@@ -38,12 +38,12 @@ RIPESTAT_API = "https://stat.ripe.net"       # RIPEstat (free, no auth)
 PEERINGDB_URL = "https://www.peeringdb.com/api/jsonp/org"
 
 
-def _ripe_auth_headers() -> dict:
+def _ripe_auth_headers():
     """Headers for RIPE Whois DB REST API."""
     return {"Accept": "application/json"}
 
 
-def _ripe_url(path_str: str) -> str:
+def _ripe_url(path_str):
     """
     Build RIPE Whois DB URL.
 
@@ -54,7 +54,7 @@ def _ripe_url(path_str: str) -> str:
     return f"https://rest.db.ripe.net/ripe{path}"
 
 
-async def _as_topology(tool_input: dict, session) -> dict:
+async def _as_topology(tool_input, session):
     """
     Determine AS topology position and neighbor relationships.
 
@@ -182,7 +182,7 @@ async def _as_topology(tool_input: dict, session) -> dict:
 
 # ── RIPEstat API helpers ──────────────────────────────────────────────────────
 
-async def _fetch_ripe_atlas_whois(asn_id: str) -> dict:
+async def _fetch_ripe_atlas_whois(asn_id):
     """
     Fetch AS WHOIS data from RIPE Whois Database REST API.
 
@@ -258,7 +258,7 @@ async def _fetch_ripe_atlas_whois(asn_id: str) -> dict:
     return await _fetch_bgpview_whois(asn)
 
 
-async def _fetch_bgpview_whois(asn_id: str) -> dict:
+async def _fetch_bgpview_whois(asn_id):
     """Fallback: BGPView WHOIS lookup."""
     url = f"https://api.bgpview.io/asn/{asn}/info"
     try:
@@ -279,7 +279,7 @@ async def _fetch_bgpview_whois(asn_id: str) -> dict:
     return {}
 
 
-async def _fetch_ripe_atlas_neighbours(asn_id: str) -> dict:
+async def _fetch_ripe_atlas_neighbours(asn_id):
     """
     Fetch AS neighbours (providers/customers/peers) and announced prefixes.
 
@@ -310,7 +310,7 @@ async def _fetch_ripe_atlas_neighbours(asn_id: str) -> dict:
     return {"data": {"providers": [], "customers": [], "peers": [], "_announced_prefixes": []}}
 
 
-async def _fetch_bgpview_neighbours(asn_id: str) -> dict:
+async def _fetch_bgpview_neighbours(asn_id):
     """Fallback: BGPView neighbour lookup."""
     url = f"https://api.bgpview.io/asn/{asn}/contacts"
     neighbours = {"providers": [], "customers": [], "peers": []}
@@ -335,7 +335,7 @@ async def _fetch_bgpview_neighbours(asn_id: str) -> dict:
     return {"data": neighbours}
 
 
-def _infer_relationships(asn: str, paths: List[list]) -> dict:
+def _infer_relationships(asn, paths: List[list]):
     """
     Infer AS relationships from collected BGP paths.
     Simple heuristic (Valley-Free principle):
@@ -374,7 +374,7 @@ def _infer_relationships(asn: str, paths: List[list]) -> dict:
     }
 
 
-async def _fetch_peeringdb(asn_id: str) -> dict:
+async def _fetch_peeringdb(asn_id):
     """Fetch PeeringDB info for an ASN (no auth needed)."""
     # PeeringDB has a free JSON API
     url = f"https://www.peeringdb.com/api/net?asn={asn}"
@@ -399,7 +399,7 @@ async def _fetch_peeringdb(asn_id: str) -> dict:
     return {}
 
 
-def _get_nested(d: dict, *keys, default=None):
+def _get_nested(d, *keys, default=None):
     for k in keys:
         if not isinstance(d, dict):
             return default

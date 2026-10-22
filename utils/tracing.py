@@ -55,7 +55,7 @@ class StageEvent:
     error: str | None = None
 
     @property
-    def is_error(self) -> bool:
+    def is_error(self):
         return self.error is not None
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,11 +74,11 @@ class StageEvent:
 class MetricsRegistry:
     """Thread-safe in-memory store of stage events."""
 
-    def __init__(self) -> None:
+    def __init__(self):
         self._events: list[StageEvent] = []
         self._lock = threading.Lock()
 
-    def record(self, event: StageEvent) -> None:
+    def record(self, event):
         with self._lock:
             self._events.append(event)
 
@@ -125,14 +125,14 @@ class MetricsRegistry:
             "events": events,
         }
 
-    def save(self, path: Path) -> None:
+    def save(self, path):
         """Persist as JSON next to the report."""
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2, default=str)
         logger.info(f"[tracing] saved metrics to {path}")
 
-    def reset(self) -> None:
+    def reset(self):
         with self._lock:
             self._events.clear()
 
@@ -194,11 +194,11 @@ class _StageHandle:
         self.attrs = attrs
         self.error: str | None = None
 
-    def add_tokens(self, in_tok: int = 0, out_tok: int = 0) -> None:
+    def add_tokens(self, in_tok=0, out_tok=0):
         self.tokens_in += int(in_tok)
         self.tokens_out += int(out_tok)
 
-    def _to_event(self) -> StageEvent:
+    def _to_event(self):
         return StageEvent(
             name=self.name,
             start_ts=self.start_ts,
@@ -212,7 +212,7 @@ class _StageHandle:
 
 
 # ── Auto-save on metrics registry flush ───────────────────────────────────
-def maybe_autosave(directory: Path, slug: str) -> Path | None:
+def maybe_autosave(directory, slug):
     """Write a metrics snapshot if the env var points at a directory."""
     if not directory:
         return None

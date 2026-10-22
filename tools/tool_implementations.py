@@ -3,7 +3,7 @@ Tool implementations for the chat-based multi-agent system.
 =========================================================
 
 Each tool follows the signature:
- async def handler(tool_input: dict, session: Session) -> dict
+ async def handler(tool_input, session) -> dict
 
 The return dict is converted to a ToolResult by the registry.
 """
@@ -29,19 +29,19 @@ import polars as pl
 class APICache:
     """Simple TTL-based cache for API responses."""
 
-    def __init__(self, ttl_seconds: int = 3600, max_entries: int = 4096):  # Default 1 hour TTL
+    def __init__(self, ttl_seconds=3600, max_entries=4096):  # Default 1 hour TTL
         self._cache: Dict[str, tuple[Any, float]] = {}  # key -> (value, timestamp)
         self._ttl = ttl_seconds
         self._max_entries = max_entries
         self._hits = 0
         self._misses = 0
 
-    def _make_key(self, prefix: str, *args, **kwargs) -> str:
+    def _make_key(self, prefix, *args, **kwargs):
         """Create a cache key from function name and arguments."""
         key_data = f"{prefix}:{args}:{sorted(kwargs.items())}"
         return hashlib.md5(key_data.encode()).hexdigest()
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key):
         """Get value from cache if not expired."""
         if key in self._cache:
             value, timestamp = self._cache[key]
@@ -53,7 +53,7 @@ class APICache:
         self._misses += 1
         return None
 
-    def set(self, key: str, value: Any) -> None:
+    def set(self, key, value):
         """Set value in cache with current timestamp.
 
  A bounded ``max_entries`` cap protects against runaway memory growth
@@ -78,7 +78,7 @@ class APICache:
                 self._cache.pop(k, None)
         self._cache[key] = (value, time.time())
 
-    def clear(self) -> None:
+    def clear(self):
         """Clear all cache entries."""
         self._cache.clear()
 
@@ -92,7 +92,7 @@ _bgpview_cache = APICache(ttl_seconds=3600)  # 1 hour TTL for AS info
 _prefix_cache = APICache(ttl_seconds=3600)  # 1 hour TTL for prefix info
 
 
-async def _async_get_json(url: str, timeout: float = 15.0) -> Optional[dict]:
+async def _async_get_json(url, timeout=15.0):
     """GET a URL and parse JSON without blocking the event loop.
 
  ``requests.get`` is synchronous and would freeze every concurrent
@@ -128,7 +128,7 @@ _TIME_FORMATS = (
 )
 
 
-def _parse_dt(value, fmt=None) -> datetime:
+def _parse_dt(value, fmt=None):
     """Parse a time string in multiple common formats. Returns datetime."""
     if not value:
         raise ValueError("Empty time string")
@@ -227,7 +227,7 @@ from agents.payload_builder import PayloadBudget, build_payload, cap_payload, es
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_traffic(tool_input: dict, session) -> dict:
+async def _analyze_traffic(tool_input, session):
     """
  Analyze traffic anomalies for one or more ASes within a time window.
 
@@ -308,7 +308,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_routing(tool_input: dict, session) -> dict:
+async def _analyze_routing(tool_input, session):
     """
  Analyze BGP routing anomalies (hijacks, leaks, outages) for an AS
  within a time window.
@@ -494,7 +494,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _check_correlation(tool_input: dict, session) -> dict:
+async def _check_correlation(tool_input, session):
     """Three-card joint-evidence analysis for routing and traffic signals.
 
     Card 1: temporal alignment with decay scoring. Card 2: blast radius
@@ -669,7 +669,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _query_as_info(tool_input: dict, session) -> dict:
+async def _query_as_info(tool_input, session):
     """
  Enrich AS data with org info, AS relationships, and announced prefixes.
  Uses RIPE Whois Database REST API (authenticated) + BGPView.
@@ -838,7 +838,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _reason_and_classify(tool_input: dict, session) -> dict:
+async def _reason_and_classify(tool_input, session):
     """
  LLM-powered reasoning on traffic + routing results to produce a final
  incident classification and evidence summary.
@@ -1298,7 +1298,7 @@ def _json_serial(obj):
     return str(obj)
 
 
-def _parse_json(raw_text: str) -> dict:
+def _parse_json(raw_text):
     raw = raw_text.strip()
     for fence in ["```json\n", "```json", "```\n", "```"]:
         if raw.startswith(fence):
@@ -1338,7 +1338,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-def _inject_traffic_plot_into_file(html_path: str, traffic_plot_base64: str) -> None:
+def _inject_traffic_plot_into_file(html_path, traffic_plot_base64):
     """After the HTML is saved, inject the traffic plot if the LLM missed it."""
     import pathlib
     try:
@@ -1366,7 +1366,7 @@ def _inject_traffic_plot_into_file(html_path: str, traffic_plot_base64: str) -> 
     except Exception:
         pass
 
-async def _generate_report(tool_input: dict, session) -> dict:
+async def _generate_report(tool_input, session):
     """Generate the final LLM-driven HTML report from all collected evidence.
 
     Params come from `tool_input` (priority) or `session.evidence` (fallback),
@@ -1654,7 +1654,7 @@ async def _generate_report(tool_input: dict, session) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
+async def _analyze_prefix_traffic(tool_input, session):
     """
  Analyze traffic impact for specific BGP prefixes involved in routing events.
 
@@ -1741,12 +1741,12 @@ async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
         "normal_samples": 0, "hijack_samples": 0,
     } for p in prefix_set}
 
-    def parse_as_path(raw_text: str) -> list:
+    def parse_as_path(raw_text):
         if not raw_text:
             return []
         return [x.strip() for x in str(raw_text).split() if x.strip()]
 
-    def in_window(ts_str: str, w_start, w_end) -> bool:
+    def in_window(ts_str, w_start, w_end):
         # Bug fix 2026-09-13 (BUG-R61): the original nested
         try:
             ts = _parse_dt(ts_str)
@@ -1890,7 +1890,7 @@ async def _analyze_prefix_traffic(tool_input: dict, session) -> dict:
     }
 
 
-def _prefix_traffic_verdict(effectiveness: str, path_delta: float, origin_changed: bool) -> str:
+def _prefix_traffic_verdict(effectiveness, path_delta, origin_changed):
     if effectiveness == "high" and path_delta > 30 and origin_changed:
         return "STRONG: attacker captured majority of traffic, origin AS changed"
     elif effectiveness in ("high", "medium") and path_delta > 0:
@@ -1901,8 +1901,10 @@ def _prefix_traffic_verdict(effectiveness: str, path_delta: float, origin_change
         return "WEAK: limited evidence of traffic impact"
 
 
-def _summarize_verdicts(items: dict) -> str:
-    verdicts = [r["verdict"].split(":")[0] for r in results.values()]
+def _summarize_verdicts(items):
+    # Bug fix 2026-10-13: function parameter is `items` (the dict of
+    # verdicts) but the body referenced the undefined name `results`.
+    verdicts = [r["verdict"].split(":")[0] for r in items.values()]
     strong = verdicts.count("STRONG")
     moderate = verdicts.count("MODERATE")
     weak = verdicts.count("WEAK")
@@ -1934,7 +1936,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _classify_traffic_anomaly(tool_input: dict, session) -> dict:
+async def _classify_traffic_anomaly(tool_input, session):
     """
  Classify the root cause type of a traffic anomaly using LLM reasoning.
  This prevents misattribution: not every traffic drop is a hijack.
@@ -2038,7 +2040,7 @@ Return ONLY valid JSON:
                 "observation": f"Classification failed: {e}"}
 
 
-def _slim_traffic(payload: dict) -> dict:
+def _slim_traffic(payload):
     """Extract only the essential fields from traffic result for LLM prompt."""
     if isinstance(traffic, dict) and "asn" in traffic:
         return {
@@ -2051,7 +2053,7 @@ def _slim_traffic(payload: dict) -> dict:
     return traffic if isinstance(traffic, dict) else {}
 
 
-def _slim_routing(payload: dict) -> dict:
+def _slim_routing(payload):
     """Extract only the essential fields from routing result for LLM prompt."""
     if not routing or not isinstance(routing, dict):
         return {}
@@ -2065,7 +2067,7 @@ def _slim_routing(payload: dict) -> dict:
     }
 
 
-def _slim_asn_info(payload: dict) -> dict:
+def _slim_asn_info(payload):
     """Extract essential AS info for LLM prompt."""
     if not isinstance(asn_info, dict):
         return {}
@@ -2090,7 +2092,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _compute_traffic_routing_correlation_score(tool_input: dict, session) -> dict:
+async def _compute_traffic_routing_correlation_score(tool_input, session):
     """Quantify traffic-routing correlation as a 0-100 score.
 
     Sum of 5 dimensions (20 each): temporal overlap, direction consistency,
@@ -2320,7 +2322,7 @@ def _resolve_result(tool_input: dict, key: str, ev: dict,
     return {}
 
 
-def _extract_routing_window(routing: dict) -> Optional[dict]:
+def _extract_routing_window(routing):
     """Extract (start, end) from routing result."""
     if not routing:
         return None
@@ -2368,7 +2370,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_as_path_delta(tool_input: dict, session) -> dict:
+async def _analyze_as_path_delta(tool_input, session):
     """Analyze AS-path structural changes during a hijack window.
 
     Past events: skip traceroute, use BGP archival data. Recent events
@@ -2435,7 +2437,7 @@ async def _analyze_as_path_delta(tool_input: dict, session) -> dict:
         traceroute_skipped_reason = "Cannot determine event recency — no end_time provided."
 
     # ── Extract all AS-path entries from routing result ───────────────────────
-    def parse_as_path(raw: str) -> list:
+    def parse_as_path(raw):
         if not raw:
             return []
         return [x.strip() for x in str(raw).split() if x.strip()]
@@ -2590,12 +2592,12 @@ def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
                           normal_start_str: Optional[str],
                           normal_end_str: Optional[str]) -> dict:
     """Compute AS-path length, structural change, and AS appearance metrics."""
-    def parse_as_path(raw: str) -> list:
+    def parse_as_path(raw):
         if not raw:
             return []
         return [x.strip() for x in str(raw).split() if x.strip()]
 
-    def in_window(ts_str: str, w_start, w_end) -> bool:
+    def in_window(ts_str, w_start, w_end):
         if not ts_str:
             return False
         # Bug fix 2026-09-13 (BUG-R85): the previous implementation
@@ -2661,7 +2663,7 @@ def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
     lost_asns = list(normal_as_set - hijack_as_set)
 
     # Detect AS-path loops (consecutive duplicate AS)
-    def has_loop(path_list: list) -> bool:
+    def has_loop(path_list):
         return any(path[i] == path[i+1] for i in range(len(path)-1))
 
     hijack_loops = sum(1 for p in hijack_paths if has_loop(p))
@@ -2694,7 +2696,7 @@ def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
     }
 
 
-def _as_path_verdict(path_metrics: dict, traceroute_result: dict) -> dict:
+def _as_path_verdict(path_metrics, traceroute_result):
     """Determine overall AS-path verdict."""
     score = 0
     reasons = []
@@ -2763,7 +2765,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_as_relationships(tool_input: dict, session) -> dict:
+async def _analyze_as_relationships(tool_input, session):
     """Analyze AS-level relationship between attacker and victim.
 
     Uses CAIDA as-rel (priority 1), then AS-path structure (priority 2),
@@ -2851,7 +2853,7 @@ async def _analyze_as_relationships(tool_input: dict, session) -> dict:
     }
 
 
-def _load_asrel_json(filepath_str: str) -> dict:
+def _load_asrel_json(filepath_str):
     """Load and parse CAIDA AS Relationship JSON file.
 
  Bug fix 2026-09-13 (BUG-R50): previously the bare ``open(filepath, "r")``
@@ -2865,7 +2867,9 @@ def _load_asrel_json(filepath_str: str) -> dict:
  empty / malformed JSON, so callers can surface the data error.
  """
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        # Bug fix 2026-10-13: parameter is ``filepath_str`` but body
+        # referenced the undefined name ``filepath``.
+        with open(filepath_str, "r", encoding="utf-8", errors="ignore") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
         return None
@@ -2873,7 +2877,7 @@ def _load_asrel_json(filepath_str: str) -> dict:
         return None
 
 
-def _query_as_relationship(asrel: dict, as1: str, as2: str) -> str:
+def _query_as_relationship(asrel, as1, as2):
     """
  Query the direct CAIDA AS relationship between as1 and as2.
  Returns: "provider" | "customer" | "peer" | "unknown"
@@ -3047,7 +3051,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _probe_prefix_reachability(tool_input: dict, session) -> dict:
+async def _probe_prefix_reachability(tool_input, session):
     """
  Verify prefix reachability and hijack effectiveness.
 
@@ -3149,7 +3153,7 @@ async def _probe_prefix_reachability(tool_input: dict, session) -> dict:
     }
 
 
-async def _live_traceroute_probe(prefix: str, attacker_asn: str, victim_asn: str) -> dict:
+async def _live_traceroute_probe(prefix, attacker_asn, victim_asn):
     """Run live traceroute using scapy (no root required) or system binary."""
     target_ip = prefix.split("/")[0]
 
@@ -3214,7 +3218,7 @@ async def _historical_prefix_probe(prefix: str, start: str, end: str,
     results_by_method = {}
 
     # Helper: fetch URL on a worker thread, return ``(status_code, body)``
-    def _sync_get(url: str, want_json: bool = True):
+    def _sync_get(url, want_json=True):
         try:
             r = requests.get(url, timeout=15)
             if want_json:
@@ -3381,7 +3385,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _validate_roa_status(tool_input: dict, session) -> dict:
+async def _validate_roa_status(tool_input, session):
     """Validate hijacked prefix+origin pairs against RPKI ROA.
 
     Sources: Cloudflare RPKI API (live, 5-min cache), RIPE NCC archive
@@ -3501,7 +3505,7 @@ async def _validate_roa_status(tool_input: dict, session) -> dict:
 _roa_cache: dict = {"data": None, "fetched_at": None}
 
 
-async def _fetch_cloudflare_roa() -> tuple:
+async def _fetch_cloudflare_roa():
     """
  Fetch ROA data from Cloudflare RPKI Validator API.
  Caches result for 5 minutes to avoid hammering the API.
@@ -3552,7 +3556,7 @@ async def _fetch_cloudflare_roa() -> tuple:
     return roa_data, "cloudflare_rpki_api"
 
 
-def _check_roa_single(roa_data: dict, prefix: str, origin_asn: str) -> tuple:
+def _check_roa_single(roa_data, prefix, origin_asn):
     """
  Check if (prefix, origin_asn) is covered by a valid ROA.
 
@@ -3600,12 +3604,12 @@ def _check_roa_single(roa_data: dict, prefix: str, origin_asn: str) -> tuple:
     return "NOT_FOUND", None
 
 
-def _ip_to_int(ip_str: str) -> int:
+def _ip_to_int(ip_str):
     parts = ip_str.split(".")
     return (int(parts[0]) << 24) | (int(parts[1]) << 16) | (int(parts[2]) << 8) | int(parts[3])
 
 
-def _int_to_ip(n: int) -> str:
+def _int_to_ip(n):
     return f"{(n >> 24) & 0xFF}.{(n >> 16) & 0xFF}.{(n >> 8) & 0xFF}.{n & 0xFF}"
 
 
@@ -3623,7 +3627,7 @@ register_tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _lookup_as_threat_intel(tool_input: dict, session) -> dict:
+async def _lookup_as_threat_intel(tool_input, session):
     """
  Gather threat intelligence on attacker AS(es): BGP history, known hijack
  activity, AS relationship, and external threat signals.
@@ -3725,15 +3729,19 @@ async def _lookup_as_threat_intel(tool_input: dict, session) -> dict:
     }
 
 
-async def _bgpview_as_info(asn_id: str) -> dict:
-    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn}/info")
+async def _bgpview_as_info(asn_id):
+    # Bug fix 2026-10-13: function parameter is `asn_id` but the body
+    # referenced the undefined name `asn`.
+    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn_id}/info")
     if isinstance(data, dict) and data.get("status") == "ok":
         return data.get("data", {}) or {}
     return {}
 
 
-async def _bgpview_prefixes(asn_id: str) -> dict:
-    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn}/prefixes")
+async def _bgpview_prefixes(asn_id):
+    # Bug fix 2026-10-13: function parameter is ``asn_id`` but body
+    # referenced the undefined name ``asn``.
+    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn_id}/prefixes")
     if isinstance(data, dict) and data.get("status") == "ok":
         prefixes_data = data.get("data", {}) or {}
         return {
@@ -3745,20 +3753,29 @@ async def _bgpview_prefixes(asn_id: str) -> dict:
     return {}
 
 
-async def _bgpview_neighbors(asn_id: str) -> dict:
-    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn}/neighbours")
+async def _bgpview_neighbors(asn_id):
+    # Bug fix 2026-10-13: see above.
+    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn_id}/neighbours")
     if isinstance(data, dict) and data.get("status") == "ok":
         neighbors = data.get("data", {}).get("neighbours", []) or []
+        # Bug fix 2026-10-14: BGPView returns ``asn`` as either an int
+        # (e.g. ``3356``) or a string (e.g. ``"2001:db8::1"``). Coerce
+        # to string before substring check to avoid ``TypeError`` on int.
+        def _asn_str(n):
+            v = n.get("asn", "")
+            return str(v) if v is not None else ""
+
         return {
-            "ipv4_neighbors": [n for n in neighbors if ":" not in n.get("asn", "")],
-            "ipv6_neighbors": [n for n in neighbors if ":" in n.get("asn", "")],
+            "ipv4_neighbors": [n for n in neighbors if ":" not in _asn_str(n)],
+            "ipv6_neighbors": [n for n in neighbors if ":" in _asn_str(n)],
             "neighbor_count": len(neighbors),
         }
     return {}
 
 
-async def _bgpview_contacts(asn_id: str) -> dict:
-    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn}/contacts")
+async def _bgpview_contacts(asn_id):
+    # Bug fix 2026-10-13: see above.
+    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn_id}/contacts")
     if isinstance(data, dict) and data.get("status") == "ok":
         return data.get("data", {}) or {}
     return {}

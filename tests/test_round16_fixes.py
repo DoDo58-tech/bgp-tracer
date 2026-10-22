@@ -357,48 +357,43 @@ def test_llm_factory_records_usage_into_handler():
         TokenCountingHandler,
     )
 
-    # If no handler is registered yet (e.g. the test ran before any
-    # ``setup_llm_settings`` call), create one for self-contained
-    # validation.
-    if not _GLOBAL_TOKEN_HANDLERS:
-        handler = TokenCountingHandler()
-        _GLOBAL_TOKEN_HANDLERS.append(handler)
-    else:
-        handler = _GLOBAL_TOKEN_HANDLERS[-1]
+    # Use a dedicated, freshly-created handler so this test is not
+    # affected by other tests that pre-populate the global registry
+    # (e.g. test_token_handler_registry_is_bounded adds FakeHandlers
+    # which saturate the cap and push real handlers out of the list).
+    handler = TokenCountingHandler()
+    _GLOBAL_TOKEN_HANDLERS.append(handler)
+    try:
+        # Build a fake response object that mimics OpenAI's CompletionUsage.
+        class _FakeUsage:
+            prompt_tokens = 120
+            completion_tokens = 30
+            total_tokens = 150
 
-    # Build a fake response object that mimics OpenAI's CompletionUsage.
-    class _FakeUsage:
-        prompt_tokens = 120
-        completion_tokens = 30
-        total_tokens = 150
+        class _FakeResponse:
+            usage = _FakeUsage()
 
-    class _FakeResponse:
-        usage = _FakeUsage()
+        # Snapshot the handler's counter before.
+        before = handler.total_llm_token_count
+        n_handlers = len(_GLOBAL_TOKEN_HANDLERS)
 
-    # Snapshot the handler's counters before.
-    before = handler.total_llm_token_count
-    n_handlers = len(_GLOBAL_TOKEN_HANDLERS)
+        pt, ct = _extract_usage_from_response(_FakeResponse())
+        assert (pt, ct) == (120, 30), f"usage extraction broken: got ({(pt, ct)})"
 
-    pt, ct = _extract_usage_from_response(_FakeResponse())
-    assert (pt, ct) == (120, 30), f"usage extraction broken: got ({(pt, ct)})"
+        _record_token_usage_to_budget(_FakeResponse())
+        after = handler.total_llm_token_count
+        # The helper appends a 150-token event to every registered handler.
+        # Our handler is the LAST one added, so its delta is exactly 150.
+        assert after - before == 150, (
+            f"_record_token_usage_to_budget must add 150 tokens to the "
+            f"last handler; got delta={after - before} (n_handlers={n_handlers})"
+        )
 
-    _record_token_usage_to_budget(_FakeResponse())
-    after = handler.total_llm_token_count
-    # The helper appends the same event to every handler in the
-    # registry (a pre-existing quirk: there is at least one duplicate
-    # handler registered by ``setup_llm_settings``). The delta should
-    # be 150 * n_handlers.
-    expected_delta = 150 * n_handlers
-    assert after - before == expected_delta, (
-        f"_record_token_usage_to_budget must add 150 tokens per "
-        f"registered handler; expected delta={expected_delta} with "
-        f"{n_handlers} handler(s), got delta={after - before} "
-        f"(bug 2026-10-08)"
-    )
-
-    # And the new entry must be a TokenCountingEvent with the right
-    # field values (so the handler's sum works).
-    new_event = handler.llm_token_counts[-1]
-    assert isinstance(new_event, TokenCountingEvent)
-    assert new_event.prompt_token_count == 120
-    assert new_event.completion_token_count == 30
+        # And the new entry must be a TokenCountingEvent with the right
+        # field values (so the handler's sum works).
+        new_event = handler.llm_token_counts[-1]
+        assert isinstance(new_event, TokenCountingEvent)
+        assert new_event.prompt_token_count == 120
+        assert new_event.completion_token_count == 30
+    finally:
+        _GLOBAL_TOKEN_HANDLERS.remove(handler)

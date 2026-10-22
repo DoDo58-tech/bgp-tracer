@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import logger
 
 
-def _parse_iso_safe(ts_str: str):
+def _parse_iso_safe(ts_str):
     """Parse ISO-8601 / space-separated timestamps, always stripping microseconds and Z."""
     ts = ts.replace("Z", "+00:00").replace("z", "+00:00").rstrip("Z").rstrip("z").rstrip("+00:00").rstrip("+00").rstrip("-").strip()
     ts = ts.split(".")[0]
@@ -22,7 +22,7 @@ def _parse_iso_safe(ts_str: str):
     return None
 
 
-def _percentile_bounds_for_baseline(historical_values_list: list, current_len: int, lower_pct: float = 2.5, upper_pct: float = 97.5):
+def _percentile_bounds_for_baseline(historical_values_list, current_len, lower_pct=2.5, upper_pct=97.5):
     """
  ( mean ± 3σ). 
  , . 
@@ -59,7 +59,7 @@ def _percentile_bounds_for_baseline(historical_values_list: list, current_len: i
     return lower_bounds, upper_bounds, median
 
 
-def _effective_std_for_baseline(mean_arr: np.ndarray, std_arr: np.ndarray):
+def _effective_std_for_baseline(mean_arr, std_arr):
     """ detect_anomalies_statistical : std , ±3σ . """
     mean_arr = np.asarray(mean_arr, dtype=float)
     std_arr = np.asarray(std_arr, dtype=float)
@@ -93,7 +93,7 @@ def plot_traffic_comparison_beautiful(
         timestamps = timestamps[:n_points]
         current_values = current_values[:n_points]
 
-        def _parse_ts_for_plot(ts_str: str):
+        def _parse_ts_for_plot(ts_str):
             dt = _parse_iso_safe(ts)
             if dt is None:
                 return ts

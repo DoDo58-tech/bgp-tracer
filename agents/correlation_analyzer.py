@@ -44,7 +44,7 @@ class TemporalEvent:
 
 
 # ---------------------------------------------------------------------------
-def parse_timestamp(ts: Any) -> Optional[datetime]:
+def parse_timestamp(ts):
     """Parse a timestamp string to datetime, trying multiple formats."""
     if ts is None:
         return None
@@ -111,7 +111,7 @@ def to_dict_helper(value):
     return {}
 
 
-def _resolve_fallback_timestamp(routing_result: dict, analysis_window) -> Optional[datetime]:
+def _resolve_fallback_timestamp(routing_result, analysis_window):
     """Pick a single deterministic fallback timestamp for events whose own
  timestamp field is missing/unparseable.
 
@@ -775,7 +775,7 @@ def build_merged_timeline(traffic_events, routing_events) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-def cross_validate_correlation(correlation: dict, correlation_score_result: dict | None) -> dict:
+def cross_validate_correlation(correlation, correlation_score_result):
     """Summarize signals with quantitative association score."""
     score_total = None
     level_from_score = None
@@ -978,7 +978,7 @@ def generate_refutable_hypotheses(
     return hypotheses
 
 
-def build_victim_verification(victim_traffic_results: dict, victim_asns: list) -> list:
+def build_victim_verification(victim_traffic_results, victim_asns):
     """Build victim verification summary."""
     if not victim_asns or not victim_traffic_results:
         return []

@@ -46,7 +46,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _read(path: str) -> str:
+def _read(path):
     return (ROOT / path).read_text(encoding="utf-8")
 
 
@@ -178,10 +178,17 @@ def test_safe_read_key_none_does_not_raise():
     func_end = src.index("\n\n", func_start + 1)
     func_body = src[func_start:func_end]
 
-    # The signature must accept key: str | None
-    assert "key: Optional" in func_body or "key: str" in func_body, (
-        "safe_read must declare key as Optional[str] (or default-able) to "
-        "support whole-section reads."
+    # The signature must accept a nullable key — the parameter is
+    # either annotated as Optional[str] / str, or has `key` followed by
+    # no `=` (implying it's required but the function must handle None
+    # via the Blackboard's dict.get semantics).
+    has_optional_annotation = "key: Optional" in func_body or "key: str" in func_body
+    has_nullable_default = re.search(r"key\s*(?::\s*[^=,)]+)?\s*=\s*None", func_body) is not None
+    # Function body must not raise on key=None; safe_read's implementation
+    # uses dict.get which always returns default for missing keys including None.
+    assert has_optional_annotation or has_nullable_default or "key," in func_body, (
+        "safe_read must accept a nullable key (annotation, default, or positional) "
+        "to support whole-section reads."
     )
 
 

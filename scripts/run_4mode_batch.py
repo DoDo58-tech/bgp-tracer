@@ -93,7 +93,7 @@ BUDGET_WINDOW_S = int(os.environ.get("LLM_BUDGET_WINDOW_S", "18000"))
 BUDGET_BACKOFF_S = int(os.environ.get("BGPT_BUDGET_BACKOFF_S", "60"))
 
 
-def _read_budget_used() -> int:
+def _read_budget_used():
     """Read how many LLM calls have been recorded in the budget window.
 
     Returns 0 if the file is missing or unreadable (conservative: don't
@@ -123,7 +123,7 @@ def _read_budget_used() -> int:
         return 0
 
 
-def _budget_window_oldest_ts() -> float:
+def _budget_window_oldest_ts():
     """Return the wall-clock timestamp of the oldest call in the budget window.
 
     Used by ``_wait_for_budget_window()`` to compute when the next call will
@@ -153,7 +153,7 @@ def _budget_window_oldest_ts() -> float:
         return 0.0
 
 
-def _wait_for_budget_window() -> None:
+def _wait_for_budget_window():
     """If budget is critically full, actually wait for the rolling window
     to rotate rather than just sleeping 60s.
 
@@ -190,7 +190,7 @@ def _wait_for_budget_window() -> None:
             return
 
 
-def _adaptive_event_sleep(idx: int, total: int) -> None:
+def _adaptive_event_sleep(idx, total):
     """Sleep between events, scaling the duration by remaining budget.
 
     Strategy (2026-10-08 r18):
@@ -247,7 +247,7 @@ SUBPROCESS_ENV_EXTRA = {
 }
 
 
-def _strip_asn(asn: str) -> str:
+def _strip_asn(asn):
     """Strip leading 'AS' / 'as' for the --asn CLI argument."""
     s = (asn or "").strip()
     if s.upper().startswith("AS"):
@@ -266,7 +266,7 @@ def _load_events(csv_path: Path) -> list[dict]:
     # (public report, route+traffic anomalies synced, route-caused), so
     # when runnable is empty (legacy rows) we keep them — they predate
     # the schema.  When runnable is explicitly True/False we honour it.
-    def _is_runnable(r: dict) -> bool:
+    def _is_runnable(r):
         flag = (r.get("project_detector_runnable") or "").strip().lower()
         if flag in ("false", "0", "no"):
             return False
@@ -279,7 +279,7 @@ def _load_events(csv_path: Path) -> list[dict]:
     return rows
 
 
-def _find_latest_html(asn: str, since_ts: float) -> str | None:
+def _find_latest_html(asn, since_ts):
     """Return the path of the most recent HTML report for this ASN."""
     html_dir = PROJECT_ROOT / "results/html"
     candidates = sorted(
@@ -331,7 +331,7 @@ def resolve_target_asn(event: dict) -> tuple[str, str]:
     return "", ""
 
 
-def run_one(event: dict, mode_name: str, mode_flag: str, log_path: Path) -> dict:
+def run_one(event, mode_name, mode_flag, log_path):
     """Run chief_agent.py for one (event, mode) and capture result."""
     asn, asn_source = resolve_target_asn(event)
     if not asn:
@@ -431,7 +431,7 @@ def run_one(event: dict, mode_name: str, mode_flag: str, log_path: Path) -> dict
     }
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", default=str(DEFAULT_CSV),
                     help="Path to ground-truth CSV")

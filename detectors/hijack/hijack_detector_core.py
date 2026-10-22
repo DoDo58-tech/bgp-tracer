@@ -460,7 +460,7 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
         .to_dicts()
     )
 
-    def _lo_for(r: dict):
+    def _lo_for(r):
         """Resolve legitimate origins for an alert row.
 
         Preference order:
@@ -478,7 +478,7 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
             return [str(x) for x in lo]
         return [str(lo)]
 
-    def make_alert(r: dict, htype: str) -> dict:
+    def make_alert(r, htype):
         lo = _lo_for(r)
         if htype == "origin_hijacked":
             return {
@@ -828,12 +828,21 @@ def _batch_connection_frequency_polars(conn_keys, full_day_data):
             count = counts_by_key.get(k, 0)
             ratio = (count / total_updates) if total_updates else 0.0
             threshold = calculate_adaptive_threshold(full_day_data, k, '')
+            # BUG FIX 2026-10-15: same as analyze_connection_frequency — if
+            # the connection never appears, the connection is not suspicious
+            # (no forge event to flag). Previously ``ratio <= threshold`` was
+            # always True for count==0, marking every absent pair as
+            # suspicious and over-counting forge alerts in outage windows.
+            if count == 0:
+                is_suspicious = False
+            else:
+                is_suspicious = ratio <= threshold
             result[k] = {
                 'connection': k,
                 'count': count,
                 'total_updates': total_updates,
                 'frequency_ratio': ratio,
-                'is_suspicious': ratio <= threshold,
+                'is_suspicious': is_suspicious,
                 'threshold_used': threshold,
                 'threshold_percentage': threshold * 100,
                 'data_coverage': 'batch_pol',
@@ -1246,7 +1255,16 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
         # Dynamic threshold based on AS activity level
         # Calculate threshold based on the AS's activity in the full day data
         threshold_used = calculate_adaptive_threshold(df, fake_connection, date_str)
-        is_suspicious = frequency_ratio <= threshold_used
+        # BUG FIX 2026-10-15: previous logic ``frequency_ratio <= threshold_used``
+        # marked every absent connection as suspicious because ``0 <= anything`` is
+        # always True. The detector's job is to flag *active* rare connections,
+        # not the absence of a connection. If ``connection_count == 0`` there is
+        # no forge event to investigate. Require at least one matching update
+        # before considering the connection suspicious.
+        if connection_count == 0:
+            is_suspicious = False
+        else:
+            is_suspicious = frequency_ratio <= threshold_used
 
         result = {
             'connection': fake_connection,

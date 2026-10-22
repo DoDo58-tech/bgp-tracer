@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _read(path: str) -> str:
+def _read(path):
     return (ROOT / path).read_text(encoding="utf-8")
 
 

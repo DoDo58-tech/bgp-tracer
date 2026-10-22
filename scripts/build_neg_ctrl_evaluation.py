@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 PER_EVENT = ROOT / "results" / "eval" / "per_event_v36.csv"
 
 
-def main() -> int:
+def main():
     if not PER_EVENT.exists():
         print(f"missing: {PER_EVENT}", file=sys.stderr)
         return 1

@@ -105,7 +105,7 @@ async def _search_duckduckgo(query: str, num_results: int = 10) -> list[dict]:
     return results[:num_results]
 
 
-def _clean_html(content: str) -> str:
+def _clean_html(content):
     """Remove HTML tags and decode entities."""
     text = re.sub(r"<[^>]+>", "", text)
     text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
@@ -319,7 +319,7 @@ async def _news_context_search(tool_input: dict, session) -> dict[str, Any]:
         "krebsonsecurity.com", "arstechnica.com", "theregister.com",
         "techcrunch.com", "reuters.com", "apnews.com",
     }
-    def priority(item: dict) -> int:
+    def priority(item):
         url = r.get("url", "")
         for i, d in enumerate(priority_domains):
             if d in url:

@@ -22,7 +22,7 @@ SRC = ROOT / "results" / "eval" / "per_event_v36.csv"
 OUT = ROOT / "results" / "eval" / "per_event_v36_real.csv"
 
 
-def main() -> None:
+def main():
     with SRC.open() as f:
         rows = list(csv.DictReader(f))
     real = [r for r in rows if "synthetic" not in r["cache_source"]]

@@ -138,7 +138,7 @@ class HypothesisAgent(Agent):
             max_retries=2,
         )
 
-    async def step(self) -> TaskResult:
+    async def step(self):
         self.state = AgentState.WORKING
 
         # Read inputs from Blackboard

@@ -20,7 +20,7 @@ from agents.payload_builder import _ROUTING_KEEP, slim_section  # noqa: E402
 from agents.report_agent import _normalize_routing, compute_top_cause  # noqa: E402
 
 
-def _live_routing_payload(leak_n: int = 5000) -> dict:
+def _live_routing_payload(leak_n=5000):
     """The exact shape routing_impl.run_routing_agent_async() returns."""
     leaks = [{"prefix": f"2.0.{i // 256}.{i % 256}.0/24"} for i in range(leak_n)]
     return {

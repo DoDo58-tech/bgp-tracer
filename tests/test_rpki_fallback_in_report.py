@@ -28,7 +28,7 @@ sys.path.insert(0, str(_ROOT))
 class TestRPKIFallbackMarker(unittest.TestCase):
     """Verify RPKI fallback status marker injection in report HTML."""
 
-    def _make_html(self) -> str:
+    def _make_html(self):
         return "<!DOCTYPE html><html><head></head><body><h1>Test</h1></body></html>"
 
     def test_marker_present_on_success(self):

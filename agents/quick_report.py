@@ -83,14 +83,14 @@ _VERDICT_META: Dict[str, Dict[str, str]] = {
 }
 
 
-def _esc(value: Any) -> str:
+def _esc(value):
     """HTML-escape any value, coercing None → '—'."""
     if value is None or value == "":
         return "—"
     return _html.escape(str(value), quote=False)
 
 
-def _row(label: str, value: Any, *, mono: bool = False) -> str:
+def _row(label, value, *, mono=False):
     val_cls = "kv-value mono" if mono else "kv-value"
     return (
         f'<tr><td class="kv-label">{_esc(label)}</td>'
@@ -98,11 +98,11 @@ def _row(label: str, value: Any, *, mono: bool = False) -> str:
     )
 
 
-def _kv_table(rows: str) -> str:
-    return f'<table class="kv-table"><tbody>{rows_html}</tbody></table>'
+def _kv_table(rows):
+    return f'<table class="kv-table"><tbody>{rows}</tbody></table>'
 
 
-def _render_traffic_card(summary: Dict[str, Any]) -> str:
+def _render_traffic_card(summary: Dict[str, Any]):
     rows = (
         _row("Anomaly count", summary.get("traffic_anomaly_count"))
         + _row("Signal present", summary.get("traffic_signal_present"))
@@ -112,7 +112,7 @@ def _render_traffic_card(summary: Dict[str, Any]) -> str:
     return _section("Traffic Signal", _kv_table(rows))
 
 
-def _render_routing_card(summary: Dict[str, Any]) -> str:
+def _render_routing_card(summary: Dict[str, Any]):
     rows = (
         _row("Hijack events", summary.get("routing_hijack_count"))
         + _row("Route leaks", summary.get("routing_leak_count"))
@@ -122,7 +122,7 @@ def _render_routing_card(summary: Dict[str, Any]) -> str:
     return _section("Routing Signal", _kv_table(rows))
 
 
-def _render_correlation_card(summary: Dict[str, Any]) -> str:
+def _render_correlation_card(summary: Dict[str, Any]):
     rows = (
         _row("Level", summary.get("correlation_level"))
         + _row("Strength", summary.get("correlation_strength"))
@@ -131,7 +131,7 @@ def _render_correlation_card(summary: Dict[str, Any]) -> str:
     return _section("Correlation", _kv_table(rows))
 
 
-def _section(title: str, body_html: str) -> str:
+def _section(title, body_html):
     return (
         f'<section class="card"><h2>{_esc(title)}</h2>{body_html}</section>'
     )

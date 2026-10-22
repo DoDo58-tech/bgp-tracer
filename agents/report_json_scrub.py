@@ -46,7 +46,7 @@ def _scrub_json_key_placeholders(html: str, asn: str = "",
     return _JSON_KEY_PLACEHOLDER_RE.sub(_repl, html)
 
 
-def _strip_nodata_artifacts(html: str) -> str:
+def _strip_nodata_artifacts(html):
     """Best-effort cleanup so reports don't show "(no data)" rows / cells.
 
     - Drops <tr> rows where every cell is a no-data placeholder.

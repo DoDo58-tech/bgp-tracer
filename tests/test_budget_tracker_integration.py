@@ -21,7 +21,7 @@ sys.path.insert(0, str(_ROOT))
 pytestmark = pytest.mark.fast
 
 
-def _mock_openai_response(content: str = "mock"):
+def _mock_openai_response(content="mock"):
     """Build a MagicMock that looks like an OpenAI ChatCompletion."""
     response = MagicMock()
     response.choices = [MagicMock()]

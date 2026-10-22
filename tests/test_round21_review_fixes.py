@@ -142,7 +142,7 @@ def _trivial_timeline():
     ]
 
 
-def _long_timeline(n: int = 60):
+def _long_timeline(n=60):
     """Long enough (≥10 points) to clear the early-return guards."""
     base = "2024-01-03T15:00:00+00:00"
     from datetime import datetime, timedelta
@@ -194,7 +194,7 @@ class TestReportSectionCompleteness:
     4. The new ``_enforce_section_completeness`` guarantees ≥3 cards
     and all 8 required ``<h2>`` sections."""
 
-    def _minimal_html(self) -> str:
+    def _minimal_html(self):
         return (
             "<!DOCTYPE html><html><head></head><body>"
             "<h2>Executive Summary</h2><p>x</p>"

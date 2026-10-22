@@ -36,7 +36,7 @@ _KNOWN_DIRECTIONS = {
 # ─── Helpers ────────────────────────────────────────────────────────────
 
 
-def _stationary_series(n: int = 200, seed: int = 42, score: float = 0.6):
+def _stationary_series(n=200, seed=42, score=0.6):
     """A stationary noise series centered around `score` (so it survives
     the >0.5 score filter inside granger_lead)."""
     import numpy as np
@@ -54,7 +54,7 @@ def _trending_series(n: int = 200, seed: int = 42, slope: float = 0.5,
     return base - base.mean() + score
 
 
-def _timeline(series, start: str = "2024-01-01T00:00:00Z") -> list:
+def _timeline(series, start="2024-01-01T00:00:00Z"):
     """Wrap a 1-D series into a list of {timestamp, score} dicts (5 min spacing)."""
     from datetime import datetime, timedelta
     base = datetime.fromisoformat(start.replace("Z", "+00:00"))

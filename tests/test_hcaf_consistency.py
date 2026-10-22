@@ -65,7 +65,7 @@ def _load_v9_rows() -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
-def _expected_direction(cause_label: str, withdrawal_count: int, routing_event_in_window: str = "") -> str | None:
+def _expected_direction(cause_label, withdrawal_count, routing_event_in_window=""):
     """Map a v9 row to the expected HCAF direction label.
 
     Returns one of:
@@ -109,14 +109,14 @@ def _expected_dir_set(cause_label: str, withdrawal_count: int, routing_event_in_
     return {expected, "unknown"}
 
 
-def _parse_int(s: str, default: int = 0) -> int:
+def _parse_int(s, default=0):
     try:
         return int(s.strip()) if s.strip() else default
     except (ValueError, AttributeError):
         return default
 
 
-def _parse_float(s: str, default: float = 0.0) -> float:
+def _parse_float(s, default=0.0):
     try:
         return float(s.strip()) if s.strip() else default
     except (ValueError, AttributeError):
@@ -247,7 +247,7 @@ def _build_timelines_for_row(row: dict[str, str]) -> tuple[list, list, dict, dic
     return routing_tl, traffic_tl, routing_context, traffic_context
 
 
-def _norm_hcaf_direction(d: str) -> str:
+def _norm_hcaf_direction(d):
     """Normalise HCAF's direction strings to the canonical 3-way + abstain."""
     if d in {"routing -> traffic", "routing_to_traffic"}:
         return "routing_to_traffic"

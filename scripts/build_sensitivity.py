@@ -22,11 +22,11 @@ JSONL = ROOT / "results" / "eval" / "hcaf_vs_baselines_v36.jsonl"
 OUT_CSV = ROOT / "results" / "eval" / "sensitivity_v36.csv"
 
 
-def l1(a: dict, b: dict) -> float:
+def l1(a, b):
     return sum(abs(a.get(k, 0) - b.get(k, 0)) for k in ("routing_to_traffic", "traffic_to_routing", "independent"))
 
 
-def synthesize_no_css(css_dir: str, channels: dict, disabled: set) -> dict:
+def synthesize_no_css(css_dir, channels, disabled):
     prior = {"routing_to_traffic": 1.0, "traffic_to_routing": 1.0, "independent": 1.0}
     post = dict(prior)
     for name, ch in channels.items():
@@ -41,7 +41,7 @@ def synthesize_no_css(css_dir: str, channels: dict, disabled: set) -> dict:
     return norm
 
 
-def synthesize_with_css_prior(css_dir: str, channels: dict, disabled: set, css_is_causal: bool) -> dict:
+def synthesize_with_css_prior(css_dir, channels, disabled, css_is_causal):
     prior = {"routing_to_traffic": 1.0, "traffic_to_routing": 1.0, "independent": 1.0}
     if css_dir in ("routing_to_traffic", "traffic_to_routing"):
         prior[css_dir] = 10.0 if css_is_causal else 4.0
@@ -63,7 +63,7 @@ def synthesize_with_css_prior(css_dir: str, channels: dict, disabled: set, css_i
     return {k: v / total for k, v in post.items()}
 
 
-def channels_for(rec: dict) -> dict:
+def channels_for(rec):
     css_dir = rec.get("css_direction", "unknown")
     css_p = rec.get("css_p_value", 1.0)
     ch = {}
@@ -106,7 +106,7 @@ def channels_for(rec: dict) -> dict:
     return ch
 
 
-def main() -> None:
+def main():
     recs = [json.loads(l) for l in JSONL.open()]
     # Filter to records with a defined expected_direction (excludes
     # origin_hijack_attacker derived rows whose expected_direction is None).

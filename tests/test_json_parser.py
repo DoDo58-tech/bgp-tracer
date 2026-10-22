@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, '/data/bgp_tracer')
 
 
-def _parse_using_batch_logic(log_content: str) -> dict | None:
+def _parse_using_batch_logic(log_content):
     """Mirror of the parser used in ``run_4mode_batch.py``."""
     candidates = []
     depth = 0

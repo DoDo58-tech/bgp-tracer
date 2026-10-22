@@ -327,7 +327,7 @@ class Blackboard:
         async with self._lock:
             return self._sections.get(section, {}).get(key, default)
 
-    async def write(self, section, key, value, *, _writer: str = "", _allow_overwrite: bool = False):
+    async def write(self, section, key, value, *, _writer="", _allow_overwrite=False):
         """Write to a Blackboard section.
 
         Critical keys (see ``_CRITICAL_RESULT_KEYS``) are protected by
@@ -365,7 +365,7 @@ class Blackboard:
         async with self._lock:
             return dict(self._sections.get(section, {}))
 
-    async def update_section(self, section, data, *, _writer: str = "", _allow_overwrite: bool = False):
+    async def update_section(self, section, data, *, _writer="", _allow_overwrite=False):
         data = self.maybe_slim_section(section, data)
         # Concurrency fix 2026-09-13: move the write-once check inside the
         rejected: dict = {}
@@ -405,7 +405,7 @@ class Blackboard:
         "meta": "reasoning",
     }
 
-    def maybe_slim(self, section: str, key: str, value):
+    def maybe_slim(self, section, key, value):
         """Slim only LLM-facing blackboard values, preserving agent contracts."""
         # The workflow's traffic/routing result entries are the contract used
         if (section, key) in {("traffic", "result"), ("routing", "result")}:
@@ -430,7 +430,7 @@ class Blackboard:
         except Exception:
             return value
 
-    def maybe_slim_section(self, section: str, data: dict) -> dict:
+    def maybe_slim_section(self, section, data):
         """Slim an entire section dict, per-key."""
         if not _BB_SLIM_ENABLED or not isinstance(data, dict):
             return data
@@ -707,6 +707,7 @@ class Agent(ABC):
         self.bb = blackboard
         self.state = AgentState.IDLE
         self._inbox = []
+        self._inbox_lock = asyncio.Lock()
         self._stop = asyncio.Event()
         self._started_at = 0.0
         self._step_started_at = 0.0
@@ -721,17 +722,21 @@ class Agent(ABC):
         await self._stop.wait()
 
     async def receive(self, msg):
-        self._inbox.append(msg)
+        async with self._inbox_lock:
+            self._inbox.append(msg)
 
-    def peek_inbox(self):
-        return list(self._inbox)
+    async def peek_inbox(self):
+        async with self._inbox_lock:
+            return list(self._inbox)
 
-    def pop_inbox(self):
-        messages, self._inbox = self._inbox, []
-        return messages
+    async def pop_inbox(self):
+        async with self._inbox_lock:
+            messages, self._inbox = self._inbox, []
+            return messages
 
-    def count_inbox(self):
-        return len(self._inbox)
+    async def count_inbox(self):
+        async with self._inbox_lock:
+            return len(self._inbox)
 
     async def send_to(self, recipient, msg_type, content, in_reply_to=None):
         msg = Message(sender=self.name, type=msg_type, content=content, in_reply_to=in_reply_to)

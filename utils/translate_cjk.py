@@ -57,14 +57,14 @@ IDEOR_RE = re.compile(r"[\u4e00-\u9fff]+")
 WS_RE = re.compile(r"  +")
 
 
-def _clean(content: str) -> str:
+def _clean(content):
     out = PUNCT_RE.sub(lambda m: PUNCT[m.group(0)], content)
     out = IDEOR_RE.sub("", out)
     out = WS_RE.sub(" ", out)
     return out
 
 
-def _process_docstring(content: str) -> str:
+def _process_docstring(content):
     """Find every triple-quoted string in `content` and strip CJK within it."""
     text = content
     # We process one triple at a time using a simple state machine to avoid
@@ -108,7 +108,7 @@ def _process_docstring(content: str) -> str:
     return "".join(out)
 
 
-def main() -> int:
+def main():
     root = Path(__file__).resolve().parent.parent
     rewritten = 0
     for rel in FILES:

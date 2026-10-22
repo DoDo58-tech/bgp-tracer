@@ -23,7 +23,7 @@ OUT_CSV = ROOT / "results" / "bench" / "multi_event_timing.csv"
 OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
 
 
-def build_timelines_from_cache(cache_path: Path):
+def build_timelines_from_cache(cache_path):
     """Mirror scripts/build_ablation.py — same timeline construction."""
     p = json.loads(cache_path.read_text())
     start = p.get("start_time") or p.get("start_time_utc")
@@ -76,7 +76,7 @@ def build_timelines_from_cache(cache_path: Path):
     return routing_tl, traffic_tl
 
 
-def main() -> None:
+def main():
     real_events = [
         "hijack_orange_spain_2024",
         "leak_upx_2025",

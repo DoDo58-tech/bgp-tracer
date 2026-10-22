@@ -27,15 +27,24 @@ pytestmark = pytest.mark.fast
 # ─── Helpers ────────────────────────────────────────────────────────────
 
 
-def _fresh_tracker(max_calls: int = 950) -> lf_mod._BudgetTracker:
-    """Return a fresh tracker with a configurable budget."""
+def _fresh_tracker(max_calls=950):
+    """Return a fresh tracker with a configurable budget.
+
+    Always starts from an empty in-process deque, regardless of any
+    shared-file state left by a prior test (even if that test set
+    ``LLM_BUDGET_SHARED_FILE`` to a path outside ``tmp_path``).
+    """
     if max_calls != 950:
         os.environ["LLM_BUDGET_MAX_CALLS"] = str(max_calls)
     tracker = lf_mod._BudgetTracker()
+    # Ensure we start with a clean deque even if the process-level
+    # shared-path was set by a previous test (BUG: the singleton's
+    # _shared_path sticks for the process lifetime; clear it here).
+    tracker._calls.clear()
     return tracker
 
 
-def _call_count(tracker: lf_mod._BudgetTracker) -> int:
+def _call_count(tracker):
     """Read current window count without mutating."""
     # Access the internal deque to read count without side-effects.
     # We use the public API: remaining_budget()

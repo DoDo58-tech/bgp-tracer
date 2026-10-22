@@ -305,7 +305,7 @@ class ReasoningAgent:
             self.reasoning_trace.append(f"- Data collection failed: {str(e)}")
             return {"success": False, "error": str(e)}
 
-    def classify_multi_role(self, initial_data: dict) -> dict | None:
+    def classify_multi_role(self, initial_data):
         """
  Run the MultiRoleClassifier to understand the AS's full role picture
  BEFORE the LLM reasons about it.
@@ -403,7 +403,7 @@ class ReasoningAgent:
             self.reasoning_trace.append(f"- Multi-role classification failed: {e}")
             return None
 
-    def run_auxiliary_enrichment(self, initial_data: dict) -> dict | None:
+    def run_auxiliary_enrichment(self, initial_data):
         """
  Run the InvestigationSupervisor to enrich routing + traffic evidence
  with auxiliary tools (threat intel, news, IRR, history, etc.).
@@ -942,7 +942,7 @@ class ReasoningAgent:
 
     # ── P5 helpers ─────────────────────────────────────────────────────────
     @staticmethod
-    def estimate_bytes_safe(obj) -> int:
+    def estimate_bytes_safe(obj):
         """Safe byte estimate for any object (used in P5 summary-only prompts)."""
         try:
             return len(json.dumps(obj, ensure_ascii=False, default=str))
@@ -950,7 +950,7 @@ class ReasoningAgent:
             return len(str(obj))
 
     @staticmethod
-    def r_meta_estimate_bytes() -> int:
+    def r_meta_estimate_bytes():
         """Rough estimate of routing slim size in bytes for P5 log."""
         return 15 * 1024
 
@@ -1103,7 +1103,7 @@ Respond concisely in JSON:
             "used_for": used_for,
         }
 
-    def cross_validate_temporal_overlap(self, overlap_window_seconds: int = 3600):
+    def cross_validate_temporal_overlap(self, overlap_window_seconds=3600):
         """Compute routing↔traffic temporal overlap and stash it in
  ``evidence_pool["temporal_correlation"]``.
 
@@ -1624,7 +1624,7 @@ Respond concisely in JSON:
             "progression": self.confidence_scores
         }
 
-    def build_confidence_assessment(self) -> dict:
+    def build_confidence_assessment(self):
         """()"""
         base = self.get_final_confidence()
 

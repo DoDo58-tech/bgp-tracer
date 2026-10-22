@@ -69,7 +69,7 @@ class AutoProbeExecutor:
     # Cloudflare Radar API（，token） AS 
     CF_RADAR_BASE = "https://api.cloudflare.com/client/v4/radar"
 
-    def __init__(self, timeout: float = 10.0, enable_external: bool = True):
+    def __init__(self, timeout=10.0, enable_external=True):
         """
  Args:
  timeout: ()
@@ -238,7 +238,7 @@ class AutoProbeExecutor:
             data={"as_results": results},
         )
 
-    async def _probe_bgp_path(self, target: str) -> AutoProbeFinding:
+    async def _probe_bgp_path(self, target):
         """
  RIPE RIS / RouteViews AS_PATH
 
@@ -279,7 +279,7 @@ class AutoProbeExecutor:
             data={"prefix_results": results},
         )
 
-    async def _probe_traceroute(self, target: str, target_as: str) -> AutoProbeFinding:
+    async def _probe_traceroute(self, target, target_as):
         """
  traceroute ( scapy, root )
 
@@ -398,7 +398,7 @@ class AutoProbeExecutor:
             data={"prefix_results": results},
         )
 
-    async def _probe_rpki(self, target: str) -> AutoProbeFinding:
+    async def _probe_rpki(self, target):
         """RPKI : rpki-validator.console.api ROA """
         prefixes = extract_prefixes(target)
         if not prefixes:
@@ -432,7 +432,7 @@ class AutoProbeExecutor:
             data={"prefix_results": results},
         )
 
-    async def _probe_as_topology(self, target: str) -> AutoProbeFinding:
+    async def _probe_as_topology(self, target):
         """AS ( CAIDA AS-Relationship )"""
         asn = extract_first_as(target)
         if not asn:
@@ -457,7 +457,7 @@ class AutoProbeExecutor:
                 error=str(e),
             )
 
-    async def _probe_irr_registry(self, target: str) -> AutoProbeFinding:
+    async def _probe_irr_registry(self, target):
         """Look up prefix → registered origin AS in IRR (RIPE/RADB/ALTDB).
 
  Returns the registered origin AS for each prefix. Useful to
@@ -510,7 +510,7 @@ class AutoProbeExecutor:
             data={"prefix_results": results},
         )
 
-    async def _probe_rdap(self, target: str) -> AutoProbeFinding:
+    async def _probe_rdap(self, target):
         """Query RDAP / whois for each prefix.
 
  Uses the public RDAP bootstrap (rdap.org) over HTTPS - works
@@ -579,7 +579,7 @@ class AutoProbeExecutor:
 
     # ----------  API  ----------
 
-    async def _query_cloudflare_radar_as(self, asn: str) -> dict:
+    async def _query_cloudflare_radar_as(self, asn):
         """
  Cloudflare Radar (token) AS 
 
@@ -612,7 +612,7 @@ class AutoProbeExecutor:
             "data_source": "cloudflare_radar_public",
         }
 
-    async def _query_cloudflare_radar_prefix(self, prefix: str) -> dict:
+    async def _query_cloudflare_radar_prefix(self, prefix):
         """ Cloudflare Radar """
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
@@ -638,7 +638,7 @@ class AutoProbeExecutor:
             "data_source": "cloudflare_radar_public",
         }
 
-    async def _query_ripe_ris_origin(self, prefix: str) -> dict:
+    async def _query_ripe_ris_origin(self, prefix):
         """
  RIPE RIS API AS
 
@@ -671,7 +671,7 @@ class AutoProbeExecutor:
             "data_source": "ripe_stat",
         }
 
-    async def _query_rpki_validation(self, prefix: str) -> dict:
+    async def _query_rpki_validation(self, prefix):
         """ RPKI Validator HTTP API ROA """
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
@@ -705,7 +705,7 @@ class AutoProbeExecutor:
 
         raise RuntimeError(f"RPKI validation failed: {last_err}")
 
-    async def _query_as_topology(self, asn: str) -> dict:
+    async def _query_as_topology(self, asn):
         """
  AS-Relationship AS ()
 
@@ -771,7 +771,7 @@ class AutoProbeExecutor:
             "data_source": f"caida_local:{os.path.basename(latest)}",
         }
 
-    async def _resolve_target_for_as(self, asn: str) -> Optional[str]:
+    async def _resolve_target_for_as(self, asn):
         """
  AS IP( RIPE RIS API )
 
@@ -814,7 +814,7 @@ class AutoProbeExecutor:
 
 
 # ----------  ----------
-def extract_as_numbers(content: str) -> List[str]:
+def extract_as_numbers(content) -> List[str]:
     """ "victim ASes: 20119, 34927, 207564" AS """
     import re
     text = content
@@ -828,7 +828,7 @@ def extract_as_numbers(content: str) -> List[str]:
     return result
 
 
-def extract_prefixes(content: str) -> List[str]:
+def extract_prefixes(content) -> List[str]:
     """ ``"prefixes: 90.174.144.0/20, ..."`` . 
 
  Bug fix 2026-09-13 (BUG-R123, two improvements):
@@ -879,13 +879,13 @@ def extract_prefixes(content: str) -> List[str]:
     return out
 
 
-def extract_first_as(content: str) -> str:
+def extract_first_as(content):
     """First AS number found in `content`, or empty string."""
     nums = extract_as_numbers(content)
     return nums[0] if nums else ""
 
 
-def format_findings_for_html(items: List[AutoProbeFinding]) -> str:
+def format_findings_for_html(items: List[AutoProbeFinding]):
     """Render the auto-probe findings list as an HTML table."""
     if not items:
         return "<p class='probe-empty'>No probe findings.</p>"

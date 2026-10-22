@@ -132,11 +132,26 @@ def test_baseline_attribution_dispatch():
         assert r.method == name
 
 
-def test_run_all_baselines_returns_all_four():
+def test_run_all_baselines_returns_every_registered_baseline():
+    """run_all_baselines must return exactly the registered baseline set.
+
+    Five baselines, not four: pc_conditional_independence was added for
+    the paper's Table~\\ref{tab:hcaf-4way} comparison, which reports PC
+    alongside Granger, transfer entropy, timestamp distance, and
+    Pearson. Asserting against the literal set keeps this test honest
+    about the current registry instead of silently accepting a new
+    baseline (or missing an old one).
+    """
     rt = _routing_burst_then_baseline()
     tt = _traffic_drop_then_baseline()
     results = run_all_baselines(rt, tt)
-    assert set(results.keys()) == {"pearson", "granger", "timestamp_distance", "transfer_entropy"}
+    assert set(results.keys()) == {
+        "pearson",
+        "granger",
+        "timestamp_distance",
+        "transfer_entropy",
+        "pc_conditional_independence",
+    }
     for r in results.values():
         assert isinstance(r, BaselineResult)
 

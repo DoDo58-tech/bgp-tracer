@@ -34,7 +34,7 @@ def make_json_safe(value, _seen=None):
         return str(value)
 
 
-def extract_json_object(content: str) -> Optional[str]:
+def extract_json_object(content):
     """Return the first balanced ``{...}`` substring from ``content`` or ``None``.
 
     Walks ``content`` from the first ``{`` it sees and tracks brace depth, so
@@ -71,7 +71,7 @@ def extract_json_object(content: str) -> Optional[str]:
     return None
 
 
-def parse_llm_json(raw_text) -> object:
+def parse_llm_json(raw_text):
     """Parse JSON from raw LLM output, tolerating stray prose/markdown.
 
     Tries (in order):

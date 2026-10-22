@@ -37,7 +37,7 @@ class _RpkiLoader:
                 continue
         return out
 
-    def fetch_roa_data(self, target_date: Optional[datetime] = None) -> Dict:
+    def fetch_roa_data(self, target_date=None):
         """Return ROA mapping ``prefix -> {"asn": str, "max_length": int, ...}``.
 
         Picks the snapshot dated closest to ``target_date`` (not after it,
@@ -79,7 +79,7 @@ class _RpkiLoader:
         logger.debug("[rpki_loader] loaded %d ROAs from %s", len(self._cache[key]), chosen.name)
         return self._cache[key]
 
-    def fetch_latest(self) -> Dict:
+    def fetch_latest(self):
         """Shortcut: fetch the newest available snapshot."""
         return self.fetch_roa_data(target_date=None)
 
@@ -87,7 +87,7 @@ class _RpkiLoader:
 _LOADER: Optional[_RpkiLoader] = None
 
 
-def get_rpki_loader() -> _RpkiLoader:
+def get_rpki_loader():
     """Return the process-wide RPKI loader (singleton)."""
     global _LOADER
     if _LOADER is None:
@@ -95,7 +95,7 @@ def get_rpki_loader() -> _RpkiLoader:
     return _LOADER
 
 
-def merge_roa_with_prefix2as(prefix2as: Dict[str, str], roa_data: Optional[Dict] = None) -> Dict[str, str]:
+def merge_roa_with_prefix2as(prefix2as: Dict[str, str], roa_data=None) -> Dict[str, str]:
     """Tag a prefix2as dict with ROA annotations; returns the unchanged mapping.
 
     The hijack detector reads ROA data via ``rpki_loader.fetch_roa_data()``

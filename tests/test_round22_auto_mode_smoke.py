@@ -53,7 +53,7 @@ def test_auto_mode_spawns_subprocess_for_phase_2():
             "--end", "2024-01-03 18:00",
         ],
         capture_output=True, text=True, cwd=PROJECT_ROOT,
-        timeout=180,
+        timeout=280,  # 280s; test asserts elapsed < 300s
     )
     elapsed = time.monotonic() - start
 

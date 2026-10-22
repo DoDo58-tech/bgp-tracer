@@ -234,6 +234,39 @@ def prepare_routing_payload(result, partial_error=None):
     origin_hijacking = [_normalize_event(e) for e in origin_hijacking]
     forge_hijacking = [_normalize_event(e) for e in forge_hijacking]
     leaks = [_normalize_event(e) for e in leaks]
+    # ROUND-26: well-evidenced leak filter. The RRC00 leak detector fires
+    # on every BGP update that mentions the target AS in its path, which
+    # yields thousands of empty (no-prefix, no-asn) events during outage
+    # withdrawal storms. Count only events with at least one evidence
+    # field set so the leak_count is not inflated by detector noise.
+    #
+    # The events carry ``prefix`` and ``as-path`` (or ``origin-as``) from
+    # the leak detector, plus the AnomalyDetail-style ``affected_prefixes``
+    # / ``affected_asns`` after unification. Treat any of them as evidence.
+    def _well_evidence_count(leak_list):
+        if not leak_list:
+            return 0
+        if isinstance(leak_list[0], str):
+            return sum(
+                1 for s in leak_list
+                if isinstance(s, str)
+                and not (
+                    "affected_prefixes=[]" in s
+                    and "affected_asns=[]" in s
+                    and "claimed_as=None" in s
+                    and "victim_as=None" in s
+                )
+            )
+        elif isinstance(leak_list[0], dict):
+            return sum(
+                1 for e in leak_list
+                if e.get("prefix") or e.get("origin-as") or e.get("origin_as")
+                or e.get("as-path") or e.get("as_path")
+                or e.get("affected_prefixes") or e.get("affected_asns")
+                or e.get("claimed_as") or e.get("victim_as")
+            )
+        return len(leak_list)
+    well_evidenced_leaks = _well_evidence_count(leaks)
     outages = _safe_dt(outages)
     #  annotation_package （_agent ，）
     nested_hijack = result.get("hijack") or {}
@@ -279,19 +312,19 @@ def prepare_routing_payload(result, partial_error=None):
         #  ChallengeAgent/RefereeAgent/EvaluationLoop  total_* 
         "total_prefix_hijacks": len(hijacked_alerts),
         "total_prefix_hijacking": len(origin_hijacking + forge_hijacking),
-        "total_route_leaks": len(leaks),
+        "total_route_leaks": well_evidenced_leaks,
         "total_outages": int(bool(outages.get("is_outage_suspected"))),
         "anomaly_count": (
             len(hijacked_alerts)
             + len(origin_hijacking + forge_hijacking)
-            + len(leaks)
+            + well_evidenced_leaks
             + int(bool(outages.get("is_outage_suspected")))
         ),
         "anomalies_detected": bool(
-            hijacked_alerts or origin_hijacking or forge_hijacking or leaks or outages.get("is_outage_suspected")
+            hijacked_alerts or origin_hijacking or forge_hijacking or well_evidenced_leaks or outages.get("is_outage_suspected")
         ),
         "hijack_count": len(hijacked_alerts),
-        "leak_count": len(leaks),
+        "leak_count": well_evidenced_leaks,
         "hijacked_prefixes": list({
             ev.get("prefix") for ev in hijacked_alerts if isinstance(ev, dict) and ev.get("prefix")
         }),

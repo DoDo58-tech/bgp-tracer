@@ -17,12 +17,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
-JSONL = ROOT / "results" / "eval" / "hcaf_vs_baselines_v36.jsonl"
+JSONL = ROOT / "results" / "eval" / "hcaf_vs_baselines_30.jsonl"
 SENS = ROOT / "results" / "eval" / "sensitivity_v36.csv"
 FIG_DIR = ROOT / "docs" / "paper" / "figs"
 
 
-def main() -> None:
+def main():
     recs = [json.loads(l) for l in JSONL.open()]
     recs = [r for r in recs if r["ground_truth_cause_label"] != "origin_hijack_attacker"]
     # Defensive: skip any remaining rows whose expected_direction is undefined.

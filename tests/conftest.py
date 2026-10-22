@@ -34,7 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
 DEFAULT_TEST_TIMEOUT_S = float(os.environ.get("BGP_TRACER_TEST_TIMEOUT_S", "60"))
 
 
-def pytest_configure(config: pytest.Config) -> None:
+def pytest_configure(config):
     """Register custom markers and surface the timeout to the user."""
     config.addinivalue_line(
         "markers",
@@ -78,7 +78,7 @@ def pytest_collection_modifyitems(
 
 
 # ── Per-test timeout (uses pytest-timeout if installed; manual fallback) ─
-def pytest_runtest_setup(item: pytest.Item) -> None:
+def pytest_runtest_setup(item):
     """Apply per-test timeout from env var or marker overrides."""
     timeout = DEFAULT_TEST_TIMEOUT_S
     marker = item.get_closest_marker("timeout")
@@ -89,7 +89,7 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
         item._bgp_tracer_started = time.monotonic()  # type: ignore[attr-defined]
 
 
-def pytest_runtest_teardown(item: pytest.Item) -> None:
+def pytest_runtest_teardown(item):
     started = getattr(item, "_bgp_tracer_started", None)
     timeout = getattr(item, "_bgp_tracer_timeout", None)
     if started is not None and timeout is not None:
@@ -107,7 +107,7 @@ def pytest_runtest_teardown(item: pytest.Item) -> None:
 
 # ── Network guard: refuse to actually open a TCP socket during fast tests ──
 @pytest.fixture(autouse=True)
-def _guard_network_in_fast_tests(request: pytest.FixtureRequest, monkeypatch):
+def _guard_network_in_fast_tests(request, monkeypatch):
     """When a test is marked ``fast``, block accidental outbound connections.
 
     Why: a fast-marked test should never call out to a real API. If it
@@ -141,7 +141,7 @@ def _guard_network_in_fast_tests(request: pytest.FixtureRequest, monkeypatch):
 
 # ── Common fixtures ────────────────────────────────────────────────────────
 @pytest.fixture
-def sample_event() -> dict:
+def sample_event():
     """The canonical AS12479 2024-01-03 traffic-drop event."""
     return {
         "asn": "12479",
@@ -153,7 +153,7 @@ def sample_event() -> dict:
 
 
 @pytest.fixture
-def minimal_routing_result() -> dict:
+def minimal_routing_result():
     """A minimal but well-formed routing result payload."""
     return {
         "result": {
@@ -168,7 +168,7 @@ def minimal_routing_result() -> dict:
 
 
 @pytest.fixture
-def minimal_traffic_result() -> dict:
+def minimal_traffic_result():
     """A minimal traffic result with two anomalies."""
     return {
         "result": {

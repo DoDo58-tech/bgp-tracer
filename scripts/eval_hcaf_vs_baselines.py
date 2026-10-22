@@ -56,7 +56,7 @@ from agents.css_engine import css_score                              # noqa: E40
 # Same logic as tests/test_hcaf_consistency.py so the paper table is
 # directly comparable to the unit-test result.
 # ─────────────────────────────────────────────────────────────────────
-def expected_direction(row: Dict[str, str]) -> Optional[str]:
+def expected_direction(row: Dict[str, str]):
     """Map a ground-truth row to the expected HCAF direction label.
 
     Logic mirrors tests/test_hcaf_consistency.py:_expected_direction so the
@@ -116,7 +116,7 @@ def expected_direction(row: Dict[str, str]) -> Optional[str]:
 # ─────────────────────────────────────────────────────────────────────
 # Quick-cache loader
 # ─────────────────────────────────────────────────────────────────────
-def normalise_start(s: str) -> str:
+def normalise_start(s):
     """v10 dataset uses ``YYYY-MM-DD HH:MM``; quick cache uses
     ``YYYY-MM-DDTHH:MM:SS``. Normalise both to ``YYYY-MM-DDTHH:MM`` so
     we can match cache files to dataset rows."""
@@ -327,7 +327,7 @@ def _load_traffic_csv_for_event(
     return events
 
 
-def _resolve_asn(row: Dict[str, str]) -> str:
+def _resolve_asn(row: Dict[str, str]):
     """Pick the right ASN column for quick-cache lookup.
 
     v10 schema has ``victim_as`` (hijack/outage), ``leak_as`` (route leak),
@@ -406,7 +406,7 @@ def split_merged_timeline(
     if not merged:
         return [], []
 
-    def _to_dt(s: str):
+    def _to_dt(s):
         from datetime import datetime
         try:
             return datetime.fromisoformat(s.replace("Z", "").replace("T", " ").split(".")[0])

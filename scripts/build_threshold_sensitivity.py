@@ -17,7 +17,7 @@ JSONL = ROOT / "results" / "eval" / "hcaf_vs_baselines_v36.jsonl"
 OUT_CSV = ROOT / "results" / "eval" / "threshold_sensitivity_v36.csv"
 
 
-def channels_for(rec: dict) -> dict:
+def channels_for(rec):
     css_dir = rec.get("css_direction", "unknown")
     css_p = rec.get("css_p_value", 1.0)
     ch = {}
@@ -60,7 +60,7 @@ def channels_for(rec: dict) -> dict:
     return ch
 
 
-def synthesize_threshold(css_dir: str, channels: dict, threshold: float, css_causal: bool) -> dict:
+def synthesize_threshold(css_dir, channels, threshold, css_causal):
     prior = {"routing_to_traffic": 1.0, "traffic_to_routing": 1.0, "independent": 1.0}
     if css_dir in ("routing_to_traffic", "traffic_to_routing"):
         prior[css_dir] = 10.0 if css_causal else 4.0
@@ -82,7 +82,7 @@ def synthesize_threshold(css_dir: str, channels: dict, threshold: float, css_cau
     return {"direction": dom if norm[dom] > threshold else "unknown", "posterior": norm}
 
 
-def main() -> None:
+def main():
     recs = [json.loads(l) for l in JSONL.open()]
     # Exclude attacker-view rows with no expected_direction.
     recs = [r for r in recs if r.get("expected_direction") in ("routing_to_traffic", "traffic_to_routing")]

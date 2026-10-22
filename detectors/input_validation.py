@@ -61,7 +61,7 @@ _TS_FORMATS = (
 )
 
 
-def _looks_timestampy(value: str) -> bool:
+def _looks_timestampy(value):
     """True for strings that are clearly datetimes, not ASNs.
 
  Used only to produce a *better error message* when the AS slot received a
@@ -76,7 +76,7 @@ def _looks_timestampy(value: str) -> bool:
     return False
 
 
-def looks_like_asn(value: Any) -> bool:
+def looks_like_asn(value):
     """True if `value` is a syntactically valid ASN string or int."""
     if isinstance(value, bool):  # bool is an int subclass; reject explicitly
         return False
@@ -91,7 +91,7 @@ def looks_like_asn(value: Any) -> bool:
     return 0 < n <= _ASN_MAX
 
 
-def looks_like_timestamp(value: Any) -> bool:
+def looks_like_timestamp(value):
     """True if `value` parses as one of the supported timestamp formats."""
     if isinstance(value, datetime):
         return True
@@ -104,7 +104,7 @@ def looks_like_timestamp(value: Any) -> bool:
         return False
 
 
-def parse_timestamp(value: Any, label: str = "timestamp") -> datetime:
+def parse_timestamp(value, label="timestamp"):
     """Parse a timestamp string into a naive datetime.
 
  Raises InputValidationError with an actionable message, including a hint
@@ -146,7 +146,7 @@ def parse_timestamp(value: Any, label: str = "timestamp") -> datetime:
     )
 
 
-def _validate_asn(value: Any, label: str = "asn") -> str:
+def _validate_asn(value, label="asn"):
     """Return the bare digits for an ASN, raising if it is not one."""
     if isinstance(value, bool) or value is None:
         raise InputValidationError(f"{label} is required, got {value!r}")

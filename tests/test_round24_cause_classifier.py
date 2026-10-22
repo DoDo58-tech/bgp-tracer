@@ -46,7 +46,16 @@ def _routing(oh, oi, leaks, *, victim_entries=0, outage_score=0.0, outage_suspec
         "origin_hijacking": hijacking,
         "forge_hijacked": [],
         "forge_hijacking": [],
-        "route_leaks": [{} for _ in range(leaks)],
+        # Leak events must carry the evidence fields a real detector emits
+        # (prefix + as-path). compute_top_cause applies a well-evidenced
+        # filter that discards leak events lacking all evidence fields --
+        # an intentional guard against withdrawal storms, where the leak
+        # detector fires thousands of times on empty events. Using bare
+        # `{}` here would make leak_n collapse to 0 and silently remove
+        # the route_leak candidate, testing nothing about leak precedence.
+        "route_leaks": [{"prefix": f"198.51.100.{i % 256}",
+                         "as-path": "52863 64500 15169"}
+                        for i in range(leaks)],
         "outage_score": outage_score,
         "outage_suspected": outage_suspected,
     }

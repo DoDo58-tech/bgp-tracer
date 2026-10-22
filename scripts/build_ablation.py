@@ -28,7 +28,7 @@ JSONL = ROOT / "results" / "eval" / "hcaf_vs_baselines_v11.jsonl"
 OUT = ROOT / "results" / "eval" / "ablation_v11.csv"
 
 
-def channels_for(rec: dict) -> dict:
+def channels_for(rec):
     """Build the 5-channel evidence dict from a jsonl record."""
     css_dir = rec.get("css_direction", "unknown")
     css_p = rec.get("css_p_value", 1.0)
@@ -72,7 +72,7 @@ def channels_for(rec: dict) -> dict:
     return ch
 
 
-def synthesize_no_css_prior(css_dir: str, channels: dict, disabled: set) -> dict:
+def synthesize_no_css_prior(css_dir, channels, disabled):
     """Mirror bayesian_synthesize but with NO CSS-anchored prior (uniform)."""
     prior = {"routing_to_traffic": 1.0, "traffic_to_routing": 1.0, "independent": 1.0}
     post = dict(prior)
@@ -92,7 +92,7 @@ def synthesize_no_css_prior(css_dir: str, channels: dict, disabled: set) -> dict
     return {"direction": dom if norm[dom] > 0.34 else "unknown", "posterior": norm}
 
 
-def main() -> None:
+def main():
     variants = [
         ("No-CSS-prior full", set()),
         ("No-CSS-prior −MSBD", {"msbd"}),

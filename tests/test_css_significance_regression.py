@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 from agents.css_engine import css_score  # noqa: E402
 
 
-def make_routing(n: int, breakpoint_at: int = None, strength: float = 1.0):
+def make_routing(n, breakpoint_at=None, strength=1.0):
     """Synthetic routing timeline with a clear mean-shift at breakpoint.
 
     Adds noise to both pre and post so the pre/post variances are non-zero
@@ -32,7 +32,7 @@ def make_routing(n: int, breakpoint_at: int = None, strength: float = 1.0):
     return [{"score": s} for s in pre + post]
 
 
-def make_traffic(n: int, breakpoint_at: int = None, lag: int = 0):
+def make_traffic(n, breakpoint_at=None, lag=0):
     """Traffic follows routing after `lag` buckets, with a drop."""
     import random
     rng = random.Random(43)

@@ -23,7 +23,7 @@ MODES = [
 ]
 
 
-def main() -> int:
+def main():
     print(f"{'mode':<28}{'strict-accuracy':>20}")
     worst_pct = 100.0
     for name, c, n, pct in MODES:

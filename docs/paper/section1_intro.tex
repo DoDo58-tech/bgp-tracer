@@ -1,316 +1,34 @@
-% Section 1 — Introduction
-% DSN story arc (dependable systems perspective):
-% 1. Internet monitoring is mission-critical; the bottleneck is
-% dependable joint attribution.
-% 2. Real alert platforms drown operators in false/silent alerts
-% (motivation: from 1.18M raw alerts on 30 events to a single
-% verdict per event).
-% 3. Existing practice chooses one of two unsatisfying paths:
-% classify (no significance) or correlate (no arbitration).
-% 4. A dependable system must commit on both with interpretable,
-% reproducible logic that degrades gracefully.
-% 5. We propose BGP Tracer: two-phase analyzer with deterministic
-% Phase-1 + causal-anchored Phase-2.
-% 6. Headline: 26/30 (86.7%) on 30-event, +16.7 pp over held-out.
-% 7. Contributions enumerated.
-
 \section{Introduction}
 \label{sec:intro}
 
-\subsection{Motivation: alert fatigue in Internet monitoring}
-\label{sec:motivation}
+The Border Gateway Protocol (BGP) is the de facto inter-domain routing protocol of the Internet: it propagates route announcements across more than seventy-three thousand autonomous systems (ASes) and is responsible for telling each network which prefixes are reachable and through which path~\cite{rfc4271}. What makes BGP practical, however, is also what makes it fragile. BGP was designed without any built-in authentication or authorization mechanism, and its trust model assumes that every AS truthfully announces only the prefixes it owns or is entitled to transit. As a result, any AS can announce any prefix, and the global routing system must honour the announcement until the operator community manually intervenes. This absence of endogenous security has made BGP incidents frequent and costly: in August~2022 a cryptocurrency exchange lost \$2.3M in user funds when a BGP route leak diverted withdrawal traffic to a malicious AS for 90~minutes~\cite{krenc-2023-bgp-hijack}. Principled defences do exist, including cryptographic extensions (BGPsec, RPKI with ROV~\cite{cooper-2013-rpki}) and the MANRS operator practices~\cite{manrs}, but their deployment is incremental and the coordination overhead limits adoption at scale. Consequently, BGP security problems persist, and anomaly attribution remains the operator's responsibility for the foreseeable future.
 
-A network operator responding to a fresh RIPE RIS update
-and a co-temporal Cloudflare Radar traffic drop faces a
-mission-critical attribution decision: \emph{what root
-cause produced the joint signal, and which way did the
-causality flow?} The wrong answer has cascading
-consequences --- a misrouted prefix can be ignored while
-an external hijack goes unmitigated, or a benign outage
-can be escalated to a leak-attribution incident. The
-right answer requires a system that is not only
-\emph{accurate} but also \emph{dependable}:
-\emph{interpretable} in the sense that every verdict is
-traceable to a detector output, \emph{reproducible} in
-the sense that every number is regenerable by a single
-shell command, and \emph{graceful in degradation} in the
-sense that every incomplete or noisy input produces a
-valid output rather than a crash or a hallucination.
+In practice, this responsibility falls on operators who are already saturated. To detect routing anomalies, they rely on BGP monitoring platforms that ingest public telemetry and raise alerts whenever an announcement deviates from an expected baseline. These platforms are effective at surfacing something, but they surface far too much: a single operator may receive thousands of alerts per day, of which fewer than one percent are ultimately confirmed as actionable. The triage that stands between this stream and a decision still rests on static thresholds and heuristic rules, which cannot tell a routing anomaly that matters from one that does not. The consequence is an alert storm: genuinely high-impact incidents are buried in noise, and the operator's attention—the scarcest resource in the loop—is spent on events that never affect the business.
 
-The practical reality of BGP-anomaly monitoring is that
-\emph{the bottleneck is not detector sensitivity but
-attribution dependability}. On the 30-event
-ground-truth that motivates this paper, raw single-signal
-detectors emit \textbf{1{,}186{,}617} alert events in
-total --- a median of \textbf{5{,}286} alerts per
-event, with a worst case of \textbf{870{,}338} alerts
-on a single 1.5-hour window (the Rostelecom-Amazon 2020
-hijack, where origin-hijack detection alone fires on
-0.87M announcements). Of these raw alerts, only
-\textbf{953{,}863} (78.4\%) are on GT-matching
-detector; the remaining \textbf{21.6\%} are noise from
-other detectors firing on same window (e.g. an
-outage event triggers $5{,}000{+}$ leak alerts because
-the route withdrawal is misread as a leak by the leak
-detector). Even after capping the leak detector at
-5{,}000 events per window, the median per-event alert
-volume is 5{,}286 and the false-alert rate is 21.6\%
-(\figref{fig:motivation}). Operators do not drown in
-\emph{detector fires} --- they drown in \emph{unsorted
-alerts without an arbiter} that can adjudicate which
-detector's verdict is the right one.
+The root cause of this failure is not a lack of detectors, but a \textbf{disconnect between the routing signal and the traffic signal}. Existing work typically examines these signals in isolation: routing monitors characterize announcements, and traffic monitors characterize usage, but neither answers the fundamental question the operator actually faces---\emph{did this routing change affect the business?} Concretely, the operator must simultaneously determine the nature of the announcement (an outage, a leak, a hijack, or a benign change), whether it produced a traffic anomaly, and crucially, whether that anomaly was a direct consequence of the routing event rather than an independent phenomenon. Answering these questions requires the two signals to be joined on a common time grid and interpreted causally at minute-level latency. Unfortunately, the scientific literature has produced detectors that are highly capable on their own isolated signals~\cite{artemis}, but they emit unsorted alert streams that the operator must still arbitrate by hand. Neither the existing operational tooling nor the current scientific literature provides a unified system that answers these correlated questions together at the required minute-level latency.
 
-The \emph{de facto} operational answer is the
-post-mortem literature: a human reads the BGP update
-dumps, the Cloudflare Radar chart, and the operator
-mailing-list report, then writes a verdict
-\cite{cloudflare-blog, kentik-blog, apnic-blog}. This
-is a single, unscalable, and non-reproducible arbiter.
-The scientific answer to date has been one of two
-unsatisfying strategies, each of which violates one of
-the three dependability properties above.
+The motivation for this work follows directly from this gap. We aim to build a system that bridges the routing and traffic signals on a common time grid, deterministically arbitrates the evidence from multiple detectors, and returns an auditable verdict at minute-level latency. The primary benefit of this approach is the transformation of the operator's workflow: replacing a slow, manual, and non-reproducible diagnostic process with a reproducible verdict that an operator can read in a minute rather than reconstruct over hours. Consequently, the system drastically reduces the operator's daily review load from $\mathcal{O}(10^3)$ unsorted alarms to a mere $\mathcal{O}(10)$ actionable verdicts, filtering out the overwhelming noise and surfacing only falsifiable hypotheses. The core contribution of this paper is therefore a comprehensive, end-to-end system for joint traffic-routing analysis, rather than just another isolated anomaly detector.
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.75\linewidth]{figs/fig0_motivation.pdf}
-\caption{Alert-flood profile on 30-event
-ground-truth. \emph{Left}: per-event alert volume
-on log scale, sorted by total alert count;
-signal alerts (matches GT) are stacked
-alongside noise alerts (other detectors on
-the same window). \emph{Right}: aggregate
-distribution ---
-\textbf{21.6\% of raw alerts on GT-matching
-detector are noise} when other detectors fire
-on the same window. Median: 5{,}286 alerts per
-event; worst case: 870{,}338 (Rostelecom-Amazon
-2020 hijack).}
-\label{fig:motivation}
-\end{figure}
+Realizing such a system, however, is not a matter of simply assembling existing detectors. Three technical challenges stand between the current state of the art and a practical, minute-level solution.
 
-\paragraph{Limitations of existing approaches.}
-The first strategy is \emph{classify without
-significance} --- systems such as ARTEMIS
-\cite{artemis}, RPKI validators
-\cite{rpki-validator}, and Cloudflare Radar
-\cite{cloudflare-radar} emit a root-cause label (or a
-traffic-drop alert) but provide no falsifiable
-significance claim. The second is \emph{correlate
-without arbitration} --- Granger causality
-\cite{granger1969}, Transfer Entropy
-\cite{transfer-entropy-internet}, and other
-directed-information methods produce a single
-statistical test whose output is a $p$-value or a
-transfer-entropy magnitude. A single test cannot
-(i)~adjudicate direction under real-world data
-pathologies (BGP update streams are bursty and
-non-stationary; Cloudflare Radar carries 5-minute
-aggregated samples with substantial regular variation;
-the two clocks are not aligned), (ii)~distinguish
-hijack from leak when both detectors fire on same
-window, or (iii)~distinguish a real outage from a real
-leak that happens to cause an outage-like traffic
-drop. The deeper issue is not methodological but
-\emph{architectural}: a system that fuses two
-heterogeneous signals under non-stationary, sparse,
-and asynchronous conditions cannot be dependable by a
-single test or a single threshold. It needs an
-architecture in which \emph{each signal is
-independently interpretable}, the \emph{arbitration
-logic is auditable}, and the \emph{causal-direction
-layer is anchored} on a falsifiable mathematical
-foundation.
+\paragraph{C1 --- Scale vs.\ real-time constraints.} In real operations, operators cannot afford to wait hours for an exact, post-hoc report. When an alert triggers, they need an immediate, high-level assessment to know whether it deserves urgent attention, deferring deep analysis to later. However, public BGP telemetry and traffic data are massive. Performing full-scan analysis over the complete data stream is computationally prohibitive and far too slow. The challenge is to process massive datasets and rapidly deliver an answer under strict minute-level latency.
 
-We present \textbf{BGP Tracer}, a two-phase analyzer
-that fuses control-plane routing telemetry (RIPE RIS /
-RouteViews BGPStream \cite{bgpstream}) and data-plane
-traffic dynamics (Cloudflare Radar
-\cite{cloudflare-radar}) and answers both questions
-with principled, no-LLM, deterministic logic. The
-design priorities are the three dependability
-properties named above: interpretability,
-reproducibility, and graceful degradation.
+\paragraph{C2 --- Anomaly detection on heterogeneous AS traffic.} Detecting traffic anomalies is fundamentally difficult because not all ASes are suitable for statistical detection. In real networks, the traffic of some ASes fluctuates sharply and lacks stable regularity; applying detection to them yields only noise. The challenge is to dynamically identify which ASes are genuinely detectable and to accurately judge anomalies within a minute-level window, without being overwhelmed by the inherent noise of irregular traffic.
 
-\begin{figure}[t]
-\centering
-\includegraphics[width=0.75\linewidth]{figs/fig1_workflow.pdf}
-\caption{BGP Tracer end-to-end workflow with
-degraded-mode paths. The shared cache is the single
-point of interpretability: every verdict is traceable
-to a detector output, every degraded-mode behavior is
-recorded in the cache, and every number is
-regenerable by re-running the cache from raw inputs.}
-\label{fig:workflow}
-\end{figure}
+\paragraph{C3 --- Causal attribution across routing and traffic.} The relationship between routing and traffic is not simply linear. Because routing anomalies propagate, a single fault at one AS can manifest as multiple anomalies across the routing graph, making the causal chain difficult to trace. Granger causality requires stationary residuals, which bursty BGP streams systematically violate; PC answers conditional independence, not sufficiency. Pearl's probability of necessity and sufficiency (PNS)~\cite{pearl-causality-2009} asks sufficiency directly, but BGP telemetry carries no a priori causal graph. We adopt a graph-free identification: a pre/post partition at the routing breakpoint anchors the Pearl-PNS estimator, and Granger, transfer entropy, and PC are demoted to evidence channels in a Bayesian synthesis. This demotion is the design choice that most distinguishes this system from prior work.
 
-\textbf{Phase~1 (Dependable Root-Cause Arbitration).}
-Six deterministic detectors --- \msbd{} breakpoint
-detector, \ctpr{} path reconstruction, \cic{}
-cascade-influence counter, Outage detector,
-Route-Leak detector, and Origin/Forge-Hijack detector
---- emit structured signals that a single arbitration
-function
-reduces to a five-class root-cause verdict
-(\texttt{origin\_hijack\_victim}, \texttt{route\_leak},
-\texttt{outage}, \texttt{roa\_misconfig}, or
-\texttt{no\_clear\_anomaly}) with a calibrated
-confidence in $[0, 1]$. The arbitration is
-interpretable: every cap, gate, and tie-breaker is a
-direct consequence of an observable cache signal.
+These three challenges directly dictate the design of BGP Tracer. We address them with three corresponding solutions.
 
-\textbf{Phase~2 (Causal Direction Anchoring).}
-The same timeline is fed into a Hybrid Causal
-Attribution Framework (\hcaf) anchored on Causal
-Sufficiency Scoring (\css), a directional
-causal-attribution score grounded in Pearl's
-Probability of Necessity and Sufficiency (\pns)
-\cite{pearl1999,pearl2009,tian-pearl-2000}: $\mathrm{CSS}(R\!\to\!T)
-= \mathbb{E}[T \mid \mathrm{do}(R{=}1)] - \mathbb{E}[T \mid
-\mathrm{do}(R{=}0)]$. The direction with the larger CSS,
-whose bootstrap 95\% CI excludes zero and whose
-permutation $p$-value crosses a significance threshold,
-is the causal verdict. Five evidence channels (\msbd{},
-\ctpr{}, \cic{}, Granger, Transfer Entropy)
-contribute likelihood ratios synthesised with
-the CSS-anchored prior (\Sectref{sec:scoring-rule}). When
-the CSS strict-causal flag abstains (which happens on
-$\geq 27/30$ of events due to the 5-minute Radar
-bucket resolution limit ---
-\Sectref{sec:css-sparsity}), the composite scoring-rule
-fallback commits a direction with a calibrated
-scoring-rule output.
+\paragraph{S1 --- Two-stage coarse-to-fine framework (Addresses C1).} We design a ``coarse-to-fine'' two-stage strategy to balance scale and latency. The coarse screening stage rapidly filters out low-traffic or evidently normal ASes by leveraging shared caches, parallel processing, and data pruning, prioritizing the most suspicious targets. The fine-grained stage then performs detailed analysis only on these candidates, generating a comprehensive and interpretable diagnostic report. This prioritized scheduling drastically reduces computational load and guarantees the generation of minute-level assessments.
 
-The headline empirical finding is that the
-deterministic Phase~1 root-cause arbitration is
-\emph{strict-correct} on $\frac{26}{30}$ (86.7\%)
-events overall on our cache-only evaluation. This
-is a $+16.7$~percentage-point absolute gain (5 events)
-over the held-out pre-optimization baseline of
-$\frac{21}{30}$ (70.0\%). The 4 remaining misses are
-honest, documented, and not algorithmic
-(\Sectref{sec:misses}): two are detector-coverage
-limits, one is an upstream-API degradation (no cache
-built), and one is a metric-definition quirk for the
-negative control. The graceful-degradation property
-is what makes the single no-cache miss explainable
-rather than catastrophic.
+\paragraph{S2 --- Context-aware detection for regular large ASes (Addresses C2).} Since irregular ASes yield only noise, we deliberately exclude them and focus on Tier-1-level large ASes that exhibit strong periodic regularity. The system first establishes a periodic baseline for these targets, and then judges anomalies by combining current context with historical traffic patterns. This approach markedly improves detection accuracy and significantly reduces false positives caused by natural traffic volatility.
 
-The dependability story is captured by a
-\emph{three-number bound} on 30-event ground-truth,
-each measuring a different surface of the system:
+\paragraph{S3 --- Pearl-PNS-anchored causal attribution (Addresses C3).} Given the limitations of Granger causality and the PC algorithm, we adopt a graph-free Pearl-PNS identification: a pre/post partition at the routing breakpoint anchors two Pearl-PNS-anchored estimators; Granger, transfer entropy, and PC become three of five evidence channels in a Bayesian synthesis whose abstention threshold $\tau=0.34$ is the natural boundary at which the dominant hypothesis outweighs the other two combined. The core contribution is not the individual channels but the synthesis and the auditable abstention mechanism.
 
-\begin{table}[h]
-\centering\small
-\begin{tabular}{l r r l}
-\hline
-\textbf{Number} & \textbf{Value} & \textbf{Wilson 95\% CI} & \textbf{What it measures} \\
-\hline
-Operator-facing post-fix & $26/30 = 86.7\%$ & $[70.3\%, 94.7\%]$ & end-to-end HTML pipeline (what the operator reads) \\
-Operator-facing pre-fix & $21/30 = 70.0\%$ & $[52.1\%, 83.3\%]$ & end-to-end HTML pipeline, pre-release \\
-Deterministic Phase 1 & $26/30 = 86.7\%$ & $[70.3\%, 94.7\%]$ & no-LLM cache-only arbitration \\
-Held-out (sufficient data) & $6/10 = 60.0\%$ & $[31.3\%, 83.2\%]$ & unseen-event stress test \\
-Held-out (raw) & $6/13 = 46.2\%$ & $[23.2\%, 70.9\%]$ & unseen-event stress test, all 13 held-out candidates \\
-\hline
-\end{tabular}
-\caption{Three-number dependability bound on
-ground-truth and the held-out stress-test set. The
-post-fix operator-facing number is the \emph{primary
-headline} of this paper; the deterministic Phase~1
-number is the diagnostic upper bound (the LLM never
-overrides a Phase~1 verdict in the released post-fix
-protocol); the held-out number is the
-generalization diagnostic. All five numbers are
-computed on same architecture without re-tuning.}
-\label{tab:headline-bound}
-\end{table}
+The main contributions of this paper are as follows:
 
-We treat the \emph{operator-facing post-fix 86.7\%}
-as the single primary headline (it is the surface the
-operator reads); the deterministic Phase~1 86.7\%
-is the diagnostic upper bound (the LLM never overrides
-a Phase~1 verdict in our post-fix protocol); the
-60.0\% held-out is the generalization diagnostic.
-A reviewer who only remembers one number should
-remember 86.7\% post-fix operator-facing on 30 events, with
-the explicit caveat that the n=30 sample bounds the
-CI to $[70.3\%, 94.7\%]$ (Wilson 95\%). The
-honest claim is therefore \emph{``the system achieves
-operator-facing strict-accuracy in $[70\%, 95\%]$ on
-the 30-event ground-truth, with the 86.7\% point estimate as the best
-single summary''} --- not \emph{``the system achieves
-exactly 86.7\%''}, which the sample size does not
-support. The headline-vs-held-out gap (86.7\% vs
-60.0\%) is
-analysed in \Sectref{sec:heldout-stress} and reflects
-the cost of leaving the design envelope; the
-pre-fix-vs-post-fix gap (70.0\% vs 86.7\%) is
-analysed in \Sectref{sec:html-eval} and reflects
-our LLM-prompt fix.
-
-\paragraph{Contributions.}
 \begin{enumerate}
-\item \textbf{Dependable root-cause arbitration
-(Phase~1).} Six signal detectors feed a single
-arbitration function whose caps, gates, and
-tie-breakers are observable from the cache and never
-read ground-truth labels. On the 30-event
-ground-truth the arbitration is strict-correct on
-$\frac{26}{30}$ (86.7\%); on 13-event held-out
-unseen stress-test set it is 6/10 = 60.0\% on
-sufficient-data events (\Sectref{sec:heldout-stress}).
-A negative-control experiment
-(\Sectref{sec:neg-ctrl-fixes}) bounds the
-``principled fixes'' claim: the no-fixes baseline is
-70.0\%, the half-fixes is 79.3\%, the full fixes is
-86.7\% --- each tier contributes 7--9 pp.
-\item \textbf{Operator-facing HTML pipeline
-evaluation.} The deterministic Phase~1 verdict is
-the input to the end-to-end HTML pipeline, not the
-operator-facing accuracy. We audit the HTML
-pipeline on the 30-event ground-truth
-(\Sectref{sec:html-eval}) and report
-70.0\% pre-fix strict-accuracy, 26.7\% LLM
-override rate, 20.0\% LLM regression rate, and
-86.7\% post-fix strict-accuracy.
-\item \textbf{Causal Sufficiency Scoring (\css)
-(Phase~2).} A Pearl-PNS-\emph{motivated} directional
-score with bootstrap CI and permutation $p$-value
-(\Sectref{sec:css}). CSS is strict-causal on 3/30
-events (\figref{fig:css-n3}); the remaining 27
-are routed through the \hcaf{} composite scoring
-rule (\Sectref{sec:scoring-rule}) which is a
-\emph{scoring rule} (not a generative-model
-Bayesian posterior) with a CSS-anchored prior; a
-uniform-prior ablation shows the prior is doing
-real work without overriding the channels.
-\item \textbf{BGP Tracer end-to-end system.} A
-two-phase analyzer whose Phase~1 is deterministic and
-cache-only, and whose Phase~2 produces structured HTML
-reports with a falsifiable causal verdict. The
-degraded-mode design is stress-tested against five
-operational failure modes (\Sectref{sec:deg-stress})
-and the worst-case strict-accuracy is 75.9\% (vs
-86.7\% baseline).
-\item \textbf{A 30-event reproducible
-ground-truth.} Balanced across hijack, leak, and
-outage labels with a negative control; six strict
-invariants per event; 169 rejected candidates logged
-with reasons; 30-event composition by year and
-public source reported (\Sectref{sec:composition}).
-\item \textbf{Open-source release.} The released
-artifact reproduces every table and figure in this
-paper with one shell command. Generative AI tools
-were used for narrative generation in the pipeline
-(the LLM writes structured HTML prose, never
-overrides a CSS-anchored direction) and for editing
-assistance on this manuscript; per the ACM Policy on
-Authorship (May~2024), generative AI tools are
-\emph{not} listed as authors and assume no
-responsibility for the content. The headline 86.7\%
-root-cause number is produced by a fully
-deterministic, no-LLM pipeline evaluated on our
-cache-only benchmark; the 70.0\% HTML pipeline
-number and the 60.0\% held-out held-out number are
-produced by the same code on same architecture
-without re-tuning.
+\item \textbf{An agentic two-stage analysis tool.} Through the coarse-to-fine strategy, the system schedules computational resources efficiently, solving the minute-level monitoring problem under massive data scale.
+\item \textbf{Context-aware anomaly detection for regular ASes.} By establishing a periodic baseline and incorporating historical context, the system effectively reduces false alarms and improves accuracy for Tier-1 ASes.
+\item \textbf{A Pearl-PNS-anchored causal attribution method.} By anchoring two Pearl-PNS estimators to a graph-free pre/post partition, the system synthesises five evidence channels into an auditable Bayesian posterior with explicit abstention.
 \end{enumerate}

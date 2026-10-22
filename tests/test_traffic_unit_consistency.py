@@ -37,14 +37,14 @@ from detectors.traffic.traffic_detector import CloudflareRadarAPI
 CACHE_DIR = ROOT / "data" / "traffic"
 
 
-def _api(cache_dir: Path) -> CloudflareRadarAPI:
+def _api(cache_dir):
     api = CloudflareRadarAPI.__new__(CloudflareRadarAPI)
     api.traffic_cache_dir = cache_dir
     api.hasCredentials = False
     return api
 
 
-def _write_series(path: Path, start: datetime, values, step_minutes: int = 15):
+def _write_series(path, start, values, step_minutes=15):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)

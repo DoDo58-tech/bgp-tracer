@@ -79,14 +79,14 @@ AVAILABLE_TOOLS = {
 _SHARED_EVIDENCE: Dict[str, Dict[str, Any]] = {}
 
 
-def shared_evidence(session_id: str) -> Dict[str, Any]:
+def shared_evidence(session_id) -> Dict[str, Any]:
     """Get or create the per-run shared evidence bucket."""
     if session_id not in _SHARED_EVIDENCE:
         _SHARED_EVIDENCE[session_id] = {}
     return _SHARED_EVIDENCE[session_id]
 
 
-def clear_shared_evidence(session_id: str) -> None:
+def clear_shared_evidence(session_id):
     """Drop the per-run bucket after agent.run() finishes."""
     _SHARED_EVIDENCE.pop(session_id, None)
 
@@ -108,7 +108,7 @@ def _finalize_run(result: "ReactResult") -> "ReactResult":
     return result
 
 
-def valid_llm_html_report(filepath: str) -> bool:
+def valid_llm_html_report(filepath):
     """Return True only for a saved, complete, non-fallback LLM HTML report.
 
  Checks:
@@ -118,6 +118,7 @@ def valid_llm_html_report(filepath: str) -> bool:
  4. Has matching <html>...</html> tags
  5. CRITICAL: Has valid HTML tag structure (not missing '<' like 'div>' instead of '<div>')
  """
+    report_path = filepath
     if not report_path:
         return False
     try:
@@ -238,7 +239,7 @@ class StreamingBuffer:
         self.callback = callback
         self.content = ""
 
-    def write(self, chunk: str):
+    def write(self, chunk):
         """Write a chunk and optionally notify callback."""
         self.content += chunk
         if self.callback:
@@ -719,7 +720,7 @@ class ReactAgent:
                             run_id=self.run_id,
         ))
 
-    async def llm_think(self, context: str) -> str:
+    async def llm_think(self, context):
         """Send context to LLM and get response (with streaming)."""
         messages = [
             {"role": "system", "content": self.get_system_prompt()},
@@ -741,7 +742,7 @@ class ReactAgent:
             logger.error(f"LLM call failed: {e}")
             raise
 
-    async def stream_chat(self, messages) -> str:
+    async def stream_chat(self, messages):
         """Stream chat response chunk by chunk."""
         try:
             stream = self.llm.stream_chat(messages)
@@ -763,7 +764,7 @@ class ReactAgent:
             self.stream_print(content)
             yield content
 
-    def stream_print(self, content: str):
+    def stream_print(self, content):
         """Send content to streaming callback if available."""
         if self.streaming_callback and content:
             try:
@@ -771,13 +772,13 @@ class ReactAgent:
             except Exception as e:
                 logger.warning(f"Streaming callback error: {e}")
 
-    def get_system_prompt(self) -> str:
+    def get_system_prompt(self):
         """Get the React coordinator system prompt."""
         prompt_template = build_react_coordinator_prompt()
         tools_description = self.format_tools_description()
         return prompt_template.format(available_tools=tools_description)
 
-    def format_tools_description(self) -> str:
+    def format_tools_description(self):
         """Format available tools with parameters for the prompt."""
         tool_descriptions = []
         tool_params = {
@@ -845,7 +846,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
 """
         return context
 
-    def parse_response(self, response: str) -> Dict[str, Any]:
+    def parse_response(self, response) -> Dict[str, Any]:
         """
  Parse LLM response into thought, action, and input.
 
@@ -910,7 +911,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
 
         return result
 
-    async def execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute_tool(self, tool_name, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool by name and given input."""
         # Shared evidence dict so tools can pass data to each other (e.g.
         runContext = {
@@ -936,7 +937,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             traffic = self._evidence.get("analyze_traffic", {})
             routing = self._evidence.get("analyze_routing", {})
 
-            def _traffic_has_evidence(value: Any) -> bool:
+            def _traffic_has_evidence(value):
                 """Check analyze_traffic result.
 
  Structure: {"success":True,"results":{"<asn>":{"anomalies":[...],"traffic_plot_path":"..."}}}
@@ -960,7 +961,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                         return True
                 return False
 
-            def _routing_has_evidence(value: Any) -> bool:
+            def _routing_has_evidence(value):
                 """Check analyze_routing result.
 
  Structure: {"success":True,"result":{"origin_hijacked":[...],
@@ -1056,7 +1057,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 "error": f"Unknown tool: {tool_name}. Available tools: {list(AVAILABLE_TOOLS.keys())}",
             }
 
-    def _pick_fallback_action(self, context: Dict[str, Any]) -> tuple:
+    def _pick_fallback_action(self, context: Dict[str, Any]):
         """Bug #9 fix: pick the next sensible tool when the LLM returns an
  empty action (e.g. JS safety guard refuses the role).
 
@@ -1098,7 +1099,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             "end_time": self._end_time or None,
         }
 
-    def format_observation(self, result: Dict[str, Any]) -> str:
+    def format_observation(self, result: Dict[str, Any]):
         """Format tool result as observation string.
 
  P1-#2: tool ( analyze_traffic traffic_timeline 
@@ -1173,7 +1174,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             return summary[:cap] + f"...[]"
         return summary
 
-    def update_context(self, old_context: str, entry: ReactTraceEntry) -> str:
+    def update_context(self, old_context, entry):
         """Update context with new observation for next round.
 
  P1-#1: context , 489K token . 
@@ -1204,7 +1205,7 @@ Action Input: {json.dumps(entry.action_input, ensure_ascii=False)}
 """
         return self.cap_context(new_context)
 
-    def cap_context(self, context: str) -> str:
+    def cap_context(self, context):
         """ context , . 
 
  MAX_CONTEXT_CHARS __init__ 50000( 13K tokens), LLM
@@ -1237,7 +1238,7 @@ Action Input: {json.dumps(entry.action_input, ensure_ascii=False)}
             )
         return head + "\n" + "\n".join(kept)
 
-    def update_context_with_error(self, old_context: str, entry: ReactTraceEntry, action_name: str = "") -> str:
+    def update_context_with_error(self, old_context, entry, action_name=""):
         """Update context with error information (for exceptions during tool execution)."""
         action_str = f" (action: {action_name})" if action_name else ""
         new_context = old_context
@@ -1383,7 +1384,7 @@ Number of auxiliary tools executed: {tool_count}
             logger.warning(f"[ReAct][Supervisor] Failed: {e}")
             return context
 
-    def get_trace_summary(self) -> str:
+    def get_trace_summary(self):
         """Get a human-readable summary of the React trace."""
         lines = [f"React Agent Trace Summary (Total Rounds: {len(self.trace)})"]
         lines.append("=" * 60)
@@ -1399,7 +1400,7 @@ Number of auxiliary tools executed: {tool_count}
         return "\n".join(lines)
 
 
-    async def _sync_evidence_to_blackboard(self, tool_name: str, result: Any):
+    async def _sync_evidence_to_blackboard(self, tool_name, result):
         """Mirror key tool outputs into the Blackboard so downstream agents
  (LLMDebateAgent, MultiAgentReportAgent) can read them.
 

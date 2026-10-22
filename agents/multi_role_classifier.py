@@ -61,7 +61,7 @@ class RoleEvidence:
     severity: str = "unknown"  # critical / high / medium / low / none
     confidence: float = 0.0  # 0.0 - 1.0
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             "count": self.count,
             "events": self.events[:20],  # cap for LLM context
@@ -86,7 +86,7 @@ class RoleClassification:
     narrative: str  # Human-readable explanation
     sub_types: list[str] = field(default_factory=list)  # e.g. ["origin_hijacking", "forge_hijacking"]
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             "role": self.role,
             "is_active": self.is_active,
@@ -114,7 +114,7 @@ class MultiRoleResult:
     attacker_becomes_victim: Optional[dict] = None  # AS hijacked then got hijacked
     detection_gap: bool = False  # routing says "clean" but annotation says otherwise
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             "asn": self.asn,
             "primary_role": self.primary_role,
@@ -133,7 +133,7 @@ class MultiRoleResult:
     def get_active_roles(self) -> list[str]:
         return [r for r, c in self.roles.items() if c.is_active]
 
-    def get_summary(self) -> str:
+    def get_summary(self):
         """One-line summary for LLM context."""
         active = self.get_active_roles()
         if not active:
@@ -191,7 +191,7 @@ def check_temporal_overlap(
     if not events_a or not events_b:
         return False
 
-    def parse_ts(event: dict) -> Optional[datetime]:
+    def parse_ts(event):
         for f in ["timestamp", "time", "start_time", "date"]:
             v = ev.get(f, "")
             if v:

@@ -69,7 +69,7 @@ def _load_csv():
         return list(csv.DictReader(f))
 
 
-def _resolve_as(row: dict) -> str:
+def _resolve_as(row):
     """The AS a consumer would actually use for this row."""
     return (
         row.get("victim_as")

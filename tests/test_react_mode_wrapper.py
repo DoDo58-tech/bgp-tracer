@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def _react_traffic(asn: str = "12479", n: int = 12):
+def _react_traffic(asn="12479", n=12):
     return {
         asn: {
             "anomalies": [
@@ -37,7 +37,7 @@ def _react_traffic(asn: str = "12479", n: int = 12):
     }
 
 
-def _react_routing(asn: str = "12479", n: int = 401):
+def _react_routing(asn="12479", n=401):
     return {
         asn: {
             "origin_hijacking": [

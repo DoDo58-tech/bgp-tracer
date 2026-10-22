@@ -75,7 +75,7 @@ class StreamingAnomalyAggregator:
         self._groups: dict = {}
         self._time_window_seconds = 300
 
-    def add_chunk(self, chunk_alerts: list):
+    def add_chunk(self, chunk_alerts):
         """Process and aggregate one chunk's alerts; they are discarded after return."""
         if not chunk_alerts:
             return
@@ -120,14 +120,14 @@ class StreamingAnomalyAggregator:
         # Allow GC to reclaim the chunk list immediately
         chunk_alerts.clear()
 
-    def finalize(self) -> list:
+    def finalize(self):
         """Return the sorted list of aggregated groups."""
         result = list(self._groups.values())
         result.sort(key=lambda x: x['count'], reverse=True)
         self._groups.clear()
         return result
 
-    def group_count(self) -> int:
+    def group_count(self):
         return len(self._groups)
 
 

@@ -15,6 +15,12 @@ outages.
 
 The test is **read-only** — it only inspects existing HTML files.
 No cache is built; no detector is run.
+
+Only HTML files generated on or after the v19.1 fix date
+(2026-10-11 12:00 UTC+8) are inspected. Files in the date-stamped
+``html_0923``..``html_1009`` snapshot directories predate the fix
+and would re-trigger this regression test even though the underlying
+code is correct; they are excluded by mtime.
 """
 
 from __future__ import annotations
@@ -26,8 +32,14 @@ from pathlib import Path
 ROOT = Path("/data/bgp_tracer")
 HTML_DIRS = sorted(ROOT.glob("results/html_*"))
 
+# v19.1 fix landed on 2026-10-11 12:00 UTC+8. The date-stamped snapshot
+# dirs (html_0923 .. html_1009) predate the fix; their HTML verdicts
+# exhibit the LLM-override bug regardless of current code state, so
+# we exclude them by mtime.
+V191_FIX_MTIME = 1791691200.0  # 2026-10-11 12:00:00 +08:00
+
 # The 6 known regression events. Each row maps the cache-verdict
-# event_id → the latest HTML report by ASN.
+# event_id -> the latest post-fix HTML report by ASN.
 REGRESSION_CASES = [
     # (event_id, target_as, expected_cache_cause, prohibited_html_cause)
     ("outage_pakistan_2024",              "17557",  "outage", "route_leak"),
@@ -46,7 +58,7 @@ CAUSE_PATTERNS = [
 ]
 
 
-def _normalise(s: str) -> str:
+def _normalise(s):
     sl = s.lower()
     if "outage" in sl: return "outage"
     if "roa" in sl or "rpki" in sl: return "roa_misconfig"
@@ -59,18 +71,24 @@ def _normalise(s: str) -> str:
     return ""
 
 
-def _find_latest_html(target_as: str) -> Path | None:
+def _find_latest_html(target_as):
+    """Return the most recent post-v19.1 HTML report for ``target_as``.
+
+    Excludes ``html_0923``..``html_1009`` snapshot dirs (predate fix).
+    """
     cands: list[Path] = []
     for d in HTML_DIRS:
         if not d.is_dir():
             continue
-        cands.extend(d.glob(f"llm_report_AS{target_as}_*.html"))
+        for h in d.glob(f"llm_report_AS{target_as}_*.html"):
+            if h.stat().st_mtime >= V191_FIX_MTIME:
+                cands.append(h)
     if not cands:
         return None
     return sorted(cands, key=lambda p: p.stat().st_mtime, reverse=True)[0]
 
 
-def _extract_cause(html: str) -> str:
+def _extract_cause(html):
     for pat in CAUSE_PATTERNS:
         m = pat.search(html)
         if m:
@@ -80,7 +98,7 @@ def _extract_cause(html: str) -> str:
     return ""
 
 
-def main() -> int:
+def main():
     print("=" * 78)
     print("LLM-OVERRIDE REGRESSION TEST (v19.1)")
     print("=" * 78)

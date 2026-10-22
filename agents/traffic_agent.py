@@ -12,7 +12,7 @@ from agents.impl.traffic_impl import (
 from agents.core import Agent, AgentState, TaskResult
 
 
-def _to_canonical_severity(items: list) -> str:
+def _to_canonical_severity(items):
     """Return the worst severity label across all anomalies.
 
     Handles three severity representations seen in the detector output:
@@ -53,7 +53,7 @@ def _to_canonical_severity(items: list) -> str:
     return best_label
 
 
-def _extract_confidence(result: dict, *, default_high: float, default_low: float) -> float:
+def _extract_confidence(result, *, default_high, default_low):
     """Pull the detector's calibrated confidence out of a raw result.
 
     Detectors write confidence in several shapes (bare float, dict with

@@ -75,7 +75,7 @@ class TracerouteProbe:
         self.method = method
         self.port = port
 
-    async def probe(self, target: str) -> ProbeResult:
+    async def probe(self, target):
         """
         Execute traceroute to target host.
 
@@ -102,7 +102,7 @@ class TracerouteProbe:
         else:
             return await self._system_traceroute(target_ip, started)
 
-    async def _scapy_traceroute(self, target_ip: str, started) -> ProbeResult:
+    async def _scapy_traceroute(self, target_ip, started):
         """Scapy-based traceroute. Tries TCP SYN first (best through firewalls), then ICMP."""
         result = ProbeResult(success=False, target=target_ip, probe_type="scapy_traceroute")
         hops: List[Dict[str, Any]] = []
@@ -218,7 +218,7 @@ class TracerouteProbe:
 
         return result
 
-    async def _curl_reachability_check(self, target_ip: str, started) -> ProbeResult:
+    async def _curl_reachability_check(self, target_ip, started):
         """
         Fallback: use curl to check if target is reachable via HTTP/HTTPS.
         Also tests general internet connectivity via 1.1.1.1 first.
@@ -304,7 +304,7 @@ class TracerouteProbe:
         result.hops = [{"ttl": 1, "ip": target_ip, "note": "not reachable (internet OK)"}]
         return result
 
-    async def _system_traceroute(self, target_ip: str, started) -> ProbeResult:
+    async def _system_traceroute(self, target_ip, started):
         """Fallback to system traceroute binary."""
         result = ProbeResult(success=False, target=target_ip, probe_type="system_traceroute")
 
@@ -344,7 +344,7 @@ class TracerouteProbe:
 
         return result
 
-    def _format_hops_text(self, hops: List[Dict]) -> str:
+    def _format_hops_text(self, hops: List[Dict]):
         """Format hops as text similar to system traceroute."""
         lines = []
         for h in hops:
@@ -361,7 +361,7 @@ class TracerouteProbe:
         return "\n".join(lines)
 
 
-def _parse_system_traceroute(output_text: str) -> List[Dict[str, Any]]:
+def _parse_system_traceroute(output_text) -> List[Dict[str, Any]]:
     """Parse system traceroute output into structured hop data."""
     import re
     hops = []
@@ -391,10 +391,10 @@ class BGPLookingGlass:
         {"name": "BGPView", "url": "https://api.bgpview.io/lookup/prefix/{prefix}"},
     ]
 
-    def __init__(self, timeout: float = 10.0):
+    def __init__(self, timeout=10.0):
         self.timeout = timeout
 
-    async def query(self, target: str, query_type: str = "prefix") -> ProbeResult:
+    async def query(self, target, query_type="prefix"):
         """
         Query looking glass for a prefix or AS.
 
@@ -458,7 +458,7 @@ class RIPERisAPI:
 
     RIS_BASE = "https://stat.ripe.net/data"
 
-    def __init__(self, timeout: float = 10.0):
+    def __init__(self, timeout=10.0):
         self.timeout = timeout
         self._aiohttp = None
 
@@ -471,7 +471,7 @@ class RIPERisAPI:
                 return None
         return self._aiohttp
 
-    async def query(self, target: str, query_type: str = "prefix-overview") -> ProbeResult:
+    async def query(self, target, query_type="prefix-overview"):
         """
         Query RIPE RIS data.
 
@@ -523,10 +523,10 @@ class CloudflareRealtime:
 
     RADAR_BASE = "https://api.cloudflare.com/client/v4/radar"
 
-    def __init__(self, timeout: float = 10.0):
+    def __init__(self, timeout=10.0):
         self.timeout = timeout
 
-    async def query(self, target: str, query_type: str = "as_summary") -> ProbeResult:
+    async def query(self, target, query_type="as_summary"):
         """
         Query Cloudflare Radar for AS-level traffic data.
 
@@ -672,7 +672,7 @@ class ProbingOrchestrator:
 
         return aggregated
 
-    async def _wrap(self, label: str, coro):
+    async def _wrap(self, label, coro):
         """Helper to tag results with their label."""
         res = await coro
         return label, res
@@ -691,7 +691,7 @@ async def run_traceroute(
 
 
 # ---------------------------------------------------------------------------
-def format_probe_result_html(result: ProbeResult) -> str:
+def format_probe_result_html(result):
     """Format a ProbeResult as HTML for reports."""
     if not result.success and not result.hops:
         return f"<div class='probe-result probe-fail'><b>Probe failed:</b> {result.error or 'unknown error'}</div>"

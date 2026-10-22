@@ -34,7 +34,7 @@ except ImportError:
 # ── Thinking / reasoning-disable helper ─────────────────────────────────────
 _extra_body_disable: dict | None = None  # lazily parsed, cached at module level
 
-def _get_thinking_disable() -> dict | None:
+def _get_thinking_disable():
     global _extra_body_disable
     if _extra_body_disable is not None:
         return _extra_body_disable
@@ -48,7 +48,7 @@ def _get_thinking_disable() -> dict | None:
         _extra_body_disable = None
     return _extra_body_disable
 
-def _merge_extra_body(caller_eb: dict | None) -> dict | None:
+def _merge_extra_body(caller_eb):
     """Merge caller extra_body with vendor thinking-disable dict."""
     disable = _get_thinking_disable()
     if not disable and not caller_eb:
@@ -61,15 +61,15 @@ def _merge_extra_body(caller_eb: dict | None) -> dict | None:
     merged = {**disable, **caller_eb}
     return merged
 
-def _extract_message_text(msg) -> str:
+def _extract_message_text(msg):
     """Extract the visible assistant output from a chat completion message.
 
     Some vendors (GLM-5, Kimi thinking mode) place reasoning output in
     `reasoning_content` and the visible answer in `content`. We prioritize
     `content` so callers don't receive CoT introspections as the final output.
     """
-    content = (getattr(message, "content", "") or "")
-    reasoning = (getattr(message, "reasoning_content", "") or "")
+    content = (getattr(msg, "content", "") or "")
+    reasoning = (getattr(msg, "reasoning_content", "") or "")
     if content.strip():
         return content
     if reasoning.strip():
@@ -77,7 +77,7 @@ def _extract_message_text(msg) -> str:
     return ""
 
 
-def _extract_delta_text(delta_obj) -> str:
+def _extract_delta_text(delta_obj):
     """Extract visible assistant output from a streamed choice delta.
 
     Always returns only the ``content`` field — the visible answer.
@@ -117,7 +117,7 @@ def build_token_counter():
 _GLOBAL_TOKEN_HANDLERS: list = []
 
 
-def register_token_counter(handler) -> None:
+def register_token_counter(handler):
     """Register a TokenCountingHandler with the process-wide aggregator."""
     try:
         if handler is not None and handler not in _GLOBAL_TOKEN_HANDLERS:
@@ -126,7 +126,7 @@ def register_token_counter(handler) -> None:
         pass
 
 
-def get_global_token_counter() -> int:
+def get_global_token_counter():
     """Sum ``total_llm_token_count`` across every registered handler."""
     total = 0
     for h in list(_GLOBAL_TOKEN_HANDLERS):
@@ -181,7 +181,7 @@ def _extract_usage_from_response(response) -> tuple[int, int]:
     return 0, 0
 
 
-def _record_token_usage_to_budget(response, agent_name: str = "OpenAICompatibleLLM") -> None:
+def _record_token_usage_to_budget(response, agent_name="OpenAICompatibleLLM"):
     """Record (prompt_tokens, completion_tokens) into every TokenBudget
     instance in ``_GLOBAL_TOKEN_HANDLERS``.
 
@@ -220,7 +220,7 @@ def _record_token_usage_to_budget(response, agent_name: str = "OpenAICompatibleL
             continue
 
 
-def reset_global_token_counter() -> None:
+def reset_global_token_counter():
     """Reset every registered handler's counter."""
     for h in list(_GLOBAL_TOKEN_HANDLERS):
         try:
@@ -241,7 +241,7 @@ class LLMRateLimitedError(RuntimeError):
     ``breaker_info`` dict for the caller to log/fallback on.
     """
 
-    def __init__(self, message: str, breaker_info: dict | None = None):
+    def __init__(self, message, breaker_info=None):
         super().__init__(message)
         self.breaker_info = breaker_info or {}
 
@@ -249,7 +249,7 @@ class LLMRateLimitedError(RuntimeError):
 class _RateLimitBreaker:
     """Process-wide rolling-window circuit breaker for HTTP 429 responses."""
 
-    def __init__(self) -> None:
+    def __init__(self):
         self._lock = threading.Lock()
         # Deque of timestamps (monotonic seconds) at which a 429 was seen.
         self._hits: collections.deque[float] = collections.deque()
@@ -259,11 +259,11 @@ class _RateLimitBreaker:
         self._cooldown_until: float = 0.0
 
     @staticmethod
-    def _now() -> float:
+    def _now():
         import time as _t
         return _t.monotonic()
 
-    def record_hit(self) -> None:
+    def record_hit(self):
         """Record a 429. Returns True if the breaker just tripped open.
 
         Two state transitions:
@@ -311,7 +311,7 @@ class _RateLimitBreaker:
                 return False, 0.0
             return True, self._cooldown_until - now
 
-    def get_window_hits(self) -> int:
+    def get_window_hits(self):
         now = self._now()
         window = float(os.environ.get("LLM_429_BREAKER_WINDOW_S", "60"))
         with self._lock:
@@ -320,7 +320,7 @@ class _RateLimitBreaker:
                 self._hits.popleft()
             return len(self._hits)
 
-    def reset(self) -> None:
+    def reset(self):
         """Force-clear the breaker (test/admin helper)."""
         with self._lock:
             self._hits.clear()
@@ -383,7 +383,7 @@ class _BudgetTracker:
         the source of truth.
     """
 
-    def __init__(self) -> None:
+    def __init__(self):
         self._lock = threading.RLock()  # reentrant: _append_shared is
         # called from inside check_and_record which already holds _lock
         self._calls: collections.deque[float] = collections.deque()
@@ -395,7 +395,7 @@ class _BudgetTracker:
         if self._shared_path:
             self._load_shared()
 
-    def _load_shared(self) -> None:
+    def _load_shared(self):
         """Load historical call timestamps from the shared file.
 
         File format: one timestamp per line (wall-clock seconds).
@@ -429,7 +429,7 @@ class _BudgetTracker:
             # be conservative (only count in-process calls).
             self._calls.clear()
 
-    def _append_shared(self, ts_mono: float) -> None:
+    def _append_shared(self, ts_mono):
         """Append a monotonic timestamp to the shared file as wall-clock.
 
         To prevent the file from growing unbounded, periodically rotate it:
@@ -453,7 +453,7 @@ class _BudgetTracker:
             # Don't fail the LLM call just because the budget file
             pass
 
-    def _rotate_shared(self) -> None:
+    def _rotate_shared(self):
         """Rewrite the shared file to contain only timestamps in the window.
 
         Best-effort: on any failure, the file is left as-is and the next
@@ -483,10 +483,10 @@ class _BudgetTracker:
             pass
 
     @staticmethod
-    def _env(key: str, default: float | int, dtype=float) -> float | int:
+    def _env(key, default, dtype=float):
         return dtype(os.environ.get(f"LLM_{key}", str(default)))
 
-    def _window_len(self) -> int:
+    def _window_len(self):
         now_mono = self._now_mono()
         window_s = float(self._env("BUDGET_WINDOW_S", 18000, float))
         cutoff = now_mono - window_s
@@ -500,7 +500,7 @@ class _BudgetTracker:
         max_calls = int(self._env("BUDGET_MAX_CALLS", 950, int))
         return max(0, max_calls - used), max_calls
 
-    def check_and_record(self) -> None:
+    def check_and_record(self):
         """Check budget; if OK, record this call. Raises BudgetExhausted."""
         used = self._window_len()
         max_calls = int(self._env("BUDGET_MAX_CALLS", 950, int))
@@ -532,7 +532,7 @@ class _BudgetTracker:
             self._append_shared(ts_mono)
             self._warned = False  # reset warning flag when window rolls
 
-    def record_call(self) -> None:
+    def record_call(self):
         """Record a call (for callers who want to call separately from check)."""
         with self._lock:
             ts_mono = self._now_mono()
@@ -540,7 +540,7 @@ class _BudgetTracker:
             self._append_shared(ts_mono)
             self._warned = False
 
-    def reset(self) -> None:
+    def reset(self):
         """Clear all records (admin / test helper)."""
         with self._lock:
             self._calls.clear()
@@ -550,12 +550,12 @@ class _BudgetTracker:
 _BUDGET_TRACKER = _BudgetTracker()
 
 
-def get_budget_tracker() -> _BudgetTracker:
+def get_budget_tracker():
     """Return the process-wide budget tracker singleton."""
     return _BUDGET_TRACKER
 
 
-def get_rate_limit_breaker() -> _RateLimitBreaker:
+def get_rate_limit_breaker():
     """Return the process-wide rate-limit circuit breaker (for diagnostics)."""
     return _RATE_LIMIT_BREAKER
 
@@ -661,7 +661,7 @@ class OpenAICompatibleLLM(LLM):
                 return tiktoken.get_encoding("cl100k_base")
 
     @staticmethod
-    def _is_retryable(exc: Exception) -> bool:
+    def _is_retryable(exc):
         err_lower = str(exc).lower()
         non_retryable = [
             "unprocessable entity",
@@ -702,7 +702,7 @@ class OpenAICompatibleLLM(LLM):
         return any(k in err_lower for k in kw)
 
     @staticmethod
-    def _is_rate_limit_error(exc: Exception) -> bool:
+    def _is_rate_limit_error(exc):
         """Return True iff this exception represents an upstream 429."""
         try:
             status = getattr(exc, "response", None)
@@ -734,7 +734,7 @@ class OpenAICompatibleLLM(LLM):
             )
 
     @staticmethod
-    def _extract_json(content: str):
+    def _extract_json(content):
         """Extract first JSON object from text. Supports:
         1. ```json ... ``` markdown code blocks (most reliable)
         2. ``` ... ``` any fenced code block

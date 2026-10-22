@@ -34,7 +34,7 @@ class Turn:
         if not self.timestamp:
             self.timestamp = datetime.now().isoformat(timespec="seconds")
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         d = {
             "role": self.role,
             "content": self.content,
@@ -80,10 +80,10 @@ class SessionManager:
 
     # ── Turn management ────────────────────────────────────────────────────────
 
-    def add_user_turn(self, content: str) -> None:
+    def add_user_turn(self, content):
         self.turns.append(Turn(role="user", content=content))
 
-    def add_agent_turn(self, content: str) -> None:
+    def add_agent_turn(self, content):
         self.turns.append(Turn(role="agent", content=content))
 
     def add_tool_turn(
@@ -112,7 +112,7 @@ class SessionManager:
         else:
             self.pending_tools.discard(tool_name)
 
-    def add_event(self, event_type: str, agent: str, payload: Dict[str, Any]) -> None:
+    def add_event(self, event_type, agent, payload: Dict[str, Any]):
         self.turns.append(Turn(
             role="agent",
             content=f"Event: {event_type}",
@@ -120,7 +120,7 @@ class SessionManager:
             tool_result={"event_type": event_type, "payload": payload},
         ))
 
-    def add_pending_tool(self, tool_name: str) -> None:
+    def add_pending_tool(self, tool_name):
         self.pending_tools.add(tool_name)
 
     # ── Accessors ─────────────────────────────────────────────────────────────
@@ -129,20 +129,20 @@ class SessionManager:
         """Return the full conversation history formatted for injection into LLM prompts."""
         return [t.to_dict() for t in self.turns]
 
-    def get_evidence(self, tool_name: str) -> Optional[dict]:
+    def get_evidence(self, tool_name):
         return self.evidence.get(tool_name)
 
     def get_all_evidence(self) -> Dict[str, dict]:
         return dict(self.evidence)
 
-    def set_time_window(self, start: str, end: str) -> None:
+    def set_time_window(self, start, end):
         self.start_time = start
         self.end_time = end
 
-    def set_asn(self, asn: str) -> None:
+    def set_asn(self, asn):
         self.asn = asn
 
-    def get_context_summary(self) -> dict:
+    def get_context_summary(self):
         return {
             "session_id": self.session_id,
             "asn": self.asn,
@@ -155,7 +155,7 @@ class SessionManager:
 
     # ── Serialization ────────────────────────────────────────────────────────
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             "session_id": self.session_id,
             "asn": self.asn,
@@ -169,7 +169,7 @@ class SessionManager:
             "started_at": self._started_at.isoformat(),
         }
 
-    def save(self, path: Optional[Path] = None) -> Path:
+    def save(self, path=None):
         if path is None:
             path = Path("results") / "sessions" / f"session_{self.session_id}.json"
         path = Path(path)
@@ -178,7 +178,7 @@ class SessionManager:
         return path
 
     @classmethod
-    def load(cls, path: Path) -> "SessionManager":
+    def load(cls, path) -> "SessionManager":
         data = json.loads(path.read_text())
         session = cls(
             asn=data.get("asn"),
@@ -194,22 +194,22 @@ class SessionManager:
 
     # ── Convenience ───────────────────────────────────────────────────────────
 
-    def has_traffic(self) -> bool:
+    def has_traffic(self):
         return "analyze_traffic" in self.completed_tools and self.evidence.get("analyze_traffic", {}).get("success")
 
-    def has_routing(self) -> bool:
+    def has_routing(self):
         return "analyze_routing" in self.completed_tools and self.evidence.get("analyze_routing", {}).get("success")
 
-    def has_correlation(self) -> bool:
+    def has_correlation(self):
         return "check_traffic_routing_correlation" in self.completed_tools
 
-    def has_asn_info(self) -> bool:
+    def has_asn_info(self):
         return "query_as_info" in self.completed_tools
 
-    def has_classification(self) -> bool:
+    def has_classification(self):
         return "reason_and_classify" in self.completed_tools
 
-    def has_report(self) -> bool:
+    def has_report(self):
         p = self.evidence.get("generate_report", {}).get("report_path")
         if p:
             self.report_path = p

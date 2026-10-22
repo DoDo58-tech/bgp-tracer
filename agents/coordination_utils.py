@@ -14,10 +14,10 @@ from utils.logger import logger
 
 def load_json(filepath):
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(filepath, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception as e:
-        logger.warning(f"Failed to load JSON from {path}: {e}")
+        logger.warning(f"Failed to load JSON from {filepath}: {e}")
         return {}
 
 
@@ -105,6 +105,214 @@ def query_as_relationships(asn, asrel_file):
         "total_peers": len(peers),
         "total_customers": len(customers),
     }
+
+
+def build_as_topology(asn, asrel_file, max_depth=3, max_nodes=400):
+    """Build an ASN -> neighbour map with edge relation labels.
+
+    The CAIDA as-rel snapshot stores relationships in three buckets:
+
+    * ``providers[X]`` — the ASes that *provide transit to* X. X is their
+      **customer**. So a provider edge is directed provider -> customer.
+    * ``peers[X]`` — symmetric peer links, stored on both endpoints.
+    * customers are the inverse of the provider index and are not stored
+      separately in the file; they are recovered by scanning the provider
+      index (this is what :func:`query_as_relationships` does).
+
+    The returned topology is the structure the HCAF cascade estimator
+    (CIC) needs to walk a routing anomaly outward across the AS graph.
+    Each neighbour is a dict carrying the relation type so the cascade
+    can weight edges by commercial relationship rather than treating
+    every hop as an undirected tie.
+
+    Args:
+        asn: the AS of interest (the origin of the cascade).
+        asrel_file: path to the parsed as-rel JSON snapshot.
+        max_depth: how many hops from the origin to include.
+        max_nodes: hard cap on the number of ASes expanded, so a
+            well-connected Tier-1 cannot drag the whole graph in.
+
+    Returns:
+        dict with keys:
+            ``adjacency``   — {asn_str: [neighbour_asn_str, ...]}
+            ``edge_types``  — {asn_str: {neighbour_asn_str: "provider"|"peer"|"customer"}}
+            ``origin``      — the normalised origin ASN string
+            ``nodes``       — total number of ASes in the map
+    """
+    origin = str(asn).strip().upper().lstrip("AS")
+    empty = {
+        "adjacency": {},
+        "edge_types": {},
+        "origin": origin,
+        "nodes": 0,
+        "reason": "no_asrel_data",
+    }
+    if not asrel_file or not Path(asrel_file).exists():
+        return empty
+    data = load_json(asrel_file)
+    if not data:
+        return empty
+
+    providers_index = data.get("providers", {}) or {}
+    peers_index = data.get("peers", {}) or {}
+
+    def _asn_list(raw):
+        out = []
+        for x in raw or []:
+            s = str(x).strip().upper().lstrip("AS")
+            if s and s not in out:
+                out.append(s)
+        return out
+
+    # Reverse index: provider -> its customers. Building this once is
+    # O(N) rather than O(N) *per lookup*, which matters because the
+    # cascade walks hundreds of ASes.
+    customer_index = {}
+    for cust, provs in providers_index.items():
+        cust_s = str(cust).strip().upper().lstrip("AS")
+        for p in _asn_list(provs):
+            customer_index.setdefault(p, []).append(cust_s)
+
+    # Direct neighbours of the origin, labelled by relation.
+    def _neighbours_of(asn_key):
+        """Return {neighbour_asn: relation} for one AS.
+
+        Relation semantics are from the *current* AS's point of view:
+        ``provider`` = the neighbour provides transit to the current AS,
+        ``customer`` = the current AS provides transit to the neighbour,
+        ``peer`` = symmetric settlement-free link.
+        """
+        out = {}
+        for p in _asn_list(providers_index.get(asn_key, [])):
+            out[p] = "provider"
+        for pe in _asn_list(peers_index.get(asn_key, [])):
+            out.setdefault(pe, "peer")
+        for cust_s in customer_index.get(asn_key, []):
+            out.setdefault(cust_s, "customer")
+        return out
+
+    # A Tier-1 AS has thousands of customers (AS3356 has 6,264), and
+    # expanding into all of them is both useless for cascade scope and
+    # expensive. We rank edges by how much they can plausibly carry a
+    # routing change toward a traffic impact:
+    #   provider (upstream transit dependency) > peer > customer.
+    # Customers are stub networks whose traffic is usually unaffected by
+    # a transit change, so they rank last and are capped hardest.
+    _RELATION_RANK = {"provider": 0, "peer": 1, "customer": 2}
+    _MAX_CUSTOMER_EDGES = 8
+    # Hard per-node fan-out. Without this a single Tier-1 node consumes
+    # the whole node budget on its own edges and the BFS never reaches
+    # depth 2.
+    _MAX_FANOUT = 16
+
+    def _ranked_neighbours(asn_key):
+        nbrs = _neighbours_of(asn_key)
+        by_rank = {}
+        for nxt, rel in nbrs.items():
+            by_rank.setdefault(_RELATION_RANK.get(rel, 3), []).append((nxt, rel))
+        ranked = []
+        for rank in sorted(by_rank):
+            bucket = sorted(by_rank[rank])
+            if rank == 2:  # customer bucket
+                bucket = bucket[:_MAX_CUSTOMER_EDGES]
+            ranked.extend(bucket)
+        return ranked[:_MAX_FANOUT]
+
+    origin_neighbours = dict(_ranked_neighbours(origin))
+    if not origin_neighbours:
+        return {**empty, "reason": "origin_not_in_asrel_snapshot"}
+
+    # Breadth-first expansion up to max_depth so the cascade can cross
+    # transit hops, not just the origin's immediate peers. The reverse
+    # relation is recorded when we walk outward: if X is a provider of the
+    # origin, then the origin is a *customer* of X.
+    adjacency = {origin: sorted(origin_neighbours.keys())}
+    edge_types = {origin: dict(origin_neighbours)}
+    seen = {origin}
+    frontier = [origin]
+    for _depth in range(max_depth):
+        if not frontier or len(seen) >= max_nodes:
+            break
+        next_frontier = []
+        for current in frontier:
+            if len(seen) >= max_nodes:
+                break
+            for nxt, rel in _ranked_neighbours(current):
+                if nxt in seen:
+                    continue
+                rev = {"provider": "customer", "customer": "provider"}.get(rel, "peer")
+                adjacency.setdefault(current, []).append(nxt)
+                edge_types.setdefault(current, {})[nxt] = rev
+                seen.add(nxt)
+                next_frontier.append(nxt)
+                if len(seen) >= max_nodes:
+                    break
+        frontier = next_frontier
+
+    for key in adjacency:
+        adjacency[key] = sorted(set(adjacency[key]))
+
+    # `nodes` counts the ASes *discovered* (origin + every neighbour
+    # reached), not the ASes that were expanded. Those are different
+    # numbers: a depth-2 walk over a wide Tier-1 discovers hundreds of
+    # ASes while expanding only a handful.
+    discovered = {origin}
+    for nbrs in adjacency.values():
+        discovered.update(nbrs)
+
+    return {
+        "adjacency": adjacency,
+        "edge_types": edge_types,
+        "origin": origin,
+        "nodes": len(discovered),
+        "expanded_nodes": len(adjacency),
+        "reason": "ok",
+    }
+
+
+# Substrings that mark an AS organisation as a content / CDN network in
+# the CAIDA as-org naming. Content networks' traffic can shift for
+# reasons unrelated to BGP (cache repopulation, anycast re-steering,
+# application deploys), so they are a classic confounder for a
+# routing->traffic attribution.
+_CONTENT_NAME_MARKERS = (
+    "cloudflare", "akamai", "fastly", "cdn", "edgecast", "limelight",
+    "amazon", "aws", "google", "microsoft", "azure", "alibaba", "tencent",
+    "facebook", "meta", "apple", "netflix", "github", "gitlab",
+    "verizon digital", "digital ocean", "stackpath", "bunny", "leaseweb",
+    "hetzner", "contabo", "ovh", "scaleway", "alibaba cloud",
+)
+
+
+def classify_content_asns(asns, asorg_file):
+    """Return the subset of ``asns`` that are content / CDN networks.
+
+    The classification is name-based over the CAIDA as-org snapshot, so
+    it is deterministic and auditable rather than a learned model.
+
+    Args:
+        asns: iterable of ASNs to classify.
+        asorg_file: path to the parsed as-org2info JSON snapshot.
+
+    Returns:
+        set of ASN strings that look like content providers.
+    """
+    asns = {str(a).strip().upper().lstrip("AS") for a in (asns or []) if a}
+    if not asns or not asorg_file or not Path(asorg_file).exists():
+        return set()
+    data = load_json(asorg_file)
+    if not data:
+        return set()
+    name_map = data.get("asn_to_name", {}) or {}
+    content = set()
+    for asn in asns:
+        raw_name = name_map.get(asn)
+        if not raw_name:
+            continue
+        low = str(raw_name).lower()
+        if any(marker in low for marker in _CONTENT_NAME_MARKERS):
+            content.add(asn)
+    return content
 
 
 def query_as_prefixes(asn, prefix2as_file):

@@ -25,7 +25,7 @@ from utils.logger import logger
 RPKI_API = "https://rpki.cloudflare.com/rpki.json"
 
 
-async def _rpki_validate(tool_input: dict, session) -> dict:
+async def _rpki_validate(tool_input, session):
     """
     Validate BGP announcements against RPKI ROAs.
 
@@ -161,7 +161,7 @@ async def _fetch_roas_cached(session) -> List[dict]:
         return _roa_cache[1] if _roa_cache else []
 
 
-def _build_roa_map(roas: List[dict]) -> dict:
+def _build_roa_map(roas: List[dict]):
     """
     Build lookup map: prefix → list of (origin_asn, max_prefix_len, expires)
     """
@@ -231,7 +231,7 @@ def _validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple
     return "not_found", None
 
 
-def _extract_announcements(routing_data: dict, asn: str) -> List[dict]:
+def _extract_announcements(routing_data, asn) -> List[dict]:
     """Extract announcements from routing_result for a given AS."""
     announcements = []
     for key in ["origin_hijacked", "forge_hijacked", "route_leaks"]:

@@ -27,7 +27,7 @@ OUT_DIR = ROOT / "results" / "bench"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _profile_quick_phase(asn: str, start: str, end: str) -> dict:
+def _profile_quick_phase(asn, start, end):
     """Run chief_agent.analyze_quick and return phase-level timing."""
     from chief_agent import ChiefAgent
 
@@ -58,7 +58,7 @@ def _profile_quick_phase(asn: str, start: str, end: str) -> dict:
     return profile
 
 
-def _smoke_profile() -> dict:
+def _smoke_profile():
     """Smoke test profile without LLM / network calls."""
     return {
         "asn": "AS12479",

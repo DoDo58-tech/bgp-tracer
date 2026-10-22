@@ -1,0 +1,20 @@
+% Section 2 -- Background and Problem Formulation
+\section{Background and Problem Formulation}
+\label{sec:background}
+
+The alert-flood pathology is the operational signature of the gap between detection capability and attribution capability. Control-plane monitors (eBGP speakers, route collectors) and data-plane monitors (NetFlow) each emit \emph{alarms}: a BGP-update alarm when an announcement violates a maintained prefix state or a valley-free constraint; a traffic-deviation alarm when a traffic series departs from a local baseline. The operational literature consistently reports an \emph{alert-flood pathology}: daily alarm volume at a Tier-1 NOC is $\mathcal{O}(10^3)$ to $\mathcal{O}(10^4)$, of which $\le 1\%$ survive operator review as actionable~\cite{iman-2022}. The asymmetry is not a tuning issue; it is structural. The signal is split across teams with different vocabularies: the routing team reasons about AS-path deltas, the traffic team about traffic deltas, and the two signals meet only in the post-mortem. Per-signal baselines fail in characteristic ways: routing baselines are blind to traffic impact, traffic baselines are blind to routing causation, and the joint answer requires both sides on the same time grid. The dominant operational answer is a human post-mortem, and the result is a single, unscalable, non-reproducible arbiter.
+
+\subsection{Operator decision loop}
+\label{sec:operator-loop}
+
+The operator's daily loop has five steps (triage, cross-check, decide, mitigate, post-mortem); the sustainable Tier-1 NOC review budget is $\sim 30\,\mathrm{min}$ per event, but cross-check alone typically consumes 60--180\,min because the analyst must manually correlate BGPStream dumps with traffic charts from three independent sources, a task the literature reports takes 4--11\,h median per event when performed rigorously~\cite{netmon2025}. BGP Tracer compresses the cross-check and decide steps to under ten minutes while preserving the operator's sign-off (\emph{assist, not replace}; Section~\ref{sec:discuss}).
+
+Formalising the control-plane to data-plane mapping. Let $\mathcal{R} = \{(r_t)\}_{t \in W}$ denote the control-plane signal (BGP-update tuples) and $\mathcal{T} = \{(t_s, x_s)\}_{s \in W'}$ the data-plane signal (5-min aggregate traffic). A detector $d_i$ maps its signal to an alert set $d_R : \mathcal{R} \to \mathcal{A}_R$ and $d_T : \mathcal{T} \to \mathcal{A}_T$ (Equation~\ref{eq:det-map}); the alert-flood pathology is the empirical observation $|\mathcal{A}_R \cup \mathcal{A}_T| \gg |\text{actionable}|$. BGP Tracer's contribution is the Phase-1 arbitration that determines the event-traffic correlation, mapping routing anomalies and traffic anomalies to one of five verdict classes: \texttt{real\_incident} (both signals present and temporally correlated), \texttt{silent\_alert} (routing anomaly but no traffic impact), \texttt{traffic\_only} (traffic anomaly but no routing signal), \texttt{correlation\_uncertain} (both signals present but temporally misaligned), or \texttt{no\_clear\_anomaly} (neither signal present).
+
+\begin{equation}
+d_R : \mathcal{R} \to \mathcal{A}_R, \quad
+d_T : \mathcal{T} \to \mathcal{A}_T,
+\quad \text{Phase-1} : \mathcal{A}_R \times \mathcal{A}_T
+\to \{\text{real\_incident},\ \text{silent\_alert},\ \text{traffic\_only},\ \text{correlation\_uncertain},\ \text{no\_clear\_anomaly}\}
+\label{eq:det-map}
+\end{equation}

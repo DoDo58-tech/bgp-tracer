@@ -87,6 +87,8 @@ def parse_datetime(dt_string):
         "%Y-%m-%d %H:%M",
         "%Y/%m/%d %H:%M:%S",
         "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M",
     ]
     
     for fmt in formats:
@@ -101,7 +103,7 @@ def parse_datetime(dt_string):
         raise ValueError(f"cannot parse datetime: {dt_string}, error: {e}")
 
 
-def _download_and_decode(url: str, gz_path: Path, txt_path: Path) -> bool:
+def _download_and_decode(url, gz_path, txt_path):
     """Download a gz file and decode it to txt using bgpdump. Returns True on success."""
     try:
         import subprocess
@@ -242,6 +244,8 @@ def parse_bgp_line(line):
         for fmt in (
             '%Y-%m-%d %H:%M:%S',  # ISO 2024-01-03 14:45:00
             '%Y-%m-%d %H:%M',
+            '%Y-%m-%dT%H:%M:%S',  # ISO with T separator
+            '%Y-%m-%dT%H:%M',     # ISO with T separator, no seconds
             '%m/%d/%y %H:%M:%S',  # RIPE RIS MM/DD/YY HH:MM:SS
             '%m/%d/%y %H:%M',
             '%m/%d/%Y %H:%M:%S',  # 4-digit year variant

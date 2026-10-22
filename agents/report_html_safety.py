@@ -34,7 +34,7 @@ _REPAIR_COMMENT_OPEN = re.compile(r"(?<!<)(!--(?:[^-]|-(?!-))*?-->)")
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
-def _repair_missing_lt(markup: str) -> str:
+def _repair_missing_lt(markup):
     """Restore ``<`` characters the LLM dropped before known HTML tags.
 
     Also restores ``<!-- ... -->`` HTML comment markers whose leading
@@ -57,7 +57,7 @@ def _repair_missing_lt(markup: str) -> str:
         comment_map.append((placeholder, m.group(0)))
         comment_masked = comment_masked.replace(m.group(0), placeholder, 1)
 
-    def _open_sub(match: re.Match) -> str:
+    def _open_sub(match):
         start = match.start()
         if start > 0 and comment_masked[start - 1].isalnum():
             return match.group(0)
@@ -174,7 +174,7 @@ def validate_html_balance(markup: str) -> "tuple[bool, list[str]]":
     return (len(problems) == 0), problems
 
 
-def _auto_close_unbalanced_html(markup: str) -> str:
+def _auto_close_unbalanced_html(markup):
     """Insert closing tags for any unclosed elements at document end.
 
     The LLM often leaves ``<li>`` / ``<ul>`` / ``<ol>`` / headings open

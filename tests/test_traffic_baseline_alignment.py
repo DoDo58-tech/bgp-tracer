@@ -19,7 +19,7 @@ import pytest
 from detectors.traffic.preprocessing import preprocess_traffic_data
 
 
-def _event_series(n: int = 101) -> np.ndarray:
+def _event_series(n=101):
     """The real AS8048 current window: calm, then a one-hour collapse.
 
     Index 0..96 are the calm pre-event samples (~1.95-2.20e9). The last four

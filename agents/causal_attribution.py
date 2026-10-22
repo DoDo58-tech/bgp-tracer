@@ -6,6 +6,7 @@ Bayesian ensemble; embeds Pearl-style Causal Sufficiency Score (CSS) as
 the anchor likelihood and supports abstention when evidence is weak.
 """
 import os
+import zlib
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
@@ -269,13 +270,28 @@ def ctpr_step_pseudo_delay(f, t):
     lower bound for an AS-to-AS eBGP update propagation in current
     operational networks.
 
-    Override via env var ``BGP_TRACER_CTPR_PSEUDO_DELAY_JITTER`` if a
-    reviewer demands reproducible constant-delay behaviour.
+    Override via env var ``BGP_TRACER_CTPR_PSEUDO_DELAY_JITTER`` to
+    change the jitter width; set it to ``0`` to force a constant
+    60s-per-hop delay (fully deterministic, no jitter).
+
+    Determinism note: the jitter uses ``zlib.crc32`` rather than
+    Python's builtin ``hash()``. The builtin hash of a ``str`` or
+    ``tuple`` is salted per-process via ``PYTHONHASHSEED``, which would
+    make this placeholder -- and therefore any downstream chain ranking
+    or reported pseudo-delay -- vary between otherwise identical runs,
+    breaking the paper's reproducibility claim. ``crc32`` is stable
+    across processes, machines, and Python versions.
     """
     if f is None or t is None:
         return 60
     jitter = int(os.environ.get("BGP_TRACER_CTPR_PSEUDO_DELAY_JITTER", "120"))
-    return 60 + hash((f, t)) % jitter
+    if jitter <= 0:
+        return 60
+    # Stable across processes: zlib.crc32 is NOT salted by PYTHONHASHSEED,
+    # unlike hash() on str/tuple. Using hash() here made the "deterministic"
+    # placeholder vary between runs, breaking reproducibility.
+    digest = zlib.crc32(f"{f}->{t}".encode("utf-8"))
+    return 60 + digest % jitter
 
 
 def ctpr_match_chain(chains, traffic_events):
@@ -344,10 +360,12 @@ def ctpr_empty():
 
 
 def estimate_counterfactual_cascade(intervention_as, intervention_type, routing_state,
-                                    as_topology, traffic_baseline, affected_prefix):
+                                    as_topology, traffic_baseline, affected_prefix,
+                                    edge_types=None):
     if not as_topology:
         return cic_empty()
-    cascade = cic_propagate(intervention_as, as_topology, routing_state, intervention_type, affected_prefix)
+    cascade = cic_propagate(intervention_as, as_topology, routing_state, intervention_type,
+                            affected_prefix, edge_types)
     if not cascade:
         return cic_empty()
     impacts = [cic_node_impact(n, intervention_type, traffic_baseline) for n in cascade]
@@ -356,37 +374,96 @@ def estimate_counterfactual_cascade(intervention_as, intervention_type, routing_
     return {"direction": "routing_to_traffic", "strength": strength, "significant": sig,
             "cascade_chain": cascade, "impact_estimates": impacts, "total_impact": total,
             "affected_as_count": len(cascade),
+            "relation_mix": cic_relation_mix(cascade),
             "counterfactual_summary": cic_cf_summary(intervention_as, total),
             "interpretation": cic_desc(intervention_as, cascade, total, strength)}
 
 
-def cic_propagate(start_as, topology, routing_state, int_type, prefix):
-    visited, chain, queue = set(), [], [(start_as, 0, None)]
+# How much a routing change at the origin propagates along one AS-to-AS
+# edge, by commercial relationship. A withdrawal at a provider does not
+# reach its customer directly (the customer re-routes around it), whereas
+# a hijack does travel down the customer tree because the customer
+# accepts the announcement. Peer links are symmetric and carry a partial
+# share in both directions.
+#
+# The values are attenuation factors applied on top of the per-hop
+# depth decay, and are the mechanism by which the AS supply
+# relationship enters the counterfactual estimate.
+_RELATION_PROPAGATION = {
+    "provider": 1.0,   # origin is the provider's customer
+    "customer": 0.75,  # origin is the provider
+    "peer": 0.6,
+    "unknown": 0.5,
+}
+
+
+def cic_propagate(start_as, topology, routing_state, int_type, prefix, edge_types=None):
+    """Walk the AS graph outward from the intervention, recording the path.
+
+    ``edge_types`` maps ``{asn: {neighbour: relation}}`` where relation is
+    one of provider / customer / peer. It is optional: without it the
+    walk still works but every edge is treated as ``unknown`` and
+    propagation is attenuated conservatively.
+    """
+    edge_types = edge_types or {}
+    # Normalise the origin to a string so the lookup matches the
+    # topology keys, which are ASN strings.
+    origin_key = str(start_as).strip().upper().lstrip("AS")
+
+    visited, chain, queue = set(), [], [(origin_key, 0, None, "origin")]
     while queue:
-        current, depth, upstream = queue.pop(0)
+        current, depth, upstream, relation = queue.pop(0)
         if current in visited:
             continue
         visited.add(current)
         chain.append({"asn": current, "depth": depth, "upstream_as": upstream,
-                     "has_route": cic_has_pfx(current, prefix, routing_state)})
+                      "relation": relation,
+                      "has_route": cic_has_pfx(current, prefix, routing_state)})
         if depth >= 5:
             continue
+        rel_map = edge_types.get(current, {}) if isinstance(edge_types, dict) else {}
         for neighbor in topology.get(current, []):
             if neighbor not in visited:
-                queue.append((neighbor, depth + 1, current))
+                rel = rel_map.get(neighbor, "unknown")
+                queue.append((neighbor, depth + 1, current, rel))
     return chain
 
 
 def cic_has_pfx(asn, prefix, routing_state):
     if not prefix or not routing_state:
         return False
-    return prefix in routing_state.get(asn, [])
+    key = str(asn).strip().upper().lstrip("AS")
+    prefixes = routing_state.get(key)
+    if prefixes is None:
+        prefixes = routing_state.get(asn, [])
+    if isinstance(prefixes, str):
+        prefixes = [prefixes]
+    if prefix in prefixes:
+        return True
+    # The affected prefix may be recorded under a different (more
+    # specific or less specific) CIDR than the detector reported. Fall
+    # back to a containment test so a /24 event is not missed because
+    # the snapshot records the covering /22.
+    try:
+        import ipaddress
+        target = ipaddress.ip_network(prefix, strict=False)
+    except (ValueError, TypeError):
+        return False
+    for pfx in prefixes or []:
+        try:
+            other = ipaddress.ip_network(str(pfx), strict=False)
+        except (ValueError, TypeError):
+            continue
+        if target.subnet_of(other) or other.subnet_of(target):
+            return True
+    return False
 
 
 def cic_node_impact(node, int_type, baseline):
     asn, depth = node["asn"], node["depth"]
     bl = baseline.get(asn, 1.0)
     has_route = node["has_route"]
+    relation = node.get("relation", "unknown")
     if int_type == "withdraw":
         impact = -bl if has_route else 0
     elif int_type == "hijack":
@@ -396,8 +473,22 @@ def cic_node_impact(node, int_type, baseline):
     else:
         impact = 0
     impact *= (0.85 ** depth)
+    # The commercial relationship between the origin and this node
+    # attenuates how much of the routing change reaches it. The origin
+    # itself is unaffected by the factor.
+    if depth > 0:
+        impact *= _RELATION_PROPAGATION.get(relation, _RELATION_PROPAGATION["unknown"])
     return {"asn": asn, "depth": depth, "baseline": bl, "impact": impact,
-            "impact_ratio": impact / bl if bl > 0 else 0, "has_route": has_route}
+            "impact_ratio": impact / bl if bl > 0 else 0, "has_route": has_route,
+            "relation": relation}
+
+
+def cic_relation_mix(cascade):
+    """Count how the cascade's nodes are reached, by commercial relation."""
+    mix = defaultdict(int)
+    for node in cascade:
+        mix[node.get("relation", "unknown")] += 1
+    return dict(mix)
 
 
 def cic_aggregate(impacts):
@@ -588,7 +679,7 @@ def granger_gt(x, y, max_lag, sig):
         return {"significant": False, "p": 1.0, "f": 0.0, "lag": 0}
 
 
-def granger_stationary_check_and_diff(series: list, name: str = "series") -> dict:
+def granger_stationary_check_and_diff(series, name="series"):
     """Stationarity pre-check used by :class:`GrangerEngine`.
 
     Returns ``{"series": stationary_series, "differencing_applied": bool,
@@ -725,34 +816,134 @@ def granger_fb(routing, traffic):
 
 
 class ConfounderDetector:
+    """Detect alternative explanations for a routing/traffic correlation.
+
+    BUG-FIX 2026-10-21: the five rule keys this detector looked up
+    (``maintenance_window``, ``multiple_upstreams``, ``cdn_scenario``,
+    ``ddos_protection``, ``concurrent_routing_changes``) had **no
+    producer anywhere in the codebase**. Every lookup returned None, so
+    the confounder list was structurally empty on every event and the
+    ``identify_limitations`` check ("more than 2 external confounders
+    present") could never fire. The confounder channel was decorative.
+
+    The fix keeps the declarative rule table but derives each key from
+    an observable signal that the pipeline actually produces, so the
+    detector reports something real:
+
+    * ``multiple_upstreams`` — the target AS has more than one
+      provider in the as-rel snapshot, so a single upstream failure
+      does not by itself explain a traffic change.
+    * ``cdn_scenario`` — the affected prefix is originated by a content
+      / CDN network, whose traffic can shift for reasons unrelated to
+      BGP.
+    * ``ddos_protection`` — a very large traffic drop with no
+      corresponding routing withdrawal or hijack, the classic
+      traffic-only signature of attack mitigation.
+    * ``concurrent_routing_changes`` — the routing timeline contains
+      several distinct event types in the same window, so the traffic
+      change may be attributable to a different routing event than the
+      candidate one.
+    * ``maintenance_window`` — an outage that is a *withdrawal* with
+      no hijack and no leak, which is the signature of a planned
+      maintenance rather than a fault.
+    """
+
     def __init__(self):
         self.rules = [
             {"name": "planned_maintenance", "key": "maintenance_window", "severity": 0.7,
              "affects_routing": True, "affects_traffic": True, "explanatory": True,
-             "desc": ""},
+             "desc": "Withdrawal-only routing event with no hijack or leak: consistent with a planned maintenance window."},
             {"name": "multiple_upstreams", "key": "multiple_upstreams", "severity": 0.5,
              "affects_routing": True, "affects_traffic": False, "explanatory": False,
-             "desc": " ISP "},
+             "desc": "Target AS has multiple upstream providers, so one upstream change does not by itself explain the traffic impact."},
             {"name": "cdn_scenario", "key": "cdn_scenario", "severity": 0.6,
              "affects_routing": False, "affects_traffic": True, "explanatory": False,
-             "desc": "CDN "},
+             "desc": "Affected prefix is originated by a content / CDN network whose traffic can shift for reasons unrelated to BGP."},
             {"name": "ddos_mitigation", "key": "ddos_protection", "severity": 0.8,
              "affects_routing": False, "affects_traffic": True, "explanatory": False,
-             "desc": "DDoS "},
+             "desc": "Large traffic drop with no matching routing withdrawal or hijack: consistent with attack mitigation or a data-plane event."},
             {"name": "concurrent_routing", "key": "concurrent_routing_changes", "severity": 0.6,
              "affects_routing": True, "affects_traffic": True, "explanatory": True,
-             "desc": ""},
+             "desc": "Multiple distinct routing event types in the same window: the traffic change may be attributable to a different routing event."},
         ]
 
+    # ── Derivation helpers ────────────────────────────────────────────────
+    @staticmethod
+    def _derive_multiple_upstreams(routing_ctx, traffic_ctx, as_ctx):
+        """True when the target AS has >1 provider in the AS topology."""
+        topo = as_ctx.get("topology_edge_types") or as_ctx.get("edge_types") or {}
+        origin = as_ctx.get("topology_origin")
+        if not topo or not origin:
+            return False
+        rels = topo.get(origin) or {}
+        return sum(1 for r in rels.values() if r == "provider") > 1
+
+    @staticmethod
+    def _derive_cdn_scenario(routing_ctx, traffic_ctx, as_ctx):
+        """True when the affected prefix belongs to a content / CDN AS."""
+        origins = as_ctx.get("content_origins") or []
+        if not origins:
+            return False
+        routing_state = as_ctx.get("routing_state") or {}
+        for asn, prefixes in routing_state.items():
+            if str(asn) in {str(o) for o in origins}:
+                return True
+        return False
+
+    @staticmethod
+    def _derive_ddos(routing_ctx, traffic_ctx):
+        """True on the traffic-only large-drop signature."""
+        drop = float(traffic_ctx.get("traffic_drop_ratio", 0.0) or 0.0)
+        if drop < 0.8:
+            return False
+        has_withdrawal = bool(routing_ctx.get("has_routing_withdrawal")
+                              or routing_ctx.get("withdrawal_count"))
+        has_hijack = bool(routing_ctx.get("has_routing_origin")
+                          or routing_ctx.get("hijack_count"))
+        return not (has_withdrawal or has_hijack)
+
+    @staticmethod
+    def _derive_maintenance(routing_ctx):
+        """True on the withdrawal-only signature of a planned maintenance."""
+        has_withdrawal = bool(routing_ctx.get("has_routing_withdrawal")
+                              or routing_ctx.get("withdrawal_count"))
+        has_hijack = bool(routing_ctx.get("has_routing_origin")
+                          or routing_ctx.get("hijack_count"))
+        has_leak = bool(routing_ctx.get("has_route_leak")
+                        or routing_ctx.get("leak_count"))
+        return has_withdrawal and not has_hijack and not has_leak
+
+    @staticmethod
+    def _derive_concurrent_routing(routing_ctx):
+        """True when several distinct routing event types co-occur."""
+        types = routing_ctx.get("event_types") or []
+        distinct = {str(t).lower() for t in types if t}
+        return len(distinct) > 1
+
     def detect(self, routing_ctx, traffic_ctx, as_ctx):
+        routing_ctx = routing_ctx or {}
+        traffic_ctx = traffic_ctx or {}
+        as_ctx = as_ctx or {}
+
+        # Derive the rule keys from observable signals, then run the
+        # declarative table over the derived context.
+        derived = {
+            "multiple_upstreams": self._derive_multiple_upstreams(routing_ctx, traffic_ctx, as_ctx),
+            "cdn_scenario": self._derive_cdn_scenario(routing_ctx, traffic_ctx, as_ctx),
+            "ddos_protection": self._derive_ddos(routing_ctx, traffic_ctx),
+            "maintenance_window": self._derive_maintenance(routing_ctx),
+            "concurrent_routing_changes": self._derive_concurrent_routing(routing_ctx),
+        }
+
         detected = []
         for rule in self.rules:
             key = rule["key"]
-            val = routing_ctx.get(key) or traffic_ctx.get(key) or as_ctx.get(key)
+            val = (routing_ctx.get(key) or traffic_ctx.get(key)
+                   or as_ctx.get(key) or derived.get(key))
             if val and val is not False and val != 0:
                 detected.append({
                     "name": rule["name"], "description": rule["desc"],
-                    "severity": rule["severity"], "detected_in": "context",
+                    "severity": rule["severity"], "detected_in": "derived" if derived.get(key) else "context",
                     "affects_routing": rule["affects_routing"],
                     "affects_traffic": rule["affects_traffic"],
                     "is_explanatory_confounder": rule["explanatory"],
@@ -851,6 +1042,7 @@ class CausalAttributionEngine:
                 as_topology=topology,
                 traffic_baseline=traffic_context.get("baseline", {}),
                 affected_prefix=traffic_context.get("affected_prefix"),
+                edge_types=topology_context.get("edge_types", {}),
             )
         else:
             cascade_result = quick_cascade_estimate(

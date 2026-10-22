@@ -1,0 +1,10 @@
+{
+  "outage-20250714-Cloudflare_Public_DNS_Outage": {
+    "date": "2025-07-13",
+    "window_start": "2025-07-13T00:05:00",
+    "max_val": 13635,
+    "baseline": 1683.2083333333333,
+    "spike_ratio": 8.1,
+    "top_as_in_window": []
+  }
+}

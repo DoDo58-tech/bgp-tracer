@@ -114,7 +114,7 @@ class MultiScaleBaseline:
     def __init__(self, get_traffic_func):
         self.get_traffic = get_traffic_func
 
-    def set_weights(self, weights: dict):
+    def set_weights(self, weights):
         """
  (). 
 
@@ -132,7 +132,7 @@ class MultiScaleBaseline:
                 self.SCALES[key]['weight'] = value
                 logger.info(f"[MultiScale] weight[{key}] = {value}")
 
-    def get_weights(self) -> dict:
+    def get_weights(self):
         """, . """
         return {k: v['weight'] for k, v in self.SCALES.items()}
 
@@ -493,7 +493,7 @@ class MultiScaleBaseline:
         )
 
     @staticmethod
-    def _parse_timestamp(value) -> Optional[datetime]:
+    def _parse_timestamp(value):
         if isinstance(value, datetime):
             return value.replace(tzinfo=None)
         if not value:
@@ -1027,7 +1027,7 @@ class CausalCorrelationScorer:
         ratio = traffic_intensity / max(0.1, routing_intensity * 0.1)
         return min(1.0, ratio)
 
-    def _compute_confounder_penalty(self, confounders: dict) -> float:
+    def _compute_confounder_penalty(self, confounders):
         """"""
         penalties = []
 
@@ -1044,7 +1044,7 @@ class CausalCorrelationScorer:
 
         return min(1.0, sum(penalties))
 
-    def _parse_time(self, ts) -> Optional[datetime]:
+    def _parse_time(self, ts):
         """Parse an observed timestamp; invalid values remain unavailable."""
         if isinstance(ts, datetime):
             return ts

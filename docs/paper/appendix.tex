@@ -1,0 +1,92 @@
+% Appendix -- supporting material (<=4 pages for CoNEXT long paper)
+\section*{Appendix}
+\addcontentsline{toc}{section}{Appendix}
+
+A.1 Coarse screen.  A candidate AS is admitted iff the
+quick score computed from the week-over-week baseline comparison
+clears the admission threshold.  The score aggregates a mean-level
+shift and a dispersion ratio, each capped and weighted, so the
+screen is monotone in the size of the deviation and independent of
+the event's absolute traffic volume.  Candidates that fail are
+marked \texttt{low-confidence} and routed to the degraded path.
+\label{app:regularity}
+
+A.2 Arbitration rules.  Six disambiguation rules operate
+on structured detector arguments in fixed design-time
+order: \texttt{leak\_induced\_hijack}, \texttt{multi-actor
+leak}, \texttt{self-leak during outage},
+\texttt{pure-leak + total-traffic-drop},
+\texttt{ROA-vs-outage}, \texttt{leak-during-outage}.
+The ordering is not tuned on the evaluation set.
+\label{app:arbitration}
+
+A.3 Abstention analysis.  The engine abstains at three
+levels, and each level records its triggering statistic in
+the cache, so abstentions are auditable rather than silent.
+At the estimator level, the direction is committed only if
+the bootstrap 95\% CI of that direction excludes zero and
+the permutation $p$-value is below the significance
+threshold; a leading series may also disqualify the
+reverse direction outright.  At the synthesis level, the
+engine abstains if the best channel's direction confidence
+falls below the direction floor.  Finally, the Bayesian
+synthesis reports \texttt{unknown} if the normalized
+posterior of the dominant direction does not exceed the
+commit floor $\tau = 0.34$.
+\label{app:abstention}
+
+A.4 Cache schema.  A versioned, content-addressed JSON store
+with schema-version, deterministic hash, structured payload,
+and input reference.  Every verdict, detector argument, and
+abstention record is reproducible from this single artefact.
+\label{app:cache}
+
+A.6 Live-replay accounting.  The 192-alert live replay is
+summarised into the evaluation cache
+(\texttt{results/cloudflare\_alerts/run\_summary.json}),
+which records the coverage rate, the per-source verdict
+breakdown, and the per-alert timing distribution underlying
+(L7).  Of 192 enqueued alerts, 130 completed adjudication and
+62 failed in the harness; the 130 adjudicated alerts yield 14
+\texttt{real\_incident} verdicts, split 7 curated and 7
+discovered.\label{app:live-replay}
+
+
+A.5 Confusion matrix.  Table~\ref{tab:dataset} reports
+Top-1 and F1; Figure~\ref{fig:confusion} shows the
+full attribution geometry.  The confusion matrix confirms
+that mis-attributions cluster at class boundaries:
+outages and route leaks share an AS-path signature,
+and hijack victims are confused with route leaks when
+multiple ASes announce the victim's prefix.
+\label{app:confusion}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.75\linewidth]{figs/fig_confusion.pdf}
+\caption{Row-normalised attribution confusion matrix.
+Diagonal cells show correct attribution; off-diagonal
+cells show the specific mis-attribution geometry.
+The 3 errors (1 outage, 1 leak, 1 hijack) all occur
+at class boundaries.\label{fig:confusion}}
+\end{figure}
+
+A.7 Detector-output geometry for the 2025 events.
+The 23 curated 2025 RRC00 events are projected into
+the 5-D detector-output space (hijack, hijacking,
+leak, outage, traffic) and reduced to two dimensions
+by PCA. A month-by-cause heatmap shows events cluster
+in time; an embedding map shows the four causes
+separate cleanly with the three mis-attributed events
+at cluster boundaries. Released as
+\texttt{fig\_detector\_geometry.pdf}.
+\label{app:case-geo}
+
+A.8 Five-month deployment statistics.  Four panels:
+rolling evaluation accuracy, daily raw-alarm trace
+against BGP Tracer verdicts, monthly cause
+distribution, and per-cause confidence histogram
+showing bimodal profiles (hijack/leak concentrated,
+outage dispersed). Released as
+\texttt{fig\_deployment\_stats.pdf}.
+\label{app:deployment}

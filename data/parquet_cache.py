@@ -79,12 +79,12 @@ _TIMESTAMP_PATTERN = re.compile(
 )
 
 
-def _ensure_dirs() -> None:
+def _ensure_dirs():
     PARQUET_DIR.mkdir(parents=True, exist_ok=True)
     DECODED_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def parquet_path_for(source: Union[str, Path]) -> Path:
+def parquet_path_for(source: Union[str, Path]):
     src = Path(source)
     name = src.name
     if name.endswith(".txt"):
@@ -98,11 +98,11 @@ def parquet_path_for(source: Union[str, Path]) -> Path:
     return PARQUET_DIR / f"{stem}.parquet"
 
 
-def meta_path_for(parquet: Path) -> Path:
+def meta_path_for(parquet):
     return parquet.with_suffix(".meta.json")
 
 
-def _source_fingerprint(path: Path) -> str:
+def _source_fingerprint(path):
     """Return a fingerprint that survives `touch` and unstable mtime ns.
 
     Uses size + inode + second-precision mtime.  Sticking to
@@ -114,7 +114,7 @@ def _source_fingerprint(path: Path) -> str:
     return f"{st.st_size}:{st.st_ino}:{int(st.st_mtime)}"
 
 
-def _read_meta(parquet: Path) -> Optional[dict]:
+def _read_meta(parquet):
     mp = meta_path_for(parquet)
     if not mp.exists():
         return None
@@ -124,7 +124,7 @@ def _read_meta(parquet: Path) -> Optional[dict]:
         return None
 
 
-def _write_meta(parquet: Path, source: Path) -> None:
+def _write_meta(parquet, source):
     """Persist cache metadata atomically.
 
     Bug fix 2026-09-13 (BUG-R93):
@@ -164,7 +164,7 @@ def _write_meta(parquet: Path, source: Path) -> None:
             pass
 
 
-def _is_cache_valid(parquet: Path, source: Optional[Path]) -> bool:
+def _is_cache_valid(parquet, source):
     if not parquet.exists():
         return False
     if source is None:
@@ -187,7 +187,7 @@ _SCHEMA = {
 }
 
 
-def _align_to_canonical(df: pl.DataFrame) -> pl.DataFrame:
+def _align_to_canonical(df):
     """Ensure every required column exists; missing columns become null.
 
     Polars parquet requires consistent schemas across reads. MRT files vary in
@@ -201,7 +201,7 @@ def _align_to_canonical(df: pl.DataFrame) -> pl.DataFrame:
     return out.select(list(_SCHEMA.keys()))
 
 
-def _txt_to_announcements_df(txt_path: Path) -> pl.DataFrame:
+def _txt_to_announcements_df(txt_path):
     df = pl.read_csv(
         txt_path,
         separator="|",
@@ -225,7 +225,7 @@ def _txt_to_announcements_df(txt_path: Path) -> pl.DataFrame:
     return _align_to_canonical(df)
 
 
-def _ensure_parquet(src_path: Path) -> Optional[Path]:
+def _ensure_parquet(src_path):
     _ensure_dirs()
     parquet = parquet_path_for(src_path)
     if _is_cache_valid(parquet, src_path):
@@ -252,7 +252,7 @@ def _ensure_parquet(src_path: Path) -> Optional[Path]:
     return parquet
 
 
-def _read_gz_into_df(gz_path: Path) -> pl.DataFrame:
+def _read_gz_into_df(gz_path):
     rows = []
     with gzip.open(gz_path, "rt", encoding="utf-8", errors="ignore") as f:
         for line in f:
@@ -411,7 +411,7 @@ def purge_decoded_txt(
     }
 
 
-def _ensure_underlying_source(stamp_str: str) -> Optional[Path]:
+def _ensure_underlying_source(stamp_str):
     """Make sure at least one of (decoded txt, raw gz) exists for `stamp`.
 
     Search order:
@@ -581,7 +581,7 @@ def load_window_announcements(
     return pl.concat(parts, how="vertical_relaxed")
 
 
-def cache_stats() -> dict:
+def cache_stats():
     if not PARQUET_DIR.exists():
         return {"parquet_dir": str(PARQUET_DIR), "exists": False, "count": 0, "total_size_mb": 0.0}
     parquet_files = list(PARQUET_DIR.glob("updates.*.parquet"))

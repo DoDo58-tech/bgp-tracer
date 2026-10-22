@@ -1,0 +1,124 @@
+% Section 7 -- Case Study
+\section{Case Study: AS12479 Route Leak}
+\label{sec:casestudy}
+
+We trace one event end-to-end to make the paper's
+contributions concrete. The AS12479 route leak of 2024-01-03
+exercises all four questions (Q0--Q3), is backed by a primary-source
+URL, and has a complete cached run: routing detections, a
+PathProb path-probability snapshot, a CAIDA AS-relationship
+snapshot, and Cloudflare Radar traffic.
+
+    10|\medskip
+\noindent\textbf{What happened.} Between 14:45\,UTC and 18:00\,UTC
+on 2024-01-03 the operational AS12479 announced prefixes that
+PathProb's path-probability model scored as highly improbable given
+the AS-relationship graph. The leak detector scored 13{,}716 candidate
+announcements against 1{,}886{,}291 announcements observed in the
+window, of which 14{,}776 survived the AS-path pre-filter, and
+reported the 5{,}000 highest-scoring as leaks, capped by a
+truncation limit. The leak was scored against a 536{,}283-entry
+AS-relationship snapshot at a path-probability threshold of 0.4.
+The same window also produced a candidate outage signal with a
+low raw confidence of 0.3.
+
+\medskip
+\noindent\textbf{Stage 1 -- Coarse screen.} The week-over-week
+baseline comparison produced a quick score below the 0.20
+admission threshold, because the Cloudflare Radar series for
+AS12479 had no usable periodic baseline in this window:
+the baseline method fell back to a non-periodic estimate and
+the periodicity confidence was 0.0. The traffic detector still
+reported a peak-to-trough excursion of 81.7\%, but with zero
+discrete anomalies and an empty historical average, so the
+screen did not admit the candidate on traffic grounds alone.
+The routing evidence was what carried the event.
+
+    30|\medskip
+\noindent\textbf{Phase 1 -- Deterministic arbitration.}
+Each detector produced a structured argument:
+
+\begin{itemize}
+  \item \textbf{Leak}: fires strongly. 13{,}716 candidate
+    announcements scored above the 0.4 path-probability threshold;
+    the leak detector returned a saturated 5{,}000-record result.
+    Because the result was truncated, the count in the report
+    is a floor rather than an estimate.
+  \item \textbf{Traffic}: fires weakly. The 81.7\% peak-to-trough
+    excursion is a real signal, but with no periodic baseline and
+    no discrete anomalies the detector cannot place it in time,
+    so it cannot be aligned against the routing event and the
+    traffic channel is suspended at the Phase-1 gate.
+  \item \textbf{Outage}: fires weakly. A withdrawal signal was
+    produced, but with a raw confidence of 0.3 it falls below the
+    evidential gate.
+  \item \textbf{Origin-hijack}: silent. No origin hijack was
+    detected in this window; the detector is suspended, not
+    silenced, and its reason is recorded in the cache.
+\end{itemize}
+The arbitration therefore returns \texttt{silent\_alert} for the
+Phase-1 correlation verdict: a routing signal is present
+while the traffic signal is absent, so the Phase-1 arbitration
+suspends the traffic channel without reaching the temporal
+correlation test. On the evidence available in this window the
+routing anomaly cannot be shown to have reached traffic. This is
+the correct Phase-1 outcome, and it is exactly the verdict that
+tells an operator to escalate rather than close. A routing-only
+pipeline would have stopped here with a bare leak count; a
+traffic-only pipeline would never have seen the event at all.
+
+    65|\medskip
+\noindent\textbf{Phase 2 -- Pearl-PNS causal attribution.}
+The Bayesian synthesis committed to $R \to T$ with a posterior of
+0.975 on $R \to T$, 0.011 on $T \to R$, and 0.014 on independent,
+against an independently verified ground truth of the
+$R \to T$ direction. This is the case that motivates the
+abstention gate. Every individual classical channel failed on this
+event: the CSS estimator abstained because the bootstrap CI could
+not exclude zero over a series with too few non-zero buckets,
+Granger abstained on the bursty update stream, and Pearson
+correlation abstained as well. The single transfer-entropy
+estimate pointed the wrong way. Only the synthesis, which discounts
+a channel that disagrees with its Pearl-anchored prior instead of
+letting it vote, produced the correct direction. The event also
+illustrates the truncation caveat: the leak count that reaches the
+report is a lower bound, so the evidence score attached to the
+leak detector is a floor, not a point estimate.
+
+    85|\medskip
+\noindent\textbf{Why not a single detector?} An
+outage-detector-only system sees a low-confidence withdrawal
+signal and stops. A leak-only system reports the leak but cannot
+say whether it had traffic impact, which is the operator's
+actual question. Only BGP Tracer answers Q0--Q3 together: the
+event is real, the leak is the cause class, and the causal
+direction is committed with a stated posterior.
+
+    95|\medskip
+\noindent\textbf{Operator loop and latency.} Triage is
+automatic; the cached Phase-1 run for this event completed in
+273\,s end-to-end, dominated by the PathProb and
+AS-relationship snapshot loads rather than by the causal engine.
+The Phase-2 attribution adds a median of 8.2\,s when invoked.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.92\linewidth]{figs/fig_case_as12479.pdf}
+\caption{AS12479 route leak, 2024-01-03.
+Top: Cloudflare Radar five-minute traffic for the week; the shaded
+band is the analysis window, in which the series falls from a peak of
+0.96 to a trough of 0.17.
+Middle: yield of the PathProb leak detector, from 1.9\,M observed
+announcements down to the 5{,}000 reported leaks, which is a truncated
+count and therefore a floor.
+Bottom: the Bayesian posterior over causal directions. The dominant
+$R \to T$ hypothesis at 0.975 clears the commit floor $\tau=0.34$,
+even though every individual classical channel abstained.}
+\label{fig:case}
+\end{figure}
+
+    115|The other two anomaly classes are illustrated with condensed
+timelines in Appendix~\ref{app:case-geo}: a Cloudflare
+data-centre outage of 2020-04-15 and a Swiss operator route
+leak of 2019-06-05. The detector-output geometry for all
+curated 2025 events is in Appendix~\ref{app:case-geo}.

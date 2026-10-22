@@ -41,7 +41,7 @@ _SECTION_NAMES = [
 
 # ── Splitter ──────────────────────────────────────────────────────────────
 
-def _split_llm_prose_blocks(markup: str) -> Dict[str, str]:
+def _split_llm_prose_blocks(markup) -> Dict[str, str]:
     """Split LLM-authored HTML into per-section prose blocks.
 
     For each known section heading (in either "Foo" or "Foo &amp;" form), grab
@@ -62,24 +62,24 @@ def _split_llm_prose_blocks(markup: str) -> Dict[str, str]:
 
 # ── Section renderers ────────────────────────────────────────────────────
 
-def _render_executive_summary(prose: str, payload: Dict[str, Any]) -> str:
+def _render_executive_summary(prose, payload: Dict[str, Any]):
     body = prose or "<p>(no prose from LLM)</p>"
     return f"<h2>Executive Summary</h2>\n{body}"
 
 
-def _render_traffic_analysis(prose: str, payload: Dict[str, Any]) -> str:
+def _render_traffic_analysis(prose, payload: Dict[str, Any]):
     return f"<h2>Traffic Analysis</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
-def _render_routing_security(prose: str, payload: Dict[str, Any]) -> str:
+def _render_routing_security(prose, payload: Dict[str, Any]):
     return f"<h2>Routing Security</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
-def _render_evidence_chain(prose: str, payload: Dict[str, Any]) -> str:
+def _render_evidence_chain(prose, payload: Dict[str, Any]):
     return f"<h2>Evidence Chain / Reasoning</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
-def _render_refutable_hypotheses(prose: str, payload: Dict[str, Any]) -> str:
+def _render_refutable_hypotheses(prose, payload: Dict[str, Any]):
     """Render Refutable Hypotheses with deterministic cards + LLM prose on top."""
     cards: List[str] = []
     hyps = (
@@ -129,11 +129,11 @@ def _render_refutable_hypotheses(prose: str, payload: Dict[str, Any]) -> str:
     return f"<h2>Refutable Hypotheses</h2>\n{prose_html}{cards_html}"
 
 
-def _render_counterfactual_analysis(prose: str, payload: Dict[str, Any]) -> str:
+def _render_counterfactual_analysis(prose, payload: Dict[str, Any]):
     return f"<h2>Counterfactual Analysis</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
-def _render_gaps_and_limitations(prose: str, payload: Dict[str, Any]) -> str:
+def _render_gaps_and_limitations(prose, payload: Dict[str, Any]):
     return f"<h2>Gaps &amp; Limitations</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
@@ -224,7 +224,7 @@ def deterministic_postprocess(
 
 import re as _re  # local alias
 
-def _scrub_pathological_fragments(markup: str) -> str:
+def _scrub_pathological_fragments(markup):
     """Remove any remaining known-bad fragments that escaped earlier stripping.
 
     This is a defense-in-depth pass. The deterministic renderers already
@@ -293,7 +293,7 @@ def _scrub_pathological_fragments(markup: str) -> str:
     return html
 
 
-def assert_no_known_issues(markup: str) -> Tuple[bool, List[str]]:
+def assert_no_known_issues(markup) -> Tuple[bool, List[str]]:
     """Return (passed, problems). The list of problems is empty when passed."""
     problems: List[str] = []
     html = markup

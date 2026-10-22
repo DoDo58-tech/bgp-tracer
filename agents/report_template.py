@@ -61,7 +61,7 @@ TEMPLATE_VERSION = "report_v2"
 SCHEMA_VERSION = "1.0"
 
 
-def preview_name(asn: str, start_time: str = "", end_time: str = "") -> str:
+def preview_name(asn, start_time="", end_time=""):
     """Build a filesystem-safe report filename: ``AS8048_2024-08-01_08-45.html``.
 
     Names never start with an underscore (a leading ``_`` is a POSIX convention
@@ -70,7 +70,7 @@ def preview_name(asn: str, start_time: str = "", end_time: str = "") -> str:
     filesystems. Unparseable timestamps degrade to ``unknown`` rather than
     producing a truncated name like ``AS44244_-06-18T17:55:00.html``.
     """
-    def _stamp(value: str) -> str:
+    def _stamp(value):
         raw = (value or "").strip()
         if not raw:
             return "unknown"
@@ -91,7 +91,7 @@ def preview_name(asn: str, start_time: str = "", end_time: str = "") -> str:
     return f"AS{asn_part}_{start_part}.html"
 
 
-def window_from_artifact_name(artifact_stem: str) -> tuple:
+def window_from_artifact_name(artifact_stem):
     """Recover ``(start, end)`` from an artifact filename.
 
     Run artifacts are named ``traffic_outage_analysis_<asn>_<window>.json``
@@ -100,7 +100,7 @@ def window_from_artifact_name(artifact_stem: str) -> tuple:
     ``8048_2024-08-01 08-45``. Returns ``("", "")`` when nothing matches so
     callers can decide their own fallback rather than getting a bogus value.
     """
-    raw = str(stem or "")
+    raw = str(artifact_stem or "")
     m = re.search(
         r"(\d{4}-\d{2}-\d{2})[T _](\d{2})[:-](\d{2})(?:[:-](\d{2}))?"
         r"(?:\s+to\s+(\d{4}-\d{2}-\d{2})[T _](\d{2})[:-](\d{2}))?",
@@ -108,12 +108,24 @@ def window_from_artifact_name(artifact_stem: str) -> tuple:
     )
     if not m:
         return "", ""
-    y, mo, d, hh, mm, s = m.group(1), m.group(2), m.group(3), m.group(4), m.group(5), m.group(6)
+    # Group indices in the regex above:
+    #   1 = start date (yyyy-mm-dd)
+    #   2 = start hour
+    #   3 = start minute
+    #   4 = start seconds (optional)
+    #   5 = end date (optional, only if " to " is present)
+    #   6 = end hour
+    #   7 = end minute
+    y, mo, d = m.group(1).split("-")
+    hh, mm = m.group(2), m.group(3)
+    s = m.group(4) or ""
     start = f"{y}-{mo}-{d} {hh}:{mm}" + (f":{s}" if s else "")
-    if m.group(7):
-        end = f"{m.group(7)} {m.group(8)}:{m.group(9)}" + (
-            f":{m.group(10)}" if m.group(10) else ""
-        )
+    if m.group(5):
+        # End date is present. The end regex also has seconds
+        # (the trailing :(\d{2}) part is not in the regex - keep it simple).
+        ey, emo, ed = m.group(5).split("-")
+        ehh, emm = m.group(6), m.group(7)
+        end = f"{ey}-{emo}-{ed} {ehh}:{emm}"
         return start, end
     return start, ""
 
@@ -139,7 +151,7 @@ _CORR_LEVEL_CODE = {
 #  Low-level helpers
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _safe(value: Any, default: str = "—") -> str:
+def _safe(value, default="—"):
     """HTML-safe text for a cell, never producing an empty string.
 
     Empty values collapse to an em-dash so a reviewer never has to
@@ -164,14 +176,14 @@ def _safe(value: Any, default: str = "—") -> str:
     return s if s else default
 
 
-def _num(value: Any, spec: str = ".2f") -> str:
+def _num(value, spec=".2f"):
     try:
         return format(float(value), spec)
     except (TypeError, ValueError):
         return "—"
 
 
-def _esc(text: Any) -> str:
+def _esc(text):
     """Escape text for interpolation into template output.
 
     Only use this on *prose*. Pre-rendered HTML fragments built by
@@ -188,12 +200,12 @@ def _esc(text: Any) -> str:
     )
 
 
-def markup(fragment: Optional[str]) -> Markup:
+def markup(fragment):
     """Mark a pre-rendered HTML fragment as already-safe for Jinja."""
     return Markup(fragment or "")
 
 
-def _unwrap(payload: Any) -> dict:
+def _unwrap(payload):
     """Unwrap the ``{"result": {...}}`` envelope used across the blackboard."""
     if isinstance(payload, dict) and isinstance(payload.get("result"), dict):
         return payload["result"]
@@ -292,7 +304,7 @@ def build_table(
 #  Event-class extraction
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _first_present(*candidates: Any) -> Any:
+def _first_present(*candidates: Any):
     """First candidate that is neither None nor an empty string.
 
     Guards against the ``or``-chain bug where a legitimate ``0`` collapses
@@ -337,7 +349,7 @@ def _dedupe_events(events: Sequence[dict]) -> list:
     return out
 
 
-def normalize_routing(routing_result: Any) -> dict:
+def normalize_routing(routing_result):
     """Flatten the routing payload into one predictable shape.
 
     Handles both shapes emitted by the routing agent: the annotation
@@ -348,7 +360,7 @@ def normalize_routing(routing_result: Any) -> dict:
     if not isinstance(rr, dict):
         return {}
 
-    def collect(*keys: str) -> list:
+    def collect(*keys: str):
         out: list = []
         for key in keys:
             value = rr.get(key)
@@ -401,7 +413,7 @@ def normalize_routing(routing_result: Any) -> dict:
     }
 
 
-def hijack_rows(routing: dict) -> list:
+def hijack_rows(routing):
     """Per-event hijack rows with only fields the detector actually set."""
     rows = []
     for ev in routing_norm.get("origin_hijacked", []) + routing_norm.get("origin_hijacking", []):
@@ -425,7 +437,7 @@ def hijack_rows(routing: dict) -> list:
     return rows
 
 
-def leak_rows(routing: dict) -> list:
+def leak_rows(routing):
     """Route-leak rows.
 
     A leak event frequently lacks a dedicated ``leaked_by`` field, in which
@@ -458,7 +470,7 @@ def leak_rows(routing: dict) -> list:
     return rows
 
 
-def traffic_anomaly_rows(traffic: dict) -> list:
+def traffic_anomaly_rows(traffic):
     """Traffic anomaly rows using only signals the detector emitted."""
     rows = []
     for a in (traffic_norm.get("anomalies") or [])[:50]:
@@ -480,11 +492,11 @@ def traffic_anomaly_rows(traffic: dict) -> list:
     return rows
 
 
-def routing_aggregate(routing_norm: dict, top_n: int = 8) -> tuple:
+def routing_aggregate(routing_norm, top_n=8):
     """Aggregate routing alerts by (prefix, role) for the top-N view."""
     counter: dict = {}
 
-    def bump(prefix: str, role: str, asn: str, counterparty: str) -> None:
+    def bump(prefix, role, asn, counterparty):
         key = (prefix, role)
         slot = counter.setdefault(
             key, {"count": 0, "prefix": prefix, "role": role, "asn": asn, "peer": counterparty}
@@ -525,7 +537,7 @@ def routing_aggregate(routing_norm: dict, top_n: int = 8) -> tuple:
 _PLOT_DIR = Path("/data/bgp_tracer/data/traffic_plots")
 
 
-def _plot_quality(path: Path) -> tuple:
+def _plot_quality(path):
     """Rank a plot render: ``(is_full_resolution, byte_size)``.
 
     The reference charts (e.g. ``AS174_2025-03-20 15-43-00_to_…png``) are
@@ -552,7 +564,7 @@ def _plot_quality(path: Path) -> tuple:
     return (1 if width >= 4000 else 0, size)
 
 
-def _best_sibling_for_window(recorded: Path, asn: str, window_hint: str) -> Optional[Path]:
+def _best_sibling_for_window(recorded, asn, window_hint):
     """Return a better render of the *same* window than ``recorded``, if any.
 
     The window is taken from ``recorded``'s OWN filename, not from
@@ -598,7 +610,7 @@ def _best_sibling_for_window(recorded: Path, asn: str, window_hint: str) -> Opti
     return None
 
 
-def _normalise_window_hint(hint: str) -> str:
+def _normalise_window_hint(hint):
     """Reduce a timestamp to the ``YYYY-MM-DD HH:MM`` prefix used in filenames.
 
     Plot files are named ``AS<asn>_<start>_to_<end>.png`` with ``:`` replaced
@@ -607,7 +619,7 @@ def _normalise_window_hint(hint: str) -> str:
     space-separated) and returns ``""`` when the input is unparseable rather
     than propagating a bogus hint.
     """
-    raw = (value or "").strip()
+    raw = (hint or "").strip()
     if not raw:
         return ""
     raw = raw.split(" to ")[0].strip()
@@ -802,7 +814,7 @@ Analysis data:
 """
 
 
-def request_llm_narrative(llm, analysis_data: dict, *, timeout: float = 240.0) -> dict:
+def request_llm_narrative(llm, analysis_data, *, timeout=240.0):
     """Ask the LLM for prose fields only. Never returns HTML.
 
     Any failure (timeout, transport error, unparseable output) degrades to
@@ -828,7 +840,7 @@ def request_llm_narrative(llm, analysis_data: dict, *, timeout: float = 240.0) -
         return empty
 
 
-def parse_narrative(text: str, default: Optional[dict] = None) -> dict:
+def parse_narrative(text, default=None):
     """Parse the LLM's JSON narrative defensively.
 
     Handles a markdown fence, leading prose, and trailing commentary. Any
@@ -873,7 +885,7 @@ def parse_narrative(text: str, default: Optional[dict] = None) -> dict:
 #  Deterministic narrative fallbacks
 # ═════════════════════════════════════════════════════════════════════════════
 
-def _traffic_prose(traffic: dict, routing_norm: dict) -> str:
+def _traffic_prose(traffic, routing_norm):
     count = traffic.get("anomaly_count") or len(traffic.get("anomalies") or [])
     drop = traffic.get("peak_trough_drop_pct")
     severity = traffic.get("max_severity")
@@ -900,7 +912,7 @@ def _traffic_prose(traffic: dict, routing_norm: dict) -> str:
     return " ".join(parts)
 
 
-def _routing_prose(routing: dict) -> str:
+def _routing_prose(routing):
     hijacked = len(routing_norm.get("origin_hijacked", []))
     hijacking = len(routing_norm.get("origin_hijacking", []))
     leaks = len(routing_norm.get("route_leaks", []))
@@ -927,7 +939,7 @@ def _routing_prose(routing: dict) -> str:
     return " ".join(parts)
 
 
-def _evidence_chain(cause: dict, traffic: dict, routing_norm: dict, corr: dict) -> list:
+def _evidence_chain(cause, traffic, routing_norm, corr):
     """Deterministic OBSERVE -> INFER -> LINK -> CONCLUDE -> CITE chain."""
     steps = []
 
@@ -986,7 +998,7 @@ def _evidence_chain(cause: dict, traffic: dict, routing_norm: dict, corr: dict) 
     return steps
 
 
-def _hypotheses(cause: dict, routing_norm: dict, traffic: dict) -> list:
+def _hypotheses(cause, routing_norm, traffic):
     """Render the leading causes as refutable hypothesis cards."""
     ranked = cause.get("ranked") or []
     palette = ["#dc3545", "#f59f00", "#fd7e14", "#6c757d"]
@@ -1024,7 +1036,7 @@ _REFUTE_HINTS = {
 }
 
 
-def _counterfactuals(cause_data: dict) -> list:
+def _counterfactuals(cause_data):
     key = cause.get("cause", "")
     table = {
         "origin_hijack_victim": (
@@ -1059,7 +1071,7 @@ def _counterfactuals(cause_data: dict) -> list:
     return [{"title": f"If the leading cause were removed ({cause.get('label')})", "body": body}]
 
 
-def _gaps(routing_norm: dict, traffic: dict, plot_missing: bool) -> list:
+def _gaps(routing_norm, traffic, plot_missing):
     gaps = []
     if plot_missing:
         gaps.append("No traffic plot artifact was resolved for this window.")
@@ -1081,7 +1093,7 @@ def _gaps(routing_norm: dict, traffic: dict, plot_missing: bool) -> list:
     return gaps
 
 
-def _routing_counts(routing: dict) -> list:
+def _routing_counts(routing):
     hijacked = len(routing_norm.get("origin_hijacked", []))
     hijacking = len(routing_norm.get("origin_hijacking", []))
     leaks = len(routing_norm.get("route_leaks", []))
@@ -1109,7 +1121,7 @@ def _routing_counts(routing: dict) -> list:
 _ENV: Optional[Environment] = None
 
 
-def _env() -> Environment:
+def _env():
     global _ENV
     if _ENV is None:
         _ENV = Environment(
@@ -1122,7 +1134,7 @@ def _env() -> Environment:
     return _ENV
 
 
-def _cause(cause_data: dict) -> dict:
+def _cause(cause_data):
     key = cause.get("cause", "no_clear_anomaly")
     return {
         "cause": key,
@@ -1134,7 +1146,7 @@ def _cause(cause_data: dict) -> dict:
     }
 
 
-def _certainty(cause_conf: float, proximity: str, strength: float) -> tuple:
+def _certainty(cause_conf, proximity, strength):
     evidence = float(strength or 0.0)
     if proximity in ("strong", "moderate"):
         evidence = max(evidence, 0.60 if proximity == "strong" else 0.45)
@@ -1146,7 +1158,7 @@ def _certainty(cause_conf: float, proximity: str, strength: float) -> tuple:
     return "LOW", "#6c757d", "?"
 
 
-def _gauge(level: str, strength: float) -> str:
+def _gauge(level, strength):
     """Inline SVG semicircle gauge, deterministic on a single strength value."""
     import math
     value = max(0.0, min(1.0, float(strength or 0.0)))
@@ -1159,7 +1171,7 @@ def _gauge(level: str, strength: float) -> str:
     else:
         label, color, arc = "minimal", "#adb5bd", 0.10
 
-    def point(frac: float) -> tuple:
+    def point(frac):
         angle = math.pi * (1 - frac)
         return (100 + 70 * math.cos(angle), 95 - 70 * math.sin(angle))
 
@@ -1450,7 +1462,7 @@ def render_report(
     return html
 
 
-def _chain_from_llm(chain: dict) -> list:
+def _chain_from_llm(chain):
     """Map the reasoning agent's evidence chain onto the template's steps."""
     steps = []
     for stage in ("observe", "infer", "link", "conclude", "cite"):
@@ -1470,7 +1482,7 @@ def _chain_from_llm(chain: dict) -> list:
     return steps
 
 
-def _gauge_note(strength: float, proximity: str, delta_ts: list) -> str:
+def _gauge_note(strength, proximity, delta_ts):
     if not delta_ts:
         return "No paired routing/traffic timestamps were available for a ΔT comparison."
     try:
@@ -1501,7 +1513,7 @@ def _deterministic_cause(
     leaks = len(routing_norm.get("route_leaks", []))
     outage = bool(routing_norm.get("outage_suspected"))
 
-    def mk(key: str, label: str, conf: float, why: str) -> dict:
+    def mk(key, label, conf, why):
         return {"cause": key, "label": label, "explanation": why, "confidence": conf,
                 "color": _CAUSE_COLORS.get(key, "#64748b"), "ranked": []}
 

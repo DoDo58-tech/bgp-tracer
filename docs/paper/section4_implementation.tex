@@ -1,0 +1,64 @@
+% Section 4 -- System Implementation
+\section{System Implementation}
+\label{sec:impl}
+
+The system is a Python multi-agent application backed
+by a shared on-disk cache, with controlled randomness
+for reproducibility and a workflow engine that
+orchestrates the two-phase analysis under a hard
+wall-clock budget~\cite{bgpstream}. Four substrate choices make the
+minute-level reporting budget feasible.
+
+The \textbf{shared cache} is a versioned,
+content-addressed key-value store. Every detector output,
+every agent decision, every gate transition, and every
+degraded-mode behaviour is recorded as an immutable record.
+The cache is the single point of interpretability: a
+verdict can be replayed deterministically by replaying
+the cache~\cite{caida-asrank,caida-asrel}. Each entry is addressed by $(a, e, t, k)$
+where $a$ is the AS-of-interest, $e$ the event id, $t$
+a monotonic timestamp, and $k$ a content key. A re-run
+with the same inputs produces the same hash; the cache
+hit is the reproducibility proof.
+
+The \textbf{parallelism strategy} parallelises along three
+orthogonal axes: AS-level (candidate set partitioned by
+AS-of-interest across worker processes), detector-level
+(the four detectors run in parallel within an AS-event
+pair), and channel-level (the four evidence channels
+run in parallel within the reasoning agent). Partitioning
+is deterministic (hash partition), so cache hits are
+stable across runs. On the released artifact, the typical
+end-to-end latency on the 30-event ground-truth is
+$<$ 1\,minute on a 16-core host, dominated by the
+traffic-data fetch from Cloudflare Radar.
+
+The \textbf{adaptive confidence gate} consumes a
+four-component confidence report (rule-based,
+model-based, prior, residual) and decides the next state
+as \emph{proceed}, \emph{skip}, \emph{replay}, or
+\emph{escalate}. The gate is a deterministic function
+of the report list and a published configuration.
+Hysteresis via separate enter-skip and exit-skip
+thresholds prevents oscillation; per-stage token budgets
+prevent a noisy early stage from starving the expensive
+reasoning stages. The gate is the mechanism that makes
+the system degradation-safe.
+
+Phase 1 (Deterministic arbitration) is evaluated in
+light mode (\texttt{use\_llm=False}), so every number in
+the paper's accuracy tables is deterministically
+reproducible from the artifact without an API call.
+Phase 2 (Pearl-PNS causal attribution) is evaluated
+with the LLM; a factual-audit on 9 held-out events
+confirms that the LLM layer generates internally
+consistent narrative reports (verdict consistency 100\%;
+see Table~\ref{tab:llm-audit}). The LLM layer does not
+override the Phase 1 verdict.
+
+Every stochastic component is \textbf{determined} by seeded
+randomness: bootstrap, permutation test, and the LLM
+narrative agent are all seeded. This determinism is the
+substrate for the dependability posture of the system
+(Section~\ref{sec:discuss}).
+

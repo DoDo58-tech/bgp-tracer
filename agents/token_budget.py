@@ -38,24 +38,24 @@ class TokenBudget:
 
     _instances: dict[str, "TokenBudget"] = {}
 
-    def __init__(self, run_id: str):
+    def __init__(self, run_id):
         self.run_id = run_id
         self._records: list[AgentTokenUsage] = []
         self._total_prompt: int = 0
         self._total_completion: int = 0
 
     @classmethod
-    def get_instance(cls, run_id: str) -> "TokenBudget":
+    def get_instance(cls, run_id) -> "TokenBudget":
         if run_id not in cls._instances:
             cls._instances[run_id] = cls(run_id)
         return cls._instances[run_id]
 
     @classmethod
-    def clear_instance(cls, run_id: str):
+    def clear_instance(cls, run_id):
         if run_id in cls._instances:
             del cls._instances[run_id]
 
-    def add(self, agent: str, prompt_tokens: int, completion_tokens: int):
+    def add(self, agent, prompt_tokens, completion_tokens):
         """
  LLM token . 
  """
@@ -70,7 +70,7 @@ class TokenBudget:
         self._total_prompt += prompt_tokens
         self._total_completion += completion_tokens
 
-    def add_from_response(self, agent: str, response, prompt_tokens: int = 0):
+    def add_from_response(self, agent, response, prompt_tokens=0):
         """
  LLM usage . 
  OpenAI-compatible : response.usage.prompt_tokens / completion_tokens
@@ -103,7 +103,7 @@ class TokenBudget:
             result[key] = (pt + rec.prompt_tokens, ct + rec.completion_tokens)
         return result
 
-    def summary(self) -> dict:
+    def summary(self):
         """"""
         pt, ct = self.total()
         return {
@@ -122,5 +122,5 @@ class TokenBudget:
             },
         }
 
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self._records)

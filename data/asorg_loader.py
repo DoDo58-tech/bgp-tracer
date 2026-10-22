@@ -33,7 +33,7 @@ def get_available_dates():
 
 
 def get_asorg_url(at_time):
-    target_date = int(target_time.strftime("%Y%m%d"))
+    target_date = int(at_time.strftime("%Y%m%d"))
     available_dates = get_available_dates()
     if not available_dates:
         logger.error("Failed to get ASORG available dates")

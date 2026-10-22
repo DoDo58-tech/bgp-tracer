@@ -27,7 +27,7 @@ pytestmark = pytest.mark.fast
 # ─── Helpers ────────────────────────────────────────────────────────────
 
 
-def _tl(n: int, anomaly_range, baseline: float = 0.1, peak: float = 1.0):
+def _tl(n, anomaly_range, baseline=0.1, peak=1.0):
     return [
         {"timestamp": f"2026-09-29T00:{i:02d}:00",
          "score": float(peak if anomaly_range[0] <= i <= anomaly_range[1] else baseline)}

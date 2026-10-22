@@ -904,11 +904,23 @@ class RouteOutageDetector:
     @staticmethod
     def parse_time(raw):
         raw_str = str(raw)
-        # Try with seconds first, fallback to without seconds
-        try:
-            return datetime.strptime(raw_str, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            return datetime.strptime(raw_str, "%Y-%m-%d %H:%M")
+        # Try several common formats. ISO with 'T' is what chief_agent
+        # passes; cache files also store it that way.
+        for fmt in (
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d %H:%M",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y/%m/%d %H:%M",
+        ):
+            try:
+                return datetime.strptime(raw_str, fmt)
+            except ValueError:
+                continue
+        # Last resort: let the default ValueError propagate with
+        # whatever raw_str the caller passed.
+        return datetime.strptime(raw_str, "%Y-%m-%d %H:%M")
 
     def _no_data_result(self, asn, start_time, end_time, baseline_start, error = ""):
         """Return a consistent result when outage detection has no data, so downstream always gets success=True and defined fields."""

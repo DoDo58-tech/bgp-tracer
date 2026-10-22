@@ -194,7 +194,7 @@ class PatternDetector:
  These patterns determine which tools get triggered.
  """
 
-    def detect(self, routing_data: dict, traffic_data: dict, context: dict) -> EvidencePattern:
+    def detect(self, routing_data, traffic_data, context):
         """Detect patterns from routing and traffic evidence.
 
  P0-#2: annotation_package {hijack:{...}, leak: {...}, outage:{...}}. 
@@ -381,7 +381,7 @@ class ToolTriggerEngine:
 class ToolOrchestrator:
     """Executes triggered tools in parallel batches."""
 
-    def __init__(self, max_concurrent: int = 8):
+    def __init__(self, max_concurrent=8):
         self.max_concurrent = max_concurrent
 
     async def execute(
@@ -406,7 +406,7 @@ class ToolOrchestrator:
 
             semaphore = asyncio.Semaphore(self.max_concurrent)
 
-            async def run_tool(tool: TriggeredTool) -> TriggeredTool:
+            async def run_tool(tool):
                 async with semaphore:
                     tool.status = "running"
                     try:
@@ -498,7 +498,7 @@ class EvidenceEnricher:
         return enriched
 
     @staticmethod
-    def build_narrative(enrichment_data: dict) -> str:
+    def build_narrative(enrichment_data):
         """Build a human-readable narrative of all enrichment results."""
         sections = []
 

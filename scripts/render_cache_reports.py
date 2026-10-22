@@ -30,7 +30,7 @@ OUT_HTML = ROOT / "results/html"
 OUT_HTML.mkdir(parents=True, exist_ok=True)
 
 
-def _resolve_target_as(row: dict) -> str:
+def _resolve_target_as(row):
     etype = (row.get("event_type") or "").strip().lower()
     label = (row.get("ground_truth_cause_label") or "").strip().lower()
     is_leak = etype in {"leak", "route_leak"} or label == "route_leak"
@@ -43,7 +43,7 @@ def _resolve_target_as(row: dict) -> str:
     return ""
 
 
-def _find_quick(event_id: str, victim_as: str) -> Path | None:
+def _find_quick(event_id, victim_as):
     """Find a quick_<asn>_*.json that matches the event's date.
 
     Reuse the same logic as cache_only_evaluation_v17.py — date-match
@@ -80,7 +80,7 @@ def _find_quick(event_id: str, victim_as: str) -> Path | None:
             matched = batch_matched
             break
 
-    def _window_score(p: Path) -> float:
+    def _window_score(p):
         ts = _re.findall(r"\d{4}-\d{2}-\d{2}[ _T]?\d{2}[: ]?\d{2}", p.name)
         if len(ts) >= 2:
             try:

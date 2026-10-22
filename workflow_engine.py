@@ -3,22 +3,8 @@ BGP Tracer Multi-Agent Workflow Engine
 ======================================
 State machine: INITIAL → TRAFFIC_ANALYSIS → ROUTING_ANALYSIS → REASONING → REPORT → COMPLETE/ERROR
 
-Enhanced Mode (--enhanced flag):
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │            ReactiveDecisionEngine + MessageBus + LLMDebateAgent           │
-  │  eval → decide (proceed|retry|probe|debate|escalate) ──▶ execute    │
-  └──────────────────────────────────────────────────────────────────────┘
-                                  ↑
-Fixes applied:
-  F9  (Issue 9):   Reactive decisions ACTUALLY change execution via _handle_decision
-  F12 (Issue 12):  Agents subscribe to MessageBus topics (not just publish)
-  F5  (Issue 5):   Decision budgets prevent infinite loops
-  F6  (Issue 6):   ExternalValidator breaks LLM self-reference in debate
-  F7  (Issue 7):   ConflictResolver implemented in MultiAgentReportAgent
-  F10 (Issue 10):   Concrete formulas for all quality metrics
-  F11 (Issue 11):   Token cost + latency tracking per stage
-  F13 (Issue 13):   Unified terminology (conclusion/winner/outcome)
-  F14 (Issue 14):    Specific error types (PipelineError, DecisionBudgetExceeded)
+Enhanced mode (--enhanced flag) removed 2026-09-29 (paper-grade cleanup);
+the legacy workflow is the only execution path.
 """
 
 from __future__ import annotations
@@ -38,6 +24,65 @@ from utils.helpers import make_json_safe
 from utils.logger import logger
 from detectors.traffic.multi_scale_baseline import CausalCorrelationScorer
 from detectors.evidence_chain_builder import EvidenceChainBuilder
+
+
+def build_routing_state(prefix2as_file, prefixes, max_prefixes=200):
+    """Build the ASN -> prefixes map the cascade estimator needs.
+
+    The cascade estimator (CIC) decides whether an AS in the propagation
+    path actually carries the affected prefix. That test needs a
+    prefix-to-ASN mapping; without it every node in the cascade reports
+    ``has_route=False`` and the whole counterfactual impact collapses to
+    zero.
+
+    BUG-FIX 2026-10-21: ``routing_state`` was hard-coded to ``{}`` in
+    :meth:`WorkflowEngine.build_hcaf_timelines` and nothing in the
+    codebase ever populated it, so the CIC channel abstained on every
+    event regardless of how far the anomaly actually propagated.
+
+    Args:
+        prefix2as_file: path to the parsed CAIDA pfx2as JSON snapshot.
+        prefixes: the prefix(es) of interest (string or list).
+        max_prefixes: cap on how many prefixes to resolve, so a
+            multi-prefix event cannot load the entire 750k-entry table
+            into a per-AS index.
+
+    Returns:
+        dict mapping ASN string -> list of prefixes it originates. Only
+        the ASes that actually originate one of ``prefixes`` are
+        included, so the map stays small and is directly usable by
+        :func:`agents.causal_attribution.cic_has_pfx`.
+    """
+    if not prefix2as_file or not Path(prefix2as_file).exists():
+        return {}
+    if isinstance(prefixes, str):
+        prefixes = [prefixes]
+    prefixes = [p for p in (prefixes or []) if p]
+    if not prefixes:
+        return {}
+
+    try:
+        from agents.coordination_utils import load_json
+        table = load_json(prefix2as_file)
+    except Exception as exc:  # noqa: BLE001 - degrade, never crash the pipeline
+        logger.warning(f"[HCAF] routing_state: failed to load {prefix2as_file}: {exc}")
+        return {}
+    if not isinstance(table, dict):
+        return {}
+
+    wanted = set(prefixes[:max_prefixes])
+    state = {}
+    for prefix, origins in table.items():
+        if prefix not in wanted:
+            continue
+        if isinstance(origins, str):
+            origins = [origins]
+        for origin_asn in origins or []:
+            key = str(origin_asn).strip().upper().lstrip("AS")
+            if not key:
+                continue
+            state.setdefault(key, []).append(prefix)
+    return state
 
 
 class WorkflowState(Enum):
@@ -181,7 +226,7 @@ class WorkflowContext:
 
 class WorkflowError(Exception):
     """Base exception for workflow errors."""
-    def __init__(self, message, stage: WorkflowState, context: WorkflowContext):
+    def __init__(self, message, stage, context):
         self.message = message
         self.stage = stage
         self.context = context
@@ -231,6 +276,15 @@ def async_retry(max_retries = 3, backoff_base = 1.0):
                         await asyncio.sleep(wait_time)
                     else:
                         logger.error(f"All {max_retries} retries exhausted for {func.__name__}")
+                except Exception as e:
+                    # Bug fix 2026-10-13: non-RetryableError exceptions
+                    # (ValueError, RuntimeError, network TimeoutError, etc.)
+                    # were previously silently swallowed and returned as None.
+                    # Re-raise immediately so the caller sees the real error
+                    # and can decide on the recovery strategy. Only
+                    # RetryableError instances get retried.
+                    logger.error(f"Non-retryable error in {func.__name__}: {e!r}")
+                    raise
             # If we got here, the function raised a RetryableError every
             # time. Propagate the last captured exception.
             if last_exception is not None:
@@ -283,7 +337,6 @@ class WorkflowEngine:
         )
         self.min_hcaf_tier = WORKFLOW_MIN_HCAF_TIER
         self.min_hcaf_score = WORKFLOW_MIN_HCAF_SCORE
-        self._enhanced_components = None  # legacy field, unused after 2026-09-29 cleanup
         # Optional kwargs accepted for API compatibility with callers that pass
         # through ChiefExpertAgent-style parameters. Stored for handler introspection.
         self._enhanced_flag = enhanced
@@ -303,7 +356,7 @@ class WorkflowEngine:
         }
 
     @staticmethod
-    def _extract_hcaf_strength(result) -> dict:
+    def _extract_hcaf_strength(result):
         """Return ``{"strength": <value|None>}`` from a HCAF result object.
 
         Bug fix 2026-09-13: previous code used
@@ -347,11 +400,7 @@ class WorkflowEngine:
             WorkflowState.ERROR: self._handle_error,
         }
 
-    def init_enhanced_components(self, context: WorkflowContext):
-        """No-op shim — enhanced mode removed 2026-09-29 (paper-grade cleanup)."""
-        return
-
-    async def execute(self, context: WorkflowContext):
+    async def execute(self, context):
         """
         Execute the workflow starting from INITIAL state.
 
@@ -383,10 +432,6 @@ class WorkflowEngine:
             WorkflowEvent.START
         )
 
-        # Transfer enhanced flags from engine to context
-        # enhanced mode removed 2026-09-29 — no field propagation needed
-        pass
-
         # Bug fix 2026-09-13: ``event_type`` and ``as_role`` came in as
         # parameters to ``run_workflow`` and were stored on the context,
         # but were NEVER written into the Blackboard ``config`` section.
@@ -403,8 +448,7 @@ class WorkflowEngine:
                 await bb_seed.write("config", "as_role", context.as_role)
 
         try:
-            # Initialize enhanced multi-agent components if enabled
-            pass  # enhanced mode removed 2026-09-29
+            # enhanced mode removed 2026-09-29; nothing to initialise here.
 
             # Main state machine loop
             timed_out = False
@@ -516,19 +560,8 @@ class WorkflowEngine:
 
             # Clean up MessageBus if enhanced mode was used
             if context.message_bus_run_id:
-                # Bug fix 2026-09-13: stop() the BlackboardMessageBridge
-                # BEFORE clearing the bus instance. The bridge monkey-patches
-                # ``bb._notify`` in start(); without stop() the patched
-                # callback stays attached and any subsequent Blackboard
-                # activity (including a non-enhanced follow-up run that
-                # happens to share the same Python process) will try to
-                # call into a dead bus instance and AttributeError.
-                bridge = (self._enhanced_components or {}).get("bridge") if hasattr(self, "_enhanced_components") else None
-                if bridge is not None:
-                    try:
-                        bridge.stop()
-                    except Exception as _bs_err:
-                        logger.warning(f"[Enhanced Mode] Bridge stop failed: {_bs_err}")
+                # enhanced mode removed 2026-09-29; no bridge to stop.
+                pass
             # Bug fix 2026-09-13 (BUG-R56): TokenBudget.clear_instance
             # existed but was never called in production — only tests
             # used it. Without cleanup, every run leaks its TokenBudget
@@ -556,7 +589,7 @@ class WorkflowEngine:
 
         return context
     
-    def get_next_state(self, current: WorkflowState, event: WorkflowEvent, context: WorkflowContext = None):
+    def get_next_state(self, current, event, context=None):
         transitions = {
             (WorkflowState.INITIAL, WorkflowEvent.START): WorkflowState.PARSING_INPUT,
             (WorkflowState.PARSING_INPUT, WorkflowEvent.INPUT_PARSED): WorkflowState.TRAFFIC_SCREENING,
@@ -581,10 +614,10 @@ class WorkflowEngine:
     
     # ── State Handlers ───────────────────────────────────────────────────────
 
-    async def _handle_initial(self, context: WorkflowContext):
+    async def _handle_initial(self, context):
         return WorkflowEvent.START
 
-    async def _handle_parsing_input(self, context: WorkflowContext):
+    async def _handle_parsing_input(self, context):
         from agents.traffic_agent import (
             parse_traffic_outage_input,
             parse_multiple_as_input,
@@ -610,7 +643,7 @@ class WorkflowEngine:
         
         return WorkflowEvent.INPUT_PARSED
     
-    async def _handle_traffic_screening(self, context: WorkflowContext):
+    async def _handle_traffic_screening(self, context):
         logger.info(f"Preparing joint traffic and routing analysis for AS{context.asn}...")
         
         try:
@@ -658,7 +691,7 @@ class WorkflowEngine:
             context.routing_analysis_detail = "full"
             return WorkflowEvent.SCREENING_COMPLETE
     
-    async def _handle_traffic_analysis(self, context: WorkflowContext):
+    async def _handle_traffic_analysis(self, context):
         from agents.core import Blackboard
         from agents.traffic_agent import TrafficAgent
 
@@ -731,12 +764,9 @@ class WorkflowEngine:
                 f"event_type={context.event_type}, as_role={context.as_role}, "
                 f"routing_window={context.routing_time_window}"
             )
-
-            # Enhanced mode: publish to MessageBus
-            pass  # enhanced message-bus path deleted 2026-09-29
         return WorkflowEvent.TRAFFIC_DONE
     
-    async def _handle_routing_analysis(self, context: WorkflowContext):
+    async def _handle_routing_analysis(self, context):
         from agents.core import Blackboard
         from agents.routing_agent import RoutingAgent
 
@@ -783,7 +813,7 @@ class WorkflowEngine:
             return WorkflowEvent.ROUTING_DONE
 
         # Use shared Blackboard in enhanced mode
-        bb = Blackboard()  # enhanced shared_blackboard deleted 2026-09-29
+        bb = Blackboard()  # shared blackboard (enhanced path removed 2026-09-29)
         # Write the routing-window config keys once. The previous
         # implementation wrote them twice in the non-enhanced branch
         # (the second copy was a dead-code duplicate of the first); we
@@ -838,12 +868,9 @@ class WorkflowEngine:
 
         await self._cross_validate_results(context)
 
-        if result.success:
-            # Enhanced mode: publish to MessageBus
-            pass  # enhanced message-bus path deleted 2026-09-29
         return WorkflowEvent.ROUTING_DONE
     
-    async def _handle_joint_evidence(self, context: WorkflowContext):
+    async def _handle_joint_evidence(self, context):
         """
         New state: Run three-card joint evidence analysis (C1/C2/C3).
         
@@ -1061,7 +1088,7 @@ class WorkflowEngine:
 
         return WorkflowEvent.JOINT_EVIDENCE_COMPLETE
     
-    async def _cross_validate_results(self, context: WorkflowContext):
+    async def _cross_validate_results(self, context):
         traffic_data_available = bool(
             context.traffic_result
             and context.traffic_result.get("data_available", context.traffic_result.get("success", False))
@@ -1423,6 +1450,39 @@ class WorkflowEngine:
                 events_all.extend(
                     routing_result.get(key) or hijack_section.get(key) or leak_section.get(key) or []
                 )
+
+            # ── Observable routing signals for the confounder detector ─────
+            # BUG-FIX 2026-10-21: these were never populated, so the
+            # ConfounderDetector's five rule keys had no source and the
+            # whole channel was structurally empty.
+            routing_context["has_routing_withdrawal"] = bool(
+                (routing_result.get("outage_analysis") or {}).get("is_outage_suspected")
+                or routing_result.get("outage_suspected")
+            )
+            routing_context["has_routing_origin"] = bool(
+                routing_result.get("origin_hijacked")
+                or routing_result.get("forge_hijacked")
+                or hijack_section.get("origin_hijacked")
+                or hijack_section.get("forge_hijacked")
+            )
+            routing_context["has_route_leak"] = bool(
+                routing_result.get("route_leaks") or leak_section.get("route_leaks")
+            )
+            routing_context["leak_count"] = len(
+                routing_result.get("route_leaks") or leak_section.get("route_leaks") or []
+            )
+            routing_context["hijack_count"] = len(
+                routing_result.get("origin_hijacked") or hijack_section.get("origin_hijacked") or []
+            )
+            # Distinct event types co-occurring in the window.
+            _event_types = set()
+            for ev in events_all:
+                if isinstance(ev, dict):
+                    et = ev.get("event_type") or ev.get("type")
+                    if et:
+                        _event_types.add(str(et).lower())
+            routing_context["event_types"] = sorted(_event_types)
+
             if events_all:
                 first_event = events_all[0]
                 # Some detectors serialise events as strings (AnomalyDetail
@@ -1453,6 +1513,34 @@ class WorkflowEngine:
                 if routing_context["as_path"]:
                     routing_context["origin_as"] = routing_context["origin_as"] or routing_context["as_path"][-1]
 
+        # Collect every prefix the routing detectors flagged. The cascade
+        # estimator needs the full set, not just the first event's, so a
+        # multi-prefix event propagates along every affected prefix.
+        affected_prefixes = set()
+        if routing_result:
+            hijack_section = routing_result.get("hijack") or {}
+            leak_section = routing_result.get("leak") or {}
+            for key in ("origin_hijacked", "forge_hijacked", "origin_hijacking",
+                        "forge_hijacking", "route_leaks"):
+                for ev in (routing_result.get(key) or hijack_section.get(key)
+                           or leak_section.get(key) or []):
+                    if not isinstance(ev, dict):
+                        continue
+                    for pkey in ("prefix", "affected_prefix", "prefixes", "victim_prefix"):
+                        pval = ev.get(pkey)
+                        if isinstance(pval, str) and pval:
+                            affected_prefixes.add(pval)
+                        elif isinstance(pval, list):
+                            affected_prefixes.update(x for x in pval if isinstance(x, str) and x)
+        if traffic_result:
+            for anom in (traffic_result.get("anomalies") or []):
+                if not isinstance(anom, dict):
+                    continue
+                for pkey in ("prefix", "affected_prefix"):
+                    pval = anom.get(pkey)
+                    if isinstance(pval, str) and pval:
+                        affected_prefixes.add(pval)
+
         if traffic_result:
             exc_list = traffic_result.get("anomalies") or []
             if exc_list:
@@ -1463,6 +1551,22 @@ class WorkflowEngine:
                     drop_ratio_val = abs(traffic_result["percent_change"])
                 if isinstance(drop_ratio_val, (int, float)):
                     traffic_context["traffic_drop_ratio"] = min(1.0, abs(drop_ratio_val) / 100.0)
+
+        # ── routing_state: which ASes originate the affected prefixes ──────
+        # BUG-FIX 2026-10-21: this was hard-coded to {} and never populated,
+        # so every node in the propagation cascade reported has_route=False
+        # and the CIC counterfactual impact was structurally zero.
+        prefix2as_file = None
+        if isinstance(routing_result, dict):
+            prefix2as_file = routing_result.get("prefix2as_file")
+        if prefix2as_file and affected_prefixes:
+            topology_context["routing_state"] = build_routing_state(
+                prefix2as_file, sorted(affected_prefixes),
+            )
+            logger.info(
+                f"[HCAF] routing_state: {len(topology_context['routing_state'])} ASes "
+                f"originate {len(affected_prefixes)} affected prefix(es)"
+            )
 
         return routing_timeline, traffic_timeline, routing_context, traffic_context, topology_context
 
@@ -1511,12 +1615,64 @@ class WorkflowEngine:
             hcaf_engine = CausalAttributionEngine()
             target_as_val = int(context.asn) if str(context.asn).isdigit() else None
 
-            if ctx_asrel := (context.as_relationships or {}):
-                topology_context["adjacency"] = {
-                    asn: list(set(neighbors))
-                    for asn, neighbors in ctx_asrel.items()
-                    if isinstance(neighbors, (list, set))
-                }
+            # ── AS topology for the cascade estimator (CIC) ──────────────────
+            # BUG-FIX 2026-10-21: the previous code built the "adjacency" map
+            # by iterating over `context.as_relationships`, whose keys are the
+            # *relation type names* ("providers", "peers", "customers"), not
+            # ASNs. The resulting map was therefore
+            #   {"providers": [...], "peers": [...], "customers": [...]}
+            # and `cic_propagate`'s `topology.get(origin_as, [])` lookup could
+            # never hit, so the cascade always contained exactly one node and
+            # the CIC evidence channel abstained on every event.
+            #
+            # The fix builds a genuine ASN -> neighbour map from the CAIDA
+            # as-rel snapshot, with each edge labelled by its commercial
+            # relationship (provider / peer / customer) so the cascade can
+            # weight propagation by relation rather than treating every hop
+            # as an undirected tie.
+            asrel_file = None
+            for src in (context.reasoning_result, context.routing_result):
+                if isinstance(src, dict) and src.get("as_rel_file"):
+                    asrel_file = src["as_rel_file"]
+                    break
+
+            if asrel_file:
+                from agents.coordination_utils import build_as_topology
+                topo = build_as_topology(context.asn, asrel_file, max_depth=2, max_nodes=300)
+                topology_context["adjacency"] = topo.get("adjacency", {})
+                topology_context["edge_types"] = topo.get("edge_types", {})
+                topology_context["topology_origin"] = topo.get("origin")
+                logger.info(
+                    f"[HCAF] AS topology: {topo.get('nodes', 0)} ASes discovered "
+                    f"({topo.get('expanded_nodes', 0)} expanded, depth<=2) "
+                    f"from {asrel_file}"
+                )
+            else:
+                logger.info("[HCAF] no AS-relationship file available; cascade estimator has no topology")
+
+            # ── Content / CDN origin classification ──────────────────────────
+            # Feeds the ``cdn_scenario`` confounder: a content network's
+            # traffic can shift for reasons unrelated to BGP, so a
+            # routing->traffic attribution on a content prefix needs the
+            # caveat.
+            asorg_file = None
+            for src in (context.reasoning_result, context.routing_result):
+                if isinstance(src, dict) and src.get("asorg_file"):
+                    asorg_file = src["asorg_file"]
+                    break
+            if asorg_file and topology_context.get("routing_state"):
+                try:
+                    from agents.coordination_utils import classify_content_asns
+                    content = classify_content_asns(
+                        topology_context["routing_state"].keys(), asorg_file
+                    )
+                    topology_context["content_origins"] = sorted(content)
+                    if content:
+                        logger.info(
+                            f"[HCAF] content/CDN origins among affected prefixes: {content}"
+                        )
+                except Exception as exc:  # noqa: BLE001 - degrade, never crash
+                    logger.warning(f"[HCAF] content-origin classification failed: {exc}")
 
             # BUG-FIX 2026-10-01: the workflow engine historically used
             # Chinese method/attribute names (the CJK engine/analysis accessors)
@@ -1586,7 +1742,7 @@ class WorkflowEngine:
             return None
 
     @staticmethod
-    def collect_causal_evidence(routing_result: dict, traffic_result: dict) -> dict:
+    def collect_causal_evidence(routing_result, traffic_result):
         """Pass through only explicit provenance-bearing evidence for causal claims."""
         raw_evidence = {}
         for result in (routing_result or {}, traffic_result or {}):
@@ -1622,7 +1778,7 @@ class WorkflowEngine:
     # ── Skip-reasoning policy ─────────────────────────────────────────────
     _TIER_ORDER = {"INSUFFICIENT": 0, "C1": 1, "C2": 2, "C3": 3}
 
-    def should_skip_reasoning(self, context: WorkflowContext) -> bool:
+    def should_skip_reasoning(self, context):
         """
         Whether to short-circuit the reasoning stage.
 
@@ -1675,7 +1831,7 @@ class WorkflowEngine:
         })
         return True
 
-    async def _handle_reasoning(self, context: WorkflowContext):
+    async def _handle_reasoning(self, context):
         from agents.reasoning_agent import run_reasoning_agent
         from agents.core import Blackboard
         from agents.hypothesis_manager import HypothesisAgent
@@ -1760,7 +1916,7 @@ class WorkflowEngine:
             logger.error(f"Reasoning failed: {e}")
             raise RetryableError(f"Reasoning error: {e}")
 
-    def apply_reasoning_causal_evidence(self, context: WorkflowContext) -> None:
+    def apply_reasoning_causal_evidence(self, context):
         """Re-score claims after independently supplied verification arrives in reasoning."""
         evidence = context.reasoning_result.get("causal_evidence")
         if not isinstance(evidence, dict):
@@ -1777,7 +1933,7 @@ class WorkflowEngine:
             context.evidence_chain = self.build_evidence_chain(context)
             context.reasoning_result["causal_analysis"] = refreshed
 
-    async def _run_legacy_diagnosis_pipeline(self, bb, context: WorkflowContext):
+    async def _run_legacy_diagnosis_pipeline(self, bb, context):
         """
         Legacy diagnosis pipeline (used when enhanced mode debate fails or is disabled).
 
@@ -1814,7 +1970,7 @@ class WorkflowEngine:
             context.verification_result = {"source": "routing_fallback", "claim_count": 0}
 
     
-    async def _handle_validation(self, context: WorkflowContext):
+    async def _handle_validation(self, context):
         quality_score = self.calculate_quality_score(context)
         context.confidence_score = quality_score
         context.data_quality = self.assess_data_quality(context)
@@ -1844,7 +2000,7 @@ class WorkflowEngine:
         # must be produced so operators can distinguish it from a pipeline error.
         return WorkflowEvent.VALIDATION_PASSED
 
-    async def _fetch_victim_traffic(self, context: WorkflowContext, bb):
+    async def _fetch_victim_traffic(self, context, bb):
         """
         Fetch traffic data for victim ASes discovered from routing events.
         Writes results to blackboard under 'routing' section.
@@ -1875,7 +2031,7 @@ class WorkflowEngine:
         except Exception as exc:
             logger.warning(f"[workflow] Victim traffic fetch failed: {exc}")
     
-    async def _handle_data_enrichment(self, context: WorkflowContext):
+    async def _handle_data_enrichment(self, context):
         """Enrich context with additional data (org info, relationships, ThreatIntel, etc.)."""
         from agents.coordination_utils import (
             lookup_org_info,
@@ -1961,14 +2117,14 @@ class WorkflowEngine:
         
         return WorkflowEvent.DATA_COLLECTED
     
-    async def _handle_report_generation(self, context: WorkflowContext):
+    async def _handle_report_generation(self, context):
         """Generate final report — MultiAgentReportAgent in enhanced mode, original ReportAgent otherwise."""
         from agents.core import Blackboard
         from agents.report_agent import ReportAgent
         from utils.logger import logger as log
 
         # Use shared Blackboard in enhanced mode
-        bb = Blackboard()  # enhanced shared_blackboard deleted 2026-09-29
+        bb = Blackboard()  # shared blackboard (enhanced path removed 2026-09-29)
 
         # Bug fix: seed the report Blackboard with config (asn, start_time,
         # end_time). Without these, ReportAgent returns "Missing asn in
@@ -2027,45 +2183,11 @@ class WorkflowEngine:
         })
 
         # ── Enhanced mode: route to report generation ──
-        # Bug fix (2026-09-12): the previous implementation unconditionally
-        # ran MultiAgentReportAgent (5+ LLM calls: TrafficExpert,
-        # RoutingExpert, EvidenceLinker, ConflictResolver, draft) followed
-        # by the legacy ReportAgent (1 more LLM call) — 6+ calls per event,
-        # each 30-90s on the qwen3.5 endpoint, blowing the 600s timeout and
-        # forcing the pipeline to silently swallow reports.
-        #
-        # New rule: enhanced mode is observationally identical to legacy
-        # mode for *report generation* (1 LLM call). The "enhanced" flag
-        # only changes two upstream decisions:
-        #   (a) a single rule-based debate round is run to refine the
-        #       diagnosis claim (LLMDebateAgent uses rule-based
-        #       Prosecutor/Defense — no LLM calls);
-        #   (b) reactive decisions are emitted, but only via the
-        #       deterministic rule-based code path.
-        # This caps LLM cost at the same level as the non-enhanced path
-        # while keeping the multi-agent *evidence-quality* benefit
-        # (debate, evaluation gates, observation board) intact.
-        #
-        # Set BGP_TRACER_RUN_MULTI_AGENT=1 to opt back into the
-        # MultiAgentReportAgent pipeline (useful for offline analyses).
-        run_multi_agent = False  # enhanced mode removed 2026-09-29
-        if run_multi_agent:
-            log.info("[Enhanced] MultiAgentReportAgent requested via env (opt-in)")
-            report_agent = self._enhanced_components.get("report_agent")
-            multi_agent_result = None
-            multi_agent_html = ""
-            multi_agent_metrics: dict = {}
-            # Multi-agent report agent removed 2026-09-29 (enhanced mode deleted).
-            # Always run the legacy ReportAgent once on top so the final
-            # HTML is the comprehensive LLM-generated report.
-            legacy_html = await self._run_legacy_report(bb, context, ReportAgent, log)
-            html = legacy_html or bb._sections.get("report", {}).get("html") or ""
-            if multi_agent_html:
-                context.final_result = context.final_result or {}
-                context.final_result["multi_agent_html"] = multi_agent_html
-        else:
-            legacy_html = await self._run_legacy_report(bb, context, ReportAgent, log)
-            html = legacy_html or bb._sections.get("report", {}).get("html") or ""
+        # Enhanced mode removed 2026-09-29; always run the legacy
+        # ReportAgent (1 LLM call). Set BGP_TRACER_RUN_MULTI_AGENT=1
+        # to opt back into the multi-agent path.
+        legacy_html = await self._run_legacy_report(bb, context, ReportAgent, log)
+        html = legacy_html or bb._sections.get("report", {}).get("html") or ""
 
         # Bug fix 2026-09-13 (BUG-R102): the unconditional
         # ``html = bb._sections.get("report", {}).get("html") or ""``
@@ -2104,7 +2226,7 @@ class WorkflowEngine:
         context.final_result["report_path"] = context.report_path
         return WorkflowEvent.REPORT_GENERATED
 
-    async def _run_legacy_report(self, bb, context: WorkflowContext, ReportAgent, log):
+    async def _run_legacy_report(self, bb, context, ReportAgent, log):
         """Run the legacy single-agent ReportAgent and return its HTML.
 
         When the LLM-driven path fails (timeout / empty / balance validation)
@@ -2178,17 +2300,17 @@ class WorkflowEngine:
         # Otherwise return empty (orchestrator already saw the fallback attempt)
         return ""
 
-    async def _handle_complete(self, context: WorkflowContext):
+    async def _handle_complete(self, context):
         """Handle completion state."""
         return WorkflowEvent.COMPLETE
     
-    async def _handle_error(self, context: WorkflowContext):
+    async def _handle_error(self, context):
         """Handle error state."""
         return WorkflowEvent.ERROR
     
     # ==================== Quality Assessment ====================
     
-    def assess_data_quality(self, context: WorkflowContext):
+    def assess_data_quality(self, context):
         """Assess overall data quality."""
         score = self.calculate_quality_score(context)
         
@@ -2199,7 +2321,7 @@ class WorkflowEngine:
         else:
             return "Low"
     
-    def calculate_quality_score(self, context: WorkflowContext):
+    def calculate_quality_score(self, context):
         """Calculate a 0-1 quality score based on available data."""
         score = 0.0
         factors = 0
@@ -2356,7 +2478,7 @@ async def run_workflow(
     return await engine.execute(context)
 
 
-def snapshot_context(context: "WorkflowContext") -> dict:
+def snapshot_context(context: "WorkflowContext"):
     """Convert a WorkflowContext dataclass to a JSON-serialisable dict for checkpointing."""
     try:
         d = asdict(context)
