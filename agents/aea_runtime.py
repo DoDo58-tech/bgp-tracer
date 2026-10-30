@@ -14,7 +14,7 @@ zero.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agents.edge_ownership import (
@@ -54,9 +54,16 @@ _MECHANISM_BY_EVENT_TYPE = {
 
 
 def parse_timestamp(value: object) -> Optional[datetime]:
-    """Parse the timestamp spellings that reach the engine."""
+    """Parse the timestamp spellings that reach the engine.
+
+    Every parsed value is made timezone-naive in UTC.  The two logs that
+    meet here carry timestamps in different spellings -- some with a
+    ``Z`` suffix, some with an explicit offset, some with none -- and
+    subtracting an aware from a naive datetime raises.  Normalising at the
+    boundary keeps the arithmetic below total.
+    """
     if isinstance(value, datetime):
-        return value
+        return _as_utc_naive(value)
     if value is None:
         return None
     text = str(value).strip()
@@ -64,16 +71,23 @@ def parse_timestamp(value: object) -> Optional[datetime]:
         return None
     candidate = text.replace("Z", "+00:00")
     try:
-        return datetime.fromisoformat(candidate)
+        return _as_utc_naive(datetime.fromisoformat(candidate))
     except ValueError:
         pass
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M",
                 "%Y-%m-%d"):
         try:
-            return datetime.strptime(text[:len(fmt) + 6], fmt)
+            return _as_utc_naive(datetime.strptime(text[:len(fmt) + 6], fmt))
         except ValueError:
             continue
     return None
+
+
+def _as_utc_naive(value: datetime) -> datetime:
+    """Return ``value`` as a naive UTC datetime."""
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def build_shared_series(

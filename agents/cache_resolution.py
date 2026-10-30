@@ -93,7 +93,21 @@ class CacheMatch:
 
 
 def candidates(quick_dir: Path) -> Iterable[Path]:
-    return sorted(quick_dir.glob("quick_*.json"))
+    """Every quick cache under ``quick_dir``, at any depth.
+
+    The tree holds caches in nested run directories as well as at the top
+    level, and the same window can be spelled with either a space or a
+    ``T`` between the date and the time.  A scan that reads only the top
+    level therefore misses most of the corpus, and an event that *has* a
+    cache gets reported as having none -- which is a measurement failure
+    dressed up as missing evidence.
+
+    Recursion costs one directory walk and makes the resolution depend on
+    the evidence rather than on where the file happens to sit.
+    """
+    if not quick_dir.is_dir():
+        return []
+    return sorted(quick_dir.rglob("quick_*.json"))
 
 
 def newest(paths: list[Path]) -> Path:
