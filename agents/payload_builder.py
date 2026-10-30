@@ -1,57 +1,5 @@
-"""
-Unified Payload Builder for LLM Calls
-=====================================
-
-Resolves a structural defect across the agent system: every LLM call site
-had its own ad-hoc size-limiting logic (or none at all), which produced
-two failures:
-
-  1. Payload explosion — routing results with 500 events carried full
-     ``as_path`` lists into 3-5 reasoning prompts, often 200KB+ each,
-     blowing past the LLM context window.
-
-  2. Silent fallback — when the model couldn't process the prompt, each
-     site had its own rule-based fallback that quietly overrode the LLM
-     decision without telling anyone.
-
-This module is the single source of truth for:
-
-  - **Section-aware slimming**: each section (traffic / routing / correlation /
-    reasoning / report) has explicit keep/drop lists for fields and a max
-    item count per list type.
-
-  - **Hard token cap**: a final guardrail that recursively shrinks lists
-    until the JSON-serialized payload fits inside the budget.
-
-  - **Token estimation**: a coarse estimator that lets callers warn the
-    caller before sending the prompt, and lets ``TokenBudget`` attribute
-    real tokens to the right agent.
-
-  - **Per-section context budgets**: different stages of the workflow have
-    different risk profiles — reasoning can use 60K tokens, reports 50K,
-    specialist validation 30K, classification 5K, calibration 8K.
-
-Design decisions:
-
-  - **Allow-list > deny-list**: each section declares what it keeps.
-    Adding a new field to the system that shouldn't go to LLM is
-    automatically excluded (no need to remember to add it to a deny list).
-
-  - **Estimate before send**: every helper returns ``(payload, est_tokens)``
-    so a caller can decide whether to skip the call or fall back to
-    deterministic.  The function never silently drops to "is_valid=True".
-
-  - **No new dependencies**: uses only stdlib ``json``.
-
-Public API:
-
-  - :func:`slim_section`     — section-aware slim with default budget
-  - :func:`cap_payload`      — hard byte cap with shrinking fallback
-  - :func:`estimate_tokens`  — coarse token estimate
-  - :func:`estimate_bytes`   — coarse byte estimate
-  - :func:`record_llm_call`  — record actual usage in TokenBudget
-  - :class:`PayloadBudget`   — pre-built budgets for each stage
-"""
+"""Unified Payload Builder for LLM Calls
+====================================="""
 
 from __future__ import annotations
 
@@ -66,13 +14,8 @@ from utils.logger import logger
 _CHARS_PER_TOKEN = 0.4
 
 
-def _safe_int_env(key, default):
-    """Read integer env var with a safe fallback (non-numeric → default).
-
-    Bug fix 2026-10-13: a previous version called ``int(env_value)``
-    directly, which raised ``ValueError`` at import time when the user
-    set the variable to a non-numeric value such as ``"150kb"``.
-    """
+def safe_int_env(key, default):
+    """Read integer env var with a safe fallback (non-numeric → default)."""
     raw = os.environ.get(key, "")
     if not raw:
         return default
@@ -84,11 +27,11 @@ def _safe_int_env(key, default):
 
 # Default budget tier sizes — in *bytes* (JSON-serialized form).
 _DEFAULT_BUDGETS = {
-    "reasoning": _safe_int_env("PAYLOAD_BUDGET_REASONING_KB", 150) * 1024,
-    "report":    _safe_int_env("PAYLOAD_BUDGET_REPORT_KB", 100) * 1024,
-    "specialist":_safe_int_env("PAYLOAD_BUDGET_SPECIALIST_KB", 60) * 1024,
-    "classify":  _safe_int_env("PAYLOAD_BUDGET_CLASSIFY_KB", 15) * 1024,
-    "calibrate": _safe_int_env("PAYLOAD_BUDGET_CALIBRATE_KB", 20) * 1024,
+    "reasoning": safe_int_env("PAYLOAD_BUDGET_REASONING_KB", 150) * 1024,
+    "report":    safe_int_env("PAYLOAD_BUDGET_REPORT_KB", 100) * 1024,
+    "specialist":safe_int_env("PAYLOAD_BUDGET_SPECIALIST_KB", 60) * 1024,
+    "classify":  safe_int_env("PAYLOAD_BUDGET_CLASSIFY_KB", 15) * 1024,
+    "calibrate": safe_int_env("PAYLOAD_BUDGET_CALIBRATE_KB", 20) * 1024,
 }
 
 
@@ -150,12 +93,6 @@ _ROUTING_KEEP = {
     "origin_hijacking", "forge_hijacking",
     "route_leaks", "outages",
     # BUG-R141 2026-09-29: the live routing payload produced by
-    # routing_impl.run_routing_agent_async() carries its leak data under
-    # ``leak_analysis`` (and the outage block under ``outage_analysis``).
-    # Neither was allow-listed, so both were stripped before the report was
-    # rendered — the detector had already found the leaks, the report showed
-    # zero. Also keep the scalar counts so a truncated list still reports the
-    # true total.
     "leak_analysis", "outage_analysis", "leak_count", "outage_score",
     "mitm_alerts", "routing_status", "llm_insights", "impact_scope",
     "analysis_timestamp", "no_data_reason", "anomalies_detected",
@@ -186,11 +123,6 @@ _CORRELATION_KEEP = {
     "hypotheses", "correlation_level", "correlation_confidence",
     "joint_tier", "joint_score", "hcaf_attribution",
     # Round-26: keep the inner correlation dict too — it carries
-    # ``signals.temporal_proximity`` and ``confidence`` which downstream
-    # renderers (Correlation Confidence gauge, TCA, Executive Summary
-    # verdict) read. Without it the gauge collapses to the "none / 0.10"
-    # fallback and the TCA strength shows "0.00" while the level says
-    # "strong", producing the contradictory output the reviewer flagged.
     "correlation",
 }
 _CORRELATION_LIST_LIMITS = {
@@ -251,20 +183,15 @@ def estimate_bytes(obj):
     """Coarse byte estimate for a JSON-serialisable object."""
     try:
         return len(json.dumps(obj, ensure_ascii=False, default=str))
-    except Exception:
+    except (ValueError):
         try:
             return len(repr(obj))
-        except Exception:
+        except (ValueError):
             return 0
 
 
 def estimate_tokens(obj):
-    """Coarse token estimate.
-
-    Uses len(json.dumps()) * 0.35 (≈3 bytes per token for compact JSON,
-    which over-estimates slightly for code-heavy text).  Always returns
-    a positive int; returns 0 only for None.
-    """
+    """Coarse token estimate."""
     if obj is None:
         return 0
     nbytes = estimate_bytes(obj)
@@ -312,17 +239,10 @@ def slim_section(
     max_list_items: Optional[int] = None,
 ) -> Any:
     """Section-aware slimming.
-
-    Args:
-        section: one of ``"traffic"``, ``"routing"``, ``"correlation"``,
-            ``"reasoning"``, or any other name (falls back to generic slim).
-        data: the raw section data.
-        max_list_items: override the per-section default.
-
+    
     Returns:
-        A slimmed copy of ``data`` suitable for an LLM prompt.  The
-        original is not mutated.
-    """
+    A slimmed copy of ``data`` suitable for an LLM prompt.  The
+    original is not mutated."""
     profile = _SECTION_PROFILES.get(section)
     if profile is None:
         return slim_generic(data, max_list_items or 10)
@@ -351,14 +271,9 @@ def slim_with_limits(
     _max_depth: int = 30,
 ) -> Any:
     """Recursive slim that:
-      1. Uses per-list-name max-item counts from ``list_limits``.
-      2. Strips ``_EVENT_DENY_KEYS`` at every depth.
-      3. Falls back to ``default_limit`` for lists without an entry.
-
-    The parent key is forwarded to the list child so a list named
-    ``"anomalies"`` looks up ``list_limits["anomalies"]``, not
-    ``list_limits["_current"]``.
-    """
+    1. Uses per-list-name max-item counts from ``list_limits``.
+    2. Strips ``_EVENT_DENY_KEYS`` at every depth.
+    3. Falls back to ``default_limit`` for lists without an entry."""
     if _depth > _max_depth:
         return None
     if isinstance(obj, dict):
@@ -383,29 +298,16 @@ def slim_with_limits(
     return obj
 
 
-def apply_section_limits(obj, list_limits, default_limit):
-    """Apply per-list-name max-item counts while recursively stripping deny keys.
-
-    Deprecated: kept for backwards compatibility.  New code should call
-    :func:`slim_with_limits` which integrates deny-key stripping.
-    """
-    return slim_with_limits(obj, list_limits, default_limit)
-
-
 # Hard byte cap
 
 def cap_payload(data: Any, max_bytes: int = PayloadBudget.REPORT) -> tuple[Any, dict]:
     """Cap a (already-slimmed) payload to ``max_bytes`` bytes.
-
-    Recursively halves list sizes until the JSON-serialised form fits.
-    As a last resort, drops optional top-level sections.
-
+    
     Returns ``(capped_data, cap_meta)`` where ``cap_meta`` records:
-        - original_bytes
-        - final_bytes
-        - dropped_sections
-        - lists_truncated (counter)
-    """
+    - original_bytes
+    - final_bytes
+    - dropped_sections
+    - lists_truncated (counter)"""
     info = {
         "original_bytes": estimate_bytes(data),
         "max_bytes": max_bytes,
@@ -484,18 +386,7 @@ def build_payload(
     max_bytes: int = PayloadBudget.REPORT,
     max_list_items: Optional[int] = None,
 ) -> tuple[Any, dict]:
-    """Slim a section then cap it to ``max_bytes``.  Returns (payload, meta).
-
-    ``meta`` contains:
-        - section
-        - max_bytes
-        - pre_slim_bytes
-        - pre_cap_bytes
-        - final_bytes
-        - est_tokens          (coarse estimate)
-        - lists_truncated
-        - dropped_sections
-    """
+    """Slim a section then cap it to ``max_bytes``.  Returns (payload, meta)."""
     pre_slim = estimate_bytes(data)
     slimmed = slim_section(section, data, max_list_items=max_list_items)
     pre_cap = estimate_bytes(slimmed)
@@ -514,7 +405,6 @@ def build_payload(
     return capped, meta
 
 
-# =============================================================================
 # Token budget recording helper
 
 def record_llm_call(
@@ -525,28 +415,14 @@ def record_llm_call(
     *,
     prompt_text_override: Optional[str] = None,
 ) -> None:
-    """Record an LLM call's actual token usage into TokenBudget.
-
-    Tries to read ``response.usage.prompt_tokens`` /
-    ``response.usage.completion_tokens`` (OpenAI-compatible format).  If
-    the upstream does not return usage info, falls back to the estimator.
-
-    Args:
-        run_id: workflow run identifier (matches ``TokenBudget.get_instance``).
-        agent: short name of the calling agent (e.g. ``"TrafficExpert"``).
-        prompt: the prompt object (str or dict).
-        response: the LLM response object (must have ``.usage`` for
-            accurate counting; otherwise estimated).
-        prompt_text_override: explicit text to use for token estimation
-            (use when the prompt object is a complex structure).
-    """
+    """Record an LLM call's actual token usage into TokenBudget."""
     try:
         from agents.token_budget import TokenBudget
         tb = TokenBudget.get_instance(run_id)
     except ImportError:
         # Module genuinely absent — caller opted out of budget tracking.
         return
-    except Exception as e:
+    except (AttributeError) as e:
         # Concrete error inside TokenBudget (bad run_id, init failure,
         logger.warning(
             "[record_llm_call] TokenBudget unavailable, skipping record: %s",
@@ -561,7 +437,7 @@ def record_llm_call(
         else:
             try:
                 prompt_text = json.dumps(prompt, ensure_ascii=False, default=str)
-            except Exception:
+            except (ValueError):
                 prompt_text = str(prompt)
 
     # Extract real usage if available
@@ -571,7 +447,7 @@ def record_llm_call(
         if usage is not None:
             pt = getattr(usage, "prompt_tokens", 0) or 0
             ct = getattr(usage, "completion_tokens", 0) or 0
-    except Exception:
+    except (ValueError):
         pass
 
     # Fall back to estimator if upstream didn't return usage
@@ -581,13 +457,12 @@ def record_llm_call(
     tb.add(agent, pt, ct)
 
 
-# =============================================================================
 # Convenience: stringify for prompt
 
 def to_json_for_prompt(obj, *, ensure_ascii=False, indent=2):
     """JSON-serialise a payload for inclusion in an LLM prompt."""
     try:
         return json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii, default=str)
-    except Exception as exc:
+    except (AttributeError) as exc:
         logger.warning(f"[PayloadBuilder] JSON serialise failed: {exc}; using repr")
         return repr(obj)

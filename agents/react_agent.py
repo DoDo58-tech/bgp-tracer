@@ -1,15 +1,5 @@
-"""
-React Agent - LLM-driven coordinator with streaming support
-=========================================================
-
-This module implements a ReAct (Reasoning + Acting) style agent that:
-1. Uses LLM to decide next action based on current context
-2. Executes tools and observes results
-3. Feeds observations back to LLM for next decision
-4. Supports streaming output for real-time feedback
-
-The agent runs in a loop until the LLM decides to provide a final answer.
-"""
+"""React Agent - LLM-driven coordinator with streaming support
+========================================================="""
 
 from __future__ import annotations
 
@@ -24,25 +14,25 @@ from typing import Any, Callable, Dict, List, Optional
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REASONING
 from llm.prompt import build_react_coordinator_prompt
 from tools.tool_implementations import (
-    _analyze_traffic as analyze_traffic,
-    _analyze_routing as analyze_routing,
-    _check_correlation as check_traffic_routing_correlation,
-    _query_as_info as query_as_info,
-    _reason_and_classify as reason_and_classify,
-    _generate_report as generate_report,
-    _analyze_prefix_traffic as analyze_prefix_traffic,
-    _classify_traffic_anomaly as classify_traffic_anomaly,
-    _compute_traffic_routing_correlation_score as compute_traffic_routing_correlation_score,
-    _analyze_as_path_delta as analyze_as_path_delta,
-    _analyze_as_relationships as analyze_as_relationships,
-    _probe_prefix_reachability as probe_prefix_reachability,
-    _validate_roa_status as validate_roa_status,
-    _lookup_as_threat_intel as lookup_as_threat_intel,
+    analyze_traffic,
+    analyze_routing,
+    check_correlation,
+    query_as_info,
+    reason_and_classify,
+    generate_report,
+    analyze_prefix_traffic,
+    classify_traffic_anomaly,
+    compute_traffic_routing_correlation_score,
+    analyze_as_path_delta,
+    analyze_as_relationships,
+    probe_prefix_reachability,
+    validate_roa_status,
+    lookup_as_threat_intel,
 )
-from tools.threat_intelligence import _threat_intel_lookup as threat_intelligence_handler
-from tools.news_context import _news_context_search as news_context_handler
-from tools.irr_registry import _irr_registry_lookup as irr_registry_handler
-from tools.historical_behavior import _historical_behavior_lookup as historical_behavior_handler
+from tools.threat_intelligence import threat_intel_lookup
+from tools.news_context import news_context_search
+from tools.irr_registry import irr_registry_lookup
+from tools.historical_behavior import historical_behavior_lookup
 from utils.helpers import extract_json_object
 from utils.logger import logger
 
@@ -56,7 +46,7 @@ DEFAULT_MAX_RETRIES = 2
 AVAILABLE_TOOLS = {
     "analyze_traffic": analyze_traffic,
     "analyze_routing": analyze_routing,
-    "check_correlation": check_traffic_routing_correlation,
+    "check_correlation": check_correlation,
     "query_as_info": query_as_info,
     "reason_and_classify": reason_and_classify,
     "generate_report": generate_report,
@@ -69,10 +59,10 @@ AVAILABLE_TOOLS = {
     "validate_roa_status": validate_roa_status,
     "lookup_as_threat_intel": lookup_as_threat_intel,
     # New auxiliary tools for human-like investigation
-    "threat_intelligence": threat_intelligence_handler,
-    "news_context": news_context_handler,
-    "irr_registry": irr_registry_handler,
-    "historical_behavior": historical_behavior_handler,
+    "threat_intelligence": threat_intel_lookup,
+    "news_context": news_context_search,
+    "irr_registry": irr_registry_lookup,
+    "historical_behavior": historical_behavior_lookup,
 }
 
 # Shared evidence dict — populated by each tool execution so generate_report
@@ -91,33 +81,18 @@ def clear_shared_evidence(session_id):
     _SHARED_EVIDENCE.pop(session_id, None)
 
 
-def _finalize_run(result: "ReactResult") -> "ReactResult":
-    """Release per-run resources once a React run is done.
-
- Wrapping the cleanup behind a helper keeps every ``return ReactResult``
- branch in ``ReactAgent.run`` (and any future call site) honest about
- freeing ``_SHARED_EVIDENCE`` - without it, every analysis run leaves
- behind a full bucket of tool output that lives for the lifetime of
- the Python process.
- """
+def finalize_run(result: "ReactResult") -> "ReactResult":
+    """Release per-run resources once a React run is done."""
     try:
         clear_shared_evidence(getattr(result, "run_id", "") or "")
-    except Exception:
+    except (ValueError):
         # Cleanup must never fail a finished run.
         pass
     return result
 
 
 def valid_llm_html_report(filepath):
-    """Return True only for a saved, complete, non-fallback LLM HTML report.
-
- Checks:
- 1. File exists and has sufficient content (>=300 bytes)
- 2. Not a deterministic fallback
- 3. Has proper DOCTYPE/html structure
- 4. Has matching <html>...</html> tags
- 5. CRITICAL: Has valid HTML tag structure (not missing '<' like 'div>' instead of '<div>')
- """
+    """Return True only for a saved, complete, non-fallback LLM HTML report."""
     report_path = filepath
     if not report_path:
         return False
@@ -232,39 +207,8 @@ class ReactResult:
     run_id: str = ""
 
 
-class StreamingBuffer:
-    """Accumulates streaming chunks for real-time display."""
-
-    def __init__(self, callback: Optional[Callable[[str], None]] = None):
-        self.callback = callback
-        self.content = ""
-
-    def write(self, chunk):
-        """Write a chunk and optionally notify callback."""
-        self.content += chunk
-        if self.callback:
-            self.callback(chunk)
-
-    def flush(self):
-        """Flush any pending content."""
-        if self.callback:
-            self.callback("")
-
-
 class ReactAgent:
-    """
- React-style coordinator agent with streaming support.
-
- The agent runs a Think -> Action -> Observe loop where:
- - Think: LLM reasons about what to do next
- - Action: LLM calls a tool or provides final answer
- - Observe: Tool result is fed back to LLM for next decision
-
- Args:
- llm: LLM instance for reasoning
- max_rounds: Maximum number of React rounds (default: 15)
- streaming_callback: Optional callback for streaming output
- """
+    """React-style coordinator agent with streaming support."""
 
     def __init__(
         self,
@@ -289,7 +233,7 @@ class ReactAgent:
         self.streaming_callback = streaming_callback
         self.precomputed_routing = precomputed_routing
         self.precomputed_traffic = precomputed_traffic
-        # enhanced  LLMDebateAgent + MultiAgentReportAgent
+        # Enhanced mode pairs the ReAct loop with a debate/report pipeline.
         self.enhanced = enhanced
         self._evidence: Dict[str, Any] = {}
         self.trace: List[ReactTraceEntry] = []
@@ -301,16 +245,15 @@ class ReactAgent:
         self._start_time: str = ""
         self._end_time: str = ""
 
-        # ── enhanced  Blackboard ────────────────────────────────────────
+        # Enhanced mode additionally keeps a blackboard for the debate stage.
         self._blackboard = None
         if self.enhanced:
             try:
                 from agents.core import Blackboard as _BB
-                # Bug fix 2026-09-13 (BUG-R98): the previous code created
                 self._blackboard = _BB()
-                # Placeholder so downstream code can check existence without
+                # Flag is set once the run context is written below.
                 self._blackboard_seeded = False
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.warning(f"[ReactAgent] Blackboard init failed: {e}; "
                                f"debate will fall back to dict-based evidence.")
                 self._blackboard = None
@@ -323,18 +266,10 @@ class ReactAgent:
         end_time: str,
         user_input: Optional[str] = None,
     ) -> ReactResult:
-        """
- Run the React agent to analyze the given AS and time window.
-
- Args:
- asn: Autonomous System number
- start_time: Analysis window start (ISO format)
- end_time: Analysis window end (ISO format)
- user_input: Optional natural language request
-
- Returns:
- ReactResult with answer and trace
- """
+        """Run the React agent to analyze the given AS and time window.
+        
+        Returns:
+        ReactResult with answer and trace"""
         self.trace = []
         self.tools_used = set()
         self._round = 0
@@ -352,7 +287,7 @@ class ReactAgent:
         _RUN_START = self._start_time
         _RUN_END = self._end_time
 
-        # enhanced ： Blackboard  Agent 
+        # Seed the blackboard with the run context.
         if self.enhanced and self._blackboard is not None:
             try:
                 await self._blackboard.update_section(
@@ -366,7 +301,7 @@ class ReactAgent:
                 # Mark the blackboard as seeded so any post-run debug
                 # logging can confirm the BUG-R98 fix took effect.
                 self._blackboard_seeded = True
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.debug(f"[ReactAgent] bb config seed at run start failed: {e}")
 
         # ── Pre-inject pre-computed evidence (annotation_package) ────────────
@@ -376,7 +311,6 @@ class ReactAgent:
             bucket["precomputed_routing"] = self.precomputed_routing
             logger.info(f"[ReactAgent] Injected precomputed_routing "
                         f"({len(str(self.precomputed_routing))//1024} KB, run_id={self.run_id[:8]})")
-            # Bug fix: generate_report gates on `analyze_routing` evidence
             _mirrored_routing = {
                 "success": True,
                 "_from_precomputed": True,
@@ -477,11 +411,8 @@ class ReactAgent:
                         )
                         self._supervisor_enrichment_done = True
                         # Supervisor enrichment ran before Answer return
-                        # (Answer is from the LLM), and we wired enrich_result
-                        # into self._supervisor_enrichment_result for
-                        # generate_report.
                         logger.info("[ReAct] Supervisor enrichment complete before Answer return")
-                    except Exception as e:
+                    except (AttributeError) as e:
                         logger.warning(f"[ReAct] Supervisor enrichment in Answer path failed: {e}")
 
                 # Generate HTML report even when LLM directly outputs Answer
@@ -500,10 +431,10 @@ class ReactAgent:
                             logger.info(f"[ReAct] Auto-generated verified LLM report: {report_path}")
                         elif report_result.get("success"):
                             logger.error("[ReAct] Auto-generated report failed HTML acceptance checks")
-                    except Exception as e:
+                    except (AttributeError) as e:
                         logger.error(f"[ReAct] Auto report generation failed: {e}")
                 
-                return _finalize_run(ReactResult(
+                return finalize_run(ReactResult(
                     success=True,
                     answer=parsed["answer"],
                     trace=self.trace,
@@ -518,7 +449,7 @@ class ReactAgent:
             action_input = parsed["input"]
             # Bug #9 fix: if LLM produced an empty action (e.g. JS safety guard
             if not action_name:
-                action_name, action_input = self._pick_fallback_action(context)
+                action_name, action_input = self.pick_fallback_action(context)
                 logger.warning(
                     f"[ReAct][Round {self._round}] empty action → fallback to "
                     f"'{action_name}' with input={action_input}"
@@ -580,7 +511,7 @@ class ReactAgent:
                     if action_name == "generate_report" and result.get("success"):
                         candidate_path = result.get("report_path", "")
                         if not valid_llm_html_report(candidate_path):
-                            return _finalize_run(ReactResult(
+                            return finalize_run(ReactResult(
                                 success=False,
                                 answer=entry.observation,
                                 trace=self.trace,
@@ -590,7 +521,7 @@ class ReactAgent:
                                 evidence=dict(self._evidence),
                                 run_id=self.run_id,
                             ))
-                        return _finalize_run(ReactResult(
+                        return finalize_run(ReactResult(
                             success=True,
                             answer=candidate_path,
                             report_path=candidate_path,
@@ -626,7 +557,6 @@ class ReactAgent:
                             if parsed.get("type") == "action":
                                 action_name = parsed["action"]
                                 action_input = parsed.get("input", {})
-                                # Bug fix 2026-09-13 (BUG-R79): ``self.trace``
                                 new_entry = ReactTraceEntry(
                                     round_num=self._round,
                                     thought=parsed.get("thought", response),
@@ -636,7 +566,7 @@ class ReactAgent:
                                 self.trace.append(new_entry)
                                 entry = new_entry
                                 continue
-                        except Exception as retry_err:
+                        except (AttributeError) as retry_err:
                             logger.error(
                                 f"[ReAct][Round {self._round}] Retry think failed: {retry_err}"
                             )
@@ -644,53 +574,6 @@ class ReactAgent:
                         # round handler so the round terminates cleanly.
                     break  # exit retry loop after exception (or retries exhausted)
 
-                # Check if tool returned success=False (e.g. bad params) — retry allowed
-                if result.get("success") is False and retry_count < self.max_retries:
-                    retry_count += 1
-                    tool_failed = True
-                    logger.warning(f"[ReAct][Round {self._round}] Tool '{action_name}' returned failure, retrying ({retry_count}/{self.max_retries})")
-                    self.stream_print(f"\n[Retry] Tool '{action_name}' returned an error. Retrying with corrected parameters ({retry_count}/{self.max_retries})...\n")
-                    # Force a new LLM think for this round with the error context
-                    context = self.update_context_with_retry(context, entry, action_name, result)
-                    response = await self.llm_think(context)
-                    entry.thought += f"\n[Retry {retry_count}] Thought: {response}"
-                    logger.info(f"[ReAct][Round {self._round}] Retry {retry_count} Thought: {response}")
-                    parsed = self.parse_response(response)
-                    if parsed["type"] == "answer":
-                        self.stream_print(f"\n[Final Answer]\n{parsed['answer']}\n")
-                        
-                        # Generate HTML report even when LLM directly outputs Answer
-                        if "generate_report" not in self.tools_used and self._evidence:
-                            try:
-                                inp = {
-                                    "asn": _RUN_ASN or None,
-                                    "start_time": _RUN_START or None,
-                                    "end_time": _RUN_END or None,
-                                }
-                                report_result = await self.execute_tool("generate_report", inp)
-                                if report_result.get("success"):
-                                    logger.info(f"[ReAct] Auto-generated report: {report_result.get('report_path', '')}")
-                            except Exception as e:
-                                logger.error(f"[ReAct] Auto report generation failed: {e}")
-                        
-                        return _finalize_run(ReactResult(
-                            success=True,
-                            answer=parsed["answer"],
-                            trace=self.trace,
-                            tools_used=list(self.tools_used),
-                            total_rounds=self._round,
-                            # Bug fix 2026-09-13 (BUG-R55): previously this
-                            evidence=dict(self._evidence),
-                            run_id=self.run_id,
-                        ))
-                    action_name = parsed["action"]
-                    action_input = parsed.get("input", {})
-                    entry.action = action_name
-                    entry.action_input = action_input
-                    self.trace[-1] = entry
-                else:
-                    # No more retries or tool succeeded
-                    break
 
         # Max rounds reached — generate report from whatever evidence was collected
         logger.warning(f"[ReAct] Max rounds ({self.max_rounds}) reached, forcing report generation")
@@ -706,10 +589,10 @@ class ReactAgent:
                 result = await self.execute_tool("generate_report", inp)
                 if result.get("success"):
                     logger.info(f"[ReAct] Forced report generated: {result.get('report_path', '')}")
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.error(f"[ReAct] Forced report generation failed: {e}")
 
-        return _finalize_run(ReactResult(
+        return finalize_run(ReactResult(
             success=False,
             answer="Maximum rounds reached without final answer.",
             trace=self.trace,
@@ -769,7 +652,7 @@ class ReactAgent:
         if self.streaming_callback and content:
             try:
                 self.streaming_callback(content)
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.warning(f"Streaming callback error: {e}")
 
     def get_system_prompt(self):
@@ -847,13 +730,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
         return context
 
     def parse_response(self, response) -> Dict[str, Any]:
-        """
- Parse LLM response into thought, action, and input.
-
- Expected formats:
- - Thought: ... Action: tool_name Action Input: {{"param": "value"}}
- - Thought: ... Action: Answer Action Input: {{"answer": "final answer"}}
- """
+        """Parse LLM response into thought, action, and input."""
         result = {
             "type": "unknown",
             "thought": "",
@@ -895,7 +772,6 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
         # Extract Action Input using string-aware brace counting
         if result["action"]:
             result["type"] = "action"
-            # Bug fix 2026-09-13 (BUG-R94): the previous brace counter
             input_match = re.search(r"Action Input:\s*(?:```json\s*)?", response)
             if input_match:
                 json_start = input_match.end()
@@ -937,13 +813,8 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             traffic = self._evidence.get("analyze_traffic", {})
             routing = self._evidence.get("analyze_routing", {})
 
-            def _traffic_has_evidence(value):
-                """Check analyze_traffic result.
-
- Structure: {"success":True,"results":{"<asn>":{"anomalies":[...],"traffic_plot_path":"..."}}}
- The results dict can be empty (all ASes failed). We need to check
- inside each per-AS sub-dict for anomalies or a plot.
- """
+            def traffic_has_evidence(value):
+                """Check analyze_traffic result."""
                 if not isinstance(value, dict) or value.get("success") is False:
                     return False
                 results = value.get("results", {})
@@ -961,13 +832,8 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                         return True
                 return False
 
-            def _routing_has_evidence(value):
-                """Check analyze_routing result.
-
- Structure: {"success":True,"result":{"origin_hijacked":[...],
- "route_leaks":[...],"outage_analysis":{...}}}
- Any non-empty event list (hijack/leak/outage) counts as evidence.
- """
+            def routing_has_evidence(value):
+                """Check analyze_routing result."""
                 if not isinstance(value, dict) or value.get("success") is False:
                     return False
                 result = value.get("result", {})
@@ -993,9 +859,8 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                     return True
                 return False
 
-            traffic_ready = _traffic_has_evidence(traffic)
-            routing_ready = _routing_has_evidence(routing)
-            # Bug fix 2026-09-15: the previous gate required BOTH traffic and
+            traffic_ready = traffic_has_evidence(traffic)
+            routing_ready = routing_has_evidence(routing)
             traffic_completed = isinstance(traffic, dict) and traffic.get("success") is True
             routing_completed = isinstance(routing, dict) and routing.get("success") is True
             if not (traffic_completed or routing_completed):
@@ -1013,7 +878,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             if self.enhanced:
                 try:
                     if "debate_outcome" not in self._evidence and self._blackboard is not None:
-                        await self._run_enhanced_debate(
+                        await self.run_enhanced_debate(
                             traffic, routing
                         )
                     multi_path = await self.try_enhanced_report(tool_input, session)
@@ -1024,7 +889,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                             "report_mode": "multi_agent_enhanced",
                             "observation": f"Enhanced report saved to: {multi_path}",
                         }
-                except Exception as e:
+                except (AttributeError) as e:
                     logger.warning(f"[ReactAgent] enhanced report path failed, "
                                    f"falling back: {e}")
 
@@ -1043,12 +908,12 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 # can read it.
                 if self.enhanced and self._blackboard is not None:
                     try:
-                        await self._sync_evidence_to_blackboard(tool_name, result)
-                    except Exception as e:
+                        await self.sync_evidence_to_blackboard(tool_name, result)
+                    except (AttributeError) as e:
                         logger.debug(f"[ReactAgent] blackboard sync failed: {e}")
 
                 return result
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.error(f"Tool {tool_name} failed: {e}")
                 return {"success": False, "error": str(e)}
         else:
@@ -1057,17 +922,9 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 "error": f"Unknown tool: {tool_name}. Available tools: {list(AVAILABLE_TOOLS.keys())}",
             }
 
-    def _pick_fallback_action(self, context: Dict[str, Any]):
+    def pick_fallback_action(self, context: Dict[str, Any]):
         """Bug #9 fix: pick the next sensible tool when the LLM returns an
- empty action (e.g. JS safety guard refuses the role).
-
- Walks a deterministic tool pipeline in priority order, skipping any
- tool whose evidence is already present. The pipeline mirrors the
- reasoning flow that a thoughtful analyst would take:
-
- analyze_traffic → analyze_routing → check_correlation →
- generate_report
- """
+        empty action (e.g. JS safety guard refuses the role)."""
         pipeline = [
             ("analyze_traffic", {
                 "asn": self._asn or None,
@@ -1100,16 +957,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
         }
 
     def format_observation(self, result: Dict[str, Any]):
-        """Format tool result as observation string.
-
- P1-#2: tool ( analyze_traffic traffic_timeline 
- ) round context, round LLM 
- (400 token ). : 
- - dict count + first/last + 
- - OBSERVATION_MAX_CHARS( 4000)
- - (timestamp)(score/drop_ratio/anomaly_score)
- - _SHARED_EVIDENCE , ; slim context observation 
- """
+        """Format tool result as observation string."""
         if not result:
             return "No result returned."
 
@@ -1135,27 +983,26 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 count = len(value)
                 first = value[0]
                 last = value[-1]
-                # Bug fix 2026-09-13 (BUG-R100): the previous code called
-                def _safe(obj):
+                def safe(obj):
                     try:
                         return json.dumps(obj, ensure_ascii=False, default=str)[:200]
-                    except Exception:
+                    except (AttributeError):
                         return f"<unserialisable {type(obj).__name__}>"
                 # When count == 1 we would otherwise print the same item
                 # twice — emit a single-line form to save context tokens.
                 if count == 1:
-                    parts.append(f"{key}: ={count}, ={_safe(first)}")
+                    parts.append(f"{key}: ={count}, ={safe(first)}")
                 else:
                     parts.append(
-                        f"{key}: ={count}, ={_safe(first)}, "
-                        f"={_safe(last)}"
+                        f"{key}: ={count}, ={safe(first)}, "
+                        f"={safe(last)}"
                     )
             elif key in ("success",):
                 continue
             elif key in ("results",):
                 try:
                     parts.append(f"Results: {json.dumps(value, ensure_ascii=False, default=str)[:2000]}")
-                except Exception:
+                except (AttributeError):
                     parts.append(f"Results: <unserialisable {type(value).__name__}>")
             elif key in ("message", "summary"):
                 parts.append(f"{key.capitalize()}: {str(value)[:1500]}")
@@ -1175,19 +1022,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
         return summary
 
     def update_context(self, old_context, entry):
-        """Update context with new observation for next round.
-
- P1-#1: context , 489K token . 
- MAX_CONTEXT_CHARS( 50K chars ≈ 13K tokens), 
- trace. trace trace summary . 
-
- B-#10: observation [Tool Observation] ... [/Tool Observation]
- fence . : 
- 1. LLM , chat-completion
- (GLM-5 / GPT ) observation 
- "", round . 
- 2. observation " glm-5". 
- """
+        """Update context with new observation for next round."""
         new_context = old_context
 
         # Add the completed action and its result, with explicit observation
@@ -1206,22 +1041,16 @@ Action Input: {json.dumps(entry.action_input, ensure_ascii=False)}
         return self.cap_context(new_context)
 
     def cap_context(self, context):
-        """ context , . 
-
- MAX_CONTEXT_CHARS __init__ 50000( 13K tokens), LLM
- context window . context 
- , (system + initial query). 
- """
+        """context , ."""
         cap = getattr(self, "MAX_CONTEXT_CHARS", 50000)
         if len(context) <= cap:
             return context
-        #  = system + initial query； = 
-        #  round 
+        #  = system + initial query； =
+        #  round
         rounded = context.split("\n## Round ")
-        # rounded[0] = （system + ），rounded[1:] =  round 
+        # rounded[0] = （system + ），rounded[1:] =  round
         head = rounded[0]
         body_parts = [f"## Round {p}" for p in rounded[1:]]
-        # 
         kept = []
         total = len(head)
         for part in reversed(body_parts):
@@ -1238,27 +1067,6 @@ Action Input: {json.dumps(entry.action_input, ensure_ascii=False)}
             )
         return head + "\n" + "\n".join(kept)
 
-    def update_context_with_error(self, old_context, entry, action_name=""):
-        """Update context with error information (for exceptions during tool execution)."""
-        action_str = f" (action: {action_name})" if action_name else ""
-        new_context = old_context
-
-        # Use the same Tool Observation fence so the LLM treats the error as
-        # tool output rather than a fresh user instruction.
-        new_context += f"""
-
-## Round {entry.round_num} Completed (with Error{action_str})
-
-Thought: {entry.thought}
-Action: {entry.action}
-[Tool Observation]
-Error: {entry.error}
-
-Please continue with an alternative approach or adjust the parameters.
-[/Tool Observation]
-"""
-
-        return self.cap_context(new_context)
 
     def update_context_with_retry(
         self,
@@ -1267,11 +1075,7 @@ Please continue with an alternative approach or adjust the parameters.
         failed_action: str,
         result: Dict[str, Any],
     ) -> str:
-        """
- Update context for a retry round after a tool returned success=False.
-
- Tells the LLM exactly what went wrong so it can fix the parameters.
- """
+        """Update context for a retry round after a tool returned success=False."""
         error_msg = result.get("error", "Unknown error")
         new_context = old_context
 
@@ -1300,16 +1104,8 @@ Current evidence already collected: {list(self._evidence.keys())}
         traffic_result: dict,
         routing_result: dict,
     ) -> str:
-        """
- Run InvestigationSupervisor after both traffic and routing analysis are complete.
-
- This is the key "human-like" enhancement for the ReAct mode:
- - Automatically triggers auxiliary tools based on detected patterns
- - Injects enriched evidence into the LLM context
- - Saves LLM from having to "decide" whether to use each tool
- """
+        """Run InvestigationSupervisor after both traffic and routing analysis are complete."""
         from agents.investigation_supervisor import InvestigationSupervisor
-        import asyncio
 
         # Infer suspected type from routing data
         suspected_type = "unknown"
@@ -1400,33 +1196,53 @@ Number of auxiliary tools executed: {tool_count}
         return "\n".join(lines)
 
 
-    async def _sync_evidence_to_blackboard(self, tool_name, result):
+    async def sync_evidence_to_blackboard(self, tool_name, result):
         """Mirror key tool outputs into the Blackboard so downstream agents
- (LLMDebateAgent, MultiAgentReportAgent) can read them.
-
- Only the 3 evidence sources that DebateAgent itself inspects are
- mirrored; everything else stays in self._evidence to avoid paying
- the BB async-write cost on every round.
- """
+        (LLMDebateAgent, MultiAgentReportAgent) can read them."""
         if self._blackboard is None:
             return
         bb = self._blackboard
 
-        async def _unwrap(d):
+        async def unwrap(d):
             """Pull out the inner {'success':..., 'result':...} flatten to result."""
             if isinstance(d, dict):
                 return d.get("results") or d.get("result") or d
             return d
 
         if tool_name == "analyze_traffic":
-            payload = await _unwrap(result)
+            payload = await unwrap(result)
             await bb.update_section("traffic", {"result": payload})
+            # Promote the detector's output to a typed observation so the
+            if isinstance(payload, dict):
+                await bb.add_observation({
+                    "source": "ReactAgent",
+                    "kind": "traffic_analysis",
+                    "summary": (
+                        f"ReAct traffic analysis returned "
+                        f"{payload.get('anomaly_count', 0)} anomalies."
+                    ),
+                    "confidence": 0.7,
+                    "payload": payload,
+                    "tags": ["traffic", "react"],
+                })
         elif tool_name == "analyze_routing":
-            payload = await _unwrap(result)
+            payload = await unwrap(result)
             await bb.update_section("routing", {"result": payload})
+            if isinstance(payload, dict):
+                await bb.add_observation({
+                    "source": "ReactAgent",
+                    "kind": "routing_analysis",
+                    "summary": (
+                        f"ReAct routing analysis returned "
+                        f"{payload.get('anomaly_count', 0)} anomalies."
+                    ),
+                    "confidence": 0.72,
+                    "payload": payload,
+                    "tags": ["routing", "react"],
+                })
         elif tool_name == "reason_and_classify":
             # ReasonAndClassify produces a final diagnosis with claims[].
-            payload = await _unwrap(result)
+            payload = await unwrap(result)
             if isinstance(payload, dict):
                 claims = payload.get("claims") or payload.get("diagnosis_claims") or []
                 final_claim = payload.get("final_claim") or payload.get("diagnosis")
@@ -1434,17 +1250,35 @@ Number of auxiliary tools executed: {tool_count}
                 # match that convention here.
                 if claims:
                     await bb.write("diagnosis", "claims", claims)
+                    # Also promote them to typed claim records, so the
+                    # ReAct arm's board carries the same record kinds as
+                    # the fixed pipeline's board.
+                    for claim in claims:
+                        if not isinstance(claim, dict):
+                            claim = getattr(claim, "__dict__", None) or {}
+                        if not claim:
+                            continue
+                        await bb.add_claim({
+                            "source": "ReactAgent",
+                            "kind": claim.get("kind") or "hypothesis",
+                            "summary": claim.get("summary") or "",
+                            "confidence": float(claim.get("confidence", 0.5) or 0.0),
+                            "status": claim.get("status") or "proposed",
+                            "evidence_ids": list(claim.get("evidence_ids") or []),
+                            "supports": list(claim.get("supporting_evidence") or []),
+                            "contradicts": list(claim.get("contradicting_evidence") or []),
+                            "assumptions": list(claim.get("assumptions") or []),
+                            "uncertainty": list(claim.get("uncertainty") or []),
+                            "derived_from": list(claim.get("derived_from") or []),
+                        })
                 await bb.write("diagnosis", "result", payload)
                 if final_claim:
                     await bb.write("diagnosis", "final_claim", final_claim)
 
-    async def _run_enhanced_debate(self, traffic, routing):
+    async def run_enhanced_debate(self, traffic, routing):
         """Stub: enhanced mode removed 2026-09-29 (paper-grade cleanup)."""
         return None
 
-    def run_enhanced_quality_gate(self, traffic, routing):
-        """Stub: enhanced mode removed 2026-09-29 (paper-grade cleanup)."""
-        return {"quality_score": 0.0, "gate_passed": True, "issues": []}
 
     async def try_enhanced_report(self, tool_input, session):
         """Stub: enhanced mode removed 2026-09-29 (paper-grade cleanup)."""
@@ -1458,19 +1292,10 @@ def create_react_agent(
     max_retries: int = DEFAULT_MAX_RETRIES,
     streaming_callback: Optional[Callable[[str], None]] = None,
 ) -> ReactAgent:
-    """
- Factory function to create a ReactAgent with LLM.
-
- Args:
- model: Model name (defaults to config.MODEL)
- api_key: API key (defaults to config.API_KEY)
- base_url: API base URL (defaults to config.BASE_URL)
- max_rounds: Maximum React rounds
- streaming_callback: Optional callback for streaming output
-
- Returns:
- Configured ReactAgent instance
- """
+    """Factory function to create a ReactAgent with LLM.
+    
+    Returns:
+    Configured ReactAgent instance"""
     try:
         from config import MODEL, API_KEY, BASE_URL
 

@@ -1,20 +1,17 @@
-"""Rule-based tool trigger engine: decides which auxiliary tools to run.
-
-Picks evidence-collecting tools from routing+traffic patterns, runs them in
-parallel batches, and injects the results into LLM reasoning. Deterministic;
-no LLM in the loop.
-"""
+"""Rule-based tool trigger engine: decides which auxiliary tools to run."""
 
 from __future__ import annotations
 
 import asyncio
-import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Optional
+from typing import Optional
 
 from tools.tool_registry import REGISTRY
 from utils.logger import logger
+import json
+from dataclasses import field
+from typing import Any
 
 
 # ── Trigger Rules ─────────────────────────────────────────────────────────────
@@ -195,14 +192,10 @@ class PatternDetector:
  """
 
     def detect(self, routing_data, traffic_data, context):
-        """Detect patterns from routing and traffic evidence.
-
- P0-#2: annotation_package {hijack:{...}, leak: {...}, outage:{...}}. 
- origin_hijacked, annotation_package , pattern . 
- """
+        """Detect patterns from routing and traffic evidence."""
         pattern = EvidencePattern()
 
-        # Routing patterns —  flat  annotation_package 
+        # Routing patterns —  flat  annotation_package
         origin_hijacks = (
             routing_data.get("origin_hijacked") or
             routing_data.get("origin_hijack") or
@@ -419,7 +412,7 @@ class ToolOrchestrator:
                             else bool(getattr(result, "success", False))
                         )
                         logger.info(f"[supervisor]   ✅ {tool.rule.name} ({tool.rule.tool_name}): success={success_flag}")
-                    except Exception as e:
+                    except (AttributeError) as e:
                         tool.status = "failed"
                         tool.error = str(e)
                         tool.result = {"success": False, "error": str(e)}
@@ -427,8 +420,7 @@ class ToolOrchestrator:
 
             try:
                 await asyncio.gather(*[run_tool(t) for t in batch], return_exceptions=True)
-            except Exception as _gather_exc:
-                # Bug fix 2026-09-13 (BUG-R74): previously we used
+            except (AttributeError) as _gather_exc:
                 logger.warning(f"[supervisor] Batch {batch_num}: gather raised {_gather_exc!r}; "
                                f"continuing with per-tool statuses")
             logger.info(f"[supervisor] Batch {batch_num}: completed")
@@ -447,17 +439,16 @@ class EvidenceEnricher:
     @staticmethod
     def read_safely(result, key, default=None):
         """Robust reader: handles ToolResult, dict, or any object with .data.
-
- Returns `default` when the key is absent, the object has no usable
- lookup API, or reading raises any exception. Keeps the narrative
- builder resilient to handler-return-type drift.
- """
+        
+        Returns `default` when the key is absent, the object has no usable
+        lookup API, or reading raises any exception. Keeps the narrative
+        builder resilient to handler-return-type drift."""
         if result is None:
             return default
         if hasattr(result, "get") and callable(getattr(result, "get", None)):
             try:
                 return result.get(key, default)
-            except Exception:
+            except (ValueError):
                 pass
         if isinstance(result, dict):
             return result.get(key, default)
@@ -610,19 +601,7 @@ class EvidenceEnricher:
 # ── InvestigationSupervisor ──────────────────────────────────────────────────
 
 class InvestigationSupervisor:
-    """
- Main entry point for the auxiliary enrichment system.
-
- Usage:
- supervisor = InvestigationSupervisor()
- enriched = await supervisor.enrich(
- routing_data=..., # from RoutingAgent
- traffic_data=..., # from TrafficAgent
- asn="43927",
- context={"suspected_type": "origin_hijack", ...}
- )
- # Pass `enriched` to LLMReasoner for final reasoning
- """
+    """Main entry point for the auxiliary enrichment system."""
 
     def __init__(
         self,
@@ -644,25 +623,14 @@ class InvestigationSupervisor:
         session=None,
         skip_pattern: str | None = None,  # "no_anomaly" to skip enrichment
     ) -> dict:
-        """
- Run the full enrichment pipeline.
-
- Args:
- routing_data: output from RoutingAgent
- traffic_data: output from TrafficAgent
- asn: AS number
- asn_info: optional pre-fetched AS info
- context: additional context (suspected_type, etc.)
- session: tool session for execution
- skip_pattern: skip if pattern matches this (e.g. "no_anomaly")
-
- Returns:
- Enriched context dict with:
- - auxiliary_enrichment: per-tool results
- - auxiliary_narrative: LLM-readable summary
- - total_confidence_boost: cumulative boost from enrichment
- - triggered_tools: list of TriggeredTool objects
- """
+        """Run the full enrichment pipeline.
+        
+        Returns:
+        Enriched context dict with:
+        - auxiliary_enrichment: per-tool results
+        - auxiliary_narrative: LLM-readable summary
+        - total_confidence_boost: cumulative boost from enrichment
+        - triggered_tools: list of TriggeredTool objects"""
         context = context or {}
         context.update({
             "routing_data": routing_data,
@@ -744,27 +712,3 @@ class InvestigationSupervisor:
         )
 
         return enriched
-
-
-# ── Convenience functions ─────────────────────────────────────────────────────
-
-async def enrich_case(
-    routing_data: dict,
-    traffic_data: dict,
-    asn: str,
-    suspected_type: str = "unknown",
-    asn_info: dict | None = None,
-) -> dict:
-    """
- One-shot enrichment for a routing + traffic result pair.
- Use this from ReasoningAgent or workflow engine.
- """
-    supervisor = InvestigationSupervisor()
-    return await supervisor.enrich(
-        routing_data=routing_data,
-        traffic_data=traffic_data,
-        asn=asn,
-        asn_info=asn_info,
-        context={"suspected_type": suspected_type},
-        skip_pattern="no_anomaly",
-    )

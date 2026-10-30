@@ -1,0 +1,271 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="1265" viewBox="0 0 1320 1265" role="img" aria-label="BGP Tracer workflow: telemetry through detectors, a shared evidence cache, PNS-inspired causal attribution with explicit abstention, and an impact-ranked operator review queue">
+<defs>
+<marker id="ah" markerWidth="9" markerHeight="9" refX="7.6" refY="3.4" orient="auto"><path d="M0,0.4 L0,6.4 L8.6,3.4 z" fill="#5B6B7C"/></marker>
+<marker id="ah1" markerWidth="9" markerHeight="9" refX="7.6" refY="3.4" orient="auto"><path d="M0,0.4 L0,6.4 L8.6,3.4 z" fill="#1F5C99"/></marker>
+<marker id="ah2" markerWidth="9" markerHeight="9" refX="7.6" refY="3.4" orient="auto"><path d="M0,0.4 L0,6.4 L8.6,3.4 z" fill="#6B3A8F"/></marker>
+<marker id="ahc" markerWidth="9" markerHeight="9" refX="7.6" refY="3.4" orient="auto"><path d="M0,0.4 L0,6.4 L8.6,3.4 z" fill="#8C5C0C"/></marker>
+<marker id="aho" markerWidth="9" markerHeight="9" refX="7.6" refY="3.4" orient="auto"><path d="M0,0.4 L0,6.4 L8.6,3.4 z" fill="#1E7A5E"/></marker>
+</defs>
+<rect x="0.0" y="0.0" width="1320.0" height="1265.0" rx="0" fill="#FFFFFF" stroke="none" />
+<text x="24.0" y="40.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="30.00" fill="#17457F" font-weight='bold' text-anchor="start">BGP Tracer: Joint Routing–Traffic Causal Attribution for Alert Prioritisation</text>
+<text x="24.0" y="68.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="22.00" fill="#54627A" text-anchor="start">Deterministic triage  ·  PNS-inspired attribution  ·  auditable, impact-ranked incidents</text>
+<line x1="24.0" y1="82.0" x2="1296.0" y2="82.0" stroke="#D3DCE6" stroke-width="1.4" stroke-linecap="round"/>
+<rect x="24.0" y="88.0" width="1272.0" height="422.0" rx="11" fill="#F2F7FC" stroke="#A9C6E2" stroke-width="1.5" />
+<rect x="24.0" y="88.0" width="470.0" height="36.0" rx="11" fill="#17457F" stroke="none" />
+<rect x="24.0" y="112.0" width="470.0" height="12.0" rx="0" fill="#17457F" stroke="none" />
+<text x="42.0" y="114.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="22.00" fill="#FFFFFF" font-weight='bold' text-anchor="start">PHASE 1  ·  DETERMINISTIC TRIAGE</text>
+<text x="518.0" y="113.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="19.00" fill="#54627A" text-anchor="start">no LLM calls  ·  ≈60 s per window  ·  deterministic and replayable</text>
+<rect x="1133.0" y="96.0" width="149.0" height="23.0" rx="11.5" fill="#17457F" stroke="none" />
+<text x="1207.5" y="112.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.00" fill="#FFFFFF" font-weight='bold' text-anchor="middle">S1  quick-to-deep</text>
+<rect x="25.5" y="134.5" width="396.0" height="176.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="24.0" y="132.0" width="396.0" height="176.0" rx="9" fill="#FFFFFF" stroke="#A9C6E2" stroke-width="1.5" />
+<path d="M 33.0 132.0 H 411.0" stroke="#1F5C99" stroke-width="3.4" stroke-linecap="round"/>
+<text x="40.0" y="162.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#17457F" font-weight='bold' text-anchor="start">Telemetry</text>
+<text x="40.0" y="184.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">control plane + data plane</text>
+<rect x="40.0" y="196.0" width="364.0" height="44.0" rx="6" fill="#F4F8FD" stroke="#A9C6E2" stroke-width="1.1" />
+<text x="52.0" y="215.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#17457F" font-weight='bold' text-anchor="start">Control plane</text>
+<text x="52.0" y="232.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">BGPStream updates · RouteViews + RIPE RIS</text>
+<rect x="40.0" y="244.0" width="364.0" height="44.0" rx="6" fill="#F4F8FD" stroke="#A9C6E2" stroke-width="1.1" />
+<text x="52.0" y="263.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#17457F" font-weight='bold' text-anchor="start">Data plane</text>
+<text x="52.0" y="280.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">Cloudflare Radar · 5-min AS-level HTTP</text>
+<text x="222.0" y="300.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#1F5C99" font-weight='bold' text-anchor="middle">event = (AS, prefixes, window)</text>
+<rect x="445.5" y="134.5" width="396.0" height="176.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="444.0" y="132.0" width="396.0" height="176.0" rx="9" fill="#FFFFFF" stroke="#A9C6E2" stroke-width="1.5" />
+<path d="M 453.0 132.0 H 831.0" stroke="#1F5C99" stroke-width="3.4" stroke-linecap="round"/>
+<text x="460.0" y="162.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#17457F" font-weight='bold' text-anchor="start">Baseline model</text>
+<text x="460.0" y="184.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">no AS excluded as irregular</text>
+<rect x="460.0" y="196.0" width="364.0" height="44.0" rx="6" fill="#F4F8FD" stroke="#A9C6E2" stroke-width="1.1" />
+<text x="472.0" y="215.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#17457F" font-weight='bold' text-anchor="start">periodic profile</text>
+<text x="472.0" y="232.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">daily · weekly</text>
+<rect x="460.0" y="244.0" width="364.0" height="44.0" rx="6" fill="#F4F8FD" stroke="#A9C6E2" stroke-width="1.1" />
+<text x="472.0" y="263.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#17457F" font-weight='bold' text-anchor="start">else robust</text>
+<text x="472.0" y="280.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">median + MAD</text>
+<text x="642.0" y="300.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#1F5C99" font-weight='bold' text-anchor="middle">the baseline adapts, the AS does not</text>
+<rect x="865.5" y="134.5" width="396.0" height="176.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="864.0" y="132.0" width="396.0" height="176.0" rx="9" fill="#FFFFFF" stroke="#A9C6E2" stroke-width="1.5" />
+<path d="M 873.0 132.0 H 1251.0" stroke="#1F5C99" stroke-width="3.4" stroke-linecap="round"/>
+<text x="880.0" y="162.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#17457F" font-weight='bold' text-anchor="start">Four detectors</text>
+<text x="880.0" y="184.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">parallel · emit evidence</text>
+<circle cx="886.0" cy="202.0" r="4.4" fill="#2E7D32"/>
+<text x="898.0" y="208.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#16202E" font-weight='bold' text-anchor="start">Traffic</text>
+<text x="982.0" y="208.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">baseline residual</text>
+<circle cx="886.0" cy="222.0" r="4.4" fill="#EF6C00"/>
+<text x="898.0" y="228.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#16202E" font-weight='bold' text-anchor="start">Outage</text>
+<text x="982.0" y="228.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">withdrawal rate</text>
+<circle cx="886.0" cy="242.0" r="4.4" fill="#C62828"/>
+<text x="898.0" y="248.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#16202E" font-weight='bold' text-anchor="start">Leak</text>
+<text x="982.0" y="248.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">valley-free test</text>
+<circle cx="886.0" cy="262.0" r="4.4" fill="#6A1B9A"/>
+<text x="898.0" y="268.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#16202E" font-weight='bold' text-anchor="start">Hijack</text>
+<text x="982.0" y="268.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">origin vs ROA</text>
+<text x="1062.0" y="300.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#1F5C99" font-weight='bold' text-anchor="middle">a structured argument, never a verdict</text>
+<line x1="423.0" y1="220.0" x2="440.0" y2="220.0" stroke="#1F5C99" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah1)"/>
+<line x1="843.0" y1="220.0" x2="860.0" y2="220.0" stroke="#1F5C99" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah1)"/>
+<rect x="865.5" y="318.5" width="396.0" height="150.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="864.0" y="316.0" width="396.0" height="150.0" rx="9" fill="#FFFFFF" stroke="#A9C6E2" stroke-width="1.5" />
+<path d="M 873.0 316.0 H 1251.0" stroke="#1F5C99" stroke-width="3.4" stroke-linecap="round"/>
+<text x="880.0" y="346.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#17457F" font-weight='bold' text-anchor="start">Shared grid</text>
+<text x="880.0" y="368.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">5-minute resolution</text>
+<text x="880.0" y="390.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">Δ = 5 min</text>
+<text x="880.0" y="410.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">joint bucketing</text>
+<text x="880.0" y="430.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">offsets preserved</text>
+<text x="1062.0" y="458.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#17457F" font-weight='bold' text-anchor="middle">one index = one wall-clock bucket</text>
+<rect x="445.5" y="318.5" width="396.0" height="150.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="444.0" y="316.0" width="396.0" height="150.0" rx="9" fill="#FFFFFF" stroke="#A9C6E2" stroke-width="1.5" />
+<path d="M 453.0 316.0 H 831.0" stroke="#1F5C99" stroke-width="3.4" stroke-linecap="round"/>
+<text x="460.0" y="346.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#17457F" font-weight='bold' text-anchor="start">Arbitration</text>
+<text x="460.0" y="368.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">disambiguates overlaps</text>
+<rect x="460.0" y="378.0" width="112.0" height="48.0" rx="6" fill="#F4F8FD" stroke="#A9C6E2" stroke-width="1.1" />
+<text x="470.0" y="396.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#17457F" font-weight='bold' text-anchor="start">6 rules</text>
+<text x="470.0" y="415.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.25" fill="#54627A" text-anchor="start">disambiguate</text>
+<rect x="582.0" y="378.0" width="112.0" height="48.0" rx="6" fill="#F4F8FD" stroke="#A9C6E2" stroke-width="1.1" />
+<text x="592.0" y="396.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="17.25" fill="#17457F" font-weight='bold' text-anchor="start">fixed order</text>
+<text x="592.0" y="415.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="14.50" fill="#54627A" text-anchor="start">at design time</text>
+<rect x="704.0" y="378.0" width="112.0" height="48.0" rx="6" fill="#F4F8FD" stroke="#A9C6E2" stroke-width="1.1" />
+<text x="714.0" y="396.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#17457F" font-weight='bold' text-anchor="start">not tuned</text>
+<text x="714.0" y="415.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="14.50" fill="#54627A" text-anchor="start">on the eval set</text>
+<text x="642.0" y="458.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#1F5C99" font-weight='bold' text-anchor="middle">fired rules are recorded</text>
+<rect x="25.5" y="318.5" width="396.0" height="150.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="24.0" y="316.0" width="396.0" height="150.0" rx="9" fill="#FFFFFF" stroke="#A9C6E2" stroke-width="1.5" />
+<path d="M 33.0 316.0 H 411.0" stroke="#1F5C99" stroke-width="3.4" stroke-linecap="round"/>
+<text x="40.0" y="346.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#17457F" font-weight='bold' text-anchor="start">Phase-1 verdict</text>
+<text x="40.0" y="368.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">five classes</text>
+<rect x="40.0" y="380.0" width="178.0" height="19.0" rx="4" fill="#E3EEF9" stroke="#1F5C99" stroke-width="1.1" />
+<text x="129.0" y="395.3" font-family="'DejaVu Sans Mono','Liberation Mono',Consolas,monospace" font-size="16.00" fill="#17457F" font-weight='bold' text-anchor="middle">real_incident</text>
+<rect x="226.0" y="380.0" width="178.0" height="19.0" rx="4" fill="#FFFFFF" stroke="#D3DCE6" stroke-width="1.1" />
+<text x="315.0" y="395.3" font-family="'DejaVu Sans Mono','Liberation Mono',Consolas,monospace" font-size="16.00" fill="#16202E" text-anchor="middle">silent_alert</text>
+<rect x="40.0" y="401.0" width="178.0" height="19.0" rx="4" fill="#FFFFFF" stroke="#D3DCE6" stroke-width="1.1" />
+<text x="129.0" y="416.3" font-family="'DejaVu Sans Mono','Liberation Mono',Consolas,monospace" font-size="16.00" fill="#16202E" text-anchor="middle">traffic_only</text>
+<rect x="226.0" y="401.0" width="178.0" height="19.0" rx="4" fill="#FFFFFF" stroke="#D3DCE6" stroke-width="1.1" />
+<text x="315.0" y="416.3" font-family="'DejaVu Sans Mono','Liberation Mono',Consolas,monospace" font-size="12.50" fill="#16202E" text-anchor="middle">correlation_uncertain</text>
+<rect x="40.0" y="422.0" width="178.0" height="19.0" rx="4" fill="#FFFFFF" stroke="#D3DCE6" stroke-width="1.1" />
+<text x="129.0" y="437.3" font-family="'DejaVu Sans Mono','Liberation Mono',Consolas,monospace" font-size="16.00" fill="#16202E" text-anchor="middle">no_clear_anomaly</text>
+<text x="222.0" y="458.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#1F5C99" font-weight='bold' text-anchor="middle">escalate only on real_incident</text>
+<line x1="1062.0" y1="311.0" x2="1062.0" y2="312.0" stroke="#1F5C99" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah1)"/>
+<line x1="440.0" y1="391.0" x2="423.0" y2="391.0" stroke="#1F5C99" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah1)"/>
+<text x="44.0" y="480.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8492A3" text-anchor="start">A detector that did not run is recorded as suspended, with a reason — never as a negative observation.</text>
+<text x="44.0" y="498.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8492A3" text-anchor="start">Baseline selection governs the traffic detector; the routing detectors use their own baselines (validated RPKI ROA, per-prefix withdrawal rate).</text>
+<rect x="24.0" y="522.0" width="1272.0" height="130.0" rx="11" fill="#FEF8ED" stroke="#E2C68F" stroke-width="1.5" />
+<rect x="24.0" y="522.0" width="560.0" height="36.0" rx="11" fill="#8C5C0C" stroke="none" />
+<rect x="24.0" y="546.0" width="560.0" height="12.0" rx="0" fill="#8C5C0C" stroke="none" />
+<text x="42.0" y="548.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="19.25" fill="#FFFFFF" font-weight='bold' text-anchor="start">SHARED EVIDENCE CACHE  ·  EVIDENCE BLACKBOARD</text>
+<text x="608.0" y="547.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="19.00" fill="#54627A" text-anchor="start">decouples the two phases  ·  a verdict is a lookup, not a re-run</text>
+<text x="44.0" y="576.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#7A5C22" text-anchor="start">Sections:  config · traffic · routing · diagnosis · evidence · report · meta · validation</text>
+<rect x="24.0" y="586.0" width="306.0" height="56.0" rx="6" fill="#FFFFFF" stroke="#E2C68F" stroke-width="1.1" />
+<text x="38.0" y="607.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#8C5C0C" font-weight='bold' text-anchor="start">Content-addressed</text>
+<text x="38.0" y="625.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">key (a, e, t, k)</text>
+<text x="38.0" y="641.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">same input → same hash</text>
+<rect x="346.0" y="586.0" width="306.0" height="56.0" rx="6" fill="#FFFFFF" stroke="#E2C68F" stroke-width="1.1" />
+<text x="360.0" y="607.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#8C5C0C" font-weight='bold' text-anchor="start">Write-once</text>
+<text x="360.0" y="625.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">detector output kept</text>
+<text x="360.0" y="641.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">a later stage cannot replace it</text>
+<rect x="668.0" y="586.0" width="306.0" height="56.0" rx="6" fill="#FFFFFF" stroke="#E2C68F" stroke-width="1.1" />
+<text x="682.0" y="607.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#8C5C0C" font-weight='bold' text-anchor="start">Typed + provenance</text>
+<text x="682.0" y="625.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">claims cite evidence</text>
+<text x="682.0" y="641.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">supporting &amp; contradicting</text>
+<rect x="990.0" y="586.0" width="306.0" height="56.0" rx="6" fill="#FFFFFF" stroke="#E2C68F" stroke-width="1.1" />
+<text x="1004.0" y="607.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#8C5C0C" font-weight='bold' text-anchor="start">Records absences</text>
+<text x="1004.0" y="625.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">suspended detectors</text>
+<text x="1004.0" y="641.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">coverage gaps, abstentions</text>
+<rect x="24.0" y="664.0" width="1272.0" height="450.0" rx="11" fill="#F8F4FC" stroke="#C4AEDB" stroke-width="1.5" />
+<rect x="24.0" y="664.0" width="470.0" height="36.0" rx="11" fill="#4F2668" stroke="none" />
+<rect x="24.0" y="688.0" width="470.0" height="12.0" rx="0" fill="#4F2668" stroke="none" />
+<text x="42.0" y="690.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="22.00" fill="#FFFFFF" font-weight='bold' text-anchor="start">PHASE 2  ·  CAUSAL ATTRIBUTION</text>
+<text x="518.0" y="689.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="19.00" fill="#54627A" text-anchor="start">PNS-inspired  ·  abstains when the evidence does not justify a claim</text>
+<rect x="1130.9" y="672.0" width="151.1" height="23.0" rx="11.5" fill="#4F2668" stroke="none" />
+<text x="1206.4" y="688.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.00" fill="#FFFFFF" font-weight='bold' text-anchor="middle">S3  PNS + abstain</text>
+<rect x="25.5" y="710.5" width="396.0" height="190.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="24.0" y="708.0" width="396.0" height="190.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<path d="M 33.0 708.0 H 411.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
+<text x="40.0" y="738.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">CSS estimator</text>
+<text x="40.0" y="760.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">PNS-inspired</text>
+<text x="40.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">breakpoint = intervention</text>
+<text x="40.0" y="801.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">standardised pre/post</text>
+<text x="40.0" y="820.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">bootstrap CI · permutation p</text>
+<rect x="40.0" y="852.0" width="364.0" height="36.0" rx="6" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.1" />
+<text x="222.0" y="876.0" font-family="'DejaVu Sans Mono','Liberation Mono',Consolas,monospace" font-size="12.00" fill="#4F2668" text-anchor="middle">CSS = E[Y | do(X=1)] − E[Y | do(X=0)]</text>
+<rect x="445.5" y="710.5" width="396.0" height="190.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="444.0" y="708.0" width="396.0" height="190.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<path d="M 453.0 708.0 H 831.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
+<text x="460.0" y="738.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Evidence channels</text>
+<text x="460.0" y="760.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">each yields a likelihood</text>
+<circle cx="464.0" cy="777.0" r="3.2" fill="#6B3A8F"/>
+<text x="474.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">CSS</text>
+<text x="824.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">PNS anchor</text>
+<circle cx="464.0" cy="795.0" r="3.2" fill="#6B3A8F"/>
+<text x="474.0" y="800.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">MSBD</text>
+<text x="824.0" y="800.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">multi-scale</text>
+<circle cx="464.0" cy="813.0" r="3.2" fill="#6B3A8F"/>
+<text x="474.0" y="818.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">CTPR</text>
+<text x="824.0" y="818.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">path recon.</text>
+<circle cx="464.0" cy="831.0" r="3.2" fill="#6B3A8F"/>
+<text x="474.0" y="836.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">CIC</text>
+<text x="824.0" y="836.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">cascade scope</text>
+<circle cx="464.0" cy="849.0" r="3.2" fill="#6B3A8F"/>
+<text x="474.0" y="854.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">Granger</text>
+<text x="824.0" y="854.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">prediction</text>
+<circle cx="464.0" cy="867.0" r="3.2" fill="#6B3A8F"/>
+<text x="474.0" y="872.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">Transfer entropy</text>
+<text x="824.0" y="872.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">surrogate null</text>
+<text x="642.0" y="891.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#6B3A8F" font-weight='bold' text-anchor="middle">channels vote by LR, not by score</text>
+<rect x="865.5" y="710.5" width="396.0" height="190.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="864.0" y="708.0" width="396.0" height="190.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<path d="M 873.0 708.0 H 1251.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
+<text x="880.0" y="738.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Synthesis</text>
+<text x="880.0" y="760.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">Bayesian, per-cluster</text>
+<text x="880.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">per-cluster geometric mean</text>
+<rect x="880.0" y="804.0" width="364.0" height="26.0" rx="6" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.1" />
+<text x="1062.0" y="822.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#4F2668" font-weight='bold' text-anchor="middle">R→T · T→R · abstain</text>
+<text x="880.0" y="844.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">L1</text>
+<text x="904.0" y="844.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">CI, p, lead test</text>
+<text x="1070.0" y="844.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">L2</text>
+<text x="1094.0" y="844.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">channel set</text>
+<text x="880.0" y="862.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">L3</text>
+<text x="904.0" y="862.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">max P ≥ 0.50</text>
+<text x="1070.0" y="862.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">L4</text>
+<text x="1094.0" y="862.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">scope only</text>
+<line x1="423.0" y1="803.0" x2="440.0" y2="803.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
+<line x1="843.0" y1="803.0" x2="860.0" y2="803.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
+<rect x="865.5" y="920.5" width="396.0" height="152.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="864.0" y="918.0" width="396.0" height="152.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<path d="M 873.0 918.0 H 1251.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
+<text x="880.0" y="948.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Agent coordination</text>
+<text x="880.0" y="970.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">S4 · typed records</text>
+<text x="880.0" y="994.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="13.25" fill="#4F2668" font-weight='bold' text-anchor="start">Evidence-driven</text>
+<text x="1244.0" y="994.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">reasoning agent</text>
+<text x="880.0" y="1013.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">Autonomous</text>
+<text x="1244.0" y="1013.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">ReAct, 18 tools</text>
+<text x="880.0" y="1032.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">Pipeline</text>
+<text x="1244.0" y="1032.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">traffic · routing · report</text>
+<text x="1062.0" y="1062.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#6B3A8F" font-weight='bold' text-anchor="middle">write-once · provenance · bounded</text>
+<rect x="445.5" y="920.5" width="396.0" height="152.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="444.0" y="918.0" width="396.0" height="152.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<path d="M 453.0 918.0 H 831.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
+<text x="460.0" y="948.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Degradation ladder</text>
+<text x="460.0" y="970.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">a failure ≠ a verdict</text>
+<circle cx="470.0" cy="990.0" r="8.5" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.2"/>
+<text x="470.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="middle">1</text>
+<text x="486.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">LLM narrative report</text>
+<circle cx="656.0" cy="990.0" r="8.5" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.2"/>
+<text x="656.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="middle">2</text>
+<text x="672.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">retry with backoff</text>
+<circle cx="470.0" cy="1016.0" r="8.5" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.2"/>
+<text x="470.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="middle">3</text>
+<text x="486.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">deterministic render</text>
+<circle cx="656.0" cy="1016.0" r="8.5" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.2"/>
+<text x="656.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="middle">4</text>
+<text x="672.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">explicit abstention</text>
+<text x="642.0" y="1062.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#6B3A8F" font-weight='bold' text-anchor="middle">verdict never changes — only richness</text>
+<rect x="25.5" y="920.5" width="396.0" height="152.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
+<rect x="24.0" y="918.0" width="396.0" height="152.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<path d="M 33.0 918.0 H 411.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
+<text x="40.0" y="948.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Audit artefacts</text>
+<text x="40.0" y="970.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">what the operator gets</text>
+<circle cx="44.0" cy="987.0" r="3.2" fill="#6B3A8F"/>
+<text x="54.0" y="992.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">HTML report · decision trace</text>
+<circle cx="44.0" cy="1005.0" r="3.2" fill="#6B3A8F"/>
+<text x="54.0" y="1010.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">typed evidence records</text>
+<circle cx="44.0" cy="1023.0" r="3.2" fill="#6B3A8F"/>
+<text x="54.0" y="1028.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">named gaps &amp; contradictions</text>
+<circle cx="44.0" cy="1041.0" r="3.2" fill="#6B3A8F"/>
+<text x="54.0" y="1046.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">replayable from the cache</text>
+<line x1="1062.0" y1="901.0" x2="1062.0" y2="914.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
+<line x1="440.0" y1="994.0" x2="423.0" y2="994.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
+<text x="44.0" y="1086.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8492A3" text-anchor="start">CIC reports cascade scope but never a direction — reporting one would assume the conclusion it is used to support.</text>
+<text x="44.0" y="1104.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8492A3" text-anchor="start">MSBD and CTPR re-read the same two series, so their agreement is not independent confirmation.</text>
+<line x1="222.0" y1="514.0" x2="222.0" y2="516.0" stroke="#8C5C0C" stroke-width="2.2" stroke-linecap="round" marker-end="url(#ahc)"/>
+<text x="236.0" y="516.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8C5C0C" text-anchor="start">writes evidence</text>
+<line x1="222.0" y1="656.0" x2="222.0" y2="658.0" stroke="#8C5C0C" stroke-width="2.2" stroke-linecap="round" marker-end="url(#ahc)"/>
+<text x="236.0" y="660.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8C5C0C" text-anchor="start">reads evidence</text>
+<rect x="24.0" y="1128.0" width="1272.0" height="96.0" rx="11" fill="#F1F9F5" stroke="#A6D3C3" stroke-width="1.5" />
+<rect x="24.0" y="1128.0" width="330.0" height="36.0" rx="11" fill="#175F49" stroke="none" />
+<rect x="24.0" y="1152.0" width="330.0" height="12.0" rx="0" fill="#175F49" stroke="none" />
+<text x="42.0" y="1154.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="22.00" fill="#FFFFFF" font-weight='bold' text-anchor="start">OPERATOR OUTPUT</text>
+<text x="378.0" y="1153.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="19.00" fill="#54627A" text-anchor="start">ranked by measured impact, not by raw alert frequency</text>
+<rect x="24.0" y="1174.0" width="410.0" height="40.0" rx="7" fill="#FFFFFF" stroke="#A6D3C3" stroke-width="1.1" />
+<text x="38.0" y="1194.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#175F49" font-weight='bold' text-anchor="start">Verdict bundle</text>
+<text x="38.0" y="1210.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">(v, d, c, s)</text>
+<text x="420.0" y="1210.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.50" fill="#54627A" text-anchor="end">verdict · direction · type · impact</text>
+<rect x="455.0" y="1174.0" width="410.0" height="40.0" rx="7" fill="#FFFFFF" stroke="#A6D3C3" stroke-width="1.1" />
+<text x="469.0" y="1194.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#175F49" font-weight='bold' text-anchor="start">Audit trail</text>
+<text x="469.0" y="1210.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="13.25" fill="#16202E" text-anchor="start">every verdict cites its evidence</text>
+<text x="851.0" y="1210.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.50" fill="#54627A" text-anchor="end">replayable from the cache alone</text>
+<rect x="886.0" y="1174.0" width="410.0" height="40.0" rx="7" fill="#FFFFFF" stroke="#A6D3C3" stroke-width="1.1" />
+<text x="900.0" y="1194.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#175F49" font-weight='bold' text-anchor="start">Review queue</text>
+<text x="900.0" y="1210.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.25" fill="#16202E" text-anchor="start">130 alerts → 14 incidents</text>
+<text x="1282.0" y="1210.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.50" fill="#54627A" text-anchor="end">10:1 reduction, low impact kept</text>
+<line x1="222.0" y1="1118.0" x2="222.0" y2="1122.0" stroke="#1E7A5E" stroke-width="2.2" stroke-linecap="round" marker-end="url(#aho)"/>
+<line x1="24.0" y1="1232.0" x2="1296.0" y2="1232.0" stroke="#D3DCE6" stroke-width="1.2" stroke-linecap="round"/>
+<rect x="24.0" y="1244.0" width="40.3" height="22.0" rx="11" fill="#1F5C99" stroke="none" />
+<text x="44.2" y="1260.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.00" fill="#FFFFFF" font-weight='bold' text-anchor="middle">S1</text>
+<text x="74.3" y="1260.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">two-phase quick-to-deep pipeline</text>
+<rect x="397.9" y="1244.0" width="40.3" height="22.0" rx="11" fill="#1F5C99" stroke="none" />
+<text x="418.0" y="1260.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.00" fill="#FFFFFF" font-weight='bold' text-anchor="middle">S2</text>
+<text x="448.2" y="1260.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">reliability-aware traffic baselines</text>
+<rect x="761.3" y="1244.0" width="40.3" height="22.0" rx="11" fill="#6B3A8F" stroke="none" />
+<text x="781.5" y="1260.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.00" fill="#FFFFFF" font-weight='bold' text-anchor="middle">S3</text>
+<text x="811.6" y="1260.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="19.25" fill="#54627A" text-anchor="start">PNS attribution with explicit abstention</text>
+<rect x="1181.9" y="1244.0" width="40.3" height="22.0" rx="11" fill="#6B3A8F" stroke="none" />
+<text x="1202.0" y="1260.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.00" fill="#FFFFFF" font-weight='bold' text-anchor="middle">S4</text>
+<text x="1232.2" y="1260.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.50" fill="#54627A" text-anchor="start">auditable agent layer, measured degradation</text>
+</svg>

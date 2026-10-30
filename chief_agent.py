@@ -26,6 +26,7 @@ from agents.traffic_agent import (
 )
 from agents.reasoning_agent import run_reasoning_agent, run_reasoning_agent_batch
 from agents.routing_agent import run_routing_agent_async
+from agents.cache_compaction import compact_cache_payload
 from agents.react_agent import valid_llm_html_report
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REASONING
 from utils.helpers import make_json_safe
@@ -42,15 +43,7 @@ from config import API_KEY, BASE_URL, MODEL, MITM_DETECTION_ENABLED, JSON_OUTPUT
 PROJECT_ROOT = Path(__file__).parent
 
 class ChiefExpertAgent:
-    """
-    Chief Expert Agent — main orchestrator for BGP analysis.
-
-    Mode selection:
-      traffic_first: state machine workflow (default); deterministic and stable.
-      react:         LLM-driven ReAct loop with 18 tools; supports streaming.
-
-    (Enhanced mode removed 2026-09-29 — paper-grade cleanup.)
-    """
+    """Chief Expert Agent — main orchestrator for BGP analysis."""
 
     def __init__(
         self,
@@ -79,10 +72,10 @@ class ChiefExpertAgent:
         self.prefix2as_file = None
         self.asorg_file = None
         self.reasoning_analysis_result = None
-        self._workflow_engine = None
+        self.engine_instance = None
         self._streaming_callback = None
     
-    def _detect_output_language(self, user_input):
+    def detect_output_language(self, user_input):
         """Detect output language from user input."""
         if not user_input:
             return "en"
@@ -106,22 +99,19 @@ class ChiefExpertAgent:
             return "zh"
         return "en"
 
-    def _format_language_instruction(self, language):
-        """Return language instruction for downstream prompts."""
-        return "Respond in English only." if language == "en" else "Reply in Chinese only."
 
     @property
     def workflow_engine(self):
         """Get or create workflow engine instance."""
-        if self._workflow_engine is None:
-            self._workflow_engine = WorkflowEngine(
+        if self.engine_instance is None:
+            self.engine_instance = WorkflowEngine(
                 max_retries=3,
                 parallel_execution=True,
                 skip_unnecessary_analysis=False,
                 debate_rounds=self.debate_rounds,
                 evaluation_retries=self.evaluation_retries,
             )
-        return self._workflow_engine
+        return self.engine_instance
     
     async def setup_llm(self):
         """Initialize the LLM client."""
@@ -143,20 +133,13 @@ class ChiefExpertAgent:
         start_time = None,
         end_time = None,
         streaming_callback = None,
+        precomputed_routing = None,
+        precomputed_traffic = None,
     ):
-        """
-        Main coordination method - dispatches to appropriate mode.
-
-        Args:
-            user_input: Natural language input
-            asn: AS number
-            start_time: Start time
-            end_time: End time
-            streaming_callback: Optional callback for streaming output (React mode)
-
+        """Main coordination method - dispatches to appropriate mode.
+        
         Returns:
-            Analysis result dictionary
-        """
+        Analysis result dictionary"""
         t0 = perf_counter()
         event_start = datetime.now()
 
@@ -165,11 +148,11 @@ class ChiefExpertAgent:
 
         # Handle batch/special cases first
         if user_input and not (asn and start_time and end_time):
-            batch_result = await self._handle_batch_input(user_input)
+            batch_result = await self.handle_batch_input(user_input)
             if batch_result:
                 return batch_result
 
-        output_language = self._detect_output_language(user_input)
+        output_language = self.detect_output_language(user_input)
 
         # Validate parameters
         if user_input:
@@ -180,14 +163,18 @@ class ChiefExpertAgent:
                 return {"success": False, "error": "Missing asn, start_time, end_time"}
 
         if self.analysis_mode == "react":
-            return await self._react_analysis_flow(
+            return await self.react_analysis_flow(
                 asn, start_time, end_time, user_input, t0, event_start,
+                precomputed_routing=precomputed_routing,
+                precomputed_traffic=precomputed_traffic,
             )
-        return await self._workflow_analysis_flow(
+        return await self.workflow_analysis_flow(
             asn, start_time, end_time, user_input, t0, event_start,
+            precomputed_routing=precomputed_routing,
+            precomputed_traffic=precomputed_traffic,
         )
 
-    async def _handle_batch_input(self, user_input):
+    async def handle_batch_input(self, user_input):
         """Handle batch analysis requests."""
         as_list, multi_start, multi_end = parse_multiple_as_input(user_input)
 
@@ -224,7 +211,7 @@ class ChiefExpertAgent:
                         end_time=normalize_time(multi_end),
                         output_dir=PROJECT_ROOT / "results"
                     )
-                except Exception as e:
+                except (AttributeError) as e:
                     logger.warning(f"Batch HTML report failed: {e}")
 
             return {
@@ -249,30 +236,27 @@ class ChiefExpertAgent:
     # ── React Mode (v4.0) ─────────────────────────────────────────────────────
 
     @staticmethod
-    def _extract_react_token_count(result):
-        """Sum token usage across all ReAct LLM calls recorded in the trace.
-
-        The LLM factory maintains a process-wide TokenBudget; we read it via
-        the LLM module instead of relying on the ReactResult to expose the
-        counter. Falls back to 0 if TokenBudget is unavailable so the CLI
-        summary line stays at "Tokens: 0" rather than "Tokens: N/A".
-        """
+    def extract_react_token_count(result, tok_before=None):
+        """Sum token usage across all ReAct LLM calls recorded in the trace."""
         try:
             # Prefer the explicit counter if the agent records one
             for attr in ("total_tokens", "tokens", "token_count"):
                 v = getattr(result, attr, None)
                 if v:
                     return int(v)
-        except Exception:
+        except (ValueError):
             pass
         try:
             from llm.llm_factory import get_global_token_counter
-            return int(get_global_token_counter())
-        except Exception:
+            now = int(get_global_token_counter())
+            if tok_before is not None:
+                return max(0, now - int(tok_before))
+            return now
+        except (ValueError):
             pass
         return 0
 
-    async def _react_analysis_flow(
+    async def react_analysis_flow(
         self,
         asn,
         start_time,
@@ -284,12 +268,7 @@ class ChiefExpertAgent:
         precomputed_traffic = None,
         enhanced = False,
     ):
-        """
-        React-mode analysis (Reasoning + Acting).
-
-        (Enhanced mode removed 2026-09-29 — `enhanced` arg kept for backward
-        compatibility with old callers.)
-        """
+        """React-mode analysis (Reasoning + Acting)."""
         logger.info(f"Using React Agent for AS{asn} analysis (enhanced={enhanced})")
         logger.info(f"Analysis mode: react (streaming: {self._streaming_callback is not None})")
 
@@ -305,6 +284,12 @@ class ChiefExpertAgent:
                 max_rounds=REACT_MAX_ROUNDS,
                 streaming_callback=self._streaming_callback if REACT_STREAMING_ENABLED else None,
             )
+
+            try:
+                from llm.llm_factory import get_global_token_counter as _gtc
+                _tok_before = int(_gtc())
+            except (ValueError):
+                _tok_before = None
 
             result = await agent.run(
                 asn=str(asn),
@@ -323,20 +308,17 @@ class ChiefExpertAgent:
             # fallback to global lookup (per-run bucket only)
             try:
                 from agents.react_agent import shared_evidence
-                # Bug fix: use `result` (the ReactResult) rather than undefined
-                # `react_result` which was always raising NameError, so the
-                # shared-evidence fallback path was never actually executed.
                 _bucket = shared_evidence(result.run_id) if result.run_id else {}
                 report_path = report_path or (
                     (_bucket.get("generate_report") or {}).get("report_path", "")
                 )
-            except Exception:
+            except (ValueError):
                 pass
             report_generated = valid_llm_html_report(report_path)
             partial_success = bool(result.success) and report_generated
 
             # react mode: process HCAF causal attribution
-            hcaf_attribution, hcaf_status = self._post_react_hcaf(result)
+            hcaf_attribution, hcaf_status = self.post_react_hcaf(result)
 
             return {
                 "success": partial_success,
@@ -354,9 +336,6 @@ class ChiefExpertAgent:
                     "trace_summary": agent.get_trace_summary(),
                     "report_generated": report_generated,
                     "html_report_path": report_path,
-                    # Bug fix: previously these fields were missing on the
-                    # ReAct code path so the CLI summary printed
-                    # "Data quality: N/A" / "Confidence score: N/A".
                     "data_quality": (
                         "high" if (result.success and report_generated) else "medium"
                     ),
@@ -385,11 +364,7 @@ class ChiefExpertAgent:
                     "tools_used": result.tools_used,
                     "total_rounds": result.total_rounds,
                 },
-                # Bug fix: expose token usage so the CLI summary doesn't print
-                # "Tokens: N/A" on the ReAct path. ReAct does not maintain a
-                # single token counter; we sum the per-call tokens recorded
-                # by the LLM factory's TokenBudget.
-                "token_count": ChiefExpertAgent._extract_react_token_count(result),
+                "token_count": extract_react_token_count(result, _tok_before),
                 "execution_time_minutes": elapsed / 60.0,
                 "execution_time_seconds": elapsed,
                 # HCAF attribution result (added when fixing Bug #6)
@@ -406,24 +381,18 @@ class ChiefExpertAgent:
             import traceback
             logger.error(traceback.format_exc())
             # Fallback to legacy mode
-            return await self._legacy_direct_analysis(
+            return await self.legacy_direct_analysis(
                 asn, start_time, end_time, user_input, t0, event_start
             )
 
-    def _post_react_hcaf(self, react_result):
-        """
-        Post-React HCAF causal attribution.
+    def post_react_hcaf(self, react_result):
+        """Post-React AEA directional attribution.
 
-        Reads evidence from ``result.evidence`` (set by ReactAgent tools)
-        and runs the CausalAttributionEngine to derive direction, strength,
-        and confidence for the routing/traffic causal link.
-
-        Returns (attribution_dict, status_string). Never returns None.
-        """
+        Returns (attribution_dict, status_string). Never returns None."""
         try:
-            from agents.causal_attribution import CausalAttributionEngine as HCAF_ENGINE_CLASS
+            from agents.aea_runtime import run_aea
         except ImportError:
-            logger.debug("[HCAF] causal_attribution engine not available; skipping post-react attribution")
+            logger.debug("[HCAF] aea_runtime not available; skipping post-react attribution")
             return {}, "skipped_no_engine"
 
         try:
@@ -433,7 +402,7 @@ class ChiefExpertAgent:
                     from agents.react_agent import shared_evidence
                     if react_result.run_id:
                         evidence = shared_evidence(react_result.run_id) or {}
-                except Exception:
+                except (ValueError):
                     evidence = {}
 
             routing_timeline = []
@@ -474,58 +443,34 @@ class ChiefExpertAgent:
             routing_timeline = routing_timeline[:200]
             traffic_timeline = traffic_timeline[:200]
 
-            engine = HCAF_ENGINE_CLASS()
-            # BUG FIX 2026-10-05: this used to try a CJK-named analyze method first and
-            # only fall back to `engine.analyze(...)` on TypeError/AttributeError.
-            # `CausalAttributionEngine` only ever defined `analyze`, so the first
-            # call raised AttributeError every single time and the fallback ran.
-            # The dead call also passed `target_as_val=None` (a stray kwarg) that
-            # no signature accepts. Calling the real method directly.
-            result = engine.analyze(
-                routing_timeline=routing_timeline,
-                traffic_timeline=traffic_timeline,
+            engine_result = run_aea(
+                routing_timeline=routing_timeline[:200],
+                traffic_timeline=traffic_timeline[:200],
                 routing_context=routing_ctx,
                 traffic_context=traffic_ctx,
-                topology_context={},
-                target_as=None,
             )
-
+            verdict = engine_result[0]
             attribution = {
-                # BUG FIX 2026-10-05: these were CJK getattr() names
-                # (direction_val + the CJK is_causal/convergence/explanation names)
-                # and the CJK method_name / innovation_findings names) that match no field on
-                # CausalAttributionResult, whose real fields are
-                # direction/strength/confidence/is_causal/convergence_score/
-                # explanation and whose findings use method_name. Every
-                # lookup therefore silently fell back to its default, so this
-                # HCAF post-react attribution always reported
-                # direction="unknown", strength="unknown", confidence=0.0,
-                # is_causal=False and an empty findings list -- i.e. the
-                # attribution was discarded no matter what HCAF computed.
-                "direction": getattr(result, "direction", "unknown"),
-                "strength": getattr(getattr(result, "strength", None), "value", "unknown"),
-                "confidence": float(getattr(result, "confidence", 0.0) or 0.0),
-                "is_causal": bool(getattr(result, "is_causal", False)),
-                "convergence": float(getattr(result, "convergence_score", 0.0) or 0.0),
-                "explanation": getattr(result, "explanation", ""),
-                "novel_findings": [
-                    {"method": f.method_name, "direction": f.direction, "strength": float(f.strength)}
-                    for f in (getattr(result, "innovation_findings", []) or [])
-                ],
+                "direction": verdict.direction if verdict.committed else "unknown",
+                "committed": verdict.committed,
+                "reason": verdict.reason,
+                "vetoes": dict(verdict.vetoes),
+                "p_value": verdict.p_value,
+                "n_placebos": verdict.n_placebos,
+                "lag": verdict.lag,
             }
             logger.info(
-                f"[HCAF post-react] direction={attribution['direction']}, "
-                f"strength={attribution['strength']}, confidence={attribution['confidence']:.0%}"
-            )
+                f"[AEA post-react] direction={attribution['direction']} "
+                f"reason={attribution['reason']}")
             return attribution, "ok"
 
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"[HCAF post-react] failed: {e}")
             return {}, "failed"
 
     # ── Workflow Engine Mode ─────────────────────────────────────────────────
 
-    async def _workflow_analysis_flow(
+    async def workflow_analysis_flow(
         self,
         asn,
         start_time,
@@ -533,21 +478,21 @@ class ChiefExpertAgent:
         user_input,
         t0,
         event_start: datetime,
+        precomputed_routing = None,
+        precomputed_traffic = None,
     ):
-        """
-        Execute analysis using the new workflow engine.
-        
-        This method uses the graph-based workflow engine for:
-        - Smart Cascade: Traffic first, routing on demand
-        - Quick screening (5-10s pre-check)
-        - State machine transitions
-        - Error recovery
-        - Quality validation
-        - Cross-validation for edge cases
-        """
+        """Execute analysis using the new workflow engine."""
         logger.info(f"Using Workflow Engine for AS{asn} analysis")
         logger.info(f"Analysis mode: {self.analysis_mode}")
         logger.info(f"MITM detection: {'enabled' if self.enable_mitm else 'disabled'}")
+
+        # Snapshot the process-wide token counter so the reported figure is
+        # a per-run delta rather than the process total.
+        try:
+            from llm.llm_factory import get_global_token_counter as _gtc
+            _tok_before = int(_gtc())
+        except (ValueError):
+            _tok_before = None
 
         try:
             # Run workflow with analysis mode
@@ -561,6 +506,8 @@ class ChiefExpertAgent:
                 enable_mitm=self.enable_mitm,
                 debate_rounds=self.debate_rounds,
                 evaluation_retries=self.evaluation_retries,
+                precomputed_routing=precomputed_routing,
+                precomputed_traffic=precomputed_traffic,
             )
 
             # Process workflow result. `run_workflow` may return either a
@@ -569,19 +516,13 @@ class ChiefExpertAgent:
             if isinstance(context, dict):
                 result = context
             else:
-                result = self._process_workflow_result(
-                    context, asn, start_time, end_time, t0, event_start
+                result = self.process_workflow_result(
+                    context, asn, start_time, end_time, t0, event_start,
+                    tok_before=_tok_before,
                 )
             # Mirror the saved LLM HTML path into both analysis_report and
             # report_result so downstream scripts (run_batch_reality_cases.py)
             # can verify it without reaching into chief_expert_analysis.
-            # Bug fix: the previous implementation walked chief_expert_analysis
-            # → report_result → analysis_report to find the path, then setdefault'd
-            # the value on the other two. _process_workflow_result already sets
-            # all three keys (lines below), so the second write was always
-            # either a no-op or a self-overwrite — pure dead code. Keep only
-            # the bare-minimum safety net: ensure both aliases carry the
-            # same path that chief_expert_analysis already has.
             saved_path = ""
             for key in ("chief_expert_analysis", "report_result", "analysis_report"):
                 block = result.get(key)
@@ -602,18 +543,19 @@ class ChiefExpertAgent:
         except Exception as e:
             logger.error(f"Workflow engine failed: {e}")
             # Fallback to legacy mode
-            return await self._legacy_direct_analysis(
+            return await self.legacy_direct_analysis(
                 asn, start_time, end_time, user_input, t0, event_start
             )
 
-    def _process_workflow_result(
+    def process_workflow_result(
         self,
         context: WorkflowContext,
         asn,
         start_time,
         end_time,
         t0,
-        event_start: datetime
+        event_start: datetime,
+        tok_before=None
     ):
         """Process workflow result into standard format."""
         elapsed = (datetime.now() - event_start).total_seconds()
@@ -628,21 +570,14 @@ class ChiefExpertAgent:
                 "workflow_states": [t.from_state.name for t in context.transitions],
                 "analysis_mode": context.analysis_mode.value if hasattr(context.analysis_mode, "value") else str(context.analysis_mode),
                 "enhanced": getattr(context, "enhanced", False),
-                # Bug fix: previously these two fields were missing on the
-                # non-chief (workflow_engine) code path, so the CLI summary
-                # printed "Data quality: N/A" and "Confidence score: N/A"
-                # even on a fully successful run. Derive them from the
-                # evidence chain when available, otherwise fall back to a
-                # well-defined default that reflects the actual confidence
-                # in the analysis (verdict + anomaly counts).
-                "data_quality": ChiefExpertAgent._derive_data_quality(context),
-                "confidence_score": ChiefExpertAgent._derive_confidence_score(context),
-                "evidence_verdict": ChiefExpertAgent._derive_verdict(context),
+                "data_quality": self.derive_data_quality(context),
+                "confidence_score": self.derive_confidence_score(context),
+                "evidence_verdict": self.derive_verdict(context),
                 "traffic_anomaly_count": (
                     (context.traffic_result or {}).get("anomaly_count")
                     if isinstance(context.traffic_result, dict) else None
                 ),
-                "routing_anomaly_count": ChiefExpertAgent._count_routing_anomalies(context),
+                "routing_anomaly_count": self.count_routing_anomalies(context),
                 "html_report_path": context.report_path,
             },
             "smart_cascade": {
@@ -654,7 +589,7 @@ class ChiefExpertAgent:
                 "traffic_ok_but_routing_anomaly": context.traffic_ok_but_routing_anomaly,
                 "validation_notes": context.validation_notes,
             },
-            "token_count": self._extract_token_count(context),
+            "token_count": self.extract_token_count(context, tok_before=tok_before),
             "reasoning_result": context.reasoning_result or {},
             "diagnosis_result": context.diagnosis_result or {},
             "verification_result": context.verification_result or {},
@@ -667,12 +602,19 @@ class ChiefExpertAgent:
             "joint_score": round(float(getattr(context, "joint_score", 0.0) or 0.0), 3),
             "joint_evidence_cards": getattr(context, "joint_evidence_cards", []) or [],
             "joint_rationale": getattr(context, "joint_rationale", "") or "",
+            # Which coordination stages ran. The ablation harness checks
+            # this against the arm's intent, so an arm that disabled one
+            # stage but also skipped another is caught rather than
+            # silently reported as a larger delta.
+            "stage_execution": getattr(context, "stage_execution", {}) or {},
             "victim_asns": getattr(context, "victim_asns", []) or [],
             "evidence_board": {
                 "observations": context.evidence_records,
                 "claims": context.diagnosis_claims,
                 "verdicts": context.verification_records,
                 "challenges": context.contradictions,
+                "alternatives": getattr(context, "evidence_alternatives", []) or [],
+                "gaps": getattr(context, "evidence_gaps", []) or [],
                 "causal_attribution": context.hcaf_attribution or {},
             },
             "analysis_report": context.final_result or {},
@@ -680,7 +622,7 @@ class ChiefExpertAgent:
             "org_info": context.org_info or {},
             "relationships": context.as_relationships or {},
             "prefixes": context.as_prefixes or {},
-            "reasoning_trace": self._build_trace(context),
+            "reasoning_trace": self.build_trace(context),
             "errors": context.errors,
             "execution_time_minutes": elapsed / 60,
             "event_start_time": event_start.isoformat(),
@@ -694,8 +636,8 @@ class ChiefExpertAgent:
 
         return result
 
-    def _extract_token_count(self, context):
-        """Extract total token count from context + TokenBudget."""
+    def extract_token_count(self, context, tok_before=None):
+        """Extract total token count for this run."""
         tokens = 0
 
         # Method 1: From reasoning_result (per-agent breakdown)
@@ -704,20 +646,6 @@ class ChiefExpertAgent:
                 token_usage = result.get("token_usage", {})
                 if isinstance(token_usage, dict):
                     if "total_across_agents" in token_usage:
-                        # Bug fix 2026-09-13 (BUG-R129): the previous code
-                        # used ``tokens = token_usage["total_across_agents"]``
-                        # which is an unconditional *assignment*. When
-                        # multiple ``*_result`` payloads carry a
-                        # ``total_across_agents`` field (each partial,
-                        # e.g. traffic=routing + reasoning sum), the loop
-                        # would keep overwriting with the LAST observed
-                        # value rather than taking the maximum. The
-                        # correct fallback semantics is "Method 2
-                        # (TokenBudget) is authoritative; Method 1
-                        # provides a *floor* we can use when TokenBudget
-                        # is unavailable", so we take ``max(tokens, ...)``
-                        # to remember the highest estimate seen across
-                        # the three sources.
                         try:
                             value = int(token_usage["total_across_agents"] or 0)
                         except (TypeError, ValueError):
@@ -745,14 +673,24 @@ class ChiefExpertAgent:
                         f"total={tokens} (prompt={pt}, completion={ct}), "
                         f"by_agent={list(tb_summary['by_agent'].keys())}"
                     )
-        except Exception:
+        except (ValueError):
             pass
+
+        # Method 3: process-wide counter, measured as a delta over the run
+        if tok_before is not None:
+            try:
+                from llm.llm_factory import get_global_token_counter
+                delta = max(0, int(get_global_token_counter()) - int(tok_before))
+                if delta > tokens:
+                    tokens = delta
+            except (ValueError):
+                pass
 
         return tokens
 
     # ── Quality derivation helpers (Bug fix: token/quality previously N/A) ──
     @staticmethod
-    def _derive_verdict(context):
+    def derive_verdict(context):
         """Best-effort verdict string from the evidence chain."""
         ec = getattr(context, "evidence_chain", None)
         if isinstance(ec, dict):
@@ -762,7 +700,7 @@ class ChiefExpertAgent:
         return "unknown"
 
     @staticmethod
-    def _derive_confidence_score(context):
+    def derive_confidence_score(context):
         """Best-effort confidence score in [0, 1]."""
         ec = getattr(context, "evidence_chain", None)
         if isinstance(ec, dict):
@@ -781,11 +719,11 @@ class ChiefExpertAgent:
                 r_anom += int(rr.get(k) or 0)
             # More anomalies → higher confidence. 0 anomalies → low confidence.
             return min(1.0, 0.2 + 0.15 * min(t_anom, 4) + 0.20 * min(r_anom, 2))
-        except Exception:
+        except (ValueError):
             return 0.0
 
     @staticmethod
-    def _derive_data_quality(context):
+    def derive_data_quality(context):
         """High/medium/low based on data availability + verdict."""
         ec = getattr(context, "evidence_chain", None)
         if isinstance(ec, dict):
@@ -807,7 +745,7 @@ class ChiefExpertAgent:
         return "low"
 
     @staticmethod
-    def _count_routing_anomalies(context):
+    def count_routing_anomalies(context):
         rr = context.routing_result or {}
         try:
             count = int(rr.get("anomaly_count") or 0)
@@ -824,10 +762,10 @@ class ChiefExpertAgent:
                 if isinstance(lst, list) and lst:
                     return len(lst)
             return 0
-        except Exception:
+        except (ValueError):
             return 0
 
-    def _build_trace(self, context):
+    def build_trace(self, context):
         """Build execution trace from context transitions."""
         trace = []
         for i, transition in enumerate(context.transitions):
@@ -843,7 +781,7 @@ class ChiefExpertAgent:
 
     # ── Legacy Direct Mode ──────────────────────────────────────────────────
 
-    async def _legacy_direct_analysis(
+    async def legacy_direct_analysis(
         self,
         asn,
         start_time,
@@ -856,11 +794,9 @@ class ChiefExpertAgent:
         routing_initial=None,
         reasoning_result=None,
     ):
-        """
-        Legacy direct analysis mode (original implementation).
-
-        Kept for backward compatibility and as fallback.
-        """
+        """Legacy direct analysis mode (original implementation).
+        
+        Kept for backward compatibility and as fallback."""
         logger.info(f"Using Legacy Direct Mode for AS{asn} analysis")
 
         # ── Stage 1: traffic ──────────────────────────────────────────
@@ -876,13 +812,6 @@ class ChiefExpertAgent:
 
         if routing_initial is None:
             # Initial routing scan: run all 3 detectors by default. The
-            # user explicitly forbade skip-outage in the v19.1 audit
-            # (2026-10-11): the v18 React-mode default of skip_outage=True
-            # was a 6-event regression (the LLM saw only leak signal and
-            # classified real outages as route_leaks). Cost is now ~5min
-            # per event for the routing pass; this is acceptable for the
-            # paper-grade React batch. Forge detection remains off by
-            # default (separate 200k-row bottleneck documented BUG-R131).
             routing_initial = await run_routing_agent_async(
                 asn, start_time, end_time, use_llm=False, skip_outage=False,
                 skip_forge=True,
@@ -892,12 +821,6 @@ class ChiefExpertAgent:
 
         traffic_anomaly_count = traffic_result.get('anomaly_count', 0)
         # BUG-R141 2026-09-29: this used to read only
-        # ``total_prefix_hijacks``, so an event whose sole routing signal was
-        # a route leak (Cox AS22773, Voxility AS3223, ReliableSite AS23470,
-        # Uztelecom AS28910) counted as "nothing detected" and was sent down
-        # the no-anomaly path — the leak data was fetched correctly and then
-        # discarded. Those reports came out as "Traffic anomaly, routing
-        # quiet" for events that leaked thousands of routes.
         routing_anomaly_count = (
             routing_initial.get('total_prefix_hijacks', 0)
             or 0
@@ -908,23 +831,17 @@ class ChiefExpertAgent:
         )
 
         if traffic_anomaly_count + routing_anomaly_count == 0:
-            return self._build_no_anomaly_result(
+            return self.build_no_anomaly_result(
                 asn, start_time, end_time, traffic_result, routing_initial, t0, event_start
             )
 
-        detected_start, detected_end = self._extract_anomaly_times(
+        detected_start, detected_end = self.extract_anomaly_times(
             traffic_result, start_time, end_time
         )
 
         # ── Stage 2: routing (with detected window) ──────────────────
         if routing_result is None:
             # Deep routing pass: run outage detection too. The Phase-1
-            # quick pass may have run all 3 detectors (post-v19.1 fix) or
-            # not (pre-v19.1 with skip_outage=True). For the deep phase
-            # we want to confirm the outage signal, so we re-run with
-            # the same skip_outage setting as Phase 1 to avoid an
-            # inconsistent mixed result. (skip_outage=False is now the
-            # default; this matches the v19.1 audit recommendation.)
             routing_result = await run_routing_agent_async(
                 asn, detected_start, detected_end, use_llm=True, skip_outage=False,
                 skip_forge=True,
@@ -963,7 +880,7 @@ class ChiefExpertAgent:
 
         await self.setup_llm()
 
-        report_result = await self._generate_report(
+        report_result = await self.generate_report(
             routing_result, traffic_result, reasoning_result,
             asn, start_time, detected_end, org_info
         )
@@ -981,7 +898,7 @@ class ChiefExpertAgent:
                 "coordination_strategy": "Direct function calls",
                 "elapsed_seconds": round(perf_counter() - t0, 3),
             },
-            "token_count": self._extract_tokens(reasoning_result),
+            "token_count": self.extract_tokens(reasoning_result),
             "reasoning_result": reasoning_result,
             "analysis_report": report_result,
             "report_result": report_result,
@@ -997,7 +914,7 @@ class ChiefExpertAgent:
 
         return result
 
-    def _build_no_anomaly_result(
+    def build_no_anomaly_result(
         self,
         asn,
         start_time,
@@ -1059,7 +976,7 @@ class ChiefExpertAgent:
             "event_end_time": datetime.now().isoformat(),
         }
 
-    def _extract_anomaly_times(
+    def extract_anomaly_times(
         self,
         traffic_result,
         start_time,
@@ -1069,33 +986,6 @@ class ChiefExpertAgent:
         detected_start = None
         detected_end = None
 
-        # Bug fix 2026-09-13 (BUG-R103): the previous implementation had
-        # three issues:
-        #
-        #   1. It used ``if`` for consecutive_windows AND ``if`` (not
-        #      ``elif``) for expanded_windows — so when BOTH keys were
-        #      present, the consecutive block ran first, set
-        #      detected_start/end, then the expanded block ran and
-        #      overwrote them. The behaviour is identical to using
-        #      ``elif`` (the latest writer wins) but the wasted
-        #      comparison hides the priority and makes the code
-        #      harder to reason about.
-        #
-        #   2. The local variable ``detected_windows`` was assigned in
-        #      the expanded_windows branch but NEVER returned and
-        #      NEVER read anywhere — pure dead code whose only
-        #      side-effect was a misleading comment about showing all windows
-        #      suggesting downstream consumers used it.
-        #
-        #   3. ``outage_period_anomalies`` used ``min(times)`` /
-        #      ``max(times)`` directly on raw timestamp strings, so
-        #      ``detected_start`` ended up being whichever raw string
-        #      sorted first lexicographically — wrong for ISO times
-        #      like "2024-01-15" vs "2024-01-05". We now parse both
-        #      bounds and pick min/max on parsed datetimes.
-        #
-        # Reorganise as an explicit priority chain: expanded_windows
-        # > consecutive_anomaly_windows > outage_period_anomalies.
         if traffic_result.get('expanded_windows'):
             windows = traffic_result['expanded_windows']
             first_window = windows[0]
@@ -1115,12 +1005,12 @@ class ChiefExpertAgent:
                         continue
                     try:
                         parsed_times.append(isoparse(str(ts).replace('Z', '+00:00')))
-                    except Exception:
+                    except (ValueError):
                         continue
                 if parsed_times:
                     detected_start = min(parsed_times).isoformat()
                     detected_end = max(parsed_times).isoformat()
-            except Exception:
+            except (ValueError):
                 pass
 
         detected_start = detected_start or start_time
@@ -1132,12 +1022,12 @@ class ChiefExpertAgent:
                     dt = datetime.strptime(ts_str.split('Z')[0], '%Y-%m-%dT%H:%M:%S')
                     return dt.strftime('%Y-%m-%d %H:%M')
                 return ts_str
-            except Exception:
+            except (ValueError):
                 return ts_str
 
         return normalize_ts(detected_start), normalize_ts(detected_end)
 
-    def _extract_tokens(self, reasoning_result):
+    def extract_tokens(self, reasoning_result):
         """Extract token count from reasoning result."""
         tokens = 0
         token_usage = reasoning_result.get("token_usage", {})
@@ -1152,7 +1042,7 @@ class ChiefExpertAgent:
                         tokens += agent_tokens
         return tokens
 
-    async def _generate_report(
+    async def generate_report(
         self,
         routing_result,
         traffic_result,
@@ -1178,14 +1068,6 @@ class ChiefExpertAgent:
             hcaf = reasoning_result.get("hcaf_attribution")
 
         # BUG-FIX 2026-10-01: direct call mode never invokes HCAF (it's a
-        # workflow-engine responsibility). Without HCAF, _inject_code_rendered_tables
-        # receives ``hcaf_attribution=None`` and the hard direction gating in
-        # ``compute_top_cause`` falls back to the signal-based path — which
-        # lets detector noise (e.g. Pakistan 500 self-hijacks on an outage
-        # window, Iran 5000 leak noise on a DPI blackout) override the
-        # ground-truth causal direction and mis-label the event as
-        # "ROA Misconfiguration". Run HCAF inline here so direct-call mode
-        # produces the same gating as workflow mode.
         if not hcaf and isinstance(routing_data, dict) and isinstance(traffic_data, dict):
             try:
                 from workflow_engine import WorkflowEngine, WorkflowContext
@@ -1202,7 +1084,7 @@ class ChiefExpertAgent:
                         f"direction={hcaf.get('direction')}, "
                         f"confidence={hcaf.get('confidence', 0):.0%}"
                     )
-            except Exception as _hcaf_err:
+            except (AttributeError) as _hcaf_err:
                 logger.warning(f"[_generate_report] Direct-mode HCAF failed: {_hcaf_err}")
 
         # Debug logging
@@ -1230,7 +1112,7 @@ class ChiefExpertAgent:
             hcaf_attribution=hcaf,
         )
 
-# ==================== Entry Points ====================
+# Entry Points
 
 async def analyze_traffic_outage_async(
     user_input = None,
@@ -1244,17 +1126,7 @@ async def analyze_traffic_outage_async(
     evaluation_retries = 2,
     time_window_extension_hours: float = 0.0,
 ):
-    """
-    Async entry point for BGP anomaly analysis.
-
-    Args:
-        user_input: Natural language description
-        asn: AS number
-        start_time: Start time (YYYY-MM-DD HH:MM)
-        end_time: End time (YYYY-MM-DD HH:MM)
-        analysis_mode: "traffic_first" (default) or "react"
-        enable_mitm: Enable MITM/hijack detection. Defaults to config.MITM_DETECTION_ENABLED.
-    """
+    """Async entry point for BGP anomaly analysis."""
     output_dir = PROJECT_ROOT / "results"
     output_dir.mkdir(exist_ok=True, parents=True)
 
@@ -1297,14 +1169,6 @@ async def analyze_traffic_outage_async(
     result = make_json_safe(result)
 
     # Atomic write: serialise to a sibling temp file first, then rename
-    # so a crash or Ctrl-C never leaves the caller reading a half-written
-    # ``analysis.json``. Bug fix 2026-09-13 (BUG-R51): the previous
-    # implementation had no try/except around the serialise+rename. A
-    # disk-full or permission error would surface as a top-level
-    # exception, discarding the perfectly good ``result`` we just
-    # produced (and forcing the user to rerun the (expensive) pipeline).
-    # Now we log the failure loudly and still return ``result`` so the
-    # caller keeps their data; we only lose the on-disk file.
     try:
         tmp_path = analysis_file.with_suffix(analysis_file.suffix + ".tmp")
         with open(tmp_path, "w", encoding="utf-8") as f:
@@ -1323,57 +1187,30 @@ async def analyze_traffic_outage_async(
 
     return result
 
-async def _async_quick_routing(asn, start_time, end_time, enable_mitm,
+async def async_quick_routing(asn, start_time, end_time, enable_mitm,
                                skip_outage=None,
                                skip_leak=None):
-    """Quick routing analysis without LLM (Phase 1).
-
-    Defaults to a light pass that:
-      * skips slow forge / MITM detection (needs full-day pre-load + ES lookup)
-      * skips path-leak detection (the slowest step at high announcement rates)
-      * skips outage detection (24h baseline re-reads 200+ txt files
-        and dominates quick-phase wall time)
-
-    ``skip_outage`` / ``skip_leak`` override the ``BGPT_RUN_OUTAGE`` /
-    ``BGPT_RUN_LEAK`` env vars when not None. Both env vars remain honoured
-    by default so the batch/cache drivers keep producing leak+outage-inclusive
-    caches; the cache drivers pass explicit ``True`` for both skips anyway.
-
-    Light-mode cost is dominated by the single-pass origin hijack detector
-    (~3-5 s for a 3 h window), keeping Phase 1 inside its ~60 s wall budget.
-    """
+    """Quick routing analysis without LLM (Phase 1)."""
     from agents.routing_agent import run_routing_agent_async
 
-    # ── Light hijack path: bypass the streaming pipeline ───────────────────────
-    # The full streaming detector (detect_hijacks → detect_hijacks_batch →
-    # detect_hijacks_streaming) re-runs vectorized origin detection once per
-    # 5-minute chunk (~37 chunks for a 3h window ⇒ ~55s wall time at MAX_WORKERS=1).
+    # Phase 1 runs every detector.  The old code took a separate
+    # "light" hijack pass over the update stream and then asked the
+    # routing agent to skip its own hijack pass, so the window was read
+    # twice for hijacking alone -- and the light pass produced false
+    # accusations against the target, because it scored announcements
+    # without the target's own prefix ownership.  The shared scan reads
+    # the window once and gives the routing agent a hijack result that
+    # is computed the same way as the batch detector's.
     #
-    # For Phase 1 we only need origin hijack counts (no forge / no per-chunk
-    # streaming). Loading the whole window into a single Polars DataFrame and
-    # calling detect_origin_hijacks ONCE collapses 55s to ~3-5s.
-    quick_hijack = _light_origin_hijack(asn, start_time, end_time)
-
-    # Run the rest of routing through the standard path, but skip the
-    # streaming hijack detector (we already produced origin_hijacked /
-    # origin_hijacking above in a single pass). Leak/outage follow the
-    # same skip_* flags as before.
-    #
-    # Round-26: per-event leak detector toggle.  The leak detector
-    # is the only one whose cost is genuinely unbounded by the
-    # AS prefix count, because it scans every BGP-update chunk in
-    # the window after filtering to target_asns.
-    #
-    # `skip_leak=None` → honour BGPT_RUN_LEAK (batch/cache default: leak ON).
-    # An explicit True/False from the caller wins over the env var.
+    # `skip_leak` / `skip_outage` stay switchable so a caller that
+    # genuinely cannot afford them can still opt out, but the default is
+    # to run them: Phase 1 is the triage stage, and a stage that skips
+    # the expensive detectors cannot triage.
     if skip_leak is None:
         skip_leak = os.environ.get("BGPT_RUN_LEAK", "1") == "0"
     if skip_outage is None:
         skip_outage = os.environ.get("BGPT_RUN_OUTAGE", "1") == "0"
 
-    # Phase-1 default skips both leak and outage so the foreground command
-    # stays inside the ~60 s budget. Cache/batch drivers explicitly pass
-    # ``skip_leak=False`` / ``skip_outage=False`` to opt back in.
     rest = await run_routing_agent_async(
         asn=asn, start_time=start_time, end_time=end_time,
         use_llm=False,
@@ -1382,39 +1219,23 @@ async def _async_quick_routing(asn, start_time, end_time, enable_mitm,
         # every BGP update in the window. v17 ground-truth labels are NEVER
         # consulted here.
         skip_leak=skip_leak,
-        skip_forge=True,       # light mode skips forge / MITM (needs full-day pre-load)
+        skip_forge=True,       # forge / MITM is out of scope for now
         skip_outage=skip_outage,
-        skip_hijack_streaming=True,  # single-pass detector already filled origin_hijacked/ing
+        skip_hijack_streaming=False,
     )
-
-    # Merge quick hijack counts into the routing result.
-    if isinstance(rest, dict) and quick_hijack:
-        rest.setdefault("origin_hijacked", [])
-        rest.setdefault("origin_hijacking", [])
-        rest["origin_hijacked"] = quick_hijack.get("origin_hijacked", [])
-        rest["origin_hijacking"] = quick_hijack.get("origin_hijacking", [])
-        rest["total_prefix_hijacks"] = (
-            len(rest["origin_hijacked"]) + len(rest.get("forge_hijacked", []))
-        )
     return rest
 
-def _light_origin_hijack(asn, start_time, end_time):
+def light_origin_hijack(asn, start_time, end_time):
     """Single-pass vectorized origin hijack detection.
-
-    Bypasses the streaming `detect_hijacks_batch` pipeline. Loads all 5-min
-    chunks for the window into a single DataFrame and calls
-    `detect_origin_hijacks` once. Wall-time drops from ~55s to ~3-5s for a
-    3-hour AS12479-scale window at MAX_WORKERS=1.
-
+    
     Returns dict with keys `origin_hijacked` and `origin_hijacking` (lists of
-    alert dicts). Empty lists on any failure (fail-safe).
-    """
+    alert dicts). Empty lists on any failure (fail-safe)."""
     try:
         from datetime import datetime as _dt
         from data.parquet_cache import iter_window_chunks
 
         # Coerce ISO strings to UTC-naive datetimes (parquet_cache expects naive)
-        def _coerce(value):
+        def coerce(value):
             if value is None:
                 return None
             if hasattr(value, "tzinfo") and value.tzinfo is not None:
@@ -1430,15 +1251,12 @@ def _light_origin_hijack(asn, start_time, end_time):
                     continue
             return None
 
-        start_dt = _coerce(start_time)
-        end_dt = _coerce(end_time)
+        start_dt = coerce(start_time)
+        end_dt = coerce(end_time)
         if start_dt is None or end_dt is None or end_dt <= start_dt:
             return {"origin_hijacked": [], "origin_hijacking": []}
 
         # ── Load all 5-min chunks into one DataFrame ─────────────────────
-        # The parquet cache already keeps memory bounded: each chunk is the
-        # full content of one RIPE RIS 5-minute file (≤80 MB), and for a 3h
-        # window that's ~37 chunks ⇒ peak ~3 GB which the system can handle.
         parts = []
         for chunk in iter_window_chunks(start_dt, end_dt, on_missing="skip"):
             if chunk is None or chunk.is_empty():
@@ -1458,9 +1276,6 @@ def _light_origin_hijack(asn, start_time, end_time):
             return {"origin_hijacked": [], "origin_hijacking": []}
 
         # Keep only the columns detect_origin_hijacks needs.
-        # Polars Parquet files typically use snake_case (`as_path`) while
-        # the upstream MRT schema uses hyphens (`as-path`).  Accept either
-        # so the column is never silently dropped before detection runs.
         keep = ["prefix"]
         for col in ("as-path", "as_path"):
             if col in df.columns:
@@ -1471,17 +1286,17 @@ def _light_origin_hijack(asn, start_time, end_time):
         df = df.select([c for c in keep if c in df.columns])
 
         # ── Build prefix → owner AS mapping for target AS ────────────────
-        from data.prefix2as_loader import process_prefix2as
+        from data.prefix2as_loader import process_prefix2as, load_prefix2as_json
         p2a_path = process_prefix2as(start_dt)
-        with open(p2a_path, "r", encoding="utf-8") as f:
-            prefix_to_as = json.load(f)
+        prefix_to_as = load_prefix2as_json(p2a_path)
+        if prefix_to_as is None:
+            # load_prefix2as_json deleted a corrupt snapshot; rebuild it once
+            # rather than silently running hijack detection against an empty
+            # map, which would report "no hijack" for every event.
+            p2a_path = process_prefix2as(start_dt)
+            prefix_to_as = load_prefix2as_json(p2a_path) or {}
 
         # BUG-R-Round26: light-hijack bypassed the routing-agent IPv6 loader,
-        # which is why every IPv6 announcement by the target AS was reported
-        # as `origin_hijacking` (false positive) and every IPv6 hijack BY
-        # another AS of an owned-by-target prefix was missed. Merge the
-        # local IPv6 cache for the target AS into prefix_to_as so a
-        # legitimate v6 announcement is treated as legitimate.
         try:
             from data.ipv6_prefix_loader import (
                 load_ipv6_prefixes_for_as,
@@ -1492,7 +1307,7 @@ def _light_origin_hijack(asn, start_time, end_time):
                 prefix_to_as = merge_prefix2as_with_ipv6(
                     prefix_to_as, v6, asn=asn,
                 )
-        except Exception as _v6e:
+        except (AttributeError) as _v6e:
             logger.debug(f"[light-hijack] IPv6 overlay merge skipped: {_v6e}")
 
         target_owned = {p for p, owners in prefix_to_as.items()
@@ -1514,23 +1329,12 @@ def _light_origin_hijack(asn, start_time, end_time):
             f"{len(origin_hijacking)} attacker origin hijacks (single-pass)"
         )
         return {"origin_hijacked": origin_hijacked, "origin_hijacking": origin_hijacking}
-    except Exception as _e:
+    except (AttributeError) as _e:
         logger.warning(f"[light-hijack] failed (fallback to streaming): {_e}")
         return {"origin_hijacked": [], "origin_hijacking": []}
 
 def build_quick_summary(traffic, routing, correlation):
-    """Build a human-readable anomaly summary from raw agent outputs.
-
-    Summary fields:
-        traffic_anomaly_count (int)
-        traffic_signal_present (bool) ← **the decisive field for "real incident?"**
-        routing_hijack_count (int)
-        routing_leak_count (int)
-        routing_outage_score (float)
-        correlation_level (str) ← "high"/"medium"/"low"/"none"
-        correlation_strength (float)
-        quick_verdict (str) ← "real_incident" / "silent_alert" / "routing_only" / "traffic_only" / "unknown"
-    """
+    """Build a human-readable anomaly summary from raw agent outputs."""
     tr = traffic.get("result", traffic) if isinstance(traffic, dict) else {}
     if not isinstance(tr, dict):
         tr = {}
@@ -1542,18 +1346,8 @@ def build_quick_summary(traffic, routing, correlation):
     traffic_anomaly_count = int(tr.get("anomaly_count", 0) or 0)
     traffic_data_available = bool(tr.get("data_available", tr.get("data_points", 0) > 0))
     # Motivation: traffic is the ground truth. Only anomaly_count counts.
-    # `data_available` just means Cloudflare Radar returned data points;
-    # a healthy AS with no anomalies still returns data points but is NOT
-    # a traffic signal. Use anomaly_count as the sole indicator.
     traffic_signal = traffic_anomaly_count > 0
     # BUG-R145 2026-09-29: when Cloudflare Radar has no timeseries for the
-    # AS (e.g. AS134840 MCCL Myanmar — a small ISP with no Radar coverage),
-    # `data_points=0` and the detector fabricates ``percent_change`` from a
-    # ``None`` baseline_avg. Without this guard the verdict falls through
-    # to ``silent_alert`` because routing_signal is the only truth source.
-    # ``no_radar_data`` is a distinct, non-actionable verdict that flags
-    # the radar gap to the reviewer instead of pretending the routing
-    # signal is the answer.
 
     # Routing aggregation. Try the annotation-package format first, then flat.
     hijack_section = rr.get("hijack") or {}
@@ -1568,10 +1362,6 @@ def build_quick_summary(traffic, routing, correlation):
         hijack_count = len(rr.get("hijacks") or rr.get("origin_hijacked") or rr.get("forge_hijacked") or [])
 
     # BUG (2026-10-05): `leak_count = len(route_leaks)` reads the capped list,
-    # so a run that found 20849 leaks was summarised as "Leaks: 5000" with no
-    # indication that 5000 was the detector's cap rather than the measurement.
-    # Carry the true count and the truncation flag into the summary so the
-    # console line and any JSON consumer can be honest about it.
     leak_count = len(leak_section.get("route_leaks") or [])
     if leak_count == 0:
         leak_count = len(rr.get("leaks") or rr.get("route_leaks") or [])
@@ -1611,10 +1401,6 @@ def build_quick_summary(traffic, routing, correlation):
     routing_signal = (hijack_count + leak_count) > 0 or outage_score > 0.5
 
     # correlation_analyzer.analyze_temporal_correlation() returns a dict whose
-    # actual correlation level lives under `correlation.signals.temporal_proximity`
-    # (strong / moderate / weak / none) OR `summary.correlation_level` (which
-    # mirrors `correlation.level`). The top-level `level` is always
-    # "SIGNALS_PRECOMPUTED" — not useful here.
     corr = correlation.get("result", correlation) if isinstance(correlation, dict) else {}
     if not isinstance(corr, dict):
         corr = {}
@@ -1631,13 +1417,7 @@ def build_quick_summary(traffic, routing, correlation):
     correlation_strength = float(corr.get("strength", 0.0) or corr.get("score", 0.0) or 0.0)
 
     # Round-25 (mirror of agents/report_agent.render_tca_section):
-    # derive the level label FROM the strength value so the CLI display
-    # cannot show "level=high + strength=0.0" the way the AS12479 console
-    # did on 2026-09-27 ("Correlation: high (strength=0.0)"). When
-    # strength is exactly 0 we still surface the temporal-proximity
-    # string as an advisory floor (mapped to the same buckets the
-    # renderer uses), so the verdict logic below keeps working.
-    def _bucket_from_strength(score):
+    def bucket_from_strength(score):
         if score >= 0.65:
             return "high"
         if score >= 0.35:
@@ -1646,7 +1426,7 @@ def build_quick_summary(traffic, routing, correlation):
             return "low"
         return "none"
 
-    def _bucket_from_temporal(label):
+    def bucket_from_temporal(label):
         if label in ("strong", "moderate", "high", "medium"):
             return "high"
         if label == "weak":
@@ -1654,14 +1434,10 @@ def build_quick_summary(traffic, routing, correlation):
         return "none"
 
     if correlation_strength > 0:
-        correlation_level = _bucket_from_strength(correlation_strength)
+        correlation_level = bucket_from_strength(correlation_strength)
     else:
-        correlation_level = _bucket_from_temporal(correlation_level)
+        correlation_level = bucket_from_temporal(correlation_level)
         # Round-25: when temporal_proximity says "high" but the numeric
-        # strength is exactly 0, downgrade to "medium" so the verdict
-        # logic doesn't treat a zero-strength case as a strong-incident
-        # match. The string-only fallback here mirrors the renderer's
-        # "legacy compatibility" path.
         if correlation_level == "high":
             correlation_level = "medium"
 
@@ -1675,11 +1451,6 @@ def build_quick_summary(traffic, routing, correlation):
         correlation_level = "none"
 
     # ── Quick verdict logic ─────────────────────────────────────────────────
-    # 1. routing + traffic both anomalous + high correlation -> real incident
-    # 2. routing anomalous + traffic calm -> silent alert
-    # 3. traffic anomalous + routing calm -> other cause (BGP anomalies are one-directional; needs flow analysis)
-    # 4. neither anomalous -> "no clear anomaly" (not actionable)
-    # 5. no Cloudflare Radar data -> "no_radar_data" (BUG-R145)
     if not traffic_data_available:
         # Radar returned no data points. The anomaly_count is fabricated
         # and useless. Surface this gap so the reviewer knows the verdict
@@ -1759,12 +1530,12 @@ def analyze_traffic_outage(
         out_dir.mkdir(parents=True, exist_ok=True)
         metrics.save(out_dir / f"{slug}_metrics.json")
         metrics.reset()
-    except Exception as _exc:
+    except (AttributeError) as _exc:
         logger.debug(f"[tracing] metrics save skipped: {_exc!r}")
     return result
 
 
-def _run_quick_analysis_async(
+def run_quick_analysis_async(
     asn,
     start_time,
     end_time,
@@ -1775,28 +1546,7 @@ def _run_quick_analysis_async(
     skip_leak: Optional[bool] = None,
     skip_outage: Optional[bool] = None,
 ) -> dict:
-    """Phase 1 sync driver. 0 LLM. ~60 s. Returns the quick-phase result dict.
-
-    Pipeline:
-        1. traffic_agent (no_llm)        → raw traffic anomalies + plot
-        2. _async_quick_routing          → routing (light origin hijack + leak-free path)
-        3. correlation_analyzer          → temporal correlation + hypotheses
-        4. build_quick_summary           → human-readable summary + verdict
-        5. Persist atomic JSON cache     → results/quick/quick_<event_id|asn>_<start>_<end>.json
-
-    Args:
-        event_id: optional canonical event id (e.g. "hijack_celer_bridge_2022").
-            When provided, the cache filename is prefixed with it and the cache
-            JSON carries a top-level ``event_id`` field. This is REQUIRED for
-            the v18 cache-based evaluation because multiple events can share
-            the same (asn, start, end) window (e.g. AS16509 is the victim of
-            hijack_celer_bridge_2022, hijack_rostelecom_amazon_2020, and
-            origin_hijack_myetherwallet_2018) and a victim_as-only filename
-            cannot disambiguate them.
-
-    Atomicity: serialise to a sibling .tmp then ``os.replace`` to guarantee
-    readers never see a half-written JSON (BUG-R122).
-    """
+    """Phase 1 sync driver. 0 LLM. ~60 s. Returns the quick-phase result dict."""
     t0 = perf_counter()
     warnings: list = []
     asn_str = str(asn) if asn is not None else ""
@@ -1813,19 +1563,14 @@ def _run_quick_analysis_async(
             traffic_raw = {"success": False, "error": f"traffic_agent returned non-dict: {type(traffic_raw).__name__}"}
         if not traffic_raw.get("success"):
             warnings.append(f"traffic_agent: {traffic_raw.get('error', 'unknown error')}")
-    except Exception as _e:
+    except (AttributeError) as _e:
         logger.warning(f"[quick] traffic_agent crashed: {_e!r}")
         warnings.append(f"traffic_agent crashed: {_e!r}")
         traffic_raw = {"success": False, "error": str(_e), "anomaly_count": 0}
 
     try:
         # BUG-FIX 2026-10-09: skip_outage was hardcoded True here, which
-        # overrode the BGPT_RUN_OUTAGE env var and caused ALL 30 v17 quick
-        # caches to ship outage_score=0.0 (the placeholder). The two-phase
-        # pipeline (Phase 1 quick → Phase 2 deep) never had Phase 2 invoked
-        # by the cache-based eval driver, so outage was effectively dead.
-        # Now respect the env var (default ON).
-        routing_raw = asyncio.run(_async_quick_routing(
+        routing_raw = asyncio.run(async_quick_routing(
             asn=asn, start_time=start_time, end_time=end_time,
             enable_mitm=enable_mitm,
             skip_leak=skip_leak,
@@ -1835,7 +1580,7 @@ def _run_quick_analysis_async(
             routing_raw = {"success": False, "error": f"routing returned non-dict: {type(routing_raw).__name__}"}
         if not routing_raw.get("success"):
             warnings.append(f"routing: {routing_raw.get('error', 'unknown error')}")
-    except Exception as _e:
+    except (AttributeError) as _e:
         logger.warning(f"[quick] _async_quick_routing crashed: {_e!r}")
         warnings.append(f"routing crashed: {_e!r}")
         routing_raw = {
@@ -1855,7 +1600,7 @@ def _run_quick_analysis_async(
                     tr_inner.get("anomaly_window")
                     or tr_inner.get("traffic_anomaly_window")
                 )
-        except Exception:
+        except (ValueError):
             traffic_anomaly_window = None
 
         correlation = analyze_temporal_correlation(
@@ -1866,7 +1611,7 @@ def _run_quick_analysis_async(
         )
         if not isinstance(correlation, dict):
             correlation = {"summary": {}, "correlation": {}, "hypotheses": []}
-    except Exception as _e:
+    except (AttributeError) as _e:
         logger.warning(f"[quick] correlation analyzer crashed: {_e!r}")
         warnings.append(f"correlation crashed: {_e!r}")
         correlation = {"summary": {}, "correlation": {}, "hypotheses": []}
@@ -1886,6 +1631,15 @@ def _run_quick_analysis_async(
     cache_path = cache_root / f"{prefix}{safe_start}_{safe_end}.json"
 
     elapsed = round(perf_counter() - t0, 2)
+
+    # The hijack detector emits one record per announcement, so a busy window
+    # produces hundreds of thousands of records for a single incident and the
+    # cache reaches hundreds of megabytes -- large enough to be OOM-killed
+    # while being written, and too slow to load during evaluation.  Collapse
+    # the per-announcement records into one record per incident before the
+    # cache is written; the original record counts are kept alongside, so no
+    # downstream consumer loses the announcement-frequency information.
+    routing_raw, correlation = compact_cache_payload(routing_raw, correlation)
 
     result = {
         "success": bool(traffic_raw.get("success", False)) or bool(routing_raw.get("success", False)),
@@ -1932,32 +1686,10 @@ def analyze_quick(
     skip_outage: Optional[bool] = None,
 ) -> dict:
     """**Phase 1** of the two-phase diagnosis. Sync. 0 LLM. ~60 s.
-
+    
     Returns a JSON-serializable dict with raw traffic / routing / correlation
-    results, plus a human-readable anomaly summary and a `quick_verdict`.
-
-    The result dict is the input to `analyze_deep_from_quick()` for Phase 2.
-
-    ``event_id`` is recommended for any caller that uses a persistent
-    quick-cache; without it, two events sharing the same (asn, start, end)
-    window (e.g. AS16509) clobber each other's cache.
-
-    Sample:
-        >>> result = analyze_quick('12479', '2024-01-03 14:45', '2024-01-03 18:00',
-        ...                        event_id='hijack_orange_spain_rpki_2024')
-        >>> print(result['quick_verdict'], result['anomaly_summary']['traffic_signal_present'])
-
-    ``skip_leak`` / ``skip_outage`` control the path-leak and outage
-    detectors. Both are expensive at high announcement rates (leak scans
-    every BGP-update chunk in the window; outage re-reads 200+ txt files for
-    its 24h baseline) and historically pushed the foreground command past
-    the documented ~60 s Phase-1 budget. Both default to honouring the
-    ``BGPT_RUN_LEAK`` / ``BGPT_RUN_OUTAGE`` env vars (both ON by default),
-    so the batch/cache drivers keep producing leak+outage-inclusive caches;
-    pass ``skip_leak=True`` / ``skip_outage=True`` (or set the env vars to
-    ``0``) to opt out — what the interactive ``--mode auto`` path does.
-    """
-    return _run_quick_analysis_async(
+    results, plus a human-readable anomaly summary and a `quick_verdict`."""
+    return run_quick_analysis_async(
         asn=asn, start_time=start_time, end_time=end_time,
         user_input=user_input,
         enable_mitm=enable_mitm,
@@ -1974,17 +1706,9 @@ def analyze_deep_from_quick(
     debate_rounds: int = 1,
 ) -> dict:
     """**Phase 2** of the two-phase diagnosis. Sync. ~3-5 min, runs the LLM.
-
-    Args:
-        quick_result: dict returned by `analyze_quick()`. Phase 2 reuses
-            the cached traffic/routing results without re-downloading BGP data.
-        user_input: optional context string forwarded to the LLM.
-        analysis_mode: legacy shape selector. Default "traffic_first".
-        debate_rounds: LLM debate rounds for the reasoning stage.
-
+    
     Returns:
-        Same dict shape as `analyze_traffic_outage()`, plus `phase="deep"`.
-    """
+    Same dict shape as `analyze_traffic_outage()`, plus `phase="deep"`."""
     if not quick_result or not quick_result.get("success"):
         return {"success": False, "error": "quick_result invalid", "phase": "deep"}
 
@@ -2004,7 +1728,7 @@ def analyze_deep_from_quick(
     )
 
     t0 = perf_counter()
-    deep_result = asyncio.run(_deep_only_pipeline(
+    deep_result = asyncio.run(deep_only_pipeline(
         asn=asn,
         start_time=start_time,
         end_time=end_time,
@@ -2029,10 +1753,6 @@ def analyze_deep_from_quick(
     }
 
     # Round-22 (observability): persist per-event metrics alongside the
-    # report. ``analyze_deep_from_quick`` is the entry point used by
-    # ``--mode deep`` and the background branch of ``--mode auto``; we
-    # mirror the hook that ``analyze_traffic_outage`` does so the
-    # metrics JSON lands in ``results/json/`` either way.
     try:
         from utils.tracing import metrics
         out_dir = Path(__file__).resolve().parent / "results" / "json"
@@ -2063,12 +1783,12 @@ def analyze_deep_from_quick(
         out_dir.mkdir(parents=True, exist_ok=True)
         metrics.save(out_dir / f"{slug}_metrics.json")
         metrics.reset()
-    except Exception as _exc:  # noqa: BLE001 — observability never breaks deep
+    except (AttributeError) as _exc:  # noqa: BLE001 — observability never breaks deep
         logger.debug(f"[tracing] deep-phase metrics save skipped: {_exc!r}")
 
     return deep_result
 
-async def _deep_only_pipeline(
+async def deep_only_pipeline(
     asn, start_time, end_time, user_input,
     chief_expert: "ChiefExpertAgent",
     precomputed_routing: dict,
@@ -2080,6 +1800,8 @@ async def _deep_only_pipeline(
         asn=asn,
         start_time=start_time,
         end_time=end_time,
+        precomputed_routing=precomputed_routing,
+        precomputed_traffic=precomputed_traffic,
     )
 
 def load_quick_cache(cache_path_str):
@@ -2089,10 +1811,10 @@ def load_quick_cache(cache_path_str):
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    except (ValueError):
         return None
 
-# ==================== CLI ====================
+# CLI
 
 if __name__ == "__main__":
     import argparse
@@ -2127,11 +1849,6 @@ if __name__ == "__main__":
         "--json-summary", action="store_true", default=False,
         help="Print Phase 1 anomaly_summary as JSON (for batch consumption)",
     )
-    # Bug fix: README + run_v2_events.sh both reference --json-output but the
-    # CLI parser never declared it, so every v2 event invocation would die
-    # with "unrecognized arguments: --json-output" before the workflow
-    # could even start. We accept --json-output and short-circuit to the
-    # JSON_OUTPUT_ENABLED branch so the documented behaviour matches.
     parser.add_argument(
         "--json-output", action="store_true", default=False,
         help="Emit full structured result as JSON to stdout (overrides JSON_OUTPUT_ENABLED env var)",
@@ -2140,16 +1857,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # ── Two-phase dispatch ─────────────────────────────────────────────
-    # quick → run analyze_quick, no LLM, write cache, exit 0
-    # deep + (--quick-cache or implicit re-run of quick) → run analyze_deep_from_quick
-    # traffic_first / react → run analyze_traffic_outage (legacy one-phase)
     if args.mode == "quick":
         if not all([args.asn, args.start, args.end]):
             parser.error("--asn, --start, --end required for --mode quick")
-        # Bug fix: when --json-output is requested (used by run_v2_events.sh),
-        # skip the human-readable mode banner entirely so stdout contains
-        # nothing but parseable JSON. Mixing prose with JSON makes downstream
-        # ``json.loads(open(out).read())`` fail in batch pipelines.
         if not getattr(args, "json_output", False):
             print(f"Mode: quick (Phase 1, 0 LLM) | MITM: {'enabled' if MITM_DETECTION_ENABLED else 'disabled'} | Enhanced: off")
             print("=" * 60)
@@ -2158,11 +1868,6 @@ if __name__ == "__main__":
             user_input=args.user_input,
             enable_mitm=MITM_DETECTION_ENABLED,
         )
-        # Bug fix: --json-output (full JSON, run_v2_events.sh style) must
-        # take precedence over --json-summary (Phase-1 anomaly_summary
-        # only) AND the human-readable verdict output. Previously, quick
-        # mode emitted prose even when --json-output was set, breaking
-        # batch consumers that rely on stdout containing parseable JSON.
         if getattr(args, "json_output", False):
             print(json.dumps(make_json_safe(result), indent=2, ensure_ascii=False, default=str))
             sys.exit(0 if result.get("success") else 1)
@@ -2198,9 +1903,6 @@ if __name__ == "__main__":
                 print(f"Outage score: {summary.get('routing_outage_score')}")
             print(f"Correlation: {summary.get('correlation_level')} (strength={summary.get('correlation_strength')})")
             # Round-25: if the upstream temporal-proximity string and the
-            # numeric strength disagreed (e.g. "high (strength=0.0)"),
-            # surface a one-line note so the operator is not misled by a
-            # label that the numeric strength did not support.
             try:
                 _str = float(summary.get('correlation_strength') or 0.0)
             except (TypeError, ValueError):
@@ -2228,12 +1930,8 @@ if __name__ == "__main__":
 
     if args.mode == "auto":
         # Two-phase diagnosis: run Phase 1 (quick) sync so the user gets
-        # an answer within ~60 s, then fork a detached subprocess for
-        # Phase 2 (deep + LLM) that overwrites the same HTML path.
-        # Round-22: this branch was previously missing from the dispatcher;
-        # we re-introduce it here to make ``--mode auto`` actually work.
-        from chief_agent import _run_auto_mode  # late import; defined below
-        sys.exit(_run_auto_mode(args))
+        from chief_agent import run_auto_mode  # late import; defined below
+        sys.exit(run_auto_mode(args))
 
     if args.mode == "deep":
         # Phase 2: load quick result from cache (or run quick first as a fallback)
@@ -2246,12 +1944,6 @@ if __name__ == "__main__":
         else:
             if not all([args.asn, args.start, args.end]):
                 parser.error("--asn, --start, --end required for --mode deep without --quick-cache")
-            # Bug fix 2026-09-13 (BUG-R63): when --json-output is on,
-            # the subsequent ``Mode: deep...`` banner below would
-            # pollute stdout before the JSON dump, breaking
-            # ``json.loads(stdout)`` for batch consumers. Suppress the
-            # banner (and the auto-quick fallback message) when JSON
-            # output is requested.
             if not (JSON_OUTPUT_ENABLED or getattr(args, "json_output", False)):
                 print("No --quick-cache given; running quick phase first...")
             quick = analyze_quick(
@@ -2275,8 +1967,6 @@ if __name__ == "__main__":
             mode_arg = mode_arg.replace("_enhanced", "")
         if not args.user_input and not all([args.asn, args.start, args.end]):
             parser.error("the following arguments are required: --asn, --start, --end (unless --user-input is provided)")
-        # Bug fix 2026-09-13 (BUG-R63 corollary): suppress the legacy
-        # banner when --json-output is on so stdout stays pure JSON.
         if not (JSON_OUTPUT_ENABLED or getattr(args, "json_output", False)):
             print(f"Mode: {mode_arg} | MITM: {'enabled' if MITM_DETECTION_ENABLED else 'disabled'} | Enhanced: off (removed 2026-09-29)")
             print("=" * 60)
@@ -2288,14 +1978,11 @@ if __name__ == "__main__":
                 end_time=args.end,
                 analysis_mode=mode_arg,
             )
-        except Exception as e:
+        except (AttributeError) as e:
             logger.error(f"Analysis failed: {e}\n{traceback.format_exc()}")
             sys.exit(1)
 
     # ── JSON output mode (captured by the batch runner)────────────────────
-    # Bug fix: --json-output CLI flag now respected (matches run_v2_events.sh
-    # and the README docs; previously the argparse entry was missing so the
-    # flag caused "unrecognized arguments" before any analysis ran).
     if JSON_OUTPUT_ENABLED or getattr(args, "json_output", False):
         import json as _json
         print(_json.dumps(result, indent=2, ensure_ascii=False, default=str))
@@ -2307,12 +1994,6 @@ if __name__ == "__main__":
             print(f"Report: {result['html_report_path']}")
     elif result.get('chief_expert_analysis'):
         analysis = result['chief_expert_analysis']
-        # Bug fix: the react-mode result dict uses ``elapsed_seconds`` rather
-        # than ``execution_time_minutes`` (the legacy workflow path sets the
-        # latter in minutes). Try both, falling back to a wall-clock-derived
-        # value computed from event_start_time / event_end_time when neither
-        # key is populated, so the summary line is always meaningful instead
-        # of the misleading "Execution time: 0.00 minutes" we used to print.
         execution_minutes = result.get('execution_time_minutes')
         if execution_minutes is None:
             elapsed_seconds = result.get('elapsed_seconds')
@@ -2325,7 +2006,7 @@ if __name__ == "__main__":
                     try:
                         from datetime import datetime as _dt
                         execution_minutes = (_dt.fromisoformat(end) - _dt.fromisoformat(start)).total_seconds() / 60.0
-                    except Exception:
+                    except (ValueError):
                         execution_minutes = None
         execution_minutes = execution_minutes if execution_minutes is not None else 0
         token_count = result.get('token_count')
@@ -2359,22 +2040,10 @@ if __name__ == "__main__":
     else:
         print(f"Unexpected result. Keys: {list(result.keys())[:5]}")
 
-def _run_auto_mode(args):
+def run_auto_mode(args):
     """Two-phase diagnosis: Phase 1 sync, Phase 2 detached subprocess.
-
-    Round-22 (bottleneck elimination): the chief_agent CLI had ``--mode auto``
-    declared in earlier review docs but the dispatcher branch was missing,
-    so users got ``error: argument --mode: invalid choice: 'auto'``. This
-    function re-introduces the branch with minimal code:
-      1. Run Phase 1 (analyze_quick) → ~60 s, 0 LLM, returns JSON.
-      2. Print the verdict + HTML path.
-      3. Spawn ``python chief_agent.py --mode deep --quick-cache <cache>``
-         via subprocess.Popen so it survives even if this process exits.
-      4. Return 0 immediately so the foreground caller (e.g. a dashboard)
-         can poll the same HTML path later.
-
-    Returns the standard POSIX exit code (0 = quick phase succeeded).
-    """
+    
+    Returns the standard POSIX exit code (0 = quick phase succeeded)."""
     import subprocess as _sp
 
     if not all([args.asn, args.start, args.end]):
@@ -2386,22 +2055,19 @@ def _run_auto_mode(args):
 
     # Phase 1
     #
-    # Phase 1 runs in "light" mode: the path-leak and outage detectors are
-    # skipped because their cost is unbounded by the AS prefix count (leak
-    # re-reads every BGP-update chunk in the window; outage re-reads 200+
-    # txt files for its 24h baseline) and together pushed the foreground
-    # command past the ~60 s Phase-1 budget. Leak and outage detection
-    # still run in the batch/cache drivers (which keep ``BGPT_RUN_LEAK`` /
-    # ``BGPT_RUN_OUTAGE`` set to ``1``) and in the Phase-2 deep phase, so
-    # nothing is lost from the report.
+    # Every detector runs here.  Phase 1 is the triage stage, so a
+    # detector that is skipped is an anomaly class that triage cannot
+    # report at all.  The cost of running them is now a single pass over
+    # the update stream (see detectors/shared_scan.py), which is what
+    # made this affordable in the first place.
     quick = analyze_quick(
         asn=args.asn,
         start_time=args.start,
         end_time=args.end,
         user_input=args.user_input,
         enable_mitm=MITM_DETECTION_ENABLED,
-        skip_leak=True,
-        skip_outage=True,
+        skip_leak=False,
+        skip_outage=False,
     )
     cache_path = quick.get("cache_path")
     summary = quick.get("anomaly_summary") or {}

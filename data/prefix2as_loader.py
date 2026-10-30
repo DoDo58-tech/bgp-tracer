@@ -39,12 +39,12 @@ def get_available_dates():
             except subprocess.CalledProcessError:
                 logger.warning(f"Failed to access year {year}, skipping")
                 continue
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.warning(f"Error processing year {year}: {e}")
                 continue
 
         return available_dates
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Failed to get available dates: {e}")
         return []
 
@@ -97,7 +97,7 @@ def get_prefix2as_url(target_time):
         
         return urljoin(dir_url, closest_file)
         
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Failed to get directory listing: {e}")
         return ""
 
@@ -129,7 +129,7 @@ def load_prefix2as(filepath):
                             prefix_to_as[prefix] = [prefix_to_as[prefix], asn]
                     else:
                         prefix_to_as[prefix] = [asn]
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error loading prefix2as data: {e}")
     
     return prefix_to_as
@@ -194,7 +194,15 @@ def process_prefix2as(target_time):
     try:
         # Bug fix 2026-09-13 (BUG-R128): the previous code wrote
         import os as _os
-        tmp_path = parsed_filepath.with_suffix(parsed_filepath.suffix + ".tmp")
+        # The temp file must be unique per process.  os.replace is atomic,
+        # but the temp path was shared: two runs handling the same snapshot
+        # interleaved their writes into one temp file, so whichever called
+        # replace() second published a corrupt JSON document and every later
+        # reader failed with JSONDecodeError (this is what killed
+        # outage_telia_finland_2025_04_01).
+        tmp_path = parsed_filepath.with_suffix(
+            f"{parsed_filepath.suffix}.{_os.getpid()}.tmp"
+        )
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(prefix_to_as, f, indent=2, ensure_ascii=False)
@@ -216,9 +224,33 @@ def process_prefix2as(target_time):
                 pass
             logger.error(f"Failed to save processed prefix2as mappings: {_wk_err}")
             return ""
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Failed to save processed prefix2as mappings: {e}")
         return ""
+
+
+def load_prefix2as_json(path):
+    """Read a prefix2as JSON map, discarding it if it is corrupt.
+
+    A corrupt snapshot is not recoverable by parsing harder: it was
+    published half-written by a racing writer, so the correct response is
+    to delete it and let the caller rebuild from the raw snapshot.
+    """
+    if not path:
+        return None
+    p = Path(path)
+    if not p.exists():
+        return None
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (ValueError, OSError) as exc:
+        logger.warning(f"Discarding corrupt prefix2as snapshot {p}: {exc}")
+        try:
+            p.unlink()
+        except OSError:
+            pass
+        return None
 
 if __name__ == "__main__":
     import argparse

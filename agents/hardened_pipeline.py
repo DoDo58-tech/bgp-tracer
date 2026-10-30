@@ -1,29 +1,4 @@
-"""Hardened post-processing pipeline.
-
-The previous pipeline was: LLM writes HTML -> strip LLM tables -> Python injects
-deterministic tables -> enforce section completeness. This left several ways for
-the LLM to inject wrong content (e.g. hallucinated TCA mechanism, wrong arc flag,
-duplicated Gaps heading).
-
-This module replaces that with a single-pass deterministic pipeline:
-
-  1. LLM output is split into per-section prose blocks.
-  2. Each required section is rendered deterministically by Python from the
-     structured payload.
-  3. The final HTML is composed by Python alone.
-
-Result: the LLM cannot introduce structural problems because it never gets the
-chance to emit the structural HTML in the first place. Bad LLM prose degrades
-the *quality* of the report; it cannot break the *shape*.
-
-Public API:
-    deterministic_postprocess(html, payload, ...) -> str
-    assert_no_known_issues(html) -> (bool, list[str])
-
-For tests / verification on existing static reports, use:
-    from hardened_pipeline import deterministic_postprocess
-    out = deterministic_postprocess(html_text, payload_dict, ...)
-"""
+"""Hardened post-processing pipeline."""
 import re
 from typing import Optional, Tuple, List, Dict, Any
 
@@ -41,13 +16,8 @@ _SECTION_NAMES = [
 
 # ── Splitter ──────────────────────────────────────────────────────────────
 
-def _split_llm_prose_blocks(markup) -> Dict[str, str]:
-    """Split LLM-authored HTML into per-section prose blocks.
-
-    For each known section heading (in either "Foo" or "Foo &amp;" form), grab
-    the prose until the next <h1/h2/h3>. If a section is missing from the LLM
-    output, return an empty string for it.
-    """
+def split_llm_prose_blocks(markup) -> Dict[str, str]:
+    """Split LLM-authored HTML into per-section prose blocks."""
     blocks: Dict[str, str] = {}
     for name in _SECTION_NAMES:
         name_html_safe = name.replace("&", "&amp;")
@@ -62,24 +32,24 @@ def _split_llm_prose_blocks(markup) -> Dict[str, str]:
 
 # ── Section renderers ────────────────────────────────────────────────────
 
-def _render_executive_summary(prose, payload: Dict[str, Any]):
+def render_executive_summary(prose, payload: Dict[str, Any]):
     body = prose or "<p>(no prose from LLM)</p>"
     return f"<h2>Executive Summary</h2>\n{body}"
 
 
-def _render_traffic_analysis(prose, payload: Dict[str, Any]):
+def render_traffic_analysis(prose, payload: Dict[str, Any]):
     return f"<h2>Traffic Analysis</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
-def _render_routing_security(prose, payload: Dict[str, Any]):
+def render_routing_security(prose, payload: Dict[str, Any]):
     return f"<h2>Routing Security</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
-def _render_evidence_chain(prose, payload: Dict[str, Any]):
+def render_evidence_chain(prose, payload: Dict[str, Any]):
     return f"<h2>Evidence Chain / Reasoning</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
-def _render_refutable_hypotheses(prose, payload: Dict[str, Any]):
+def render_refutable_hypotheses(prose, payload: Dict[str, Any]):
     """Render Refutable Hypotheses with deterministic cards + LLM prose on top."""
     cards: List[str] = []
     hyps = (
@@ -93,10 +63,10 @@ def _render_refutable_hypotheses(prose, payload: Dict[str, Any]):
              "statement": "No correlation evidence available; treat as inconclusive."},
         ]
     # Sort by confidence descending so most confident is first
-    def _conf(h):
+    def conf(h):
         c = h.get("confidence_base")
         return float(c) if isinstance(c, (int, float)) else 0.0
-    sorted_hyps = sorted(hyps, key=_conf, reverse=True)
+    sorted_hyps = sorted(hyps, key=conf, reverse=True)
     for h in sorted_hyps:
         rank = str(h.get("rank") or h.get("id") or "?").strip()
         ct = str(h.get("causal_type") or "unknown").strip()
@@ -129,22 +99,22 @@ def _render_refutable_hypotheses(prose, payload: Dict[str, Any]):
     return f"<h2>Refutable Hypotheses</h2>\n{prose_html}{cards_html}"
 
 
-def _render_counterfactual_analysis(prose, payload: Dict[str, Any]):
+def render_counterfactual_analysis(prose, payload: Dict[str, Any]):
     return f"<h2>Counterfactual Analysis</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
-def _render_gaps_and_limitations(prose, payload: Dict[str, Any]):
+def render_gaps_and_limitations(prose, payload: Dict[str, Any]):
     return f"<h2>Gaps &amp; Limitations</h2>\n{prose or '<p>(no prose)</p>'}"
 
 
 _RENDERERS = {
-    "Executive Summary": _render_executive_summary,
-    "Traffic Analysis": _render_traffic_analysis,
-    "Routing Security": _render_routing_security,
-    "Evidence Chain / Reasoning": _render_evidence_chain,
-    "Refutable Hypotheses": _render_refutable_hypotheses,
-    "Counterfactual Analysis": _render_counterfactual_analysis,
-    "Gaps & Limitations": _render_gaps_and_limitations,
+    "Executive Summary": render_executive_summary,
+    "Traffic Analysis": render_traffic_analysis,
+    "Routing Security": render_routing_security,
+    "Evidence Chain / Reasoning": render_evidence_chain,
+    "Refutable Hypotheses": render_refutable_hypotheses,
+    "Counterfactual Analysis": render_counterfactual_analysis,
+    "Gaps & Limitations": render_gaps_and_limitations,
 }
 
 
@@ -163,19 +133,13 @@ def deterministic_postprocess(
     inject_traffic_plot: bool = True,
 ) -> str:
     """Replace the body of the report between <body> and </body> with a
-    deterministic, payload-driven version.
-
-    The LLM output is harvested for prose only; all structural HTML is
-    generated by Python.  This is a defense-in-depth measure against the
-    pathologies observed in earlier pipeline versions (Mechanism: unknown
-    hallucination, large-arc-flag=1, duplicate Gaps headings, etc.).
-    """
+    deterministic, payload-driven version."""
     payload = payload or {}
     correlation_analysis = correlation_analysis or {}
     auto_probe_findings = auto_probe_findings or []
 
     # 1. Pull prose out of LLM output, keyed by section name.
-    prose = _split_llm_prose_blocks(html)
+    prose = split_llm_prose_blocks(html)
 
     # 2. Render each required section deterministically.
     rendered_sections: List[str] = []
@@ -217,22 +181,18 @@ def deterministic_postprocess(
     # 5. Belt-and-suspenders: if the LLM output slipped any of the known
     # pathological fragments past our prose harvesting, scrub them again here
     # so the on-disk HTML matches the assert_no_known_issues contract.
-    new_html = _scrub_pathological_fragments(new_html)
+    new_html = scrub_pathological_fragments(new_html)
 
     return new_html
 
 
 import re as _re  # local alias
 
-def _scrub_pathological_fragments(markup):
-    """Remove any remaining known-bad fragments that escaped earlier stripping.
-
-    This is a defense-in-depth pass. The deterministic renderers already
-    produce clean output; this catch-all ensures even a deliberately bad
-    LLM output cannot break the structural contract.
-    """
+def scrub_pathological_fragments(markup):
+    """Remove any remaining known-bad fragments that escaped earlier stripping."""
     # Drop <svg> blocks whose arcs use large-arc-flag=1 (the gauge bug).
     # We do this iteratively because deleting one block shifts later offsets.
+    html = markup  # NOTE: parameter is `markup`; body uses `html`.
     while True:
         prev = html
         html = _re.sub(
@@ -262,9 +222,6 @@ def _scrub_pathological_fragments(markup):
             break
 
     # Drop any tag-containing-or-text paragraph fragment that mentions
-    # "Mechanism: unknown" or "insufficient AS topology data", in any wrapper
-    # (p, div, span, bare text). The LLM has been observed to put these
-    # in all of these contexts.
     for phrase in ("Mechanism:\\s*unknown", "insufficient AS topology data",
                    "server has no internet access"):
         # Tag-wrapped variant

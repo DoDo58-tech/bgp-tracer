@@ -27,7 +27,7 @@ def get_available_dates():
         
         available_dates = [file.split('.')[0] for file in files]
         return available_dates
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Failed to get ASORG available dates: {e}")
         return []
 
@@ -90,7 +90,7 @@ def parse_asorg_file(filepath):
                             aut_norm = aut_norm[2:]
                         try:
                             aut_norm = str(int(aut_norm))
-                        except Exception:
+                        except (ValueError):
                             pass
                         asn_to_org_id[aut_norm] = org_id
                         asn_to_name[aut_norm] = aut_name
@@ -110,7 +110,7 @@ def parse_asorg_file(filepath):
             "asn_to_name": asn_to_name,
             "org_id_to_info": org_id_to_info,
         }
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Failed to parse ASORG file {filepath}: {e}")
         return {
             "asn_to_org_id": asn_to_org_id,
@@ -137,7 +137,7 @@ def get_asn_org_info(target_time, asn):
     try:
         with open(parsed_path, "r", encoding="utf-8") as f:
             parsed = json.load(f)
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Failed to load parsed ASORG data {parsed_path}: {e}")
         return {
             "success": False,
@@ -153,7 +153,7 @@ def get_asn_org_info(target_time, asn):
         asn_norm = asn_norm[2:]
     try:
         asn_norm = str(int(asn_norm))
-    except Exception:
+    except (ValueError):
         pass
 
     org_id = asn_to_org_id.get(asn_norm)
@@ -228,7 +228,7 @@ def process_asorg(target_time):
         if txt_path.exists():
             os.remove(txt_path)
         return str(parsed_filepath)
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Failed to save processed AS organization data: {e}")
         return ""
 

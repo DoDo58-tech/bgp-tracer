@@ -1,27 +1,19 @@
-"""
-LLM 
-================
-
- LLM . 
-
-: 
-- LLM 
-- LLM 
-- LLM 
-"""
+"""LLM
+================"""
 
 from __future__ import annotations
 
 import dataclasses
 import json
-from typing import Optional, Any, Dict, List
+from typing import Any, Dict
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REASONING
 from config import MODEL, API_KEY, BASE_URL
 from utils.logger import logger
 from utils.helpers import extract_json_object as _extract_json_object
+from typing import Optional, List
 
 
-def _safe_event_get(event, key, default=None):
+def safe_event_get(event, key, default=None):
     """Read attribute from a dict OR AnomalyDetail/dataclass; never AttributeError."""
     if event is None:
         return default
@@ -34,19 +26,15 @@ def _safe_event_get(event, key, default=None):
     if callable(getter):
         try:
             return getter(key, default)
-        except Exception:
+        except (ValueError):
             pass
     return getattr(event, key, default)
 
 
-# LLM 
+# LLM
 
 class LLMIncidentClassifier:
-    """
- LLM 
- 
- , . 
- """
+    """LLM"""
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in incident classification.
 
@@ -132,22 +120,17 @@ If multiple types are possible, provide alternative classifications with confide
         duration_minutes: float = 0.0,
         run_id: str = "",
     ) -> Dict[str, Any]:
-        """
- 
- 
- Returns:
- {
- "incident_type": str,
- "confidence": float,
- "sub_type": str,
- "reasoning": str,
- "alternative_types": [...],
- "source": "llm" or "rule"
- }
- """
+        """Returns:
+        {
+        "incident_type": str,
+        "confidence": float,
+        "sub_type": str,
+        "reasoning": str,
+        "alternative_types": [...],
+        "source": "llm" or "rule"
+        }"""
         self.ensure_llm()
 
-        # 
         origin_hijacked = routing_data.get("origin_hijacked", []) or routing_data.get("origin_hijack", []) or []
         forge_hijacked = routing_data.get("forge_hijacked", []) or routing_data.get("forge_hijack", []) or []
         leaks = routing_data.get("route_leaks", []) or []
@@ -157,7 +140,6 @@ If multiple types are possible, provide alternative classifications with confide
         traffic_count = traffic_data.get("anomaly_count", 0) or 0
         percent_change = traffic_data.get("percent_change", 0.0) or 0.0
 
-        # ，
         if not (origin_hijacked or forge_hijacked or leaks or traffic_anomaly):
             return {
                 "incident_type": "No Anomaly Detected",
@@ -171,7 +153,7 @@ If multiple types are possible, provide alternative classifications with confide
         self.ensure_llm()
 
         try:
-            #  token 
+            #  token
             origin_sample = origin_hijacked[:2] if origin_hijacked else []
             forge_sample = forge_hijacked[:2] if forge_hijacked else []
             leak_sample = leaks[:2] if leaks else []
@@ -210,70 +192,6 @@ If multiple types are possible, provide alternative classifications with confide
                 f"LLMIncidentClassifier: LLM call failed ({type(e).__name__}): {e}"
             ) from e
 
-    def classify_by_rule(
-        self,
-        origin_hijacked: List,
-        forge_hijacked: List,
-        leaks: List,
-        outage: Dict,
-        traffic_anomaly: bool,
-        traffic_count: int,
-    ) -> Dict[str, Any]:
-        """-based ()"""
-        if origin_hijacked:
-            return {
-                "incident_type": "Origin Hijacking",
-                "confidence": 0.85,
-                "sub_type": "victim_hijack",
-                "reasoning": "Detected unauthorized prefix announcements",
-                "alternative_types": [],
-                "source": "rule"
-            }
-        elif forge_hijacked:
-            return {
-                "incident_type": "Path Forgery",
-                "confidence": 0.8,
-                "sub_type": "mitm",
-                "reasoning": "Detected AS_PATH manipulation",
-                "alternative_types": [],
-                "source": "rule"
-            }
-        elif leaks:
-            return {
-                "incident_type": "Route Leak",
-                "confidence": 0.75,
-                "sub_type": None,
-                "reasoning": "Detected route propagation beyond boundaries",
-                "alternative_types": [],
-                "source": "rule"
-            }
-        elif outage.get("is_outage_suspected"):
-            return {
-                "incident_type": "Route Outage",
-                "confidence": 0.7,
-                "sub_type": None,
-                "reasoning": f"Route disappearance detected (score: {outage.get('outage_score', 0):.2f})",
-                "alternative_types": [],
-                "source": "rule"
-            }
-        elif traffic_anomaly:
-            return {
-                "incident_type": "Traffic-Only Anomaly",
-                "confidence": 0.6,
-                "sub_type": None,
-                "reasoning": "Traffic anomalies without clear routing cause",
-                "alternative_types": [],
-                "source": "rule"
-            }
-        else:
-            return {
-                "incident_type": "Unknown",
-                "confidence": 0.3,
-                "sub_type": None,
-                "reasoning": "Unable to determine incident type",
-                "alternative_types": [],
-                "source": "rule"
-            }
 
     def parse_llm_response(self, response) -> Dict[str, Any]:
         """ LLM """
@@ -305,14 +223,10 @@ If multiple types are possible, provide alternative classifications with confide
         }
 
 
-# LLM 
+# LLM
 
 class LLMSeverityAssessor:
-    """
- LLM 
- 
- . 
- """
+    """LLM"""
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in incident severity assessment.
 
@@ -395,30 +309,24 @@ Assess the severity of this incident based on:
         time_range: str = "unknown",
         run_id: str = "",
     ) -> Dict[str, Any]:
-        """
- 
- 
- Returns:
- {
- "severity": "High/Medium/Low",
- "confidence": float,
- "score": int,
- "factors": {...},
- "reasoning": str,
- "source": "llm" or "rule"
- }
- """
+        """Returns:
+        {
+        "severity": "High/Medium/Low",
+        "confidence": float,
+        "score": int,
+        "factors": {...},
+        "reasoning": str,
+        "source": "llm" or "rule"
+        }"""
         self.ensure_llm()
 
-        # 
         origin_hijacked = routing_data.get("origin_hijacked", []) or routing_data.get("origin_hijack", []) or []
         forge_hijacked = routing_data.get("forge_hijacked", []) or routing_data.get("forge_hijack", []) or []
         leaks = routing_data.get("route_leaks", []) or []
         
-        # 
         prefixes = set()
         for event in origin_hijacked + forge_hijacked + leaks:
-            prefix = _safe_event_get(event, "prefix")
+            prefix = safe_event_get(event, "prefix")
             if prefix:
                 prefixes.add(prefix)
         
@@ -426,7 +334,6 @@ Assess the severity of this incident based on:
         traffic_count = traffic_data.get("anomaly_count", 0) or 0
         percent_change = abs(traffic_data.get("percent_change", 0.0) or 0.0)
 
-        # ，
         if not (origin_hijacked or forge_hijacked or leaks) and not traffic_anomaly:
             return {
                 "severity": "Low",
@@ -470,73 +377,6 @@ Assess the severity of this incident based on:
                 f"LLMSeverityAssessor: LLM call failed ({type(e).__name__}): {e}"
             ) from e
 
-    def assess_by_rule(
-        self,
-        origin_count: int,
-        forge_count: int,
-        leak_count: int,
-        prefix_count: int,
-        traffic_anomaly: bool,
-        percent_change: float,
-        duration_minutes: float,
-    ) -> Dict[str, Any]:
-        """-based ()"""
-        score = 0
-        
-        # 
-        event_count = origin_count + forge_count + leak_count
-        if event_count >= 5:
-            score += 30
-        elif event_count >= 3:
-            score += 20
-        elif event_count >= 1:
-            score += 10
-        
-        # 
-        if prefix_count >= 5:
-            score += 25
-        elif prefix_count >= 3:
-            score += 15
-        elif prefix_count >= 1:
-            score += 5
-        
-        # 
-        if traffic_anomaly and percent_change >= 50:
-            score += 30
-        elif traffic_anomaly and percent_change >= 20:
-            score += 20
-        elif traffic_anomaly:
-            score += 10
-        
-        # 
-        if duration_minutes > 120:
-            score += 15
-        elif duration_minutes > 30:
-            score += 10
-        elif duration_minutes > 10:
-            score += 5
-        
-        # 
-        if score >= 70:
-            severity = "High"
-        elif score >= 40:
-            severity = "Medium"
-        else:
-            severity = "Low"
-
-        return {
-            "severity": severity,
-            "confidence": 0.7,
-            "score": min(100, score),
-            "factors": {
-                "event_count": {"level": "High" if event_count >= 5 else "Medium" if event_count >= 2 else "Low"},
-                "scope": {"level": "High" if prefix_count >= 5 else "Medium" if prefix_count >= 2 else "Low"},
-                "traffic_impact": {"level": "High" if percent_change >= 50 else "Medium" if percent_change >= 20 else "Low"},
-                "duration": {"level": "High" if duration_minutes > 120 else "Medium" if duration_minutes > 30 else "Low"},
-            },
-            "reasoning": f"Rule-based assessment: score={score}",
-            "source": "rule"
-        }
 
     def parse_llm_response(self, response) -> Dict[str, Any]:
         """ LLM """
@@ -566,14 +406,10 @@ Assess the severity of this incident based on:
         }
 
 
-# LLM 
+# LLM
 
 class LLMTrafficCorrelator:
-    """
- LLM 
- 
- . 
- """
+    """LLM"""
 
     SYSTEM_PROMPT = """You are a BGP security expert specializing in causal correlation analysis.
 
@@ -648,24 +484,19 @@ Consider timing, intensity, and possible alternative explanations.
         traffic_data: Dict[str, Any],
         run_id: str = "",
     ) -> Dict[str, Any]:
-        """
- 
- 
- Returns:
- {
- "has_correlation": bool,
- "confidence": float,
- "correlation_type": str,
- "reasoning": str,
- "temporal_alignment": float,
- "intensity_correlation": float,
- "alternative_explanations": [...],
- "source": "llm" or "rule"
- }
- """
+        """Returns:
+        {
+        "has_correlation": bool,
+        "confidence": float,
+        "correlation_type": str,
+        "reasoning": str,
+        "temporal_alignment": float,
+        "intensity_correlation": float,
+        "alternative_explanations": [...],
+        "source": "llm" or "rule"
+        }"""
         self.ensure_llm()
 
-        # 
         origin_hijacked = routing_data.get("origin_hijacked", []) or routing_data.get("origin_hijack", []) or []
         forge_hijacked = routing_data.get("forge_hijacked", []) or routing_data.get("forge_hijack", []) or []
         leaks = routing_data.get("route_leaks", []) or []
@@ -674,7 +505,6 @@ Consider timing, intensity, and possible alternative explanations.
         traffic_count = traffic_data.get("anomaly_count", 0) or 0
         percent_change = traffic_data.get("percent_change", 0.0) or 0.0
 
-        # 
         routing_count = len(origin_hijacked) + len(forge_hijacked) + len(leaks)
         if routing_count == 0 and not traffic_anomaly:
             return {
@@ -713,11 +543,10 @@ Consider timing, intensity, and possible alternative explanations.
         self.ensure_llm()
 
         try:
-            # （）
             routing_details = []
             for event in (origin_hijacked + forge_hijacked + leaks)[:3]:
-                ts = _safe_event_get(event, "timestamp") or _safe_event_get(event, "first_seen", "unknown")
-                prefix = _safe_event_get(event, "prefix", "unknown")
+                ts = safe_event_get(event, "timestamp") or safe_event_get(event, "first_seen", "unknown")
+                prefix = safe_event_get(event, "prefix", "unknown")
                 routing_details.append(f"- {ts}: {prefix}")
             
             traffic_timestamps = []
@@ -757,39 +586,6 @@ Consider timing, intensity, and possible alternative explanations.
                 f"LLMTrafficCorrelator: LLM call failed ({type(e).__name__}): {e}"
             ) from e
 
-    def correlate_by_rule(
-        self,
-        routing_count: int,
-        traffic_anomaly: bool,
-        traffic_count: int,
-        percent_change: float,
-    ) -> Dict[str, Any]:
-        """-based ()"""
-        if routing_count > 0 and traffic_anomaly:
-            # /
-            intensity = min(1.0, (routing_count / 5) * (abs(percent_change) / 50))
-            
-            return {
-                "has_correlation": intensity >= 0.3,
-                "confidence": 0.7 if intensity >= 0.5 else 0.5,
-                "correlation_type": "direct" if intensity >= 0.5 else "indirect",
-                "reasoning": f"Both routing and traffic anomalies detected",
-                "temporal_alignment": 0.6,
-                "intensity_correlation": intensity,
-                "alternative_explanations": [],
-                "source": "rule"
-            }
-        
-        return {
-            "has_correlation": False,
-            "confidence": 0.5,
-            "correlation_type": "none",
-            "reasoning": "Unable to establish correlation",
-            "temporal_alignment": 0.0,
-            "intensity_correlation": 0.0,
-            "alternative_explanations": [],
-            "source": "rule"
-        }
 
     def parse_llm_response(self, response) -> Dict[str, Any]:
         """ LLM """

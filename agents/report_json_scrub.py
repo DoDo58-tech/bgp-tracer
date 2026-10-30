@@ -1,9 +1,4 @@
-"""JSON-key scrubber for the LLM-rendered HTML report.
-
-Extracted from agents/report_agent.py.  Replaces ``[key]`` placeholders
-that the LLM sometimes emits with the resolved value, and strips any
-left-over no-data cells or rows.
-"""
+"""JSON-key scrubber for the LLM-rendered HTML report."""
 from __future__ import annotations
 
 import re
@@ -11,25 +6,20 @@ import re
 from agents.report_postprocess import (
     _CJK_CHAR,
     _NO_DATA_PATTERNS,
-    _strip_table_nodata_rows,
+    strip_table_nodata_rows,
 )
 
 
 _JSON_KEY_PLACEHOLDER_RE = re.compile(r"\[(?P<key>[^\[\]:\s]+)\]")
 
 
-def _scrub_json_key_placeholders(html: str, asn: str = "",
+def scrub_json_key_placeholders(html: str, asn: str = "",
                                   start_time: str = "", end_time: str = "") -> str:
-    """Substitute well-known JSON-key placeholders with their actual values.
-
-    The LLM occasionally emits strings like ``[target_as]`` in the rendered
-    HTML instead of the resolved value. Any placeholder we cannot resolve
-    becomes ``"(no data)"`` so the operator never sees raw ``[...]`` brackets.
-    """
+    """Substitute well-known JSON-key placeholders with their actual values."""
     if not html:
         return html
 
-    def _repl(m):
+    def repl(m):
         key = m.group("key")
         if key in ("target_as", "target_asn", "asn"):
             return asn if asn else "(no data)"
@@ -43,32 +33,25 @@ def _scrub_json_key_placeholders(html: str, asn: str = "",
             return end_time or "(no data)"
         return "(no data)"
 
-    return _JSON_KEY_PLACEHOLDER_RE.sub(_repl, html)
+    return _JSON_KEY_PLACEHOLDER_RE.sub(repl, html)
 
 
-def _strip_nodata_artifacts(html):
-    """Best-effort cleanup so reports don't show "(no data)" rows / cells.
-
-    - Drops <tr> rows where every cell is a no-data placeholder.
-    - Replaces leftover (no data)/(N/A)/(unresolved)/(unavailable) cells with "-".
-    - Drops the entire Three-Card tier <div> if all three cards are UNAVAILABLE.
-    - Strips CJK characters from the HTML body.
-    - Removes orphan <ul>/<ol> that contain only "no data" entries.
-    """
+def strip_nodata_artifacts(html):
+    """Best-effort cleanup so reports don't show "(no data)" rows / cells."""
     if not html:
         return html
 
     # 1. Strip empty table rows.
-    def _strip_table_block(m):
+    def strip_table_block(m):
         block = m.group(0)
         tbody_m = re.search(r"<tbody\b[^>]*>(.*?)</tbody>", block, flags=re.DOTALL | re.IGNORECASE)
         if not tbody_m:
             return block
         tbody_before = block[:tbody_m.start()]
-        stripped = _strip_table_nodata_rows(tbody_m.group(1))
+        stripped = strip_table_nodata_rows(tbody_m.group(1))
         return tbody_before + "<tbody>" + stripped + "</tbody>" + block[tbody_m.end():]
 
-    html = re.sub(r"<table\b[^>]*>.*?</table>", _strip_table_block, html,
+    html = re.sub(r"<table\b[^>]*>.*?</table>", strip_table_block, html,
                    flags=re.DOTALL | re.IGNORECASE)
 
     # 2. Replace no-data tokens inside cells with em-dash.
@@ -76,12 +59,12 @@ def _strip_nodata_artifacts(html):
         html = pat.sub("—", html)
 
     # 3. Drop Three-Card tier if all three cards are UNAVAILABLE.
-    def _drop_unavailable_tier(m):
+    def drop_unavailable_tier(m):
         return "" if m.group(0).count("UNAVAILABLE") >= 3 else m.group(0)
 
     html = re.sub(
         r"<div\s+class=\"three-card-tier\"[^>]*>.*?</div>\s*(?=</div>|$)",
-        _drop_unavailable_tier,
+        drop_unavailable_tier,
         html,
         flags=re.DOTALL | re.IGNORECASE,
     )
@@ -111,7 +94,7 @@ def _strip_nodata_artifacts(html):
     )
 
     # 9. Split single-cell rows that contain multiple space-separated tokens.
-    def _split_single_td(m, html=html):
+    def split_single_td(m, html=html):
         cell_text = m.group(1).strip()
         if cell_text.count(" ") < 2:
             return m.group(0)
@@ -138,7 +121,7 @@ def _strip_nodata_artifacts(html):
 
     html = re.sub(
         r"<tr>\s*<td>((?:(?!</td>).)*?)</td>\s*</tr>",
-        _split_single_td,
+        split_single_td,
         html,
         flags=re.DOTALL,
     )

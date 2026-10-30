@@ -1,41 +1,27 @@
-"""
-Hypothesis Agent
-================
-
-LLM . 
-
-Workflow:
- 1. Blackboard traffic + routing 
- 2. LLM + 
- 3. claims Blackboard `diagnosis.claims`
- 4. (LLMDebateAgent / report generation) 
-
- LLM: , TaskResult(success=False)
- Blackboard `diagnosis.error`, workflow_engine / . 
-"""
+"""Hypothesis Agent
+================"""
 
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Optional
 
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REASONING
 from config import MODEL, API_KEY, BASE_URL
 from utils.logger import logger
 from utils.helpers import make_json_safe, extract_json_object as _extract_json_object
 from agents.core import Agent, AgentState, TaskResult
+from datetime import datetime
+from typing import Optional
 
 
 def extract_json_robust(text):
     """Try fenced block, then balanced-brace depth scan (string-aware).
-
- Returns ``(dict | None, ok, err)``. ``text`` may be a ``str`` or, when
- some LLM backends emit ``(reasoning_content, content)``, a tuple/list.
- In the tuple case we use the last string element as the payload.
- """
+    
+    Returns ``(dict | None, ok, err)``. ``text`` may be a ``str`` or, when
+    some LLM backends emit ``(reasoning_content, content)``, a tuple/list.
+    In the tuple case we use the last string element as the payload."""
     if isinstance(text, (tuple, list)):
         for item in reversed(text):
             if isinstance(item, str):
@@ -67,7 +53,6 @@ def extract_json_robust(text):
 
 @dataclass
 class Hypothesis:
-    """"""
     id: str
     kind: str                       # origin_hijack | route_leak | outage | misconfiguration | ...
     summary: str
@@ -81,7 +66,6 @@ class Hypothesis:
 
 @dataclass
 class Evidence:
-    """"""
     id: str
     source: str                     # traffic | routing | external | supervisor | manual
     kind: str
@@ -149,9 +133,9 @@ class HypothesisAgent(Agent):
         # Slim noisy payloads before sending to LLM
         try:
             from agents.payload_builder import slim_section
-            traffic_slim = slim_section(traffic)
-            routing_slim = slim_section(routing)
-        except Exception:
+            traffic_slim = slim_section("traffic", traffic)
+            routing_slim = slim_section("routing", routing)
+        except (ValueError):
             traffic_slim = traffic
             routing_slim = routing
 
@@ -182,7 +166,7 @@ class HypothesisAgent(Agent):
             run_id = config.get("run_id", "")
             if run_id:
                 record_llm_call(run_id, "HypothesisAgent", prompt, response)
-        except Exception:
+        except (ValueError):
             pass
 
         # Parse LLM output

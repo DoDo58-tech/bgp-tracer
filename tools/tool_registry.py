@@ -1,28 +1,15 @@
-"""
-Tool Registry — dynamic tool registration and invocation.
-========================================================
-
-All analysis capabilities are exposed as "tools" that the RouterAgent
-can call.  Tools are registered at startup and are called by name.
-
-Tool schema (per tool):
-    name        str         — unique identifier, e.g. "analyze_traffic"
-    description str         — one-line human-readable description
-    parameters  list[dict] — JSON-schema-like parameter list
-    handler     callable   — async function(tool_input, session) → ToolResult
-
-RouterAgent decides which tools to call based on the conversation context
-and passes the tool's raw output back to the LLM for interpretation.
-"""
+"""Tool Registry — dynamic tool registration and invocation.
+========================================================"""
 
 from __future__ import annotations
 
-import asyncio
-import json
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from utils.logger import logger
+import asyncio
+import json
+import httpx
+from datetime import datetime
 
 
 @dataclass
@@ -87,14 +74,7 @@ class ToolResult:
 
 
 class ToolRegistry:
-    """
-    Central registry of all available tools.
-
-    Usage:
-        registry = ToolRegistry()
-        registry.register(my_tool)
-        result = await registry.call("analyze_traffic", {"asn": "135826", ...}, session)
-    """
+    """Central registry of all available tools."""
 
     def __init__(self):
         self._tools: Dict[str, Tool] = {}
@@ -105,17 +85,8 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         logger.info(f"[ToolRegistry] Registered: {tool.name}")
 
-    def unregister(self, name):
-        return self._tools.pop(name, None) is not None
-
-    def get(self, name):
-        return self._tools.get(name)
-
     def list_tools(self) -> List[dict]:
         return [t.to_dict() for t in self._tools.values() if t.enabled]
-
-    def list_names(self) -> List[str]:
-        return [t.name for t in self._tools.values() if t.enabled]
 
     async def call(
         self,
@@ -124,20 +95,20 @@ class ToolRegistry:
         session,
     ) -> ToolResult:
         """Execute a tool by name and return a ToolResult."""
-        tool = self._tools.get(tool_name)
-        if not tool:
+        entry = self._tools.get(tool_name)
+        if not entry:
             return ToolResult(
                 tool_name=tool_name,
                 success=False,
                 error=f"Unknown tool: {tool_name}",
             )
-        if not tool.enabled:
+        if not entry.enabled:
             return ToolResult(
                 tool_name=tool_name,
                 success=False,
                 error=f"Tool '{tool_name}' is disabled",
             )
-        if tool.handler is None:
+        if entry.handler is None:
             return ToolResult(
                 tool_name=tool_name,
                 success=False,
@@ -146,7 +117,7 @@ class ToolRegistry:
 
         try:
             logger.info(f"[ToolRegistry] Calling: {tool_name}({tool_input})")
-            data = await tool.handler(tool_input, session)
+            data = await entry.handler(tool_input, session)
             if isinstance(data, ToolResult):
                 return data
             # Handler returned a plain dict — extract fields if present
@@ -158,12 +129,20 @@ class ToolRegistry:
                 observation=obs or f"Tool '{tool_name}' returned successfully.",
                 error=data.get("error", "") if isinstance(data, dict) else "",
             )
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ValueError, KeyError,
+                AttributeError, TypeError) as e:
+            # A tool is an *optional* source of evidence.  An unreachable
+            # upstream (DNS failure, connection reset, a JSON body that
+            # changed shape) must cost the agent that one observation, not
+            # the whole analysis: the previous narrow AttributeError
+            # handler let a bgpview.io DNS failure propagate out of the
+            # ReAct loop and abort the event entirely.
             logger.error(f"[ToolRegistry] {tool_name} failed: {e}")
             return ToolResult(
                 tool_name=tool_name,
                 success=False,
                 error=str(e),
+                observation=f"Tool '{tool_name}' unavailable: {e}",
             )
 
     async def call_sequence(
@@ -186,40 +165,13 @@ class ToolRegistry:
 REGISTRY = ToolRegistry()
 
 
-def tool(
-    name: str,
-    description: str,
-    parameters: Optional[List[ToolParameter]] = None,
-):
-    """
-    Decorator to register a coroutine as a tool handler.
-
-    Usage:
-        @tool(name="analyze_traffic", description="...", parameters=[...])
-        async def my_handler(tool_input, session):
-            ...
-    """
-
-    def decorator(func):
-        t = Tool(
-            name=name,
-            description=description,
-            parameters=parameters or [],
-            handler=func,
-        )
-        REGISTRY.register(t)
-        return func
-
-    return decorator
-
-
 def register_tool(
     name: str,
     description: str,
     parameters: Optional[List[ToolParameter]] = None,
     handler: Optional[Callable] = None,
 ):
-    """Functional tool registration (alternative to decorator)."""
+    """Register a tool handler under ``name``."""
     t = Tool(
         name=name,
         description=description,

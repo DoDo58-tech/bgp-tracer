@@ -1,15 +1,5 @@
-"""
- - 
-=========================
-
-, (). 
-: 
-- ""(AND) ""(OR): 
-- "": 
-- context_filter: , 
-- sudden_drop : 0.50 0.35, min_consecutive 3 1
-- : , 
-"""
+"""-
+========================="""
 
 import numpy as np
 from datetime import datetime, timedelta
@@ -46,15 +36,7 @@ def detect_anomalies_combined(
     event_start_time=None,    # P0 Fix 2026-09-07: 
     event_end_time=None,
 ):
-    """
- . 
- 
- : 
- 1. → : 
- 2. context : + 
- 3. : 
- 4. : 
- """
+    """."""
     curr = np.array(current_values, dtype=float)
     n = len(curr)
     hist = np.array(historical_means, dtype=float) if len(historical_means) == n else None
@@ -67,13 +49,11 @@ def detect_anomalies_combined(
         current_values, historical_values
     )
 
-    # ── 2.  (UNION)， ──────────────────────────────
     s_idx = {a["index"] for a in stat_anomalies}
     m_idx = {a["index"] for a in ml_anomalies}
 
     combined: list = []
 
-    # ： → 
     for idx in s_idx & m_idx:
         sa = next(a for a in stat_anomalies if a["index"] == idx)
         ma = next(a for a in ml_anomalies if a["index"] == idx)
@@ -86,7 +66,6 @@ def detect_anomalies_combined(
             "detected_by": ["statistical", "isolation_forest"],
         })
 
-    # （）
     for idx in s_idx - m_idx:
         a = next(x for x in stat_anomalies if x["index"] == idx)
         combined.append({
@@ -97,7 +76,6 @@ def detect_anomalies_combined(
             "detected_by": ["statistical"],
         })
 
-    # （ML）
     for idx in m_idx - s_idx:
         ma = next(a for a in ml_anomalies if a["index"] == idx)
         combined.append({
@@ -125,10 +103,8 @@ def detect_anomalies_combined(
                             a["detected_by"].append("sustained_outage")
                         break
 
-    # ── 4. （）────────────────────────────────────
     if detect_direction in ("both", "lower_only") and timestamps:
         try:
-            #  0.50 → 0.35，min_consecutive  3 → 1
             for oa in detect_anomalies_sudden_drop(
                 current_values, historical_means, timestamps,
                 drop_threshold_ratio=0.35,   # ，
@@ -144,7 +120,7 @@ def detect_anomalies_combined(
                         if a.get("index") == idx:
                             a["sudden_drop"] = True
                             break
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Sudden drop detection failed: {e}")
 
     # ── 5.  ────────────────────────────────────────────
@@ -163,7 +139,7 @@ def detect_anomalies_combined(
                         if a.get("index") == idx:
                             a["sudden_drop_to_zero"] = True
                             break
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Sudden drop-to-zero detection failed: {e}")
 
     # ── 6.  ────────────────────────────────────────────────
@@ -178,7 +154,7 @@ def detect_anomalies_combined(
                 combined.append({**oa, "_skip_context_filter": True,
                                  "confidence": "high", "ml_detected": False,
                                  "detected_by": ["sudden_jump"]})
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Sudden jump detection failed: {e}")
 
     # ── 7.  ─────────────────────────────────────────
@@ -196,7 +172,7 @@ def detect_anomalies_combined(
                         if a.get("index") == idx:
                             a["post_jump_drop"] = True
                             break
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Post-jump drop detection failed: {e}")
 
     # ── 8.  ──────────────────────────────────────────────
@@ -223,17 +199,17 @@ def detect_anomalies_combined(
                             a["percentile_deviation"] = oa.get("deviation")
                             a["percentile_direction"] = oa.get("direction")
                             break
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Percentile detection failed: {e}")
 
     # ── 9. Cross-modal fusion (AND/OR) ────────────────
     if n >= 4 and len(historical_means) == n:
         try:
-            for oa in _detect_peak_trough_drops(
+            for oa in detect_peak_trough_drops(
                 current_values, historical_means, timestamps,
                 min_drop_ratio=0.25,   # 25%
                 min_sustained_points=3,  # 3
-                # P0 Fix 2026-09-07: ， peak/trough 
+                # P0 Fix 2026-09-07: ， peak/trough
                 event_start_timestamp=event_start_time if event_start_time else None,
                 event_end_timestamp=event_end_time if event_end_time else None,
             ):
@@ -246,7 +222,7 @@ def detect_anomalies_combined(
                         if a.get("index") == idx:
                             a["peak_trough"] = True
                             break
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Peak-trough detection failed: {e}")
 
     # ── 10.  context  ──────────────────────────────────────
@@ -261,7 +237,6 @@ def detect_anomalies_combined(
                 ctx_filtered.append(anom)
                 continue
 
-            # ： context_window 
             ctx_vals = []
             for w in range(1, context_window + 1):
                 if idx - w >= 0:
@@ -276,25 +251,21 @@ def detect_anomalies_combined(
             ctx_avg = float(np.mean(ctx_vals))
             current_val = float(curr[idx])
 
-            #  = 
+            #  =
             if abs(ctx_avg) > 1e-6:
                 deviation = abs(current_val - ctx_avg) / ctx_avg
             else:
                 deviation = 0.0
 
-            # ，，
-            # ，（）
             hist_mean = float(historical_means[idx]) if idx < len(historical_means) else ctx_avg
             hist_deviation = abs(current_val - hist_mean) / abs(hist_mean) if abs(hist_mean) > 1e-6 else 0.0
 
-            # ，
             if hist_deviation >= 0.30:  # 30% → 
                 ctx_filtered.append(anom)
             elif deviation >= context_threshold:
-                #  → 
+                #  →
                 ctx_filtered.append(anom)
             else:
-                # ， → 
                 anom["filtered_by_context"] = True
         combined = ctx_filtered
 
@@ -305,7 +276,6 @@ def detect_anomalies_combined(
             if idx is not None and idx < len(timestamps):
                 anom["timestamp"] = timestamps[idx]
 
-    # ── 12. （P0 Fix 2026-09-07）────────────────────
     hist_filter_threshold = 0.30
     hist_filtered = []
     for anom in combined:
@@ -334,9 +304,8 @@ def detect_anomalies_combined(
     filtered = filter_consecutive_anomalies(others, min_consecutive=1)
     filtered.extend(skip)
 
-    # ── 13. ： ─────────────
     if not filtered and n >= 4:
-        fallback = _fallback_detection(
+        fallback = fallback_detection(
             current_values, historical_means, historical_stds, timestamps
         )
         if fallback:
@@ -346,8 +315,7 @@ def detect_anomalies_combined(
     return sorted(filtered, key=lambda x: x.get("index", 0)), sorted(combined, key=lambda x: x.get("index", 0))
 
 
-# ─────────────────────────────────────────────────────────────────
-def _parse_event_ts(s):
+def parse_event_ts(s):
     """ datetime( tz) None. """
     if s is None:
         return None
@@ -362,25 +330,17 @@ def _parse_event_ts(s):
     return s
 
 
-def _find_peak_trough_in_event_window(
+def find_peak_trough_in_event_window(
     curr, hist, timestamps, event_start_timestamp, event_end_timestamp,
 ):
-    """
- peak/trough, . 
-
- : 
- - : peak [event_start - 4h, event_end + 6h] , 
- trough (: trough , )
- - : ()
- """
+    """peak/trough, ."""
     n = len(curr)
     if n == 0:
         return None, None
 
-    ev_start = _parse_event_ts(event_start_timestamp)
-    ev_end = _parse_event_ts(event_end_timestamp)
+    ev_start = parse_event_ts(event_start_timestamp)
+    ev_end = parse_event_ts(event_end_timestamp)
 
-    # ：（）
     if ev_start is None or ev_end is None or timestamps is None or len(timestamps) != n:
         peak_idx = int(np.argmax(curr))
         if peak_idx < n - 1:
@@ -392,9 +352,8 @@ def _find_peak_trough_in_event_window(
     # ──  ─────────────────────────────────────────
     parsed_ts = []
     for ts in timestamps:
-        parsed_ts.append(_parse_event_ts(ts))
+        parsed_ts.append(parse_event_ts(ts))
 
-    # -  ev_start - 2h ：（""）
     window_start = ev_start - timedelta(hours=2)
     window_end = ev_end + timedelta(hours=12)
 
@@ -414,7 +373,6 @@ def _find_peak_trough_in_event_window(
     local_peak_pos = int(np.argmax(candidate_vals))
     peak_idx = candidate_idx[local_peak_pos]
 
-    # Trough  peak （）
     after_peak_window = [i for i in candidate_idx if i > peak_idx]
     if not after_peak_window:
         return peak_idx, None
@@ -422,32 +380,13 @@ def _find_peak_trough_in_event_window(
     return peak_idx, trough_idx
 
 
-# ─────────────────────────────────────────────────────────────────
-def _detect_peak_trough_drops(
+def detect_peak_trough_drops(
     current_values, historical_means, timestamps=None,
     min_drop_ratio=0.25, min_sustained_points=3,
     min_historical_deviation_ratio=0.20,
     event_start_timestamp=None, event_end_timestamp=None,
 ):
-    """
- : → → 
-
- 13:00-16:00 "". 
- sudden_drop , peak_trough (peak -> sustained low -> recovery). 
-
- (2026-09-04): current values historical_means 
- . (peak-to-trough ). 
-
- (2026-09-07): (). 
- event_start_timestamp, (). 
-
- Args:
- min_historical_deviation_ratio: (20%). 
- current_value historical_mean, . 
- event_start_timestamp / event_end_timestamp: ( datetime). 
- Peak trough (). 
- "". 
- """
+    """: → →"""
     curr = np.array(current_values, dtype=float)
     hist = np.array(historical_means, dtype=float) if len(historical_means) == len(curr) else None
     n = len(curr)
@@ -458,7 +397,7 @@ def _detect_peak_trough_drops(
 
     # ── P0 Fix 2026-09-07: raise the Starlink/Turkey z=3+ false-positive
     # floor from 5% to 10% ─────────────────────
-    peak_idx, trough_idx = _find_peak_trough_in_event_window(
+    peak_idx, trough_idx = find_peak_trough_in_event_window(
         curr, hist, timestamps, event_start_timestamp, event_end_timestamp,
     )
 
@@ -477,16 +416,13 @@ def _detect_peak_trough_drops(
     if hist is not None and trough_idx < len(hist):
         hist_trough_val = float(hist[trough_idx])
         hist_peak_val = float(hist[peak_idx]) if peak_idx < len(hist) else float(np.mean(hist))
-        # 
         if abs(hist_trough_val) > 1e-6:
             hist_deviation = abs(trough_val - hist_trough_val) / hist_trough_val
         elif abs(peak_val) > 1e-6:
-            # 0，
             hist_deviation = abs(peak_val - trough_val) / peak_val
         else:
             hist_deviation = 0.0
 
-        # ，，
         if hist_deviation < min_historical_deviation_ratio:
             logger.info(
                 f"[PeakTrough] Skipping: trough={trough_val:.3f} vs hist_trough={hist_trough_val:.3f} "
@@ -495,21 +431,16 @@ def _detect_peak_trough_drops(
             )
             return anomalies
 
-    # （）
     if peak_val > 1e-6:
         drop_ratio = (peak_val - trough_val) / peak_val
     else:
         drop_ratio = 0.0
 
-    # ，
     if drop_ratio < min_drop_ratio:
         return anomalies
 
-    # （）（）
     threshold = trough_val + (peak_val - trough_val) * 0.3  # 30% 
 
-    # （： 8 ，）
-    #  Starlink ：" 13 "
     max_lookback = min(8, peak_idx)
     drop_start = peak_idx
     for i in range(peak_idx - 1, peak_idx - max_lookback - 1, -1):
@@ -520,7 +451,6 @@ def _detect_peak_trough_drops(
         else:
             break
 
-    # 
     recovery_end = trough_idx
     for i in range(trough_idx, n):
         if curr[i] >= threshold:
@@ -528,14 +458,11 @@ def _detect_peak_trough_drops(
         else:
             break
 
-    # 
     sustained_points = recovery_end - drop_start + 1
 
-    # ，
     if sustained_points < min_sustained_points:
         return anomalies
 
-    # ── （P0 Fix 2026-09-07）： ──
     if hist is not None:
         sig_points = 0
         total_points = 0
@@ -561,17 +488,14 @@ def _detect_peak_trough_drops(
             )
             return anomalies
 
-    # 
     for idx in range(drop_start, recovery_end + 1):
         ts = timestamps[idx] if timestamps and idx < len(timestamps) else None
 
-        # 
         if peak_val > 1e-6:
             local_drop = (peak_val - float(curr[idx])) / peak_val
         else:
             local_drop = 0.0
 
-        # 
         hist_val = float(hist[idx]) if hist is not None else float(np.mean(hist)) if hist is not None else peak_val
         if abs(hist_val) > 1e-6:
             z = abs(float(curr[idx]) - hist_val) / abs(hist_val)
@@ -598,15 +522,10 @@ def _detect_peak_trough_drops(
     return anomalies
 
 
-# ─────────────────────────────────────────────────────────────────
-def _fallback_detection(
+def fallback_detection(
     current_values, historical_means, historical_stds, timestamps=None,
 ):
-    """
- : . 
-
- , . 
- """
+    """: ."""
     curr = np.array(current_values, dtype=float)
     n = len(curr)
 
@@ -618,9 +537,8 @@ def _fallback_detection(
 
     anomalies = []
 
-    # 1：（ combined ，）
     try:
-        pt_anomalies = _detect_peak_trough_drops(
+        pt_anomalies = detect_peak_trough_drops(
             current_values, historical_means, timestamps,
             min_drop_ratio=0.30,  # 
             min_sustained_points=3,
@@ -628,10 +546,9 @@ def _fallback_detection(
         if pt_anomalies:
             logger.info(f"Fallback peak-trough: {len(pt_anomalies)} anomalies")
             return pt_anomalies
-    except Exception as e:
+    except (AttributeError) as e:
         logger.debug(f"Fallback peak-trough failed: {e}")
 
-    # 2：Z-score（ P0 Fix 2026-09-07）
     if hist is not None:
         z_threshold = 3.0
         z_anomalies_idx = []
@@ -649,7 +566,7 @@ def _fallback_detection(
             if z > z_threshold:
                 z_anomalies_idx.append(i)
 
-        #  3 
+        #  3
         consecutive_idx = []
         if len(z_anomalies_idx) > 0:
             sorted_z = sorted(z_anomalies_idx)
@@ -687,14 +604,12 @@ def _fallback_detection(
                 "_skip_context_filter": True,
             })
 
-    # 3：
     drops = []
     for i in range(1, n):
         if curr[i] < curr[i - 1] * 0.9:  # 10%
             drops.append(i)
 
     if len(drops) >= 3:
-        # 
         groups, current = [], [drops[0]]
         for idx in drops[1:]:
             if idx == current[-1] + 1:

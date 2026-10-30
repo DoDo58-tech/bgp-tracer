@@ -13,7 +13,7 @@ from config import PROJECT_ROOT, PATHPROB_SEARCH_PATHS, PATHPROB_AE_ROOT, DEFAUL
 from detectors.unified_result import wrap, DetectionType
 from detectors.input_validation import InputValidationError, validate_detection_request
 
-def _parse_time_window(value):
+def parse_time_window(value):
     if hasattr(value, "year") and hasattr(value, "month") and hasattr(value, "day"):
         return value
 
@@ -40,15 +40,10 @@ def _parse_time_window(value):
         raise ValueError(f"Unsupported time format: {value_str}") from exc
 
 def find_pathprob_file(pathprob_file = None):
-    """
-    Find pathprob.txt file in common locations.
+    """Find pathprob.txt file in common locations.
     
-    Args:
-        pathprob_file: Optional explicit path to pathprob.txt
-        
     Returns:
-        Path to pathprob.txt if found, None otherwise
-    """
+    Path to pathprob.txt if found, None otherwise"""
     if pathprob_file and os.path.exists(pathprob_file):
         logger.info(f"Using specified PathProb file: {pathprob_file}")
         return pathprob_file
@@ -83,7 +78,7 @@ def find_pathprob_file(pathprob_file = None):
     return None
 
 
-def _read_prob(probfile):
+def read_prob(probfile):
     prob = {}
     try:
         with open(probfile, 'r', encoding='utf-8') as f:
@@ -97,14 +92,14 @@ def _read_prob(probfile):
                         if as1 > as2:
                             probs = [c2p, p2p, p2c]
                         prob[(min(as1, as2), max(as1, as2))] = probs
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error reading PathProb file {probfile}: {e}")
     
     logger.info(f"Loaded {len(prob)} AS relationship probabilities from {probfile}")
     return prob
 
 
-def _parse_as_path(as_path_str):
+def parse_as_path(as_path_str):
     if not as_path_str:
         return []
     if '|' in as_path_str:
@@ -116,7 +111,21 @@ def _parse_as_path(as_path_str):
     return path
 
 
-def _detect_leak_by_prob(path, asrelprob, threshold = DEFAULT_LEAK_THRESHOLD):
+def detect_leak_by_prob(path, asrelprob, threshold = DEFAULT_LEAK_THRESHOLD):
+    """Compose the PathProb path likelihood for one AS path.
+
+    The probability table is stored under unordered keys: every link is
+    filed under ``(min(asn), max(asn))`` and the tuple then reads
+    ``[P(min provides max), P(min peers max), P(max provides min)]``.  A
+    path hop is *directed* -- path[i] provides path[i+1] -- so the two
+    slots have to be selected according to the hop's direction.  Reading
+    slot 0 unconditionally swaps the provider and customer roles on
+    every descending hop, which inverts the composed likelihood for the
+    majority of real paths.
+
+    The reference implementation keeps the directed pair as the lookup
+    key, which is equivalent to selecting the slots by direction here.
+    """
     if len(path) < 2:
         return False, 1.0
 
@@ -125,14 +134,14 @@ def _detect_leak_by_prob(path, asrelprob, threshold = DEFAULT_LEAK_THRESHOLD):
 
     for i in range(len(path) - 1):
         as1, as2 = int(path[i]), int(path[i + 1])
-        link = (min(as1, as2), max(as1, as2))
-
-        if link in asrelprob:
-            p2c, _, c2p = asrelprob[link]
-        elif link[::-1] in asrelprob:
-            c2p, _, p2c = asrelprob[link[::-1]]
-        else:
+        key = (min(as1, as2), max(as1, as2))
+        entry = asrelprob.get(key)
+        if entry is None:
             continue
+        if as1 <= as2:
+            p2c, c2p = float(entry[0]), float(entry[2])
+        else:
+            p2c, c2p = float(entry[2]), float(entry[0])
 
         prob = min(p2c + c2p0 - p2c * c2p0, prob)
         c2p0 = c2p
@@ -146,9 +155,6 @@ def detect_route_leaks_in_announcements_slow(
     asrelprob,
     threshold
 ):
-    """
-    leak（）
-    """
     leaks = []
 
     # Convert polars to pandas if needed (handles both polars and pandas)
@@ -164,7 +170,7 @@ def detect_route_leaks_in_announcements_slow(
             else:
                 # Fallback: try to convert from dict/list
                 announcements_df = pd.DataFrame(announcements_df)
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Failed to convert DataFrame to pandas: {e}")
             return leaks
 
@@ -180,11 +186,11 @@ def detect_route_leaks_in_announcements_slow(
         if not as_path_str:
             continue
 
-        path = _parse_as_path(as_path_str)
+        path = parse_as_path(as_path_str)
         if len(path) < 2:
             continue
 
-        is_leak, leak_prob = _detect_leak_by_prob(path, asrelprob, threshold)
+        is_leak, leak_prob = detect_leak_by_prob(path, asrelprob, threshold)
 
         if is_leak:
             leak_event = {
@@ -213,18 +219,10 @@ def detect_route_leaks_vectorized(
     threshold,
     max_leaks: int = 0
 ):
-    """
-    leak - polars
-
-    Args:
-        announcements_df: DataFrame (polars)
-        asrelprob: AS
-        threshold: leak
-        max_leaks: leak，0
-
+    """leak - polars
+    
     Returns:
-        leak
-    """
+    leak"""
     leaks = []
     leak_count = 0
     try:
@@ -247,16 +245,13 @@ def detect_route_leaks_vectorized(
         return leaks
     
     try:
-        # 1. AS（）
         # ：polars 0.19+  list.eval API ，
         try:
-            # 
             # polars  str.strip_chars()  str.strip()
             df = df.with_columns([
                 pl.col('as-path').str.split(by=" ").list.eval(pl.element().str.strip_chars()).alias('_path_list')
             ])
         except AttributeError:
-            # ：，strip_chars
             df = df.with_columns([
                 pl.col('as-path').str.split(by=" ").alias('_path_list')
             ])
@@ -266,11 +261,10 @@ def detect_route_leaks_vectorized(
                     pl.col('_path_list').list.eval(pl.element().str.strip_chars()).alias('_path_list')
                 ])
             except AttributeError:
-                # ：
                 logger.warning("Polars version too old for string operations, skipping path cleanup")
                 pass
         
-        # 2. 
+        # 2.
         df = df.with_columns([
             pl.col('_path_list').list.len().alias('_path_len')
         ])
@@ -279,11 +273,23 @@ def detect_route_leaks_vectorized(
         if df.is_empty():
             return leaks
         
-        # 3. link（）
-        link_cache = {}
-        for link, probs in asrelprob.items():
-            link_cache[link] = probs
-            link_cache[link[::-1]] = [probs[2], probs[1], probs[0]]
+        # The PathProb table is stored under unordered keys: a link filed
+        # under (min, max) carries, in slot 0, the probability that the
+        # *smaller* AS provides the larger one.  A path hop is directed,
+        # so the table has to be expanded into both directed orientations
+        # before the join; otherwise the provider and customer roles are
+        # swapped on every descending hop.
+        link_records = []
+        for k, v in asrelprob.items():
+            if not isinstance(k, tuple) or len(k) != 2:
+                continue
+            try:
+                a, b = int(k[0]), int(k[1])
+            except (TypeError, ValueError):
+                continue
+            p2c, _, c2p = float(v[0]), float(v[1]), float(v[2])
+            link_records.append((a, b, p2c, c2p))
+            link_records.append((b, a, c2p, p2c))
 
         # ── Optimization 2026-09-17: replace per-row map_elements with
         df = df.with_row_index(name="_path_id")
@@ -307,37 +313,31 @@ def detect_route_leaks_vectorized(
                 pl.col("_to").cast(pl.Int64, strict=False).alias("_to_i"),
             ])
             .with_columns([
-                pl.min_horizontal("_from_i", "_to_i").alias("_a"),
-                pl.max_horizontal("_from_i", "_to_i").alias("_b"),
+                pl.col("_from_i").alias("_a"),
+                pl.col("_to_i").alias("_b"),
             ])
             .filter(pl.col("_from_i").is_not_null() & pl.col("_to_i").is_not_null())
         )
-        # 2. Convert link_cache to a Polars DataFrame for the join.
+        # 2. Convert the directed link table to a Polars DataFrame for the join.
         try:
-            link_records = []
-            for k, v in link_cache.items():
-                if not isinstance(k, tuple) or len(k) != 2:
-                    continue
-                try:
-                    a, b = int(k[0]), int(k[1])
-                except (TypeError, ValueError):
-                    continue
-                p2c, _, c2p = v[0], v[1], v[2]
-                link_records.append((a, b, float(p2c), float(c2p)))
             link_df = pl.DataFrame(
                 link_records,
                 schema=["_a", "_b", "_p2c", "_c2p"],
                 orient="row",
             )
-        except Exception as exc:
+        except (AttributeError) as exc:
             logger.error(f"[leak_detector] failed to build link DataFrame: {exc}")
             return leaks
         # 3. Hash-join to fetch per-edge (p2c, c2p) tuples.
         joined = edges.join(link_df, on=["_a", "_b"], how="left")
-        # 4. Compute leak probability per path:
+        # 4. Compute leak probability per path.  The c2p term refers to the
+        # *previous edge of the same path*, so the shift has to be windowed
+        # by _path_id: a bare shift(1) would index across path boundaries and
+        # feed the last edge of the neighbouring path into the first edge of
+        # this one, corrupting one edge of every path in the batch.
         joined = joined.with_columns([
-            (pl.col("_p2c") + pl.col("_c2p").shift(1).fill_null(1.0) -
-             pl.col("_p2c") * pl.col("_c2p").shift(1).fill_null(1.0))
+            (pl.col("_p2c") + pl.col("_c2p").shift(1).over("_path_id").fill_null(1.0) -
+             pl.col("_p2c") * pl.col("_c2p").shift(1).over("_path_id").fill_null(1.0))
             .cum_min()
             .over("_path_id")
             .alias("_prob_running"),
@@ -359,9 +359,8 @@ def detect_route_leaks_vectorized(
         if leak_df.is_empty():
             return leaks
 
-        # 6. 
+        # 6.
         for row in leak_df.iter_rows(named=True):
-            # max_leaks，
             if max_leaks > 0 and leak_count >= max_leaks:
                 logger.warning(f"Reached max_leaks limit ({max_leaks}), truncating results")
                 break
@@ -379,7 +378,6 @@ def detect_route_leaks_vectorized(
                 "detection_method": "PathProb"
             }
 
-            # 
             for field in ['collector', 'peer-as', 'peer_as', 'type']:
                 if field in row and row[field] is not None:
                     leak_event[field] = row[field]
@@ -391,7 +389,6 @@ def detect_route_leaks_vectorized(
         
     except Exception as e:
         logger.error(f"Error in vectorized leak detection: {e}")
-        # 
         logger.info("Falling back to row-by-row detection")
         return detect_route_leaks_in_announcements_slow(announcements_df, asrelprob, threshold)
     
@@ -418,28 +415,13 @@ def analyze_leak_surface(
     target_asns: List[str] | None = None,
     max_leaks: int = 5000,
 ):
-    """
-    Analyze route leaks for specified AS and time period.
-
-    Args:
-        asn: Primary AS number
-        start_time: Start time string (format: "YYYY-MM-DD HH:MM")
-        end_time: End time string (format: "YYYY-MM-DD HH:MM")
-        pathprob_file: Optional path to pathprob.txt file
-        threshold: Leak detection threshold (default: 0.4)
-        target_asns: List of AS numbers to filter by. Only messages containing these ASNs will be analyzed.
-                    If None, analyzes all messages (backward compatibility).
-        max_leaks: Maximum number of leaks to return (default: 5000). 0 means no limit.
-
+    """Analyze route leaks for specified AS and time period.
+    
     Returns:
-        Dictionary with leak analysis results
-    """
+    Dictionary with leak analysis results"""
     from data.updates_loader import get_updates_streaming
     
     # Validate the request BEFORE doing any work. Without this, swapped
-    # arguments (asn passed in a time slot) surface as a confusing
-    # "invalid time format" for the ASN value, and an inverted window is
-    # accepted and scans nothing. Reject both explicitly.
     try:
         asn_clean, start_dt, end_dt = validate_detection_request(
             asn, start_time, end_time, asn_label="asn"
@@ -472,9 +454,9 @@ def analyze_leak_surface(
     logger.info(f"Route leak detection: filtering for AS paths containing: {target_asns}")
 
     try:
-        start_dt = _parse_time_window(start_time)
-        end_dt = _parse_time_window(end_time)
-    except Exception as e:
+        start_dt = parse_time_window(start_time)
+        end_dt = parse_time_window(end_time)
+    except (AttributeError) as e:
         logger.error(f"Invalid time format for leak analysis: {e}")
         return wrap(DetectionType.LEAK, {
             "success": False,
@@ -508,7 +490,7 @@ def analyze_leak_surface(
                 "anomaly_count": 0,
             }, asn=asn_clean).to_dict()
     
-    asrelprob = _read_prob(pathprob_file)
+    asrelprob = read_prob(pathprob_file)
     
     if len(asrelprob) == 0:
         logger.error("Failed to load AS relationship probabilities")
@@ -525,14 +507,9 @@ def analyze_leak_surface(
             "anomaly_count": 0,
         }, asn=asn_clean).to_dict()
     
-    # （ES）
     all_leaks = []
     
-    # ========== ES，CSV ==========
     # The Elasticsearch fast path was removed 2026-10-05: it called
-    # get_leak_candidates_es / convert_es_records_to_dataframe, neither of
-    # which exists in this module, so the block could only ever raise
-    # NameError if re-enabled. Detection reads the CSV stream below.
     logger.info(f"Using CSV streaming for leak detection (max_leaks={max_leaks})")
 
     # target AS
@@ -541,8 +518,9 @@ def analyze_leak_surface(
     all_leaks = []
     total_announcements = 0
     filtered_announcements = 0
+    leak_origin_announcements = 0
     chunk_count = 0
-    total_leak_count = 0  # 
+    total_leak_count = 0  #
 
     for df_chunk in get_updates_streaming(start_dt, end_dt, workers=MAX_WORKERS, io_busy_threshold=IO_BUSY_THRESHOLD, auto_download=True):
         chunk_count += 1
@@ -550,50 +528,22 @@ def analyze_leak_surface(
         if df_chunk is None or df_chunk.is_empty():
             continue
 
-        # ，
-        announcements = df_chunk.filter(pl.col('A/W') == 'A').select(['as-path', 'prefix', 'timestamp', 'origin'])
-        del df_chunk  # chunk
-        gc.collect()
+        from detectors.leak.leak_chunk_api import consume_chunk
 
-        if announcements.is_empty():
-            continue
-
-        total_announcements += len(announcements)
-
-        # ========== Bug: ASN（）==========
-        filtered_ann = announcements
-        if target_asns:
-            # Pre-split as-path into a list column so .list.contains() can
-            # do exact-token matching.
-            _has_split = "as_path_tokens" in announcements.columns
-            if not _has_split:
-                announcements = announcements.with_columns(
-                    pl.col("as-path").str.split(by=" ").alias("as_path_tokens")
-                )
-            mask = None
-            for _target_asn in target_asns_set:
-                m = announcements["as_path_tokens"].list.contains(_target_asn)
-                mask = m if mask is None else (mask | m)
-            filtered_ann = announcements.filter(mask)
-            filtered_announcements += len(filtered_ann)
-
-        if filtered_ann.is_empty():
-            del announcements, filtered_ann
-            gc.collect()
-            continue
-
-        # Detect leaks in this filtered chunk
-        chunk_leaks = detect_route_leaks_vectorized(filtered_ann, asrelprob, threshold, max_leaks=0)
+        res = consume_chunk(df_chunk, asrelprob, threshold, target_asns_set)
+        total_announcements += res["total_announcements"]
+        filtered_announcements += res["filtered_announcements"]
+        leak_origin_announcements += res["leak_origin_announcements"]
+        chunk_leaks = res["leaks"]
         total_leak_count += len(chunk_leaks)
 
         # max_leaks，leaks
         if max_leaks > 0 and len(all_leaks) >= max_leaks:
-            del announcements, filtered_ann, chunk_leaks
+            del chunk_leaks
             gc.collect()
             logger.warning(f"Reached max_leaks limit ({max_leaks}), stopping early")
             break
 
-        # leaks，
         remaining_slots = max_leaks - len(all_leaks) if max_leaks > 0 else len(chunk_leaks)
         if remaining_slots > 0:
             all_leaks.extend(chunk_leaks[:remaining_slots])
@@ -601,22 +551,12 @@ def analyze_leak_surface(
         if chunk_leaks:
             logger.info(f"Chunk {chunk_count}: detected {len(chunk_leaks)} route leaks (total: {total_leak_count})")
 
-        # 
-        del announcements, filtered_ann, chunk_leaks
+        del chunk_leaks
         gc.collect()
 
     logger.info(f"Route leak analysis completed (CSV): {total_leak_count} leaks detected from {filtered_announcements} filtered announcements (out of {total_announcements} total)")
 
     # BUG (2026-10-05): `route_leaks` / `leak_count` are capped by max_leaks,
-    # while `total_detected` holds the real count. Downstream consumers
-    # (routing_impl -> report payload, report_agent's leak table, llm_reasoning)
-    # read `leak_count` or `len(route_leaks)`, i.e. the CAP, so a run that found
-    # 20849 leaks was reported as "5000 route leaks" with no indication that the
-    # number was a truncation limit rather than a measurement. That reads as
-    # overwhelming evidence when it is actually an artefact of the limit.
-    #
-    # Publish the truncation state explicitly so a consumer can say
-    # ">=5000 (truncated)" instead of asserting 5000.
     truncated = bool(max_leaks > 0 and total_leak_count > len(all_leaks))
     if truncated:
         logger.warning(
@@ -634,6 +574,7 @@ def analyze_leak_surface(
         "asrel_count": len(asrelprob),
         "route_leaks": all_leaks,
         "leak_count": len(all_leaks),
+        "leak_origin_announcements": leak_origin_announcements,
         "total_detected": total_leak_count,  # true count, uncapped
         "truncated": truncated,
         "truncation_limit": max_leaks if truncated else None,
@@ -663,7 +604,7 @@ def detect_route_leaks_streaming(
             logger.warning("PathProb file not found, skipping route leak detection")
             return []
         
-        asrelprob = _read_prob(pathprob_file)
+        asrelprob = read_prob(pathprob_file)
         if len(asrelprob) == 0:
             logger.warning("Failed to load AS relationship probabilities")
             return []
@@ -678,12 +619,10 @@ def detect_route_leaks_streaming(
 
 
 def check_pathprob_integration():
-    """
-    Check PathProb integration status.
-
+    """Check PathProb integration status.
+    
     Returns:
-        bool: True if PathProb is properly integrated, False otherwise
-    """
+    bool: True if PathProb is properly integrated, False otherwise"""
     print("=" * 70)
     print("PathProb Integration Checker")
     print("=" * 70)
@@ -718,7 +657,7 @@ def check_pathprob_integration():
             with open(pathprob_file, 'r') as f:
                 line_count = sum(1 for _ in f)
             print(f"   ✓ File is readable, contains {line_count:,} lines")
-        except Exception as e:
+        except (ValueError) as e:
             print(f"   ✗ Error reading file: {e}")
     else:
         print("   ✗ pathprob.txt not found in any search location")
@@ -759,24 +698,16 @@ def check_pathprob_integration():
 
 
 def extract_as_paths_from_bgp_data(start_time, end_time, output_dir, min_path_length=2):
-    """
-    Extract AS paths from BGP data for PathProb analysis.
-
-    Args:
-        start_time: Start time (datetime or str)
-        end_time: End time (datetime or str)
-        output_dir: Output directory path
-        min_path_length: Minimum AS path length to include
-
+    """Extract AS paths from BGP data for PathProb analysis.
+    
     Returns:
-        str: Path to output file, or None if failed
-    """
+    str: Path to output file, or None if failed"""
     from collections import Counter
 
     try:
-        start_dt = _parse_time_window(start_time)
-        end_dt = _parse_time_window(end_time)
-    except Exception as e:
+        start_dt = parse_time_window(start_time)
+        end_dt = parse_time_window(end_time)
+    except (AttributeError) as e:
         logger.error(f"Invalid time format: {e}")
         return None
 
@@ -799,7 +730,6 @@ def extract_as_paths_from_bgp_data(start_time, end_time, output_dir, min_path_le
         if df_chunk is None or df_chunk.is_empty():
             continue
 
-        # ，
         announcements = df_chunk.filter(pl.col('A/W') == 'A').select(['as-path'])
         del df_chunk  # chunk
         gc.collect()
@@ -817,7 +747,7 @@ def extract_as_paths_from_bgp_data(start_time, end_time, output_dir, min_path_le
             if not as_path_str:
                 continue
 
-            path = _parse_as_path(as_path_str)
+            path = parse_as_path(as_path_str)
 
             if len(path) < min_path_length:
                 continue

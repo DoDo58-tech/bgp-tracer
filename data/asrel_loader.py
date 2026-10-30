@@ -27,7 +27,7 @@ def get_available_dates():
         available_dates = [file.split('.')[0] for file in files]
         
         return available_dates
-    except Exception as e:
+    except (ValueError) as e:
         print(f"Failed to get available dates: {e}")
         return []
 
@@ -82,7 +82,7 @@ def load_asrel(fpath):
                         as_to_peers[as2] = []
                     as_to_peers[as1].append(as2)
                     as_to_peers[as2].append(as1)
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error loading AS relationship data: {e}")
     
     return {
@@ -149,7 +149,7 @@ def process_asrel(target_time):
         if filepath.exists():
             os.remove(filepath)
         return str(parsed_filepath)
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Failed to save processed AS relationship data: {e}")
         return ""
 

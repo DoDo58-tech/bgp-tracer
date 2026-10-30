@@ -1,20 +1,14 @@
-"""HCAF causal attribution engine.
-
-Chains MSBD (wavelet breakpoints), CTPR (AS-path reconstruction), CIC
-(counterfactual cascade), Granger causality, and Transfer Entropy into a
-Bayesian ensemble; embeds Pearl-style Causal Sufficiency Score (CSS) as
-the anchor likelihood and supports abstention when evidence is weak.
-"""
+"""HCAF causal attribution engine."""
 import os
 import zlib
 from dataclasses import dataclass
 from enum import Enum
 from datetime import datetime
 from collections import defaultdict
-from typing import Dict, Optional, Any
+from typing import Dict, Any
 import logging
 import math
-import warnings
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,57 +21,31 @@ try:
     _CSS_OK = True
 except ImportError:
     _CSS_OK = False
-    CSSResult = None  # type: ignore[assignment, misc]
-    css_score = None  # type: ignore[assignment]
-    bayesian_synthesize = None  # type: ignore[assignment]
+    CSSResult = None
+    css_score = None
+    bayesian_synthesize = None
 
 try:
     from agents.causal_baselines import transfer_entropy_baseline
 except ImportError:
-    transfer_entropy_baseline = None  # type: ignore[assignment]
+    transfer_entropy_baseline = None
 
 try:
     import numpy as np
-    from statsmodels.tsa.stattools import grangercausalitytests, adfuller
-    STATSMODELS_OK = True
+    NUMPY_OK = True
 except ImportError:
-    STATSMODELS_OK = False
-    np = None  # type: ignore[assignment]
+    NUMPY_OK = False
+    np = None
 
 try:
     from config import (
-        HCAF_WEIGHTS_MSBD, HCAF_WEIGHTS_CTPR, HCAF_WEIGHTS_CIC,
-        HCAF_WEIGHTS_GRANGER, HCAF_MAJORITY_THRESHOLD,
-        HCAF_MIN_DIRECTION_CONFIDENCE, HCAF_MIN_POSTERIOR,
+        HCAF_MIN_POSTERIOR,
     )
     _HCAF_CFG_OK = True
 except ImportError:
     _HCAF_CFG_OK = False
-    HCAF_WEIGHTS_MSBD, HCAF_WEIGHTS_CTPR = 0.40, 0.30
-    HCAF_WEIGHTS_CIC, HCAF_WEIGHTS_GRANGER = 0.30, 0.15
-    HCAF_MAJORITY_THRESHOLD = 2
-    HCAF_MIN_DIRECTION_CONFIDENCE = 0.10
     HCAF_MIN_POSTERIOR = 0.50
 
-
-def _hcaf_majority_vote(method_directions, threshold=HCAF_MAJORITY_THRESHOLD):
-    """Return the direction with ≥ ``threshold`` votes, or None.
-
-    ``method_directions`` is a list of direction strings. ``"unknown"``
-    counts as abstention and does not contribute.
-    """
-    counts = {}
-    for d in method_directions:
-        if d == "unknown" or d is None:
-            continue
-        counts[d] = counts.get(d, 0) + 1
-    for d, c in counts.items():
-        if c >= threshold:
-            return d
-    return None
-
-# ADF significance level for the stationarity pre-check. Series with
-ADF_SIGNIFICANCE = float(os.environ.get("BGP_TRACER_ADF_SIG", "0.05"))
 
 try:
     import pywt
@@ -104,7 +72,7 @@ def detect_multi_scale_breakpoints(routing_series, traffic_series, timestamps=No
     try:
         r_coeffs = pywt.wavedec(routing, wavelet, level=max_level)
         t_coeffs = pywt.wavedec(traffic, wavelet, level=max_level)
-    except Exception:
+    except (ValueError):
         return msbd_fallback(routing_series, traffic_series)
     scale_results = []
     for idx in range(1, len(r_coeffs)):
@@ -157,9 +125,9 @@ def msbd_consistency(results):
 
 
 def msbd_direction(sync, routing, traffic):
-    # sync<0.2  peak_position fallback,  HCAF 
+    # sync<0.2  peak_position fallback,  HCAF
     if sync >= 0.6:
-        # ,  peak 
+        # ,  peak
         r_peak = int(np.argmax(routing)) if len(routing) > 0 else 0
         t_peak = int(np.argmax(traffic)) if len(traffic) > 0 else 0
         n = max(len(routing), len(traffic), 1)
@@ -181,11 +149,6 @@ def msbd_fallback(routing_series, traffic_series):
         return {"direction": "unknown", "strength": 0.0, "significant": False, "interpretation": ""}
     r, t = np.array(routing_series[:n]), np.array(traffic_series[:n])
     # FIX: If traffic is all zeros (no traffic events recorded), the peak
-    # position is undefined — the argmax is at index 0 regardless of any
-    # real signal. MSBD should abstain rather than hallucinate a direction.
-    # This prevents "traffic_to_routing" predictions on events where the
-    # traffic CSV has no overlap with the event window (e.g. AS45804,
-    # AS29119, outage_bangladesh where traffic CSV ends before the event).
     t_std = float(np.std(t))
     t_nonzero = float(np.sum(t > 1e-9))
     if t_std < 1e-9 and t_nonzero < 2:
@@ -259,30 +222,13 @@ def ctpr_build_chain(source):
 
 def ctpr_step_pseudo_delay(f, t):
     """Per-hop pseudo-propagation delay placeholder.
-
+    
     WARNING: this value is a non-physical, deterministic placeholder used
     only to give CTPR chains a stable, comparable total-delay metric for
     ranking / strength calculation. It MUST NOT be interpreted as a real
     BGP propagation delay. The name change from ``ctpr_step_delay`` to
     ``ctpr_step_pseudo_delay`` is intentional to discourage reviewers /
-    downstream consumers from quoting it as an empirical observation.
-
-    Range is bounded to [60s, 180s] (1 hop → 1-3 minutes), the realistic
-    lower bound for an AS-to-AS eBGP update propagation in current
-    operational networks.
-
-    Override via env var ``BGP_TRACER_CTPR_PSEUDO_DELAY_JITTER`` to
-    change the jitter width; set it to ``0`` to force a constant
-    60s-per-hop delay (fully deterministic, no jitter).
-
-    Determinism note: the jitter uses ``zlib.crc32`` rather than
-    Python's builtin ``hash()``. The builtin hash of a ``str`` or
-    ``tuple`` is salted per-process via ``PYTHONHASHSEED``, which would
-    make this placeholder -- and therefore any downstream chain ranking
-    or reported pseudo-delay -- vary between otherwise identical runs,
-    breaking the paper's reproducibility claim. ``crc32`` is stable
-    across processes, machines, and Python versions.
-    """
+    downstream consumers from quoting it as an empirical observation."""
     if f is None or t is None:
         return 60
     jitter = int(os.environ.get("BGP_TRACER_CTPR_PSEUDO_DELAY_JITTER", "120"))
@@ -325,12 +271,7 @@ def ctpr_strength(chain, traffic_events):
 
 
 def ctpr_delay(chain):
-    """Return the cumulative pseudo-delay (lower-bound estimate in seconds).
-
-    NOTE: pseudo-delay is a deterministic placeholder used to rank
-    chains within a single event, NOT a physical measurement. See
-    ``ctpr_step_pseudo_delay`` docstring for details.
-    """
+    """Return the cumulative pseudo-delay (lower-bound estimate in seconds)."""
     return chain[-1].get("cumulative_pseudo_delay", 0) if chain else 0
 
 
@@ -373,12 +314,6 @@ def estimate_counterfactual_cascade(intervention_as, intervention_type, routing_
     total = cic_aggregate(impacts)
     strength, sig = cic_strength(total, impacts)
     # The propagation model expands a *routing* change along the AS graph, so
-    # its direction is "routing -> traffic" **by construction**.  Reporting that
-    # as the cascade's direction turned an assumption into evidence: the
-    # `cic_scope` channel then contributed a 1+log1p(N) likelihood ratio in
-    # favour of R→T on every run that had a topology, regardless of what the
-    # two time series did.  The cascade measures *scope*, not direction, so it
-    # now says so and the synthesis does not use it as a directional channel.
     return {"direction": "unknown", "strength": strength, "significant": sig,
             "direction_note": "routing->traffic assumed by the propagation model",
             "cascade_chain": cascade, "impact_estimates": impacts, "total_impact": total,
@@ -389,15 +324,6 @@ def estimate_counterfactual_cascade(intervention_as, intervention_type, routing_
 
 
 # How much a routing change at the origin propagates along one AS-to-AS
-# edge, by commercial relationship. A withdrawal at a provider does not
-# reach its customer directly (the customer re-routes around it), whereas
-# a hijack does travel down the customer tree because the customer
-# accepts the announcement. Peer links are symmetric and carry a partial
-# share in both directions.
-#
-# The values are attenuation factors applied on top of the per-hop
-# depth decay, and are the mechanism by which the AS supply
-# relationship enters the counterfactual estimate.
 _RELATION_PROPAGATION = {
     "provider": 1.0,   # origin is the provider's customer
     "customer": 0.75,  # origin is the provider
@@ -407,13 +333,7 @@ _RELATION_PROPAGATION = {
 
 
 def cic_propagate(start_as, topology, routing_state, int_type, prefix, edge_types=None):
-    """Walk the AS graph outward from the intervention, recording the path.
-
-    ``edge_types`` maps ``{asn: {neighbour: relation}}`` where relation is
-    one of provider / customer / peer. It is optional: without it the
-    walk still works but every edge is treated as ``unknown`` and
-    propagation is attenuated conservatively.
-    """
+    """Walk the AS graph outward from the intervention, recording the path."""
     edge_types = edge_types or {}
     # Normalise the origin to a string so the lookup matches the
     # topology keys, which are ASN strings.
@@ -450,9 +370,6 @@ def cic_has_pfx(asn, prefix, routing_state):
     if prefix in prefixes:
         return True
     # The affected prefix may be recorded under a different (more
-    # specific or less specific) CIDR than the detector reported. Fall
-    # back to a containment test so a /24 event is not missed because
-    # the snapshot records the covering /22.
     try:
         import ipaddress
         target = ipaddress.ip_network(prefix, strict=False)
@@ -542,11 +459,7 @@ def cic_empty():
 
 def quick_cascade_estimate(event_type, affected_as_count, traffic_drop_ratio,
                            routing_timeline=None, traffic_timeline=None):
-    """ AS .
-
-     routing_to_traffic,  routing/traffic 
-     ( peak_position baseline ),  unknown.
-    """
+    """AS ."""
     if not event_type or affected_as_count == 0:
         return {"direction": "unknown", "strength": 0.0, "significant": False}
     factors = {"outage": 0.9, "hijack": 0.8, "leak": 0.5, "withdrawal": 0.9, "normal": 0.0}
@@ -555,7 +468,7 @@ def quick_cascade_estimate(event_type, affected_as_count, traffic_drop_ratio,
     df = min(traffic_drop_ratio, 1.0)
     strength = ef * af * df
 
-    # , 
+    # ,
     direction = "unknown"
     try:
         if routing_timeline and traffic_timeline:
@@ -571,7 +484,7 @@ def quick_cascade_estimate(event_type, affected_as_count, traffic_drop_ratio,
                     direction = "traffic_to_routing"
                 else:
                     direction = "independent"
-    except Exception:
+    except (ValueError):
         direction = "unknown"
 
     return {"direction": direction, "strength": strength, "significant": strength >= 0.3,
@@ -579,283 +492,8 @@ def quick_cascade_estimate(event_type, affected_as_count, traffic_drop_ratio,
             "interpretation": f"{event_type} impact {affected_as_count} count AS, strength {strength:.2f}"}
 
 
-# Granger  (baseline)
-
-
-class GrangerEngine:
-    def __init__(self, max_lag=3, significance=0.05, enforce_stationarity=True):
-        self.max_lag = max_lag
-        self.significance = significance
-        # When True (default), run ADF stationarity pre-check and
-        self.enforce_stationarity = enforce_stationarity
-
-    def test(self, routing_timeline, traffic_timeline):
-        if not STATSMODELS_OK:
-            return granger_fb(routing_timeline, traffic_timeline)
-        r_series, t_series = granger_align(routing_timeline, traffic_timeline)
-        n = len(r_series)
-        if n < 10:
-            return granger_insuf(n)
-
-        stationarity_meta = {"checked": False, "differencing_applied": False,
-                             "adf_p_value": None, "stationarity_ok": True,
-                             "routing_note": "", "traffic_note": ""}
-        if self.enforce_stationarity:
-            r_check = granger_stationary_check_and_diff(r_series, name="routing")
-            t_check = granger_stationary_check_and_diff(t_series, name="traffic")
-            stationarity_meta.update({
-                "checked": True,
-                "differencing_applied": r_check["differencing_applied"] or t_check["differencing_applied"],
-                "routing_adf_p_value": r_check["adf_p_value"],
-                "traffic_adf_p_value": t_check["adf_p_value"],
-                "stationarity_ok": r_check["stationarity_ok"] and t_check["stationarity_ok"],
-                "routing_note": r_check["note"],
-                "traffic_note": t_check["note"],
-            })
-            if not stationarity_meta["stationarity_ok"]:
-                # Either series failed to stationarise → suppress Granger.
-                return granger_stationarity_insuf(n, stationarity_meta)
-            r_series = r_check["series"]
-            t_series = t_check["series"]
-            if not r_series or not t_series:
-                return granger_stationarity_insuf(n, stationarity_meta)
-            # If differencing was applied to only one series, the two
-            common_n = min(len(r_series), len(t_series))
-            r_series = r_series[-common_n:]
-            t_series = t_series[-common_n:]
-            n = common_n
-
-        lead = granger_lead(routing_timeline, traffic_timeline)
-        try:
-            rt = granger_gt(r_series, t_series, self.max_lag, self.significance)
-            tr = granger_gt(t_series, r_series, self.max_lag, self.significance)
-            return granger_synth(rt, tr, lead, n, stationarity_meta)
-        except Exception as e:
-            logger.warning(f"Granger failed: {e}")
-            return granger_fb(routing_timeline, traffic_timeline)
-
-
-def granger_align(routing, traffic):
-    r_sorted = sorted(routing, key=lambda x: x.get("timestamp", ""))
-    t_sorted = sorted(traffic, key=lambda x: x.get("timestamp", ""))
-    r_scores = [float(r.get("score", 0)) for r in r_sorted]
-    t_scores = [float(t.get("score", 0)) for t in t_sorted]
-    n = min(len(r_scores), len(t_scores))
-    return r_scores[:n], t_scores[:n]
-
-
-def granger_lead(routing, traffic):
-    r_sorted = sorted(routing, key=lambda x: x.get("timestamp", ""))
-    t_sorted = sorted(traffic, key=lambda x: x.get("timestamp", ""))
-    first_r = next((r for r in r_sorted if r.get("score", 0) > 0.5), None)
-    first_t = next((t for t in t_sorted if t.get("score", 0) > 0.5), None)
-    if not first_r or not first_t:
-        return None
-    try:
-        rt = datetime.fromisoformat(first_r["timestamp"].replace("Z", "+00:00"))
-        tt = datetime.fromisoformat(first_t["timestamp"].replace("Z", "+00:00"))
-        return (tt - rt).total_seconds()
-    except (ValueError, TypeError):
-        return None
-
-
-def granger_gt(x, y, max_lag, sig):
-    """Run Granger test on a (possibly pre-differenced) pair (x, y).
-
-    The caller is responsible for stationarising the input via
-    :func:`granger_stationary_check_and_diff`. This function assumes its
-    inputs are already stationary.
-    """
-    data = np.column_stack([y, x])
-    try:
-        ml = min(max_lag, len(data) // 3)
-        if ml < 1:
-            ml = 1
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=FutureWarning)
-            result = grangercausalitytests(data, maxlag=ml, verbose=False)
-        best_lag = 1
-        best_aic = float("inf")
-        for lag, res in result.items():
-            if res[0].get("params") is not None:
-                aic = res[0].get("aic", float("inf"))
-                if aic < best_aic:
-                    best_aic = aic
-                    best_lag = lag
-        f_test = result[best_lag][0]["ssr_ftest"]
-        return {"significant": float(f_test[1]) < sig, "p": float(f_test[1]), "f": float(f_test[0]), "lag": best_lag}
-    except Exception:
-        return {"significant": False, "p": 1.0, "f": 0.0, "lag": 0}
-
-
-def granger_stationary_check_and_diff(series, name="series"):
-    """Stationarity pre-check used by :class:`GrangerEngine`.
-
-    Returns ``{"series": stationary_series, "differencing_applied": bool,
-    "adf_p_value": float|None, "stationarity_ok": bool, "note": str}``.
-
-    Strategy:
-      1. Run ADF on the raw series. If p < ``ADF_SIGNIFICANCE``, accept
-         it as stationary.
-      2. Else apply ``np.diff`` (drop first element) and re-run ADF.
-         If p < threshold now, accept the differenced series.
-      3. Else mark ``stationarity_ok=False`` and return an empty list.
-         Caller (GrangerEngine) treats this as "do not run Granger at
-         all" — better to abstain than to produce a spurious result.
-
-    Implementation is defensive: if ``statsmodels`` is missing or the
-    series is too short for ADF, we return the raw series unchanged
-    (preserving legacy behaviour). Reviewer-facing note in the returned
-    ``note`` field explains the path taken.
-    """
-    if not series or len(series) < 8:
-        return {"series": list(series), "differencing_applied": False,
-                "adf_p_value": None, "stationarity_ok": True,
-                "note": f"{name}: too short for ADF (n={len(series)}); pass-through."}
-    if not STATSMODELS_OK:
-        return {"series": list(series), "differencing_applied": False,
-                "adf_p_value": None, "stationarity_ok": True,
-                "note": f"{name}: statsmodels unavailable; pass-through."}
-    try:
-        arr = np.asarray(series, dtype=float)
-        p_raw = float(adfuller(arr, autolag="AIC", regression="c")[1])
-        if p_raw < ADF_SIGNIFICANCE:
-            return {"series": list(arr), "differencing_applied": False,
-                    "adf_p_value": p_raw, "stationarity_ok": True,
-                    "note": f"{name}: ADF p={p_raw:.4f} < {ADF_SIGNIFICANCE}, stationary."}
-        diff = np.diff(arr)
-        p_diff = float(adfuller(diff, autolag="AIC", regression="c")[1])
-        if p_diff < ADF_SIGNIFICANCE:
-            return {"series": list(diff), "differencing_applied": True,
-                    "adf_p_value": p_diff, "stationarity_ok": True,
-                    "note": f"{name}: raw non-stationary (p={p_raw:.4f}), "
-                            f"differenced OK (p={p_diff:.4f})."}
-        return {"series": [], "differencing_applied": False,
-                "adf_p_value": p_diff, "stationarity_ok": False,
-                "note": f"{name}: stationary neither before (p={p_raw:.4f}) "
-                        f"nor after differencing (p={p_diff:.4f}); Granger suppressed."}
-    except Exception as e:
-        logger.debug(f"[{name}] ADF pre-check failed: {e}")
-        return {"series": list(series), "differencing_applied": False,
-                "adf_p_value": None, "stationarity_ok": True,
-                "note": f"{name}: ADF exception {type(e).__name__}; pass-through."}
-
-
-def granger_synth(rt, tr, lead, n, stationarity_meta=None):
-    rt_sig, rt_p, rt_f = rt["significant"], rt["p"], rt["f"]
-    tr_sig, tr_p, tr_f = tr["significant"], tr["p"], tr["f"]
-    rt_s = rt_f / (rt_f + 5.0) if rt_f > 0 else 0.0
-    tr_s = tr_f / (tr_f + 5.0) if tr_f > 0 else 0.0
-    routing_leads = lead is not None and lead >= 0
-    if rt_sig and not tr_sig:
-        direction, strength, sig = "routing_to_traffic", rt_s, True
-    elif tr_sig and not rt_sig:
-        direction, strength, sig = "traffic_to_routing", tr_s, True
-    elif rt_sig and tr_sig:
-        direction = "routing_to_traffic" if rt_f >= tr_f else "traffic_to_routing"
-        strength, sig = max(rt_s, tr_s), True
-    else:
-        if routing_leads and lead is not None and abs(lead) / 60 <= 60 and max(rt_f, tr_f) > 0.5:
-            direction, strength, sig = "routing_to_traffic", max(rt_s, tr_s) * 0.5, False
-        else:
-            direction, strength, sig = "none", max(rt_s, tr_s) * 0.3, False
-    meta = stationarity_meta or {}
-    return {"direction": direction, "strength": min(strength, 1.0), "p_value": min(rt_p, tr_p),
-            "significant": sig, "f_statistic": max(rt_f, tr_f), "temporal_lead": lead,
-            "interpretation": f"Granger {direction} (p={min(rt_p, tr_p):.4f})",
-            "data_points": n, "association": max(rt_s, tr_s),
-            "stationarity_checked": meta.get("checked", False),
-            "differencing_applied": meta.get("differencing_applied", False),
-            "adf_p_value": min([p for p in (meta.get("routing_adf_p_value"),
-                                             meta.get("traffic_adf_p_value")) if p is not None],
-                                default=None),
-            "stationarity_note": (
-                f"routing: {meta.get('routing_note', '')}; "
-                f"traffic: {meta.get('traffic_note', '')}"
-                if meta.get("checked") else "stationarity pre-check skipped"
-            )}
-
-
-def granger_insuf(n):
-    return {"direction": "unknown", "strength": 0.0, "p_value": 1.0, "significant": False,
-            "f_statistic": 0.0, "temporal_lead": None, "interpretation": f"insufficient_data_points (n={n})",
-            "data_points": n, "association": 0.0}
-
-
-def granger_stationarity_insuf(n, meta):
-    """Return a Granger result when ADF pre-check rejects stationarity.
-
-    We deliberately report ``direction="unknown"`` and
-    ``significant=False`` so the HCAF voter abstains rather than
-    voting spuriously on a non-stationary series. The diagnostic
-    fields are preserved for the report / debugging.
-    """
-    notes = []
-    if meta.get("routing_note"):
-        notes.append(meta["routing_note"])
-    if meta.get("traffic_note"):
-        notes.append(meta["traffic_note"])
-    return {"direction": "unknown", "strength": 0.0, "p_value": 1.0, "significant": False,
-            "f_statistic": 0.0, "temporal_lead": None,
-            "interpretation": "Granger suppressed: " + (" | ".join(notes) or "non-stationary series"),
-            "data_points": n, "association": 0.0,
-            "stationarity_checked": True,
-            "stationarity_ok": False,
-            "stationarity_note": " | ".join(notes)}
-
-
-def granger_fb(routing, traffic):
-    lead = granger_lead(routing, traffic)
-    ra = sum(1 for r in routing if r.get("score", 0) > 0.5)
-    ta = sum(1 for t in traffic if t.get("score", 0) > 0.5)
-    n = max(len(routing), len(traffic))
-    coc = min(ra, ta) / max(ra, 1)
-    if lead is not None and lead >= 0:
-        direction, strength = "routing_to_traffic", coc
-    elif lead is not None:
-        direction, strength = "traffic_to_routing", coc
-    else:
-        direction, strength = "unknown", coc * 0.3
-    return {"direction": direction, "strength": strength, "p_value": 1.0, "significant": False,
-            "f_statistic": 0.0, "temporal_lead": lead, "interpretation": "statsmodels ",
-            "data_points": n, "association": coc}
-
-
-# 
-
-
 class ConfounderDetector:
-    """Detect alternative explanations for a routing/traffic correlation.
-
-    BUG-FIX 2026-10-21: the five rule keys this detector looked up
-    (``maintenance_window``, ``multiple_upstreams``, ``cdn_scenario``,
-    ``ddos_protection``, ``concurrent_routing_changes``) had **no
-    producer anywhere in the codebase**. Every lookup returned None, so
-    the confounder list was structurally empty on every event and the
-    ``identify_limitations`` check ("more than 2 external confounders
-    present") could never fire. The confounder channel was decorative.
-
-    The fix keeps the declarative rule table but derives each key from
-    an observable signal that the pipeline actually produces, so the
-    detector reports something real:
-
-    * ``multiple_upstreams`` — the target AS has more than one
-      provider in the as-rel snapshot, so a single upstream failure
-      does not by itself explain a traffic change.
-    * ``cdn_scenario`` — the affected prefix is originated by a content
-      / CDN network, whose traffic can shift for reasons unrelated to
-      BGP.
-    * ``ddos_protection`` — a very large traffic drop with no
-      corresponding routing withdrawal or hijack, the classic
-      traffic-only signature of attack mitigation.
-    * ``concurrent_routing_changes`` — the routing timeline contains
-      several distinct event types in the same window, so the traffic
-      change may be attributable to a different routing event than the
-      candidate one.
-    * ``maintenance_window`` — an outage that is a *withdrawal* with
-      no hijack and no leak, which is the signature of a planned
-      maintenance rather than a fault.
-    """
+    """Detect alternative explanations for a routing/traffic correlation."""
 
     def __init__(self):
         self.rules = [
@@ -878,7 +516,7 @@ class ConfounderDetector:
 
     # ── Derivation helpers ────────────────────────────────────────────────
     @staticmethod
-    def _derive_multiple_upstreams(routing_ctx, traffic_ctx, as_ctx):
+    def derive_multiple_upstreams(routing_ctx, traffic_ctx, as_ctx):
         """True when the target AS has >1 provider in the AS topology."""
         topo = as_ctx.get("topology_edge_types") or as_ctx.get("edge_types") or {}
         origin = as_ctx.get("topology_origin")
@@ -888,7 +526,7 @@ class ConfounderDetector:
         return sum(1 for r in rels.values() if r == "provider") > 1
 
     @staticmethod
-    def _derive_cdn_scenario(routing_ctx, traffic_ctx, as_ctx):
+    def derive_cdn_scenario(routing_ctx, traffic_ctx, as_ctx):
         """True when the affected prefix belongs to a content / CDN AS."""
         origins = as_ctx.get("content_origins") or []
         if not origins:
@@ -900,7 +538,7 @@ class ConfounderDetector:
         return False
 
     @staticmethod
-    def _derive_ddos(routing_ctx, traffic_ctx):
+    def derive_ddos(routing_ctx, traffic_ctx):
         """True on the traffic-only large-drop signature."""
         drop = float(traffic_ctx.get("traffic_drop_ratio", 0.0) or 0.0)
         if drop < 0.8:
@@ -912,7 +550,7 @@ class ConfounderDetector:
         return not (has_withdrawal or has_hijack)
 
     @staticmethod
-    def _derive_maintenance(routing_ctx):
+    def derive_maintenance(routing_ctx):
         """True on the withdrawal-only signature of a planned maintenance."""
         has_withdrawal = bool(routing_ctx.get("has_routing_withdrawal")
                               or routing_ctx.get("withdrawal_count"))
@@ -923,7 +561,7 @@ class ConfounderDetector:
         return has_withdrawal and not has_hijack and not has_leak
 
     @staticmethod
-    def _derive_concurrent_routing(routing_ctx):
+    def derive_concurrent_routing(routing_ctx):
         """True when several distinct routing event types co-occur."""
         types = routing_ctx.get("event_types") or []
         distinct = {str(t).lower() for t in types if t}
@@ -937,11 +575,11 @@ class ConfounderDetector:
         # Derive the rule keys from observable signals, then run the
         # declarative table over the derived context.
         derived = {
-            "multiple_upstreams": self._derive_multiple_upstreams(routing_ctx, traffic_ctx, as_ctx),
-            "cdn_scenario": self._derive_cdn_scenario(routing_ctx, traffic_ctx, as_ctx),
-            "ddos_protection": self._derive_ddos(routing_ctx, traffic_ctx),
-            "maintenance_window": self._derive_maintenance(routing_ctx),
-            "concurrent_routing_changes": self._derive_concurrent_routing(routing_ctx),
+            "multiple_upstreams": self.derive_multiple_upstreams(routing_ctx, traffic_ctx, as_ctx),
+            "cdn_scenario": self.derive_cdn_scenario(routing_ctx, traffic_ctx, as_ctx),
+            "ddos_protection": self.derive_ddos(routing_ctx, traffic_ctx),
+            "maintenance_window": self.derive_maintenance(routing_ctx),
+            "concurrent_routing_changes": self.derive_concurrent_routing(routing_ctx),
         }
 
         detected = []
@@ -965,9 +603,6 @@ class ConfounderDetector:
                            "is_explanatory_confounder": False})
         detected.sort(key=lambda x: x["severity"], reverse=True)
         return detected
-
-
-# 
 
 
 class CausalStrength(Enum):
@@ -1007,7 +642,6 @@ class CausalAttributionResult:
 
 class CausalAttributionEngine:
     def __init__(self):
-        self.granger = GrangerEngine()
         self.confounder_detector = ConfounderDetector()
 
     def analyze(self, routing_timeline, traffic_timeline, routing_context=None, traffic_context=None, topology_context=None, target_as=None):
@@ -1062,10 +696,8 @@ class CausalAttributionEngine:
                 traffic_timeline=traffic_timeline,
             )
 
-        granger_result = self.granger.test(routing_timeline, traffic_timeline)
-
         convergence = self.evaluate_convergence(
-            breakpoint_result, path_result, cascade_result, granger_result,
+            breakpoint_result, path_result, cascade_result,
             routing_timeline=routing_timeline,
             traffic_timeline=traffic_timeline,
             routing_context=routing_context,
@@ -1087,9 +719,6 @@ class CausalAttributionEngine:
                    cascade_result.get("direction", "unknown"),
                    cascade_result.get("strength", 0.0), 1.0, cascade_result.get("significant", False),
                    cascade_result.get("interpretation", ""), cascade_result),
-            innovation_finding("Granger (baseline)", granger_result.get("direction", "unknown"),
-                   granger_result.get("strength", 0.0), granger_result.get("p_value", 1.0),
-                   granger_result.get("significant", False), granger_result.get("interpretation", ""), granger_result),
             # CSS evidence finding — added in round 30 to expose the
             # Pearl-PNS score alongside the 3 innovation methods.
             innovation_finding("Causal Sufficiency Score (CSS)",
@@ -1114,24 +743,6 @@ class CausalAttributionEngine:
         limitations = self.identify_limitations(finding_list, confounder_list, len(routing_timeline))
 
         # ── Abstention gate (rewritten 2026-10-22) ───────────────────────────
-        # Do not assert a causal direction the evidence does not support.
-        #
-        # The previous gate compared `confidence` — the *blended display score*
-        # 0.6·css_conf + 0.3·innovation_strength + 0.1·te_conf, multiplied by
-        # 0.7 (or 0.95 when CSS was causal) — against a 0.55 floor.  Those two
-        # numbers are not on the same scale: with typical css≈0.1 and
-        # innovation≈0.1 the blend collapses to ≈0.07, so the gate abstained on
-        # 23 of 25 real-cache events regardless of the evidence.  The blend is
-        # a *reporting* strength, not a decision probability.
-        #
-        # The decision now uses two gates on the quantities they were defined
-        # for:
-        #   gate 1 (statistics): the committed direction must be the one whose
-        #           CSS bootstrap CI excludes zero (`is_causal`);
-        #   gate 2 (posterior): max(posterior) >= HCAF_MIN_POSTERIOR.
-        # `direction` may be the enum ("traffic_to_traffic") or its rendered
-        # label ("traffic -> traffic") depending on which branch produced it,
-        # so normalise before testing.
         _dir_norm = (direction or "").replace(" ", "").replace("->", "_to_")
         posterior = convergence.get("posterior") or {}
         max_posterior = (
@@ -1141,13 +752,6 @@ class CausalAttributionEngine:
         abstained = _dir_norm not in ("routing_to_traffic", "traffic_to_routing")
         if abstained:
             # Distinguish the two ways "no direction" arises:
-            #   * the synthesis already applied the same posterior floor and
-            #     returned "unknown" — then `posterior_below_floor` is the
-            #     honest reason (this is the overwhelmingly common case on
-            #     real caches: 143/145 in the unlabelled sweep);
-            #   * there is no posterior at all (CSS unavailable / degenerate).
-            # The previous label said `no_supported_direction` for both, which
-            # hid the fact that the floor, not missing evidence, was deciding.
             abstain_reason = (
                 "posterior_below_floor"
                 if posterior and max_posterior < HCAF_MIN_POSTERIOR
@@ -1194,7 +798,6 @@ class CausalAttributionEngine:
                 "ctpr_path_length": path_result.get("path_length"),
                 "ctpr_root_cause_as": path_result.get("root_cause_as"),
                 "cic_affected_as_count": cascade_result.get("affected_as_count"),
-                "granger_p": granger_result.get("p_value"),
                 "css_routing_to_traffic": convergence.get("css_routing_to_traffic"),
                 "css_traffic_to_routing": convergence.get("css_traffic_to_routing"),
                 "css_p_value": convergence.get("css_p_value"),
@@ -1237,45 +840,20 @@ class CausalAttributionEngine:
         breakpoint,
         path,
         cascade,
-        granger,
         routing_timeline=None,
         traffic_timeline=None,
         routing_context=None,
         traffic_context=None,
     ):
         """Bayesian causal-attribution synthesis (replaces weighted-vote).
-
-        Pipeline:
-            1. Compute CSS (Pearl PNS) on the two timelines. CSS detects its
-               own intervention breakpoint on the routing series; MSBD's
-               multi-scale sync does not produce a sample-domain index, so it
-               cannot supply that point.
-            2. Run Transfer Entropy baseline (non-linear / non-Gaussian
-               directional information flow).
-            3. Feed each evidence channel as a likelihood ratio into
-               ``bayesian_synthesize`` — *not* a weighted vote. The
-               posterior per direction is
-                   P(d | evidence) ∝ prior(d) · Π_ch LR_d(ch).
-               The dominant posterior wins.
-
+        
         Returns:
-            dict with keys: direction, score (posterior mass), is_causal,
-            css_*, ci_*, te_*, posterior, evidence_channels,
-            method="css_bayesian_synthesis".
-        """
-        # --- 1. CSS (PNS) ---------------------------------------------------
+        dict with keys: direction, score (posterior mass), is_causal,
+        css_*, ci_*, te_*, posterior, evidence_channels,
+        method="css_bayesian_synthesis"."""
+# 1. CSS (PNS)
         css_res = None
         # MSBD does NOT supply the intervention index.  `scale_results` entries
-        # carry {"scale", "sync_score", "energy"} — the wavelet *coefficient*
-        # indices from `msbd_find_bp` are never converted back to sample
-        # positions — so the old loop looked up a `breakpoint_idx` key that no
-        # producer writes and always produced None.  It read as "MSBD anchors
-        # the counterfactual window" while in fact CSS always ran its own
-        # mean-shift detector.  Rather than invent a coefficient→sample mapping
-        # (which would put an unvalidated index into the intervention point),
-        # the anchor is left to `css_score`, which detects the breakpoint on the
-        # series it is about to split, and MSBD contributes its scale-sync as an
-        # evidence channel only.
         msbd_breakpoint_idx = None
 
         if (
@@ -1292,7 +870,7 @@ class CausalAttributionEngine:
                 p_threshold=float(os.environ.get("BGP_TRACER_CSS_P", "0.05")),
             )
 
-        # --- 2. Transfer Entropy baseline -----------------------------------
+# 2. Transfer Entropy baseline
         te_result = None
         if (
             transfer_entropy_baseline is not None
@@ -1307,24 +885,15 @@ class CausalAttributionEngine:
                     bins=2,
                     n_perm=int(os.environ.get("BGP_TRACER_TE_PERM", "200")),
                 )
-            except Exception as e:  # noqa: BLE001
+            except (AttributeError) as e:  # noqa: BLE001
                 logger.debug("transfer_entropy_baseline failed: %s", e)
                 te_result = None
 
         # NOTE (2026-10-22): `event_type` is no longer read here.  It is the
-        # ground-truth cause label, and the expected direction in the
-        # evaluation is derived from that same label, so injecting it into any
-        # prior or channel turns the benchmark into a label-echo test.  Only
-        # quantities measurable from the BGP/traffic streams may enter.
 
-        # --- 3. Build evidence channels (likelihood ratios) ----------------
         evidence_channels: Dict[str, Dict[str, Any]] = {}
 
         # MSBD: acts as the counterfactual baseline (Pearl's "intervention
-        # window"). Its likelihood ratio favours the direction MSBD sees.
-        # When MSBD abstains, it contributes nothing: the previous code
-        # injected a 1.5:1 R→T "event type" channel here, which was a copy of
-        # the ground-truth label.
         msbd_dir = (breakpoint or {}).get("direction", "unknown")
         msbd_strength = float((breakpoint or {}).get("strength", 0.0) or 0.0)
         if msbd_dir in ("routing_to_traffic", "traffic_to_routing"):
@@ -1340,13 +909,10 @@ class CausalAttributionEngine:
             }
 
         # CTPR (path reconstruction): Pearl's sufficiency check. If CTPR
-        # finds a path that connects routing event to traffic drop, this
-        # counts as evidence the intervention *could* have produced the
-        # outcome (sufficiency in PNS terminology).
         ctpr_dir = (path or {}).get("direction", "unknown")
-        ctpr_strength = float((path or {}).get("strength", 0.0) or 0.0)
+        ctpr_score = float((path or {}).get("strength", 0.0) or 0.0)
         if ctpr_dir in ("routing_to_traffic", "traffic_to_routing"):
-            ctpr_lr = max(1.05, 1.0 + ctpr_strength * 2.0)
+            ctpr_lr = max(1.05, 1.0 + ctpr_score * 2.0)
             evidence_channels["ctpr_sufficiency"] = {
                 "direction": ctpr_dir,
                 "likelihood": {
@@ -1358,9 +924,6 @@ class CausalAttributionEngine:
             }
 
         # CIC (impacted-set evaluation): Reef's "scope" check — how many
-        # ASes are affected. Larger scope at the routing event implies
-        # the routing change is more likely to have caused the traffic
-        # response. The likelihood ratio favours routing_to_traffic.
         cic_dir = (cascade or {}).get("direction", "unknown")
         cic_affected = int((cascade or {}).get("affected_as_count", 0) or 0)
         if cic_dir in ("routing_to_traffic", "traffic_to_routing") and cic_affected > 0:
@@ -1375,33 +938,7 @@ class CausalAttributionEngine:
                 },
             }
 
-        # Granger (linear, Gaussian baseline): only fed in as an evidence
-        # channel when it disagrees with CSS — agreement boosts confidence,
-        # disagreement adds uncertainty. We weight by F-statistic.
-        if granger:
-            g_dir = granger.get("direction", "unknown")
-            g_f = float(granger.get("f_statistic", 0.0) or 0.0)
-            if g_dir in ("routing_to_traffic", "traffic_to_routing") and g_f > 0:
-                g_lr = max(1.05, 1.0 + g_f / (g_f + 3.0) * 1.5)
-                evidence_channels["granger_linearity"] = {
-                    "direction": g_dir,
-                    "likelihood": {
-                        g_dir: g_lr,
-                        ("traffic_to_routing" if g_dir == "routing_to_traffic"
-                         else "routing_to_traffic"): 1.0 / g_lr,
-                        "independent": 1.0,
-                    },
-                }
-
         # Transfer Entropy: non-linear directional information flow.
-        #
-        # FIX (2026-10-22): TE used to be admitted only when its direction
-        # agreed with a direction derived from `event_type` ("suppress TE when
-        # it disagrees with the domain prior").  That is label leakage: the
-        # prior and the ground truth are the same mapping, so disagreement
-        # suppression guaranteed the "correct" answer.  TE now contributes on
-        # its own statistical merit — the baseline exposes a permutation
-        # p-value per direction, and only a significant TE may enter.
         if te_result is not None and te_result.direction in (
             "routing_to_traffic", "traffic_to_routing"
         ):
@@ -1423,28 +960,9 @@ class CausalAttributionEngine:
                     },
                 }
 
-        # --- 4. No "event type" channel ------------------------------------
-        # Two label-derived channels have been removed from this pipeline:
-        #
-        #   * the old 10:1 prior keyed on evt in ("route_leak",
-        #     "roa_misconfig", "origin_hijack*"), which also popped the
-        #     contradicting MSBD channel (the expected direction is produced by
-        #     the same mapping, so it guaranteed the "right" answer);
-        #   * a 1.5:1 "withdrawal observed" channel keyed on
-        #     evt == "outage" and has_routing_withdrawal.
-        #
-        # The second one was a bug even after the first was removed: in the
-        # evaluation `routing_context` carries no `event_type`, so it never
-        # fired, while in the live workflow `event_type` is derived from the
-        # detected event (defaulting to "hijack"/"outage"), so it fired on every
-        # full run.  Eval and production were therefore running different
-        # models, and the production one had an unconditional R→T nudge.  A BGP
-        # withdrawal is *routing activity*, not evidence about which side caused
-        # which: an outage withdrawal is frequently the effect of the traffic
-        # disruption.  The channel is gone; `bayesian_synthesize` keeps the
-        # parameter for API compatibility but is always called with None.
+# 4. No "event type" channel
 
-        # --- 5. Bayesian synthesis -----------------------------------------
+# 5. Bayesian synthesis
         if _CSS_OK and bayesian_synthesize is not None and css_res is not None:
             posterior = bayesian_synthesize(
                 css_res,
@@ -1490,7 +1008,6 @@ class CausalAttributionEngine:
                 "explanation": css_res.explanation,
             }
 
-        # --- Fallback: deterministic per-evidence channel if CSS unavailable
         if not evidence_channels:
             return {
                 "score": 0.0,
@@ -1530,10 +1047,6 @@ class CausalAttributionEngine:
         if dominant == "independent":
             return ("independent", False, False)
         # The Bayesian posterior's confidence modulates the
-        # method_agreement flag. We require posterior dominance for any
-        # causal claim — is_causal is a stricter flag that requires the
-        # CSS bootstrap CI to exclude zero, which it may not at small
-        # sample sizes. At large sample sizes both flags should agree.
         agreement = method_agreement or max_posterior > 0.6
         mapping = {
             "routing_to_traffic": ("routing -> traffic", True, False),
@@ -1541,15 +1054,6 @@ class CausalAttributionEngine:
         }
         dir_label, r_t, t_r = mapping.get(dominant, ("unknown", False, False))
         # BUG (2026-10-05): when the label and the flags disagreed the result
-        # was internally inconsistent — `direction` could read
-        # "traffic -> routing" while BOTH `routing_caused_traffic` and
-        # `traffic_caused_routing` were False, because the booleans were
-        # additionally gated on `agreement` but the label was not.
-        #
-        # Downstream (and the ground-truth evaluation) reads `direction`, so a
-        # label asserting a causal direction whose flags both deny it is a
-        # fabricated verdict. When the flags do not support the direction, the
-        # direction must be "unknown" too.
         if dominant in mapping and not (r_t or t_r):
             dir_label = "unknown"
         return (dir_label, r_t and agreement, t_r and agreement)
@@ -1622,12 +1126,7 @@ class CausalAttributionEngine:
 
     def single_sided_result(self, routing_timeline=None, traffic_timeline=None, routing_context=None,
                 traffic_context=None, topology_context=None, target_as=None, side="routing_only"):
-        """.
-
-          ,  + ,  HCAF 
-        "unknown/none/0%". +  drop_ratio
-         ( quick_cascade_estimate ).
-        """
+        """."""
         affected_as = (routing_context or {}).get("affected_as_count", 0)
         traffic_drop_ratio = (traffic_context or {}).get("traffic_drop_ratio", 0.0)
         as_factor = min(affected_as / 10.0, 1.0) if affected_as else 0.0
@@ -1635,15 +1134,6 @@ class CausalAttributionEngine:
         strength = (as_factor + drop_factor) / 2 if (as_factor or drop_factor) else 0.0
 
         # A single-sided analysis can measure *that* something happened, never
-        # *which side caused it*.  This branch used to commit
-        # direction="routing_to_traffic" whenever event_type was
-        # hijack/outage/withdrawal and the traffic drop exceeded 10% — i.e. it
-        # turned the ground-truth cause label (workflow_engine passes it in
-        # routing_context) into a directional answer, and it bypassed the
-        # abstention gate entirely, because `analyze()` returns here before the
-        # gate runs.  Direction is now always "unknown"; strength and the drop
-        # ratio remain as diagnostics so the report can say "routing activity
-        # detected, direction not identifiable without a traffic timeline".
         direction = "unknown"
         routing_to_traffic = False
         if side == "traffic_only":
@@ -1661,8 +1151,8 @@ class CausalAttributionEngine:
         data_points = (len(routing_timeline) if routing_timeline else 0) + (len(traffic_timeline) if traffic_timeline else 0)
         confidence = min(0.5, 0.2 + 0.1 * drop_factor + 0.1 * as_factor)  #  50%
         limitations = (
-            ": , ///Granger ;"
-            ", ."
+            "Single-sided timelines cannot run MSBD, CTPR, CIC, CSS "
+            "or transfer entropy; no directional method applies."
         )
         return CausalAttributionResult(
             direction=direction, strength=CausalStrength.weak if strength > 0.3 else CausalStrength.none,

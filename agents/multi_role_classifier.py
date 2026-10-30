@@ -1,43 +1,5 @@
-"""
-Multi-Role Classification Engine
-================================
-
-Resolves the core classification challenge: most ASes don't have a single role —
-they have MULTIPLE roles simultaneously. Turk Telekom (AS9121) was annotated as
-"leaker" but also shows 500 origin_hijacking + 500 origin_hijacked events.
-
-This engine classifies an AS into ALL applicable roles simultaneously, with
-confidence scores and evidence chains for each role.
-
-Role taxonomy (multi-label):
-  ATTACKER:
-    - origin_hijacking:   announcing prefixes it doesn't own
-    - forge_hijacking:    impersonating another AS's origin
-    - path_manipulation:  inserting itself into paths it shouldn't be in
-    - route_leak (active): leaking customer/provider routes to peers it shouldn't
-
-  VICTIM:
-    - origin_hijacked:    someone else announced this AS's prefixes
-    - outage:             this AS's prefixes disappeared from routing table
-    - traffic_hijacked:  traffic was redirected (correlates with origin_hijacked)
-
-  LEAKER:
-    - route_leak (passive): this AS received leaked routes from neighbor
-    - path_leak:            route passed through AS that shouldn't carry it
-
-  NEUTRAL / INTERNAL FAULT:
-    - routing anomaly caused by internal misconfiguration (no external attacker)
-    - Starlink/AWS internal faults that look like BGP issues
-
-  CONDUIT:
-    - AS was inserted into path but was neither attacker nor victim
-    - (typically downstream provider unaware of customer's hijack)
-
-Usage:
-    classifier = MultiRoleClassifier()
-    result = classifier.classify(routing_data, traffic_data, asn_info)
-    # result.roles gives {attacker: {score, evidence, events}, victim: {...}, ...}
-"""
+"""Multi-Role Classification Engine
+================================"""
 
 from __future__ import annotations
 
@@ -184,55 +146,10 @@ def extract_events(data: list[dict], key: str = "prefix") -> tuple[list[str], li
     return prefixes, asns, times
 
 
-def check_temporal_overlap(
-    events_a: list[dict], events_b: list[dict], time_window_hours: float = 2.0
-) -> bool:
-    """Check if two sets of events overlap temporally (within time_window_hours)."""
-    if not events_a or not events_b:
-        return False
-
-    def parse_ts(event):
-        for f in ["timestamp", "time", "start_time", "date"]:
-            v = ev.get(f, "")
-            if v:
-                try:
-                    # Handle formats like "07/14/23 11:02:23" or ISO
-                    v = str(v).strip()
-                    for fmt in ["%m/%d/%y %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"]:
-                        try:
-                            return datetime.strptime(v, fmt)
-                        except ValueError:
-                            continue
-                except Exception:
-                    pass
-        return None
-
-    for ev_a in events_a:
-        ts_a = parse_ts(ev_a)
-        if not ts_a:
-            continue
-        for ev_b in events_b:
-            ts_b = parse_ts(ev_b)
-            if not ts_b:
-                continue
-            diff = abs((ts_a - ts_b).total_seconds()) / 3600
-            if diff <= time_window_hours:
-                return True
-    return False
-
-
 # ── Main Classifier ────────────────────────────────────────────────────────────
 
 class MultiRoleClassifier:
-    """
-    Classifies an AS into all applicable roles based on routing evidence.
-
-    Key insight: The same AS can simultaneously be attacker, victim, and leaker.
-    We classify ALL roles, then determine:
-      - Primary role (dominant by score)
-      - Complexity level (simple/dual/multi/ambiguous)
-      - Cross-reference patterns (self-hijack, victim→attacker, etc.)
-    """
+    """Classifies an AS into all applicable roles based on routing evidence."""
 
     # Thresholds for severity scoring
     ORIGIN_HIJACK_THRESHOLDS = {
@@ -251,17 +168,10 @@ class MultiRoleClassifier:
         traffic_data: Optional[dict] = None,
         asn_info: Optional[dict] = None,
     ) -> MultiRoleResult:
-        """
-        Classify all applicable roles for an AS.
-
-        Args:
-            routing_data: from RoutingAgent (contains hijack, leak, outage)
-            traffic_data: optional from TrafficAgent (for traffic correlation)
-            asn_info: optional AS organization info
-
+        """Classify all applicable roles for an AS.
+        
         Returns:
-            MultiRoleResult with all roles classified
-        """
+        MultiRoleResult with all roles classified"""
         asn = routing_data.get("asn", "unknown")
         logger.info(f"[multi_role] Classifying AS{asn}")
 
@@ -681,15 +591,13 @@ class MultiRoleClassifier:
         victim: RoleClassification,
         leaker: RoleClassification,
     ) -> RoleClassification:
-        """
-        Classify if the AS had internal faults (misconfiguration, software bugs)
+        """Classify if the AS had internal faults (misconfiguration, software bugs)
         that LOOK like BGP attacks but are actually internal issues.
-
+        
         Examples:
-          - Starlink: BGP routes mostly intact, but internal service failed
-          - AWS Virginia: BGP withdrawal but internal datacenter issue
-          - Orange España: RPKI misconfiguration by attacker (not internal)
-        """
+        - Starlink: BGP routes mostly intact, but internal service failed
+        - AWS Virginia: BGP withdrawal but internal datacenter issue
+        - Orange España: RPKI misconfiguration by attacker (not internal)"""
         evidence = RoleEvidence()
         sub_types = []
 
@@ -745,13 +653,8 @@ class MultiRoleClassifier:
         origin_hijacking: list,
         origin_hijacked: list,
     ) -> Optional[dict]:
-        """
-        Detect self-hijack: AS announces its own prefixes as a different AS
-        (or vice versa: AS's prefixes were announced by itself as a different origin).
-
-        This is a specific attack pattern where AS X announces prefixes that
-        AS X legitimately owns, but with a different AS number.
-        """
+        """Detect self-hijack: AS announces its own prefixes as a different AS
+        (or vice versa: AS's prefixes were announced by itself as a different origin)."""
         if not origin_hijacking or not origin_hijacked:
             return None
 
@@ -796,13 +699,8 @@ class MultiRoleClassifier:
         origin_hijacked: list,
         origin_hijacking: list,
     ) -> Optional[dict]:
-        """
-        Detect temporal pattern: AS was FIRST hijacked, then LATER became a hijacker.
-        This is the "compromised account" pattern (e.g., AS49581 Orange España RPKI case).
-
-        Interpretation: Attackers first compromised this AS's routing infrastructure,
-        used it to hijack others' prefixes, and possibly later the AS reverted.
-        """
+        """Detect temporal pattern: AS was FIRST hijacked, then LATER became a hijacker.
+        This is the "compromised account" pattern (e.g., AS49581 Orange España RPKI case)."""
         if not origin_hijacked or not origin_hijacking:
             return None
 
@@ -818,7 +716,7 @@ class MultiRoleClassifier:
                         for fmt in ["%m/%d/%y %H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
                             hijacked_times.append(datetime.strptime(str(v), fmt))
                             break
-                    except Exception:
+                    except (ValueError):
                         pass
 
         for ev in origin_hijacking:
@@ -829,7 +727,7 @@ class MultiRoleClassifier:
                         for fmt in ["%m/%d/%y %H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
                             hijacking_times.append(datetime.strptime(str(v), fmt))
                             break
-                    except Exception:
+                    except (ValueError):
                         pass
 
         if not hijacked_times or not hijacking_times:
@@ -883,7 +781,7 @@ class MultiRoleClassifier:
                         for fmt in ["%m/%d/%y %H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
                             hijacked_times.append(datetime.strptime(str(v), fmt))
                             break
-                    except Exception:
+                    except (ValueError):
                         pass
 
         for ev in origin_hijacking:
@@ -894,7 +792,7 @@ class MultiRoleClassifier:
                         for fmt in ["%m/%d/%y %H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
                             hijacking_times.append(datetime.strptime(str(v), fmt))
                             break
-                    except Exception:
+                    except (ValueError):
                         pass
 
         if not hijacked_times or not hijacking_times:
@@ -1037,21 +935,3 @@ class MultiRoleClassifier:
 
 
 # ── Convenience Function ───────────────────────────────────────────────────────
-
-def classify_as_roles(
-    routing_data: dict,
-    traffic_data: Optional[dict] = None,
-    asn_info: Optional[dict] = None,
-) -> dict:
-    """
-    One-shot multi-role classification.
-
-    Usage in ReasoningAgent or Supervisor:
-        from agents.multi_role_classifier import classify_as_roles
-        result = classify_as_roles(routing_data, traffic_data)
-        print(result.get_summary())
-        print(result.composite_narrative)
-    """
-    classifier = MultiRoleClassifier()
-    result = classifier.classify(routing_data, traffic_data, asn_info)
-    return result

@@ -1,40 +1,22 @@
-"""
- Token 
-==================
-
-: LLM token , 
-" token". 
-
-: 
- from agents.token_budget import TokenBudget
- tb = TokenBudget.get_instance("run_123")
- tb.add("routing_agent", 500, 200)
- tb.add("reasoning_agent", 1000, 400)
- total = tb.total() # (1500, 600)
-"""
+"""Per-run LLM token accounting."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime
 
 
 @dataclass
 class AgentTokenUsage:
-    """ agent token """
     agent: str
     prompt_tokens: int
     completion_tokens: int
     requests: int = 1
-    timestamp: str = ""  # non-default after default is OK (requests=1 has default, then timestamp="" has default)
+    timestamp: str = ""
 
 
 class TokenBudget:
-    """
- : run_id token . 
-
- LLM TokenBudget.add() , 
- chief_agent . 
- """
+    """Accumulates token usage per run, keyed by ``run_id``."""
 
     _instances: dict[str, "TokenBudget"] = {}
 
@@ -52,59 +34,29 @@ class TokenBudget:
 
     @classmethod
     def clear_instance(cls, run_id):
-        if run_id in cls._instances:
-            del cls._instances[run_id]
+        cls._instances.pop(run_id, None)
 
     def add(self, agent, prompt_tokens, completion_tokens):
-        """
- LLM token . 
- """
-        record = AgentTokenUsage(
+        self._records.append(AgentTokenUsage(
             agent=agent,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
-            requests=1,
             timestamp=datetime.now().isoformat(),
-        )
-        self._records.append(record)
+        ))
         self._total_prompt += prompt_tokens
         self._total_completion += completion_tokens
 
-    def add_from_response(self, agent, response, prompt_tokens=0):
-        """
- LLM usage . 
- OpenAI-compatible : response.usage.prompt_tokens / completion_tokens
- """
-        try:
-            usage = getattr(response, "usage", None)
-            if usage:
-                pt = getattr(usage, "prompt_tokens", 0) or prompt_tokens
-                ct = getattr(usage, "completion_tokens", 0)
-                self.add(agent, pt, ct)
-                return
-        except Exception:
-            pass
-        # Fallback:  prompt_tokens
-        if prompt_tokens > 0:
-            self.add(agent, prompt_tokens, 0)
-
     def total(self) -> tuple[int, int]:
-        """ (prompt_tokens, completion_tokens) """
         return self._total_prompt, self._total_completion
 
     def by_agent(self) -> dict[str, tuple[int, int]]:
-        """ agent token """
         result: dict[str, tuple[int, int]] = {}
         for rec in self._records:
-            key = rec.agent
-            if key not in result:
-                result[key] = (0, 0)
-            pt, ct = result[key]
-            result[key] = (pt + rec.prompt_tokens, ct + rec.completion_tokens)
+            pt, ct = result.get(rec.agent, (0, 0))
+            result[rec.agent] = (pt + rec.prompt_tokens, ct + rec.completion_tokens)
         return result
 
     def summary(self):
-        """"""
         pt, ct = self.total()
         return {
             "run_id": self.run_id,

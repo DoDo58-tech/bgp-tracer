@@ -14,18 +14,19 @@ Cloudflare RPKI Validator API (free, no auth):
 
 from __future__ import annotations
 
-import asyncio
-import json
-from typing import Any, Dict, List, Optional
+from typing import List
 
 import httpx
 from tools.tool_registry import ToolParameter, register_tool
 from utils.logger import logger
+import asyncio
+import json
+from typing import Any, Dict, Optional
 
 RPKI_API = "https://rpki.cloudflare.com/rpki.json"
 
 
-async def _rpki_validate(tool_input, session):
+async def rpki_validate(tool_input, session):
     """
     Validate BGP announcements against RPKI ROAs.
 
@@ -53,7 +54,7 @@ async def _rpki_validate(tool_input, session):
         routing = session.get_evidence("analyze_routing")
         if routing:
             routing_data = routing.get("result", {})
-            announcements = _extract_announcements(routing_data, asn)
+            announcements = extract_announcements(routing_data, asn)
 
     if not announcements:
         return {
@@ -66,8 +67,8 @@ async def _rpki_validate(tool_input, session):
     logger.info(f"[rpki_validate] Fetching ROA data, validating {len(announcements)} announcements")
 
     # Step 1: fetch all ROAs (cached for 5 minutes)
-    roas = await _fetch_roas_cached(session)
-    roa_map = _build_roa_map(roas)
+    roas = await fetch_roas_cached(session)
+    roa_map = build_roa_map(roas)
 
     # Step 2: validate each announcement
     results = []
@@ -75,7 +76,7 @@ async def _rpki_validate(tool_input, session):
         prefix = ann.get("prefix", "")
         origin = str(ann.get("origin_asn", ""))
         ts = ann.get("timestamp", "")
-        status, matched_roa = _validate_announcement(prefix, origin, roa_map)
+        status, matched_roa = validate_announcement(prefix, origin, roa_map)
         results.append({
             "prefix": prefix,
             "origin_asn": origin,
@@ -128,7 +129,7 @@ async def _rpki_validate(tool_input, session):
 _roa_cache: tuple[float, List[dict]] | None = None
 
 
-async def _fetch_roas_cached(session) -> List[dict]:
+async def fetch_roas_cached(session) -> List[dict]:
     """Fetch all ROAs from Cloudflare, caching for 5 minutes."""
     global _roa_cache
     import time
@@ -156,12 +157,12 @@ async def _fetch_roas_cached(session) -> List[dict]:
             return _roa_cache[1] if _roa_cache else []
         logger.error(f"[rpki] Failed to fetch ROAs: {e}")
         return _roa_cache[1] if _roa_cache else []
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
         logger.error(f"[rpki] Failed to fetch ROAs: {e}")
         return _roa_cache[1] if _roa_cache else []
 
 
-def _build_roa_map(roas: List[dict]):
+def build_roa_map(roas: List[dict]):
     """
     Build lookup map: prefix → list of (origin_asn, max_prefix_len, expires)
     """
@@ -183,12 +184,12 @@ def _build_roa_map(roas: List[dict]):
                 "expires": expires,
                 "validation": roa.get("validation", ""),
             })
-        except Exception:
+        except (ValueError):
             continue
     return mp
 
 
-def _validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple[str, dict | None]:
+def validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple[str, dict | None]:
     """
     Validate a single announcement against ROA map.
     Returns: (status, matched_roa_dict)
@@ -201,7 +202,7 @@ def _validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple
 
     try:
         ann_prefix = ip_network(prefix, strict=False)
-    except Exception:
+    except (ValueError):
         return "not_found", None
 
     candidates = []
@@ -211,7 +212,7 @@ def _validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple
                 for roa in roa_list:
                     if roa["origin_asn"] == origin_asn:
                         candidates.append(roa)
-        except Exception:
+        except (ValueError):
             continue
 
     if not candidates:
@@ -231,7 +232,7 @@ def _validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple
     return "not_found", None
 
 
-def _extract_announcements(routing_data, asn) -> List[dict]:
+def extract_announcements(routing_data, asn) -> List[dict]:
     """Extract announcements from routing_result for a given AS."""
     announcements = []
     for key in ["origin_hijacked", "forge_hijacked", "route_leaks"]:
@@ -264,5 +265,5 @@ register_tool(
             "If omitted, extracts from routing_result in session.", "object", required=False
         ),
     ],
-    handler=_rpki_validate,
+    handler=rpki_validate,
 )

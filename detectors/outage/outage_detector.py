@@ -141,28 +141,6 @@ FEATURE_DETECTION_RULES = [
 ]
 
 
-def compute_adaptive_threshold(feature_name, baseline_features):
-    """
-    Compute adaptive threshold based on baseline distribution.
-    Uses mean ± 2*std as the adaptive threshold range.
-    """
-    if not baseline_features or feature_name not in baseline_features:
-        return None, None
-
-    bf = baseline_features.get(feature_name, {})
-    mean = bf.get("mean", 0)
-    std = bf.get("std", 0)
-
-    if mean == 0 and std == 0:
-        return None, None
-
-    # Adaptive thresholds: 2 standard deviations
-    lower = mean - 2 * std if std > 0 else 0
-    upper = mean + 2 * std if std > 0 else float('inf')
-
-    return lower, upper
-
-
 def compute_z_score(value, baseline_features, feature_name):
     """Compute z-score for a feature value."""
     if not baseline_features or feature_name not in baseline_features:
@@ -179,18 +157,10 @@ def compute_z_score(value, baseline_features, feature_name):
 
 
 def score_outage_by_sliding_window(event_ts, baseline_features, window_minutes=60, slide_minutes=30):
-    """
-    Score outage using sliding window approach to detect partial-window outages.
-
-    Args:
-        event_ts: dict of timestamp -> features for event window
-        baseline_features: dict with 'mean' and 'std' for each feature
-        window_minutes: sliding window size in minutes (default 60)
-        slide_minutes: slide step in minutes (default 30)
-
+    """Score outage using sliding window approach to detect partial-window outages.
+    
     Returns:
-        (max_score, avg_score, window_scores) tuple
-    """
+    (max_score, avg_score, window_scores) tuple"""
     if not event_ts or not baseline_features:
         return 0.0, 0.0, []
 
@@ -235,21 +205,14 @@ def score_outage(
     baseline_features,
     anomalies
 ):
-    """
-    Score outage likelihood based on event features vs baseline.
+    """Score outage likelihood based on event features vs baseline.
     Returns enhanced scoring with detailed feature information for reporting.
-
-    Args:
-        event_features: dict of aggregated features for event window
-        baseline_features: dict with 'mean' and 'std' for each feature (from multiple periods)
-        anomalies: list of detected anomalies from timeseries analysis
-
+    
     Returns:
-        (score, indicators, feature_scores) tuple
-        - score: 0.0 to 1.0 outage likelihood
-        - indicators: list of triggered indicator names
-        - feature_scores: dict with detailed scoring info for each feature
-    """
+    (score, indicators, feature_scores) tuple
+    - score: 0.0 to 1.0 outage likelihood
+    - indicators: list of triggered indicator names
+    - feature_scores: dict with detailed scoring info for each feature"""
     if not baseline_features:
         logger.warning("[score_outage] baseline_features is empty, returning 0 score")
         return 0.0, [], {}
@@ -451,17 +414,87 @@ class RouteOutageDetector:
     )
     _parsed_cache_order: List[str] = field(default_factory=list, init=False)
 
-    def analyze(self, asn, start_time, end_time, periodicity=None, periodicity_confidence=0.0):
-        """
-        Analyze BGP updates for potential outages.
+    @staticmethod
+    def _query_files(query_start, query_end):
+        """The decoded text files that back the query range.
 
-        Args:
-            asn: The AS number to analyze
-            start_time: Start time of the event window
-            end_time: End time of the event window
-            periodicity: Detected periodicity from traffic detection (e.g., "daily", "weekly")
-            periodicity_confidence: Confidence of the periodicity detection
+        Only used to list the sources in the report; the analysis itself
+        runs off the parquet cache.
         """
+        try:
+            return [str(p) for p in find_update_files(query_start, query_end, auto_download=False)]
+        except (AttributeError, OSError) as exc:
+            logger.debug(f"[outage] could not list the source files: {exc!r}")
+            return []
+
+    def build_timeseries(self, asn, query_start, query_end):
+        """Build the per-bucket feature series for one AS.
+
+        The parquet cache is the primary source: it is roughly an order of
+        magnitude cheaper to read than the decoded text files, which the
+        24-hour baseline used to read as ~17 GB of text.  The text path
+        stays as a fallback for a window the parquet cache cannot serve.
+        """
+        asn_int = self._asn_int(asn)
+
+        try:
+            from detectors.outage.outage_features_parquet import (
+                ParquetOutageFeatureExtractor,
+            )
+            from data.parquet_cache import iter_window_chunks
+
+            extractor = ParquetOutageFeatureExtractor(asn_int)
+            chunks = iter_window_chunks(
+                query_start, query_end,
+                on_missing="skip",
+                include_withdrawals=True,
+            )
+            for chunk in chunks:
+                extractor.consume(chunk)
+            series = extractor.finalize()
+            if series:
+                logger.info(
+                    "Outage detector: %d buckets from the parquet cache",
+                    len(series),
+                )
+                return series
+            logger.info(
+                "Outage detector: parquet cache yielded no buckets; "
+                "falling back to the decoded text files"
+            )
+        except (AttributeError, ImportError, FileNotFoundError) as exc:
+            logger.warning("Outage detector parquet path unavailable: %r", exc)
+
+        try:
+            plot_files = find_update_files(query_start, query_end)
+            return extract_timeseries_for_as(plot_files, {asn_int})
+        except FileNotFoundError as exc:
+            logger.warning("Outage detector file error: %s", exc)
+            return {}
+        except (AttributeError) as exc:
+            logger.error("Outage detector failed: %s", exc)
+            return {}
+
+    @staticmethod
+    def _asn_int(asn) -> int:
+        try:
+            text = str(asn).strip()
+            if text.upper().startswith("AS"):
+                text = text[2:]
+            return int(text)
+        except (TypeError, ValueError):
+            return int(asn)
+
+    def analyze(self, asn, start_time, end_time, periodicity=None, periodicity_confidence=0.0,
+                timeseries=None):
+        """Analyze BGP updates for potential outages.
+
+        ``timeseries`` lets the caller supply the per-bucket features
+        directly.  The shared-scan orchestrator builds them once for all
+        three detectors and hands the same series here, so the update
+        stream is read once per event instead of once per detector.
+        """
+        timeseries_supplied = timeseries is not None
         try:
             start_dt = self.parse_time(start_time)
             end_dt = self.parse_time(end_time)
@@ -488,7 +521,7 @@ class RouteOutageDetector:
             }, asn=asn).to_dict()
 
         # Determine baseline strategy based on periodicity
-        baseline_periods = self._get_baseline_periods(start_dt, end_dt, periodicity)
+        baseline_periods = self.get_baseline_periods(start_dt, end_dt, periodicity)
         event_duration = end_dt - start_dt
 
         # Query data range: from earliest baseline to end of event
@@ -507,18 +540,22 @@ class RouteOutageDetector:
             periodicity_confidence,
         )
 
-        # Find update files for the entire query range
-        plot_files = find_update_files(query_start, query_end)
-
         # For logging purposes, define the main baseline period start
         if baseline_periods:
             baseline_start = baseline_periods[0]["start"]
         else:
             baseline_start = start_dt - timedelta(hours=self.baseline_hours)
 
-        if not plot_files:
+        if timeseries is None:
+            timeseries = self.build_timeseries(asn, query_start, query_end)
+
+        # The report lists the files the analysis was based on.  When the
+        # caller supplied the series there are no files of ours to name.
+        data_files = [] if timeseries_supplied else self._query_files(query_start, query_end)
+
+        if not timeseries:
             logger.info(
-                "Outage detector: no decoded BGP update files in detectors/outage/data/...; "
+                "Outage detector: no BGP update data for the query range; "
                 "attempting to use routing_result for fallback outage estimation."
             )
             # Return a more informative result that can be used for fallback
@@ -545,34 +582,22 @@ class RouteOutageDetector:
                     "min_path_length": 0,
                 },
                 "baseline_features": {},
-                "error": "No decoded BGP update files found",
+                "error": "No BGP update data found",
                 "note": (
-                    "Outage detection requires decoded BGP update files in "
-                    "detectors/outage/data/updates_rrc00/decoded/ directory. "
-                    "Run bgp_tracer/data/batch_decode.py to generate these files, "
-                    "or use routing_result to estimate outage from withdrawal events."
+                    "Outage detection needs BGP updates for the query range. "
+                    "The parquet cache under data/updates_rrc00/parquet/ is "
+                    "the primary source; the decoded text files are the "
+                    "fallback. Or use routing_result to estimate outage from "
+                    "withdrawal events."
                 ),
                 "data_available": False,
-                "no_data_reason": "no_decoded_bgp_files",
+                "no_data_reason": "no_bgp_update_data",
                 "anomalies_detected": False,
                 "fallback_available": True,
                 "fallback_method": "Use routing_result.route_leaks or withdrawal events for outage estimation",
             }, asn=asn).to_dict()
 
-        try:
-            asn_int = int(asn) if isinstance(asn, str) else int(asn)
-            if str(asn).strip().upper().startswith("AS"):
-                asn_int = int(asn[2:]) if len(asn) > 2 else int(asn)
-            timeseries = extract_timeseries_for_as(plot_files, {asn_int})
-        except FileNotFoundError as exc:
-            logger.warning("Outage detector file error: %s", exc)
-            return self._no_data_result(asn, start_time, end_time, baseline_start, error=str(exc))
-        except Exception as exc:
-            logger.error("Outage detector failed: %s", exc)
-            return self._no_data_result(asn, start_time, end_time, baseline_start, error=str(exc))
-
         if not timeseries:
-            # Bug fix 2026-09-13 (BUG-R42): route this branch through the
             return wrap(DetectionType.OUTAGE, {
                 "success": False,
                 "asn": asn,
@@ -613,7 +638,7 @@ class RouteOutageDetector:
         event_ts, baseline_ts_dict = self.split_windows_periodic(timeseries, start_dt, end_dt, baseline_periods)
 
         if len(event_ts) < self.min_required_buckets:
-            return self._no_data_result(asn, start_time, end_time, baseline_start,
+            return self.no_data_result(asn, start_time, end_time, baseline_start,
                 error=f"Insufficient event window coverage (got {len(event_ts)} buckets, need {self.min_required_buckets}).")
 
         event_features = aggregate_timeseries(event_ts)
@@ -740,25 +765,18 @@ class RouteOutageDetector:
             "anomaly_feature_count": len(anomalies),
             "high_severity_anomaly_count": len(high_severity_timeslots),
             "unique_features_with_anomalies": list(anomaly_by_feature_summary.keys()),
-            "data_files": [str(p) for p in plot_files],
+            "data_files": data_files,
             # Unified schema fields
             "data_available": True,
             "no_data_reason": "",
             "anomalies_detected": is_outage,
         }, asn=asn).to_dict()
 
-    def _get_baseline_periods(self, start_dt, end_dt, periodicity):
-        """
-        Determine baseline periods based on detected periodicity.
-
-        Args:
-            start_dt: Event window start time
-            end_dt: Event window end time
-            periodicity: Detected periodicity ("daily", "weekly", "6h", etc.)
-
+    def get_baseline_periods(self, start_dt, end_dt, periodicity):
+        """Determine baseline periods based on detected periodicity.
+        
         Returns:
-            List of baseline period dicts with 'start' and 'end' keys
-        """
+        List of baseline period dicts with 'start' and 'end' keys"""
         event_duration = end_dt - start_dt
         periods = []
 
@@ -799,14 +817,12 @@ class RouteOutageDetector:
         return periods
 
     def split_windows_periodic(self, timeseries, start_dt, end_dt, baseline_periods):
-        """
-        Split timeseries into event window and multiple baseline periods.
-
+        """Split timeseries into event window and multiple baseline periods.
+        
         Returns:
-            (event_ts, baseline_ts_dict)
-            - event_ts: dict of timestamp -> features for event window
-            - baseline_ts_dict: dict of period_index -> (timestamp -> features)
-        """
+        (event_ts, baseline_ts_dict)
+        - event_ts: dict of timestamp -> features for event window
+        - baseline_ts_dict: dict of period_index -> (timestamp -> features)"""
         event_ts = {}
         baseline_ts_dict = {}
 
@@ -825,13 +841,11 @@ class RouteOutageDetector:
         return event_ts, baseline_ts_dict
 
     def aggregate_multiple_periods(self, baseline_ts_dict):
-        """
-        Aggregate features from multiple baseline periods.
+        """Aggregate features from multiple baseline periods.
         Computes mean and std for each feature across all periods.
-
+        
         Returns:
-            dict with feature keys containing 'mean' and 'std' for each metric
-        """
+        dict with feature keys containing 'mean' and 'std' for each metric"""
         import numpy as np
 
         features = [
@@ -870,25 +884,8 @@ class RouteOutageDetector:
 
         return result
 
-    def split_windows(
-        self,
-        timeseries,
-        start_dt,
-        end_dt,
-        baseline_start,
-    ):
-        event_ts = {}
-        baseline_ts = {}
-        for ts_str, payload in timeseries.items():
-            ts_dt = self.parse_cached(ts_str)
-            if start_dt <= ts_dt <= end_dt:
-                event_ts[ts_str] = payload
-            elif baseline_start <= ts_dt < start_dt:
-                baseline_ts[ts_str] = payload
-        return event_ts, baseline_ts
 
     def parse_cached(self, iso_ts):
-        # Bug fix 2026-09-13 (BUG-R127): previously this method used a
         cached = self.parsed_cache.get(iso_ts)
         if cached is not None:
             # Refresh recency position (LRU semantics)
@@ -922,7 +919,7 @@ class RouteOutageDetector:
         # whatever raw_str the caller passed.
         return datetime.strptime(raw_str, "%Y-%m-%d %H:%M")
 
-    def _no_data_result(self, asn, start_time, end_time, baseline_start, error = ""):
+    def no_data_result(self, asn, start_time, end_time, baseline_start, error = ""):
         """Return a consistent result when outage detection has no data, so downstream always gets success=True and defined fields."""
         empty_features = {
             "announcement_count": 0,
@@ -963,4 +960,3 @@ class RouteOutageDetector:
 OUTAGE_DETECTOR = RouteOutageDetector()
 
 __all__ = ["RouteOutageDetector", "OUTAGE_DETECTOR"]
-

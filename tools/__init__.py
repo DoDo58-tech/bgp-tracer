@@ -1,26 +1,7 @@
-"""
-BGP Multi-Agent Tools Package
-=============================
+"""BGP Multi-Agent Tools Package
+============================="""
 
-Exports:
-    ToolRegistry  — REGISTRY singleton + register_tool decorator
-    SessionManager — conversation history + evidence store
-    RouterAgent  — LLM-driven tool router + conversation manager
-    ChatInterface — conversational REPL entry point
-    tool_implementations — registers all built-in tools on import
-
-Quick start:
-    from tools import ChatInterface
-    ChatInterface().run()
-
-    # Or programmatically:
-    from tools import RouterAgent, SessionManager
-    router = RouterAgent()
-    session = SessionManager()
-    response = await router.step("analyze AS135826 from 2025-06-21 00:30 to 2025-06-21 01:46", session)
-"""
-
-from tools.tool_registry import REGISTRY, Tool, ToolResult, ToolParameter, tool, register_tool
+from tools.tool_registry import REGISTRY, Tool, ToolResult, ToolParameter, register_tool
 from tools.session_manager import SessionManager
 from tools.router_agent import RouterAgent
 

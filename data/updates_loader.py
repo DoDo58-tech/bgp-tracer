@@ -33,11 +33,11 @@ def is_valid_gz_file(filepath, min_size = GZ_MIN_SIZE):
         with gzip.open(filepath, 'rb') as f:
             f.read(1)
         return True
-    except Exception:
+    except (ValueError):
         return False
 
 
-def _convert_timestamp(line):
+def convert_timestamp(line):
     """bgpdump  MM/DD/YY HH:MM:SS， decoded txt ，。"""
     return line
 
@@ -62,7 +62,7 @@ def decode_gz_to_txt(gz_path, txt_path):
                     for line in proc.stdout:
                         decoded_line = line.decode('utf-8', errors='ignore').strip()
                         if decoded_line:
-                            converted = _convert_timestamp(decoded_line)
+                            converted = convert_timestamp(decoded_line)
                             out.write(converted + '\n')
                             written += 1
                 finally:
@@ -80,7 +80,7 @@ def decode_gz_to_txt(gz_path, txt_path):
             try:
                 proc.kill()
                 proc.wait(timeout=5)
-            except Exception:
+            except (ValueError):
                 pass
         if txt_path.exists():
             txt_path.unlink()
@@ -196,7 +196,7 @@ def download_data(url, max_retries=3, retry_delay=5):
     raise ValueError(f"Download failed after {max_retries} attempts: {fname}")
 
 
-def _disk_busy(threshold = 80, sample_seconds = 0.2):
+def disk_busy(threshold = 80, sample_seconds = 0.2):
     try:
         c1 = psutil.disk_io_counters()
         if not c1:
@@ -209,7 +209,7 @@ def _disk_busy(threshold = 80, sample_seconds = 0.2):
         busy_delta = c2.busy_time - c1.busy_time
         pct = (busy_delta / (sample_seconds * 1000)) * 100
         return pct >= threshold
-    except Exception:
+    except (ValueError):
         return False
 
 
@@ -217,23 +217,16 @@ def _disk_busy(threshold = 80, sample_seconds = 0.2):
 LARGE_FILE_THRESHOLD = 500 * 1024 * 1024  # 500MB
 
 def read_updates_file(filepath, columns):
-    """
-    Read a BGP update file into a Polars DataFrame.
-
-    Uses pl.read_csv() with explicit column count to avoid predicate-pushdown
-    column pruning that breaks files with fewer columns than expected.
-
-    For large files (>500MB), uses chunked reading to prevent OOM.
-    Falls back to manual line parsing if read fails.
-    """
+    """Read a BGP update file into a Polars DataFrame."""
     try:
         separator = '|'
+        file_path = filepath  # NOTE: parameter is `filepath`; body uses `file_path`.
         
         # ，
         file_size = file_path.stat().st_size if isinstance(file_path, Path) else Path(file_path).stat().st_size
         if file_size > LARGE_FILE_THRESHOLD:
             logger.debug(f"Large file detected ({file_size/1024/1024:.0f}MB), using chunked reading: {file_path.name}")
-            return _read_updates_chunked(file_path, columns, separator)
+            return read_updates_chunked(file_path, columns, separator)
         
         df = pl.read_csv(
             file_path,
@@ -260,10 +253,10 @@ def read_updates_file(filepath, columns):
     except Exception as e:
         # Fallback: manual line-by-line parsing
         logger.debug(f"read_csv failed for {file_path}, using fallback: {e}")
-        return _read_updates_line_by_line(file_path, columns)
+        return read_updates_line_by_line(file_path, columns)
 
 
-def _read_updates_chunked(file_path, columns, separator='|', chunk_size=50000):
+def read_updates_chunked(file_path, columns, separator='|', chunk_size=50000):
     """
     ，chunk_size，。
     ，yield。
@@ -295,12 +288,12 @@ def _read_updates_chunked(file_path, columns, separator='|', chunk_size=50000):
                 yield chunk_df
                 del data
                 gc.collect()
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Chunked reading failed for {file_path}: {e}")
         return
 
 
-def _read_updates_line_by_line(file_path, columns):
+def read_updates_line_by_line(file_path, columns):
     """fallback"""
     data = []
     try:
@@ -318,38 +311,13 @@ def _read_updates_line_by_line(file_path, columns):
             return None
         df = pl.DataFrame(data, schema=columns, strict=False)
         return df if not df.is_empty() else None
-    except Exception as inner:
+    except (AttributeError) as inner:
         logger.error(f"Line-by-line fallback also failed for {file_path}: {inner}")
         return None
 
 
 def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold = 85, auto_download = True):
-    """Stream BGP announcements for [start_time, end_time] as Polars DataFrames.
-
-    Single-source-of-truth backed by `data.parquet_cache`, which already
-    implements a four-layer cache:
-
-        1. {file}.parquet  – pre-parsed binary (5-25x smaller than txt)
-        2. decoded/*.txt   – already bgpdump-decoded text
-        3. .gz             – raw MRT gz archived by RIPE RIS
-        4. Network         – download from RIPE RIS, then decode
-
-    On first hit that misses every layer the function transparently downloads
-    the missing .gz files into UPDATES_DIR, decodes them into DECODED_DIR, and
-    relies on `parquet_cache.iter_window_chunks` to populate the parquet index
-    on the fly. Subsequent runs hit layer 1 and skip network entirely.
-
-    Each yielded DataFrame carries the canonical schema:
-        type, timestamp, A/W, peer_ip, peer_as, prefix,
-        as-path, origin, next-hop, local-pref, med,
-        communities, atomic-aggregate, aggregator, unknown, ts
-
-    Args:
-        start_time, end_time: window (UTC, datetime).
-        workers: thread-pool size for the in-process decode fallback only
-            (most chunks are already cached; workers is unused on warm cache).
-        io_busy_threshold / auto_download: kept for backward compatibility.
-    """
+    """Stream BGP announcements for [start_time, end_time] as Polars DataFrames."""
     from data.parquet_cache import (
         iter_window_chunks,
         list_window_files,
@@ -357,8 +325,8 @@ def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold 
         DECODED_DIR,
     )
 
-    start_time = _to_utc_naive(start_time)
-    end_time = _to_utc_naive(end_time)
+    start_time = to_utc_naive(start_time)
+    end_time = to_utc_naive(end_time)
     if start_time is None and end_time is None:
         # Both bounds missing — caller is in an error state. Bail out
         return
@@ -370,12 +338,12 @@ def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold 
     missing_buckets: list[datetime] = []
     for p in files_to_ensure:
         if not p.exists() or p.stat().st_size == 0:
-            missing_buckets.append(_bucket_start_from_path(p))
+            missing_buckets.append(bucket_start_from_path(p))
 
     # 2) download + decode whatever is missing
     if missing_buckets and auto_download:
         logger.info(f"Auto-downloading {len(missing_buckets)} missing BGP buckets for {start_time}→{end_time}")
-        _download_and_decode_buckets(missing_buckets)
+        download_and_decode_buckets(missing_buckets)
 
     # 3) stream through the cache; on_missing='skip' returns nothing for
     if workers <= 1 or not auto_download:
@@ -395,18 +363,18 @@ def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold 
     # Queue depth of 2× workers keeps the consumer fed even when a large
     q: _queue.Queue = _queue.Queue(maxsize=effective_workers * 2)
 
-    def _producer():
+    def producer():
         try:
             for chunk in iter_window_chunks(start_time, end_time, on_missing="skip"):
                 if "announce" in chunk.columns and "A/W" not in chunk.columns:
                     chunk = chunk.rename({"announce": "A/W"})
                 q.put(chunk)
-        except Exception as exc:
+        except (AttributeError) as exc:
             logger.error(f"[updates_loader] producer error: {exc}")
         finally:
             q.put(sentinel)
 
-    _t = _threading.Thread(target=_producer, daemon=True, name="bgp-parquet-prefetch")
+    _t = _threading.Thread(target=producer, daemon=True, name="bgp-parquet-prefetch")
     _t.start()
     try:
         while True:
@@ -420,13 +388,8 @@ def get_updates_streaming(start_time, end_time, workers = 16, io_busy_threshold 
             _t.join(timeout=1.0)
 
 
-def _to_utc_naive(dt):
-    """Normalise any datetime into a UTC-naive datetime.
-
-    The cache layer stores timestamps as UTC-naive `Datetime` columns. Mixing
-    tz-aware and tz-naive values in Polars filters silently returns zero rows,
-    so we force UTC + drop tzinfo before handing the window to the cache.
-    """
+def to_utc_naive(dt):
+    """Normalise any datetime into a UTC-naive datetime."""
     if dt is None:
         return None
     try:
@@ -436,12 +399,12 @@ def _to_utc_naive(dt):
                 from datetime import timezone
                 dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
             return dt
-    except Exception:
+    except (ValueError):
         pass
     return dt
 
 
-def _bucket_start_from_path(filepath):
+def bucket_start_from_path(filepath):
     """Parse updates.YYYYMMDD.HHMM.{txt,gz} -> datetime at bucket start (UTC)."""
     from datetime import datetime as _dt
     name = Path(filepath).name
@@ -450,13 +413,8 @@ def _bucket_start_from_path(filepath):
     return _dt.strptime(f"{parts[1]}{parts[2]}", "%Y%m%d%H%M")
 
 
-def _download_and_decode_buckets(buckets):
-    """ bucket。
-
-    ： (16 ),  (4 workers,  bgpdump CPU )。
-    decode ， bgpdump  fork 。
-    Each bucket is independent so failures don't cascade.
-    """
+def download_and_decode_buckets(buckets):
+    """bucket。"""
     decoded_dir = UPDATES_DIR / "decoded"
     decoded_dir.mkdir(parents=True, exist_ok=True)
 
@@ -476,7 +434,7 @@ def _download_and_decode_buckets(buckets):
         for f in as_completed(futs):
             try:
                 f.result()
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.debug(f"[backfill] download sub-task failed: {e}")
 
     # Second: parallel decode (bgpdump-bound; 4 workers = ~ ok on 2-core VM)
@@ -492,22 +450,22 @@ def _download_and_decode_buckets(buckets):
                     ok += 1
                 else:
                     err += 1
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.debug(f"decode {gz_path.name} failed: {e}")
                 err += 1
     else:
         logger.info(f"[backfill] parallel decoding {len(todo)} gz files (workers={decode_workers})")
-        def _decode_one(args):
+        def decode_one(args):
             _, _, gz_path = args
             time_str = gz_path.stem.replace("updates.", "")
             txt_path = decoded_dir / f"updates.{time_str}.txt"
             try:
                 return (True, decode_gz_to_txt(gz_path, txt_path))
-            except Exception as e:
+            except (ValueError) as e:
                 return (False, e)
 
         with ThreadPoolExecutor(max_workers=decode_workers) as ex:
-            for ok_, res in ex.map(_decode_one, todo):
+            for ok_, res in ex.map(decode_one, todo):
                 if ok_ and res:
                     ok += 1
                 else:
@@ -516,7 +474,7 @@ def _download_and_decode_buckets(buckets):
     logger.info(f"Bucket download/decode: ok={ok}, err={err}")
 
 
-def _read_files_sequential(files_to_process, columns):
+def read_files_sequential(files_to_process, columns):
     file_count = 0
     for file_path in sorted(files_to_process):
         try:
@@ -540,7 +498,7 @@ def _read_files_sequential(files_to_process, columns):
                     if file_count % 10 == 0:
                         del result
                         gc.collect()
-        except Exception as e:
+        except (AttributeError) as e:
             logger.error(f"Error processing file {file_path}: {e}")
             continue
     gc.collect()
@@ -595,7 +553,7 @@ def ensure_updates_available_for_event(event_start, event_end, pre_days = 7, pos
                     local_paths.append(fpath)
                     if completed % 10 == 0 or completed == len(todo_urls):
                         logger.info(f"Progress: {completed}/{len(todo_urls)} files downloaded")
-                except Exception as e:
+                except (AttributeError) as e:
                     logger.error(f"Failed to download {url}: {e}")
 
     logger.info(f"Prepared {len(local_paths)} files for the event window")
@@ -662,7 +620,7 @@ def ensure_updates_from_xlsx(
                 max_workers=max_workers,
             )
             all_paths.update(paths)
-        except Exception as err:
+        except (KeyError, IndexError, AttributeError) as err:
             logger.error(f"Failed for row {idx} (start={row[start_col]}, end={row[end_col]}): {err}")
             continue
 
@@ -692,7 +650,7 @@ if __name__ == "__main__":
             post_days=args.post_days,
             max_workers=args.max_workers,
         )
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Failed to prepare updates from Excel: {e}")
         sys.exit(1)
 

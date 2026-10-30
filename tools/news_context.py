@@ -1,36 +1,14 @@
-"""
-Tool B2: News & Event Context Search
+"""Tool B2: News & Event Context Search
 ====================================
-
-Searches for news articles and incident reports about BGP events.
-This is the "Google search" tool for BGP incidents — the most human-like
-capability: when you see a weird hijack, you Google it.
-
-Capabilities:
-  1. BGP/Network incident news via web search
-  2. RIPE NCC incident reports
-  3. NANOG mailing list archives
-  4. BGPMON / Renesys historical incident blog posts
-  5. Cloudflare / Fastly / Akamai status pages
-  6. Internet governance & regulatory news
 
 The key insight: BGP incidents rarely happen in isolation.
 A human analyst ALWAYS searches for external context.
-The goal is to make the agent do the same.
-
-APIs / Data Sources:
-  - Web search (DuckDuckGo HTML API - free)
-  - BGP news sites (bgpstream.com, bgpupdates.nl, bgp-hijack.net)
-  - RIPE NCC RIS alert feed: https://stat.ripe.net/ris/incidents
-  - NANOG mailing list: https://mailman.nanog.org/pipermail/nanog/
-  - Internet health reports: Cloudflare Radar, Akamai SOTI, Cisco VNI
-"""
+The goal is to make the agent do the same."""
 
 from __future__ import annotations
 
 import asyncio
 import re
-import urllib.parse
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -38,6 +16,7 @@ import httpx
 
 from tools.tool_registry import ToolParameter, register_tool
 from utils.logger import logger
+import urllib.parse
 
 # ── DuckDuckGo Instant Answer API (free, no auth) ────────────────────────────
 
@@ -53,7 +32,7 @@ RIPE_INCIDENTS_URL = "https://stat.ripe.net/ris/incidents"
 BGPUPDATES_URL = "https://bgpupdates.nl/feed/"
 
 
-async def _search_duckduckgo(query: str, num_results: int = 10) -> list[dict]:
+async def search_duckduckgo(query: str, num_results: int = 10) -> list[dict]:
     """
     Search DuckDuckGo for news/articles.
     Uses the HTML interface which doesn't require API keys.
@@ -89,9 +68,9 @@ async def _search_duckduckgo(query: str, num_results: int = 10) -> list[dict]:
             ):
                 url, title, snippet = m.group(1), m.group(2), m.group(3)
                 results.append({
-                    "title": _clean_html(title),
+                    "title": clean_html(title),
                     "url": url,
-                    "snippet": _clean_html(snippet),
+                    "snippet": clean_html(snippet),
                 })
                 if len(results) >= num_results:
                     break
@@ -100,20 +79,21 @@ async def _search_duckduckgo(query: str, num_results: int = 10) -> list[dict]:
             logger.info(f"[news] DuckDuckGo blocked (403), skipping search")
             return []
         logger.warning(f"[news] DuckDuckGo search failed: {e}")
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
         logger.warning(f"[news] DuckDuckGo search failed: {e}")
     return results[:num_results]
 
 
-def _clean_html(content):
+def clean_html(content):
     """Remove HTML tags and decode entities."""
+    text = content  # NOTE: parameter is `content`; body uses `text`.
     text = re.sub(r"<[^>]+>", "", text)
     text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     text = text.replace("&quot;", '"').replace("&#39;", "'").replace("&nbsp;", " ")
     return text.strip()
 
 
-async def _query_ripe_incidents(
+async def query_ripe_incidents(
     asn: str, timeframe_days: int = 30
 ) -> list[dict]:
     """Query RIPE NCC RIS incident reports for this AS."""
@@ -148,19 +128,13 @@ async def _query_ripe_incidents(
             logger.info(f"[news] RIPE incidents API: no data for AS{asn} (404)")
             return []
         logger.warning(f"[news] RIPE incidents query failed: {e}")
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
         logger.warning(f"[news] RIPE incidents query failed: {e}")
     return []
 
 
-def _build_search_queries(asn: str, prefix: str, event_type: str, country: str) -> list[str]:
-    """
-    Build targeted search queries based on what we know about the incident.
-
-    This is the "human analyst thinking" part:
-    - AS43927 hijack Turkey → search "Turkey AS43927 BGP hijack"
-    - Cloudflare Iran outage → search "Cloudflare Iran BGP outage"
-    """
+def build_search_queries(asn: str, prefix: str, event_type: str, country: str) -> list[str]:
+    """Build targeted search queries based on what we know about the incident."""
     queries = []
     asn_str = f"AS{asn}"
     prefix_short = prefix.split("/")[0] if prefix else ""
@@ -200,16 +174,14 @@ def _build_search_queries(asn: str, prefix: str, event_type: str, country: str) 
     return deduped[:5]  # Limit to avoid too many searches
 
 
-def _extract_incident_context(news_results: list[dict]) -> dict[str, Any]:
-    """
-    Extract structured context from news results.
+def extract_incident_context(news_results: list[dict]) -> dict[str, Any]:
+    """Extract structured context from news results.
     Human analysts look for:
-      - What happened (confirmed via news)
-      - Root cause (misconfiguration, attack, government)
-      - Duration and scope
-      - Who was affected
-      - Any official statements
-    """
+    - What happened (confirmed via news)
+    - Root cause (misconfiguration, attack, government)
+    - Duration and scope
+    - Who was affected
+    - Any official statements"""
     context = {
         "confirmed_incident": False,
         "root_cause": None,
@@ -256,27 +228,15 @@ def _extract_incident_context(news_results: list[dict]) -> dict[str, Any]:
     return context
 
 
-async def _news_context_search(tool_input: dict, session) -> dict[str, Any]:
-    """
-    Search for news and incident context about a BGP event.
-
-    Required params:
-        asn (str): AS number involved in the incident
-        event_type (str, optional): origin_hijack / route_leak / outage / unknown
-
-    Optional params:
-        prefix (str): prefix involved
-        country (str): country of the AS/organization
-        search_queries (list[str]): custom search queries
-        timeframe_days (int): how far back to search (default: 90)
-
+async def news_context_search(tool_input: dict, session) -> dict[str, Any]:
+    """Search for news and incident context about a BGP event.
+    
     Returns:
-        - search_results: list of news/article results with title, URL, snippet
-        - ripe_incidents: RIPE NCC RIS incident reports
-        - incident_context: extracted structured context (root cause, duration, etc.)
-        - summary: narrative assessment combining all sources
-        - observation: LLM-readable summary
-    """
+    - search_results: list of news/article results with title, URL, snippet
+    - ripe_incidents: RIPE NCC RIS incident reports
+    - incident_context: extracted structured context (root cause, duration, etc.)
+    - summary: narrative assessment combining all sources
+    - observation: LLM-readable summary"""
     asn = str(tool_input.get("asn", "")).lstrip("AS")
     event_type = tool_input.get("event_type", "unknown")
     prefix = tool_input.get("prefix", "")
@@ -292,12 +252,12 @@ async def _news_context_search(tool_input: dict, session) -> dict[str, Any]:
     if custom_queries:
         queries = custom_queries
     else:
-        queries = _build_search_queries(asn, prefix, event_type, country)
+        queries = build_search_queries(asn, prefix, event_type, country)
 
     # Execute searches concurrently
     all_results = []
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        tasks = [_search_duckduckgo(q, num_results=5) for q in queries]
+        tasks = [search_duckduckgo(q, num_results=5) for q in queries]
         results_batches = await asyncio.gather(*tasks, return_exceptions=True)
 
         for batch in results_batches:
@@ -329,10 +289,10 @@ async def _news_context_search(tool_input: dict, session) -> dict[str, Any]:
     unique_results.sort(key=priority)
 
     # RIPE NCC incident reports
-    ripe_incidents = await _query_ripe_incidents(asn, timeframe_days)
+    ripe_incidents = await query_ripe_incidents(asn, timeframe_days)
 
     # Extract incident context
-    incident_context = _extract_incident_context(unique_results)
+    incident_context = extract_incident_context(unique_results)
 
     # Build summary
     if unique_results:
@@ -395,5 +355,5 @@ register_tool(
         ToolParameter("search_queries", "Optional: custom search queries (list)", "string", required=False),
         ToolParameter("timeframe_days", "How far back to search (default: 90)", "string", required=False),
     ],
-    handler=_news_context_search,
+    handler=news_context_search,
 )

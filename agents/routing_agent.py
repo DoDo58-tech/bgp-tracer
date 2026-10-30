@@ -23,7 +23,7 @@ def run_routing_agent(asn, start_time, end_time, target_asns=None, periodicity=N
     )
 
 
-def _extract_routing_confidence(
+def extract_routing_confidence(
     result,
     *,
     hijacked_alerts,
@@ -32,13 +32,7 @@ def _extract_routing_confidence(
     leaks,
     has_outage,
 ) -> float:
-    """Best-effort confidence for the routing layer.
-
-    The detectors publish a calibrated confidence in several shapes. When
-    any of them is present we trust it (clamped to [0, 1]); otherwise we
-    fall back to the historical 0.85 / 0.6 anomaly/no-anomaly heuristic
-    so existing consumers keep working.
-    """
+    """Best-effort confidence for the routing layer."""
     has_anomaly = bool(
         hijacked_alerts or origin_hijacking or forge_hijacking or leaks or has_outage
     )
@@ -91,8 +85,11 @@ class RoutingAgent(Agent):
     async def step(self):
         t0 = perf_counter()
         asn = await self.bb.read("config", "asn")
-        start_time = await self.bb.read("config", "start_time")
-        end_time = await self.bb.read("config", "end_time")
+        # The routing window may be wider than the analysis window. The
+        start_time = (await self.bb.read("config", "routing_start_time")
+                      or await self.bb.read("config", "start_time"))
+        end_time = (await self.bb.read("config", "routing_end_time")
+                    or await self.bb.read("config", "end_time"))
         enable_mitm = await self.bb.read("config", "enable_mitm", False)
 
         if not all([asn, start_time, end_time]):
@@ -122,7 +119,6 @@ class RoutingAgent(Agent):
             prepared = prepare_routing_payload(result)
             traffic = await self.bb.read_section("traffic")
             prepared["investigation_plan"] = build_investigation_plan(prepared, traffic)
-            # Bug fix (2026-09-13): prepared contains a ``result`` key that
             normalized_result = dict(result)
             normalized_result.update({
                 key: prepared[key]
@@ -180,19 +176,19 @@ class RoutingAgent(Agent):
             return TaskResult(success=False, error=str(e), agent=self.name)
 
 
-def _safe_dt(v):
+def safe_dt(v):
     """Convert datetime objects to ISO strings so JSON serialization never fails."""
     from datetime import datetime
     if isinstance(v, datetime):
         return v.isoformat()
     if isinstance(v, (list, tuple)):
-        return [_safe_dt(x) for x in v]
+        return [safe_dt(x) for x in v]
     if isinstance(v, dict):
-        return {kk: _safe_dt(vv) for kk, vv in v.items()}
+        return {kk: safe_dt(vv) for kk, vv in v.items()}
     return v
 
 
-def _normalize_event(ev):
+def normalize_event(ev):
     """Normalize a routing event dict: convert datetimes, truncate as_path."""
     if not isinstance(ev, dict):
         return ev
@@ -205,9 +201,9 @@ def _normalize_event(ev):
                 v = " ".join(parts[:10]) + " ... [" + str(len(parts) - 20) + " more ASes]"
             out[k] = v
         elif k == "as_paths" and isinstance(v, list):
-            out[k] = [_safe_dt(x) for x in v[:5]]
+            out[k] = [safe_dt(x) for x in v[:5]]
         else:
-            out[k] = _safe_dt(v)
+            out[k] = safe_dt(v)
     return out
 
 
@@ -229,21 +225,13 @@ def prepare_routing_payload(result, partial_error=None):
     if isinstance(nested_leak, dict):
         leaks = leaks or nested_leak.get("route_leaks") or []
     # Normalize all event lists for JSON safety and as_path truncation
-    origin_hijacked = [_normalize_event(e) for e in origin_hijacked]
-    forge_hijacked = [_normalize_event(e) for e in forge_hijacked]
-    origin_hijacking = [_normalize_event(e) for e in origin_hijacking]
-    forge_hijacking = [_normalize_event(e) for e in forge_hijacking]
-    leaks = [_normalize_event(e) for e in leaks]
+    origin_hijacked = [normalize_event(e) for e in origin_hijacked]
+    forge_hijacked = [normalize_event(e) for e in forge_hijacked]
+    origin_hijacking = [normalize_event(e) for e in origin_hijacking]
+    forge_hijacking = [normalize_event(e) for e in forge_hijacking]
+    leaks = [normalize_event(e) for e in leaks]
     # ROUND-26: well-evidenced leak filter. The RRC00 leak detector fires
-    # on every BGP update that mentions the target AS in its path, which
-    # yields thousands of empty (no-prefix, no-asn) events during outage
-    # withdrawal storms. Count only events with at least one evidence
-    # field set so the leak_count is not inflated by detector noise.
-    #
-    # The events carry ``prefix`` and ``as-path`` (or ``origin-as``) from
-    # the leak detector, plus the AnomalyDetail-style ``affected_prefixes``
-    # / ``affected_asns`` after unification. Treat any of them as evidence.
-    def _well_evidence_count(leak_list):
+    def well_evidence_count(leak_list):
         if not leak_list:
             return 0
         if isinstance(leak_list[0], str):
@@ -266,8 +254,8 @@ def prepare_routing_payload(result, partial_error=None):
                 or e.get("claimed_as") or e.get("victim_as")
             )
         return len(leak_list)
-    well_evidenced_leaks = _well_evidence_count(leaks)
-    outages = _safe_dt(outages)
+    well_evidenced_leaks = well_evidence_count(leaks)
+    outages = safe_dt(outages)
     #  annotation_package （_agent ，）
     nested_hijack = result.get("hijack") or {}
     nested_leak = result.get("leak") or {}
@@ -301,7 +289,7 @@ def prepare_routing_payload(result, partial_error=None):
         # Prefer the detector's calibrated confidence when present so the
         # HCAF / report agents do not see a constant regardless of detector
         # output. Fall back to a coarse 0.85 / 0.6 heuristic otherwise.
-        "confidence": _extract_routing_confidence(
+        "confidence": extract_routing_confidence(
             result,
             hijacked_alerts=hijacked_alerts,
             origin_hijacking=origin_hijacking,
@@ -309,7 +297,7 @@ def prepare_routing_payload(result, partial_error=None):
             leaks=leaks,
             has_outage=has_outage,
         ),
-        #  ChallengeAgent/RefereeAgent/EvaluationLoop  total_* 
+        #  ChallengeAgent/RefereeAgent/EvaluationLoop  total_*
         "total_prefix_hijacks": len(hijacked_alerts),
         "total_prefix_hijacking": len(origin_hijacking + forge_hijacking),
         "total_route_leaks": well_evidenced_leaks,
@@ -340,7 +328,7 @@ def routing_scope(hijacks, leaks, outages):
         # `event` may be a plain dict (legacy hijack detector output) or an
         # AnomalyDetail dataclass. Bind it as a default arg so the helper
         # cannot pick up a later loop value.
-        def _event_get(key, default=None, _event=event):
+        def event_get(key, default=None, _event=event):
             if hasattr(_event, "get") and callable(getattr(_event, "get")):
                 try:
                     return _event.get(key, default)
@@ -349,7 +337,7 @@ def routing_scope(hijacks, leaks, outages):
             return getattr(_event, key, default)
 
         for key in ("prefix", "prefixes", "affected_prefix", "victim_prefix"):
-            value = _event_get(key)
+            value = event_get(key)
             values = value if isinstance(value, list) else [value]
             prefixes.update(str(item) for item in values if item)
     return {

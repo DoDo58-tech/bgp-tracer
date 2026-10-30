@@ -1,11 +1,6 @@
-"""
-BGP Tracer Multi-Agent Workflow Engine
+"""BGP Tracer Multi-Agent Workflow Engine
 ======================================
-State machine: INITIAL → TRAFFIC_ANALYSIS → ROUTING_ANALYSIS → REASONING → REPORT → COMPLETE/ERROR
-
-Enhanced mode (--enhanced flag) removed 2026-09-29 (paper-grade cleanup);
-the legacy workflow is the only execution path.
-"""
+State machine: INITIAL → TRAFFIC_ANALYSIS → ROUTING_ANALYSIS → REASONING → REPORT → COMPLETE/ERROR"""
 
 from __future__ import annotations
 
@@ -17,42 +12,58 @@ from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 from typing import Callable
-from functools import wraps
 from time import perf_counter
 
 from utils.helpers import make_json_safe
 from utils.logger import logger
+from agents.ablation_switches import (
+    ablation_campaign_active,
+    ablation_switches,
+)
 from detectors.traffic.multi_scale_baseline import CausalCorrelationScorer
 from detectors.evidence_chain_builder import EvidenceChainBuilder
 
 
+def aea_runtime_parse(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        from agents.aea_runtime import parse_timestamp
+        return parse_timestamp(value)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def aea_explanation(verdict):
+    if verdict.committed:
+        return (
+            "AEA committed %s: onset intervals disjoint with lag %s buckets, "
+            "exclusivity p=%.4f over %d placebos."
+            % (verdict.direction, verdict.lag, verdict.p_value, verdict.n_placebos)
+        )
+    vetoes = ", ".join(
+        "%s=%s" % (k, v) for k, v in (verdict.vetoes or {}).items())
+    return "AEA abstained (%s; vetoes: %s)." % (verdict.reason, vetoes)
+
+
+def aea_limitations(verdict):
+    if verdict.committed:
+        return "Direction only; magnitude and mechanism are out of scope."
+    return (
+        "The window does not support a directional claim: "
+        "%s. Only the committed direction is reported." % verdict.reason)
+
+
 def build_routing_state(prefix2as_file, prefixes, max_prefixes=200):
     """Build the ASN -> prefixes map the cascade estimator needs.
-
-    The cascade estimator (CIC) decides whether an AS in the propagation
-    path actually carries the affected prefix. That test needs a
-    prefix-to-ASN mapping; without it every node in the cascade reports
-    ``has_route=False`` and the whole counterfactual impact collapses to
-    zero.
-
-    BUG-FIX 2026-10-21: ``routing_state`` was hard-coded to ``{}`` in
-    :meth:`WorkflowEngine.build_hcaf_timelines` and nothing in the
-    codebase ever populated it, so the CIC channel abstained on every
-    event regardless of how far the anomaly actually propagated.
-
-    Args:
-        prefix2as_file: path to the parsed CAIDA pfx2as JSON snapshot.
-        prefixes: the prefix(es) of interest (string or list).
-        max_prefixes: cap on how many prefixes to resolve, so a
-            multi-prefix event cannot load the entire 750k-entry table
-            into a per-AS index.
-
+    
     Returns:
-        dict mapping ASN string -> list of prefixes it originates. Only
-        the ASes that actually originate one of ``prefixes`` are
-        included, so the map stays small and is directly usable by
-        :func:`agents.causal_attribution.cic_has_pfx`.
-    """
+    dict mapping ASN string -> list of prefixes it originates. Only
+    the ASes that actually originate one of ``prefixes`` are
+    included, so the map stays small and is directly usable by
+    :func:`agents.causal_attribution.cic_has_pfx`."""
     if not prefix2as_file or not Path(prefix2as_file).exists():
         return {}
     if isinstance(prefixes, str):
@@ -64,7 +75,7 @@ def build_routing_state(prefix2as_file, prefixes, max_prefixes=200):
     try:
         from agents.coordination_utils import load_json
         table = load_json(prefix2as_file)
-    except Exception as exc:  # noqa: BLE001 - degrade, never crash the pipeline
+    except (AttributeError) as exc:  # noqa: BLE001 - degrade, never crash the pipeline
         logger.warning(f"[HCAF] routing_state: failed to load {prefix2as_file}: {exc}")
         return {}
     if not isinstance(table, dict):
@@ -116,7 +127,7 @@ class WorkflowEvent(Enum):
     DATA_COLLECTED = auto()
 
 
-# ==================== Analysis Mode Configuration ====================
+# Analysis Mode Configuration
 
 class AnalysisMode(Enum):
     """Analysis mode selection for different use cases."""
@@ -183,25 +194,28 @@ class WorkflowContext:
     diagnosis_claims: list = field(default_factory=list)
     verification_records: list = field(default_factory=list)
     contradictions: list = field(default_factory=list)
+    # Typed records for the alternatives the analysis ruled out and the
+    evidence_alternatives: list = field(default_factory=list)
+    evidence_gaps: list = field(default_factory=list)
     traffic_ok_but_routing_anomaly: bool = False
     causal_analysis: dict = None
     joint_alert: dict = None
     evidence_chain: dict = None
     bayesian_result: dict = None
+    # Which coordination stages actually ran, and which were ablated.
+    # Written by the engine as each stage executes, so a run can be
+    # audited for single-variability after the fact instead of the
+    # property being taken on trust.
+    stage_execution: dict = field(default_factory=dict)
     # ── HCAF causal attribution result (three innovation methods: MSCBD/CTPR/CIC)─────────────
     hcaf_attribution: dict = None
     hcaf_attribution_status: str = "skipped"  # "ok" / "skipped" / "failed"
     buffer_hours: float = 2.0
     # ── Enhanced multi-agent fields ──────────────────────────────────────────
     enhanced: bool = False              # enable enhanced multi-agent mode
-    shared_blackboard = None           # legacy field, unused after 2026-09-29 cleanup
+    shared_blackboard = None           # the one Blackboard shared by every stage
     message_bus_run_id: str = ""       # unique run_id for legacy MessageBus instance
     # debate_rounds / evaluation_retries / reactive_decisions /
-    # evaluation_metrics / debate_results were all populated only by the
-    # enhanced subsystem (deleted 2026-09-29). They remain as defaults so
-    # old cache JSON can still be deserialised without KeyError.
-    # BUG-FIX 2026-10-01: also accept these as init kwargs for backwards
-    # compatibility with callers that pass them when constructing context.
     debate_rounds: int = 3
     evaluation_retries: int = 2
 
@@ -223,6 +237,13 @@ class WorkflowContext:
         ))
         self.current_state = to_state
 
+    def get_blackboard(self):
+        """Return the single Blackboard shared by every stage of this run."""
+        if self.shared_blackboard is None:
+            from agents.core import Blackboard
+            self.shared_blackboard = Blackboard()
+        return self.shared_blackboard
+
 
 class WorkflowError(Exception):
     """Base exception for workflow errors."""
@@ -238,80 +259,8 @@ class RetryableError(Exception):
     pass
 
 
-def async_retry(max_retries = 3, backoff_base = 1.0):
-    """
-    Decorator for automatic retry with exponential backoff.
-
-    Usage:
-        @async_retry(max_retries=3)
-        async def unreliable_operation():
-            ...
-    """
-    def decorator(func):
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            # Bug fix 2026-09-13 (BUG-R44): the previous implementation
-            # unconditionally executed ``raise last_exception`` after the
-            # retry loop. When ``max_retries == 0`` the for-loop runs
-            # zero times, ``last_exception`` stays None, and the post-loop
-            # statement becomes ``raise None`` → ``TypeError: exceptions
-            # must derive from BaseException`` at runtime. Also, even
-            # with a positive retry count, any non-RetryableError
-            # exception was suppressed (we returned ``None``) — silent
-            # swallowing.
-            #
-            # The cleaner fix: rewrite as ``attempt < max(max_retries, 1)``
-            # so the function is always invoked at least once, and only
-            # retry when ``max_retries > 0``.
-            last_exception = None
-            effective_attempts = max(max_retries, 1)
-            for attempt in range(effective_attempts):
-                try:
-                    return await func(*args, **kwargs)
-                except RetryableError as e:
-                    last_exception = e
-                    if attempt < effective_attempts - 1:
-                        wait_time = backoff_base * (2 ** attempt)
-                        logger.warning(f"Retry {attempt + 1}/{max_retries} for {func.__name__} after {wait_time}s: {e}")
-                        await asyncio.sleep(wait_time)
-                    else:
-                        logger.error(f"All {max_retries} retries exhausted for {func.__name__}")
-                except Exception as e:
-                    # Bug fix 2026-10-13: non-RetryableError exceptions
-                    # (ValueError, RuntimeError, network TimeoutError, etc.)
-                    # were previously silently swallowed and returned as None.
-                    # Re-raise immediately so the caller sees the real error
-                    # and can decide on the recovery strategy. Only
-                    # RetryableError instances get retried.
-                    logger.error(f"Non-retryable error in {func.__name__}: {e!r}")
-                    raise
-            # If we got here, the function raised a RetryableError every
-            # time. Propagate the last captured exception.
-            if last_exception is not None:
-                raise last_exception
-            # Defensive fallback (should be unreachable in practice).
-            return None
-        return wrapper
-    return decorator
-
-
 class WorkflowEngine:
-    """
-    Graph-based workflow engine with state machine.
-
-    This engine orchestrates multi-agent BGP analysis with:
-    - Parallel execution where possible
-    - Conditional branching
-    - Error recovery
-    - Detailed execution tracing
-    - Enhanced multi-agent mode (--enhanced flag):
-      * Shared Blackboard across all stages
-      * AgentMessageBus for real-time agent communication
-      * OnlineEvaluationAgent with self-correction
-      * LLM-driven debate replacing rule-based ChallengeAgent/RefereeAgent
-      * ReactiveDecisionEngine for adaptive stage decisions
-      * MultiAgentReportAgent for specialist-validated reports
-    """
+    """Graph-based workflow engine with state machine."""
 
     def __init__(
         self,
@@ -337,6 +286,19 @@ class WorkflowEngine:
         )
         self.min_hcaf_tier = WORKFLOW_MIN_HCAF_TIER
         self.min_hcaf_score = WORKFLOW_MIN_HCAF_SCORE
+
+        # ── Component ablation switches ────────────────────────────────────────
+        # Read through the shared module so that every component which
+        # honours a switch -- the workflow engine, the tool layer, the
+        # sub-agents -- sees the same state.  A stage that is switched
+        # off must be off *everywhere*; a component that read the
+        # environment variable on its own could disagree with the
+        # engine, and the arm would then measure a mixture of two
+        # configurations rather than one.
+        self.ablate = ablation_switches()
+        if any(self.ablate.values()):
+            logger.info(f"[Workflow] component ablation active: "
+                        f"{[k for k, v in self.ablate.items() if v]}")
         # Optional kwargs accepted for API compatibility with callers that pass
         # through ChiefExpertAgent-style parameters. Stored for handler introspection.
         self._enhanced_flag = enhanced
@@ -355,72 +317,35 @@ class WorkflowEngine:
             "total_execution_time_ms": 0.0
         }
 
-    @staticmethod
-    def _extract_hcaf_strength(result):
-        """Return ``{"strength": <value|None>}`` from a HCAF result object.
-
-        Bug fix 2026-09-13: previous code used
-        ``getattr(getattr(res, "strength_val", None), "value", "unknown")``.
-        If ``res.strength_val`` exists but lacks a ``.value`` attribute, the
-        inner getattr returned ``None`` and the outer ``getattr`` ALSO
-        returned ``None`` — the "unknown" default was unreachable.
-
-        New shape handles four cases:
-          1. ``strength_val`` missing  → ``"unknown"``
-          2. ``strength_val`` has ``.value`` (e.g. Enum) → use that
-          3. ``strength_val`` is a plain scalar (float/int/str) → use directly
-          4. Otherwise → ``str(strength_val)`` so the value still reaches the caller
-        """
-        strength_obj = getattr(result, "strength_val", None)
-        if strength_obj is None:
-            return {"strength": "unknown"}
-        if hasattr(strength_obj, "value"):
-            return {"strength": strength_obj.value}
-        if isinstance(strength_obj, (int, float, str, bool)):
-            return {"strength": strength_obj}
-        try:
-            return {"strength": str(strength_obj)}
-        except Exception:
-            return {"strength": "unknown"}
-
     def register_default_handlers(self):
         """Register default state handlers."""
         self._state_handlers = {
-            WorkflowState.INITIAL: self._handle_initial,
-            WorkflowState.PARSING_INPUT: self._handle_parsing_input,
-            WorkflowState.TRAFFIC_SCREENING: self._handle_traffic_screening,
-            WorkflowState.TRAFFIC_ANALYSIS: self._handle_traffic_analysis,
-            WorkflowState.ROUTING_ANALYSIS: self._handle_routing_analysis,
-            WorkflowState.JOINT_EVIDENCE: self._handle_joint_evidence,  # New state for three-card analysis
-            WorkflowState.REASONING: self._handle_reasoning,
-            WorkflowState.VALIDATION: self._handle_validation,
-            WorkflowState.DATA_ENRICHMENT: self._handle_data_enrichment,
-            WorkflowState.REPORT_GENERATION: self._handle_report_generation,
-            WorkflowState.COMPLETE: self._handle_complete,
-            WorkflowState.ERROR: self._handle_error,
+            WorkflowState.INITIAL: self.handle_initial,
+            WorkflowState.PARSING_INPUT: self.handle_parsing_input,
+            WorkflowState.TRAFFIC_SCREENING: self.handle_traffic_screening,
+            WorkflowState.TRAFFIC_ANALYSIS: self.handle_traffic_analysis,
+            WorkflowState.ROUTING_ANALYSIS: self.handle_routing_analysis,
+            WorkflowState.JOINT_EVIDENCE: self.handle_joint_evidence,  # New state for three-card analysis
+            WorkflowState.REASONING: self.handle_reasoning,
+            WorkflowState.VALIDATION: self.handle_validation,
+            WorkflowState.DATA_ENRICHMENT: self.handle_data_enrichment,
+            WorkflowState.REPORT_GENERATION: self.handle_report_generation,
+            WorkflowState.COMPLETE: self.handle_complete,
+            WorkflowState.ERROR: self.handle_error,
         }
 
     async def execute(self, context):
-        """
-        Execute the workflow starting from INITIAL state.
-
-        Args:
-            context: Initial workflow context with user input
-
+        """Execute the workflow starting from INITIAL state.
+        
         Returns:
-            Updated context with all results and execution trace
-        """
+        Updated context with all results and execution trace"""
         _t0 = perf_counter()
         self.metrics["total_runs"] += 1
 
         # Hard cap on total workflow runtime to avoid the enhanced mode
-        # getting stuck in debate/retry loops. Defaults to 900s, overridable
-        # via BGP_TRACER_WORKFLOW_TIMEOUT_S. When the cap is hit we jump
-        # straight to REPORT_GENERATION so the caller still gets a usable
-        # HTML, then mark COMPLETE.
         try:
             from config import WORKFLOW_TOTAL_TIMEOUT_S
-        except Exception:
+        except (ValueError):
             WORKFLOW_TOTAL_TIMEOUT_S = 900.0
         workflow_timeout_s = float(
             os.environ.get("BGP_TRACER_WORKFLOW_TIMEOUT_S", WORKFLOW_TOTAL_TIMEOUT_S)
@@ -432,14 +357,6 @@ class WorkflowEngine:
             WorkflowEvent.START
         )
 
-        # Bug fix 2026-09-13: ``event_type`` and ``as_role`` came in as
-        # parameters to ``run_workflow`` and were stored on the context,
-        # but were NEVER written into the Blackboard ``config`` section.
-        # Downstream agents that read ``config.event_type`` (e.g.
-        # RoutingAgent when deciding whether to skip / force routing
-        # analysis for a hijack-shaped event) therefore saw ``None``.
-        # Mirror both keys into the shared blackboard here so they're
-        # available before any handler runs.
         bb_seed = getattr(context, "shared_blackboard", None)
         if bb_seed is not None:
             if context.event_type is not None:
@@ -512,16 +429,11 @@ class WorkflowEngine:
                 if ckpt is not None and ckpt.enabled:
                     try:
                         ckpt.save(f"workflow_{prev_state.name.lower()}", snapshot_context(context))
-                    except Exception as e:
+                    except (AttributeError) as e:
                         logger.warning(f"[Checkpoint] Failed to save after {prev_state.name}: {e}")
 
             if timed_out and context.current_state != WorkflowState.COMPLETE:
                 # Fallback reached: jump to report generation and let it
-                # produce whatever HTML it can with the partial evidence.
-                # The state machine loop above already redirected us there
-                # but the ``break`` path skipped the handler — so call it
-                # directly here to ensure we still get an HTML report out
-                # the door on a timeout.
                 logger.warning(
                     "[Workflow] timeout-fallback: invoking _handle_report_generation "
                     "directly to salvage a partial report"
@@ -530,7 +442,7 @@ class WorkflowEngine:
                     handler = self._state_handlers.get(context.current_state)
                     if handler is not None:
                         await handler(context)
-                except Exception as fb_exc:
+                except (AttributeError) as fb_exc:
                     logger.error(f"[Workflow] timeout-fallback failed: {fb_exc!r}")
 
             # Success
@@ -551,7 +463,7 @@ class WorkflowEngine:
             if ckpt is not None and ckpt.enabled:
                 try:
                     ckpt.save("workflow_state", snapshot_context(context))
-                except Exception as save_err:
+                except (AttributeError) as save_err:
                     logger.warning(f"[Checkpoint] Failed to save error state: {save_err}")
 
         finally:
@@ -562,21 +474,11 @@ class WorkflowEngine:
             if context.message_bus_run_id:
                 # enhanced mode removed 2026-09-29; no bridge to stop.
                 pass
-            # Bug fix 2026-09-13 (BUG-R56): TokenBudget.clear_instance
-            # existed but was never called in production — only tests
-            # used it. Without cleanup, every run leaks its TokenBudget
-            # entry into TokenBudget._instances for the lifetime of the
-            # Python process. Long-running batch jobs (e.g. 100-event
-            # benchmark runs) accumulate hundreds of AgentTokenUsage
-            # lists that are kept alive even after analysis completes,
-            # eventually OOMing the worker. We now clear the instance
-            # here alongside MessageBus so both registries balance with
-            # each run.
             if context.message_bus_run_id:
                 try:
                     from agents.token_budget import TokenBudget
                     TokenBudget.clear_instance(context.message_bus_run_id)
-                except Exception as _tb_err:
+                except (AttributeError) as _tb_err:
                     logger.debug(f"[Cleanup] TokenBudget.clear_instance failed: {_tb_err}")
 
             # ── Final checkpoint: save fully-completed context ──
@@ -584,7 +486,7 @@ class WorkflowEngine:
             if ckpt is not None and ckpt.enabled and context.current_state == WorkflowState.COMPLETE:
                 try:
                     ckpt.save("workflow_context", snapshot_context(context))
-                except Exception as e:
+                except (AttributeError) as e:
                     logger.warning(f"[Checkpoint] Failed to save final context: {e}")
 
         return context
@@ -614,10 +516,10 @@ class WorkflowEngine:
     
     # ── State Handlers ───────────────────────────────────────────────────────
 
-    async def _handle_initial(self, context):
+    async def handle_initial(self, context):
         return WorkflowEvent.START
 
-    async def _handle_parsing_input(self, context):
+    async def handle_parsing_input(self, context):
         from agents.traffic_agent import (
             parse_traffic_outage_input,
             parse_multiple_as_input,
@@ -643,7 +545,7 @@ class WorkflowEngine:
         
         return WorkflowEvent.INPUT_PARSED
     
-    async def _handle_traffic_screening(self, context):
+    async def handle_traffic_screening(self, context):
         logger.info(f"Preparing joint traffic and routing analysis for AS{context.asn}...")
         
         try:
@@ -678,7 +580,7 @@ class WorkflowEngine:
                 context.routing_analysis_detail = "full"
                 return WorkflowEvent.SCREENING_COMPLETE
 
-        except Exception as e:
+        except (AttributeError) as e:
             logger.error(f"Traffic screening failed: {e}")
             # On error, default to full analysis
             context.screening_result = {
@@ -691,28 +593,17 @@ class WorkflowEngine:
             context.routing_analysis_detail = "full"
             return WorkflowEvent.SCREENING_COMPLETE
     
-    async def _handle_traffic_analysis(self, context):
-        from agents.core import Blackboard
+    async def handle_traffic_analysis(self, context):
         from agents.traffic_agent import TrafficAgent
 
         logger.info(f"[_handle_traffic_analysis] precomputed_traffic={bool(context.precomputed_traffic)}")
 
-        # Use shared Blackboard in enhanced mode; create new one otherwise
-        if context.enhanced and context.shared_blackboard:
-            bb = context.shared_blackboard
-            # Bug fix: in enhanced mode the shared Blackboard is created in
-            # init_enhanced_components but never seeded with config.asn /
-            # config.start_time / config.end_time. Without these, TrafficAgent
-            # / RoutingAgent immediately return "Missing config" and the
-            # whole analysis chain silently degrades to inconclusive.
-            await bb.write("config", "asn", context.asn)
-            await bb.write("config", "start_time", context.start_time)
-            await bb.write("config", "end_time", context.end_time)
-        else:
-            bb = Blackboard()
-            await bb.write("config", "asn", context.asn)
-            await bb.write("config", "start_time", context.start_time)
-            await bb.write("config", "end_time", context.end_time)
+        # One Blackboard per run, shared by every stage (see
+        # ``WorkflowContext.get_blackboard``).
+        bb = context.get_blackboard()
+        await bb.write("config", "asn", context.asn)
+        await bb.write("config", "start_time", context.start_time)
+        await bb.write("config", "end_time", context.end_time)
 
         # ── Inject precomputed data (from annotation_package route_check.json)─────────────
         if context.precomputed_routing:
@@ -766,8 +657,7 @@ class WorkflowEngine:
             )
         return WorkflowEvent.TRAFFIC_DONE
     
-    async def _handle_routing_analysis(self, context):
-        from agents.core import Blackboard
+    async def handle_routing_analysis(self, context):
         from agents.routing_agent import RoutingAgent
 
         if not context.needs_routing_analysis:
@@ -781,9 +671,6 @@ class WorkflowEngine:
         if rt:
             context.traffic_anomaly_window = rt
             # when routing_time_window comes from traffic-expanded analysis,
-            # Routing analysis must use the extended time window, not the raw user input window.
-            # The old code updated only traffic_anomaly_window and not routing_start/routing_end,
-            # so RoutingAgent always received the original user window in its bb config.
             if isinstance(rt, dict):
                 if rt.get("start") or rt.get("start_time"):
                     routing_start = str(rt.get("start") or rt.get("start_time"))
@@ -809,28 +696,23 @@ class WorkflowEngine:
                 or context.routing_result.get("anomalies_detected")
                 or context.routing_result.get("anomaly_count", 0) > 0
             )
-            await self._cross_validate_results(context)
+            await self.cross_validate_results(context)
             return WorkflowEvent.ROUTING_DONE
 
-        # Use shared Blackboard in enhanced mode
-        bb = Blackboard()  # shared blackboard (enhanced path removed 2026-09-29)
+        # One Blackboard per run, shared by every stage (see
+        # ``WorkflowContext.get_blackboard``).
+        bb = context.get_blackboard()
         # Write the routing-window config keys once. The previous
-        # implementation wrote them twice in the non-enhanced branch
-        # (the second copy was a dead-code duplicate of the first); we
-        # consolidate here so config keys stay in lockstep with the
-        # routing_time_window derivation above.
         await bb.write("config", "asn", context.asn)
-        await bb.write("config", "start_time", routing_start)
-        await bb.write("config", "end_time", routing_end)
+        # The routing window may be *wider* than the analysis window (it is
+        await bb.write("config", "routing_start_time", routing_start)
+        await bb.write("config", "routing_end_time", routing_end)
         await bb.write("config", "enable_mitm", context.enable_mitm)
         # use_traffic_time_window should follow rt dynamically
         # Set True when routing_time_window comes from the extended traffic analysis,
         # so RoutingAgent knows to use the extended window instead of the original one.
         await bb.write("config", "use_traffic_time_window", rt is not None)
         await bb.write("config", "routing_detail", context.routing_analysis_detail or "full")
-        # Bug fix 2026-09-13: ``event_type`` and ``as_role`` came in via
-        # the CLI / workflow context but were never propagated into the
-        # routing Blackboard, so RoutingAgent saw them as None.
         if context.event_type is not None:
             await bb.write("config", "event_type", context.event_type)
         if context.as_role is not None:
@@ -866,22 +748,12 @@ class WorkflowEngine:
                 "error": result.error or "Routing analysis failed",
             }
 
-        await self._cross_validate_results(context)
+        await self.cross_validate_results(context)
 
         return WorkflowEvent.ROUTING_DONE
     
-    async def _handle_joint_evidence(self, context):
-        """
-        New state: Run three-card joint evidence analysis (C1/C2/C3).
-        
-        This runs after routing analysis is complete and before LLM reasoning.
-        It computes the three-card evidence package:
-        - Card 1: Temporal alignment
-        - Card 2: Blast radius (prefix-level AS-path shift + victim traffic)
-        - Card 3: Falsification tree (alternative explanations)
-        
-        The joint tier (C1/C2/C3) is stored in context.joint_tier for report rendering.
-        """
+    async def handle_joint_evidence(self, context):
+        """New state: Run three-card joint evidence analysis (C1/C2/C3)."""
         try:
             from detectors.traffic.joint_evidence import analyse_joint_evidence
             from detectors.traffic.multi_scale_baseline import CausalCorrelationScorer
@@ -892,10 +764,6 @@ class WorkflowEngine:
             routing_events = []
             if context.routing_result and context.routing_result.get("success") is not False:
                 # annotation_package uses a nested format:
-                #   { "hijack": { "origin_hijacked": [...] }, "leak": {...}, "outage": {...} }
-                # Live routing analysis uses a flat format:
-                #   { "origin_hijacked": [...], "leak": {...}, "outage_analysis": {...} }
-                # Normalise both into the flat form.
                 rr = context.routing_result
                 hijack_section = rr.get("hijack") or {}   # annotation_package nested format
                 for key in ["origin_hijacked", "origin_hijacking", "forge_hijacked", "forge_hijacking"]:
@@ -960,7 +828,21 @@ class WorkflowEngine:
             logger.info(f"[JointEvidence] Found {len(routing_events)} routing events, {len(traffic_anomalies)} traffic anomalies")
 
             # Run the three-card joint evidence analysis
-            if routing_events or traffic_anomalies:
+            if self.ablate.get("joint_evidence"):
+                logger.info("[JointEvidence] ablated — skipping three-card joint evidence")
+                context.joint_tier = "INSUFFICIENT"
+                context.joint_score = 0.0
+                context.joint_evidence_cards = []
+                context.joint_rationale = "joint evidence ablated"
+                context.validation_notes.append({
+                    "case": "joint_evidence_ablated",
+                    "severity": "warning",
+                    "message": "Three-card joint evidence was ablated for this run",
+                })
+                self.record_stage_execution(
+                    context, "joint_evidence", ran=False,
+                    detail="ablated by BGP_TRACER_ABLATE_JOINT_EVIDENCE")
+            elif routing_events or traffic_anomalies:
                 # Pass the soft cluster window through so the temporal card
                 # can compute a ΔT entry even when `anomalies=[]` but the
                 # chart still shows a clear drop inside the analysis window.
@@ -1016,29 +898,78 @@ class WorkflowEngine:
                         ],
                     },
                 })
+                self.record_stage_execution(
+                    context, "joint_evidence", ran=True,
+                    detail=f"tier={context.joint_tier}")
             else:
                 logger.info("[JointEvidence] No routing events or traffic anomalies found, skipping joint analysis")
                 context.joint_tier = "INSUFFICIENT"
                 context.joint_score = 0.0
                 context.joint_evidence_cards = []
+                self.record_stage_execution(
+                    context, "joint_evidence", ran=False,
+                    detail="no routing events or traffic anomalies to fuse")
+
+            # ── Record the ruled-out alternatives as first-class records ──
+            try:
+                bb_joint = context.get_blackboard()
+                falsification = next(
+                    (c for c in (context.joint_evidence_cards or [])
+                     if c.get("name") == "falsification"),
+                    None,
+                )
+                for note in (falsification or {}).get("alternative_explanations") or []:
+                    if not note or note == "no alternative explanations identified":
+                        continue
+                    await bb_joint.add_alternative({
+                        "source": "JointEvidenceFalsification",
+                        "alternative": str(note),
+                        "summary": (
+                            f"Alternative explanation considered and discounted: {note}"
+                        ),
+                        "competes_with": "routing_caused_traffic_anomaly",
+                        "rejected_because": (
+                            f"Falsification card score "
+                            f"{(falsification or {}).get('score', 0)} with the "
+                            f"competing explanation noted but not established"
+                        ),
+                        "confidence": float((falsification or {}).get("score", 0.5) or 0.0),
+                        "derived_from": ["joint_evidence.falsification"],
+                    })
+            except (AttributeError) as exc:  # noqa: BLE001
+                logger.warning(f"[JointEvidence] failed to record alternatives: {exc}")
 
             # HCAF causal attribution (three innovation methods: MSCBD/CTPR/CIC)
             try:
-                hcaf_result = self.compute_hcaf_attribution(context)
-                if hcaf_result:
-                    context.hcaf_attribution = hcaf_result
-                    context.hcaf_attribution_status = "ok"
-                    logger.info(
-                        f"[HCAF] direction_val={hcaf_result['direction']}, "
-                        f"strength_val={hcaf_result['strength']}, "
-                        f"confidence={hcaf_result['confidence']:.0%}, "
-                        f"convergence={hcaf_result['convergence']:.0%}"
-                    )
+                if self.ablate.get("hcaf"):
+                    logger.info("[HCAF] ablated — skipping causal attribution")
+                    context.hcaf_attribution = {}
+                    context.hcaf_attribution_status = "ablated"
+                    self.record_stage_execution(
+                        context, "hcaf", ran=False,
+                        detail="ablated by BGP_TRACER_ABLATE_HCAF")
                 else:
-                    if context.hcaf_attribution_status not in ("ok",):
-                        context.hcaf_attribution_status = "skipped"
-                    logger.info(f"[HCAF] causal attribution produced no result (status={context.hcaf_attribution_status})")
-            except Exception as e:
+                    hcaf_result = self.compute_hcaf_attribution(context)
+                    if hcaf_result:
+                        context.hcaf_attribution = hcaf_result
+                        context.hcaf_attribution_status = "ok"
+                        self.record_stage_execution(
+                            context, "hcaf", ran=True,
+                            detail=f"direction={hcaf_result.get('direction')}")
+                        logger.info(
+                            f"[HCAF] direction_val={hcaf_result['direction']}, "
+                            f"strength_val={hcaf_result['strength']}, "
+                            f"confidence={hcaf_result['confidence']:.0%}, "
+                            f"convergence={hcaf_result['convergence']:.0%}"
+                        )
+                    else:
+                        if context.hcaf_attribution_status not in ("ok",):
+                            context.hcaf_attribution_status = "skipped"
+                        self.record_stage_execution(
+                            context, "hcaf", ran=False,
+                            detail="attribution produced no result")
+                        logger.info(f"[HCAF] causal attribution produced no result (status={context.hcaf_attribution_status})")
+            except (AttributeError) as e:
                 logger.warning(f"[HCAF] causal attribution failed in joint_evidence stage: {e}")
                 if context.hcaf_attribution_status not in ("ok",):
                     context.hcaf_attribution_status = "failed"
@@ -1055,7 +986,7 @@ class WorkflowEngine:
                 "message": f"Joint evidence analysis skipped: {e}",
             })
             # Do not return here - HCAF must run outside joint_evidence
-        except Exception as e:
+        except (AttributeError) as e:
             logger.error(f"[JointEvidence] Error running joint evidence analysis: {e}")
             context.validation_notes.append({
                 "case": "joint_evidence",
@@ -1081,14 +1012,14 @@ class WorkflowEngine:
                 if context.hcaf_attribution_status not in ("ok",):
                     context.hcaf_attribution_status = "skipped"
                 logger.info(f"[HCAF] causal attribution produced no result (status={context.hcaf_attribution_status})")
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"[HCAF] causal attribution failed after joint_evidence: {e}")
             if context.hcaf_attribution_status not in ("ok",):
                 context.hcaf_attribution_status = "failed"
 
         return WorkflowEvent.JOINT_EVIDENCE_COMPLETE
     
-    async def _cross_validate_results(self, context):
+    async def cross_validate_results(self, context):
         traffic_data_available = bool(
             context.traffic_result
             and context.traffic_result.get("data_available", context.traffic_result.get("success", False))
@@ -1105,15 +1036,15 @@ class WorkflowEngine:
                 len(rr.get(key) or hijack_section.get(key) or [])
                 for key in ("origin_hijacked", "forge_hijacked", "origin_hijacking", "forge_hijacking")
             )
-            routing_anomalies = rr.get("total_prefix_hijacks", hijack_events)
+            routing_anomalies = rr.get("total_prefix_hijacks") or hijack_events
             leak_section = rr.get("leak") or {}
             routing_anomalies += rr.get(
-                "leak_count", len(rr.get("route_leaks") or leak_section.get("route_leaks") or [])
-            )
+                "leak_count"
+            ) or len(rr.get("route_leaks") or leak_section.get("route_leaks") or [])
             outage = rr.get("outage_analysis") or rr.get("outage") or {}
-            routing_anomalies += int(
-                outage.get("is_outage_suspected", rr.get("outage_suspected", False))
-            )
+            # NOTE: ``is_outage_suspected`` / ``outage_suspected`` may be present
+            outage_flag = outage.get("is_outage_suspected", rr.get("outage_suspected", False))
+            routing_anomalies += int(bool(outage_flag))
 
         routing_ok = routing_anomalies == 0
 
@@ -1181,7 +1112,7 @@ class WorkflowEngine:
             context.causal_analysis = causal_result
             context.joint_alert = causal_result
 
-        evidence_chain = self.build_evidence_chain(context)
+        evidence_chain = await self.build_evidence_chain(context)
         if evidence_chain:
             context.evidence_chain = evidence_chain
 
@@ -1205,7 +1136,7 @@ class WorkflowEngine:
         def events_for(key):
             return rr.get(key) or hijack_section.get(key) or leak_section.get(key) or []
 
-        def _normalise_event(ev):
+        def normalise_event(ev):
             """Convert AnomalyDetail objects (or any dataclass) to dict.
             Several routing detector return lists of ``AnomalyDetail`` instances
             which are not JSON-serialisable and don't expose ``.get``. The rest
@@ -1221,7 +1152,7 @@ class WorkflowEngine:
         victim_asns: set = set()
         for key in ["origin_hijacked", "forge_hijacked", "origin_hijacking", "forge_hijacking"]:
             for ev in events_for(key):
-                ev = _normalise_event(ev)
+                ev = normalise_event(ev)
                 if key in ("origin_hijacked", "forge_hijacked"):
                     if ev.get("origin_as"):
                         victim_asns.add(str(ev["origin_as"]))
@@ -1241,9 +1172,6 @@ class WorkflowEngine:
         for key, role in event_roles.items():
             for event in events_for(key):
                 # `event` may be a dict OR an AnomalyDetail object (e.g. when
-                # the unified_result wrapper is in play).  Normalise to a dict
-                # so downstream code (event_copy, .get(...), etc.) works for
-                # both shapes.
                 if isinstance(event, dict):
                     event_copy = dict(event)
                 else:
@@ -1297,7 +1225,7 @@ class WorkflowEngine:
                 causal_evidence=causal_evidence,
             )
             return result
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"causal analysis computation failed: {e}")
             return None
 
@@ -1452,9 +1380,6 @@ class WorkflowEngine:
                 )
 
             # ── Observable routing signals for the confounder detector ─────
-            # BUG-FIX 2026-10-21: these were never populated, so the
-            # ConfounderDetector's five rule keys had no source and the
-            # whole channel was structurally empty.
             routing_context["has_routing_withdrawal"] = bool(
                 (routing_result.get("outage_analysis") or {}).get("is_outage_suspected")
                 or routing_result.get("outage_suspected")
@@ -1486,9 +1411,6 @@ class WorkflowEngine:
             if events_all:
                 first_event = events_all[0]
                 # Some detectors serialise events as strings (AnomalyDetail
-                # __repr__). Skip string-typed events when looking for
-                # structured metadata — HCAF only needs the event_type/as_path
-                # for routing context, and a stringified event carries neither.
                 first_event = next(
                     (e for e in events_all if isinstance(e, dict)),
                     {}
@@ -1553,9 +1475,6 @@ class WorkflowEngine:
                     traffic_context["traffic_drop_ratio"] = min(1.0, abs(drop_ratio_val) / 100.0)
 
         # ── routing_state: which ASes originate the affected prefixes ──────
-        # BUG-FIX 2026-10-21: this was hard-coded to {} and never populated,
-        # so every node in the propagation cascade reported has_route=False
-        # and the CIC counterfactual impact was structurally zero.
         prefix2as_file = None
         if isinstance(routing_result, dict):
             prefix2as_file = routing_result.get("prefix2as_file")
@@ -1571,7 +1490,14 @@ class WorkflowEngine:
         return routing_timeline, traffic_timeline, routing_context, traffic_context, topology_context
 
     def compute_hcaf_attribution(self, context):
-        """Run the HCAF causal attribution engine (MSCBD + CTPR + CIC + Granger) on the routing-traffic pair. Degrades to None on failure."""
+        """Attribute the direction of a routing/traffic pair with the AEA estimator.
+
+        The admissible edge attribution test is the authority for the
+        direction: it commits only when four vetoes pass and otherwise
+        returns the veto that failed.  The multi-channel synthesis is
+        retained as supporting evidence and is reported alongside the
+        veto record, but it does not decide the direction.
+        """
         routing_result = context.routing_result
         traffic_result = context.traffic_result
 
@@ -1581,15 +1507,15 @@ class WorkflowEngine:
             return None
 
         try:
-            from agents.causal_attribution import CausalAttributionEngine
+            from agents.aea_runtime import run_aea
         except ImportError as e:
-            logger.warning(f"[HCAF] causal_engine_import_failed: {e}")
+            logger.warning(f"[HCAF] aea_runtime_import_failed: {e}")
             context.hcaf_attribution_status = "failed"
             return None
 
         routing_timeline, traffic_timeline, routing_context, traffic_context, topology_context = self.build_hcaf_timelines(routing_result, traffic_result)
 
-        # Only skip HCAF when BOTH timelines are empty. Traffic-only or routing-only
+        # Only skip when BOTH timelines are empty. Traffic-only or routing-only
         # events still provide partial evidence that the LLM report can reason about.
         if not routing_timeline and not traffic_timeline:
             logger.info(f"[HCAF] insufficient_timeline_data: routing={len(routing_timeline)}, traffic={len(traffic_timeline)}; skipping")
@@ -1611,135 +1537,72 @@ class WorkflowEngine:
                 f"[HCAF] traffic_timeline(anomalies) empty; continuing with routing data only ({len(routing_timeline)} points){extra}"
             )
 
+        target_as_val = int(context.asn) if str(context.asn).isdigit() else None
+        window_start = aea_runtime_parse(context.start_time)
+        window_end = aea_runtime_parse(context.end_time)
+
         try:
-            hcaf_engine = CausalAttributionEngine()
-            target_as_val = int(context.asn) if str(context.asn).isdigit() else None
-
-            # ── AS topology for the cascade estimator (CIC) ──────────────────
-            # BUG-FIX 2026-10-21: the previous code built the "adjacency" map
-            # by iterating over `context.as_relationships`, whose keys are the
-            # *relation type names* ("providers", "peers", "customers"), not
-            # ASNs. The resulting map was therefore
-            #   {"providers": [...], "peers": [...], "customers": [...]}
-            # and `cic_propagate`'s `topology.get(origin_as, [])` lookup could
-            # never hit, so the cascade always contained exactly one node and
-            # the CIC evidence channel abstained on every event.
-            #
-            # The fix builds a genuine ASN -> neighbour map from the CAIDA
-            # as-rel snapshot, with each edge labelled by its commercial
-            # relationship (provider / peer / customer) so the cascade can
-            # weight propagation by relation rather than treating every hop
-            # as an undirected tie.
-            asrel_file = None
-            for src in (context.reasoning_result, context.routing_result):
-                if isinstance(src, dict) and src.get("as_rel_file"):
-                    asrel_file = src["as_rel_file"]
-                    break
-
-            if asrel_file:
-                from agents.coordination_utils import build_as_topology
-                topo = build_as_topology(context.asn, asrel_file, max_depth=2, max_nodes=300)
-                topology_context["adjacency"] = topo.get("adjacency", {})
-                topology_context["edge_types"] = topo.get("edge_types", {})
-                topology_context["topology_origin"] = topo.get("origin")
-                logger.info(
-                    f"[HCAF] AS topology: {topo.get('nodes', 0)} ASes discovered "
-                    f"({topo.get('expanded_nodes', 0)} expanded, depth<=2) "
-                    f"from {asrel_file}"
-                )
-            else:
-                logger.info("[HCAF] no AS-relationship file available; cascade estimator has no topology")
-
-            # ── Content / CDN origin classification ──────────────────────────
-            # Feeds the ``cdn_scenario`` confounder: a content network's
-            # traffic can shift for reasons unrelated to BGP, so a
-            # routing->traffic attribution on a content prefix needs the
-            # caveat.
-            asorg_file = None
-            for src in (context.reasoning_result, context.routing_result):
-                if isinstance(src, dict) and src.get("asorg_file"):
-                    asorg_file = src["asorg_file"]
-                    break
-            if asorg_file and topology_context.get("routing_state"):
-                try:
-                    from agents.coordination_utils import classify_content_asns
-                    content = classify_content_asns(
-                        topology_context["routing_state"].keys(), asorg_file
-                    )
-                    topology_context["content_origins"] = sorted(content)
-                    if content:
-                        logger.info(
-                            f"[HCAF] content/CDN origins among affected prefixes: {content}"
-                        )
-                except Exception as exc:  # noqa: BLE001 - degrade, never crash
-                    logger.warning(f"[HCAF] content-origin classification failed: {exc}")
-
-            # BUG-FIX 2026-10-01: the workflow engine historically used
-            # Chinese method/attribute names (the CJK engine/analysis accessors)
-            # that never existed on ``CausalAttributionEngine``. The result was
-            # that ``compute_hcaf_attribution`` raised AttributeError on every
-            # invocation and ``context.hcaf_attribution`` stayed None, which
-            # propagated through to ``compute_top_cause`` and made the hard
-            # direction gating fall back to the signal-based path. Call the
-            # real English API here, then map the CausalAttributionResult
-            # fields to the dict shape downstream consumers expect.
-            #
-            # NOTE: this line is load-bearing. A project-wide CJK->ASCII rename
-            # on 2026-10-05 turned the engine reference back into its CJK form and
-            # re-broke the AttributeError this fix had eliminated. Do not let a
-            # bulk rename touch it.
-            res = hcaf_engine.analyze(
-                routing_timeline=routing_timeline,
-                traffic_timeline=traffic_timeline,
+            verdict, routing_series, traffic_series = run_aea(
+                routing_timeline,
+                traffic_timeline,
                 routing_context=routing_context,
                 traffic_context=traffic_context,
-                topology_context=topology_context,
-                target_as=target_as_val,
+                window_start=window_start,
+                window_end=window_end,
             )
-
-            # CausalAttributionResult exposes English attributes; map them
-            # to the dict shape the rest of the system (and existing
-            # serialised JSONL rows in results/eval/hcaf_vs_baselines_*.jsonl)
-            # expects.
-            direction_val = getattr(res, "direction", "unknown")
-            if hasattr(direction_val, "value"):
-                direction_val = direction_val.value
-            strength_raw = getattr(res, "strength", "unknown")
-            if hasattr(strength_raw, "value"):
-                strength_val = strength_raw.value
-            else:
-                strength_val = str(strength_raw)
-            return {
-                "direction": direction_val,
-                "strength": strength_val,
-                "strength_score": float(getattr(res, "strength_score", 0.0) or 0.0),
-                "confidence": float(getattr(res, "confidence", 0.0) or 0.0),
-                "is_causal": bool(getattr(res, "is_causal", False)),
-                "convergence": float(getattr(res, "convergence", 0.0) or 0.0),
-                "routing_causes_traffic": direction_val == "routing_to_traffic",
-                "traffic_causes_routing": direction_val == "traffic_to_routing",
-                "explanation": getattr(res, "explanation", "") or getattr(res, "explanation_text", ""),
-                "limitations": getattr(res, "limitations", "") or "",
-                "novel_findings": [
-                    {
-                        "method": getattr(f, "method_name", "unknown"),
-                        "direction": getattr(f, "direction", "unknown"),
-                        "strength": float(getattr(f, "strength", 0.0) or 0.0),
-                        "p_value": float(getattr(f, "p_value", 1.0) or 1.0),
-                        "significant": bool(getattr(f, "significant", False)),
-                        "description": getattr(f, "description", ""),
-                    }
-                    for f in (getattr(res, "novel_findings", []) or getattr(res, "findings", []) or [])
-                    if f is not None
-                ],
-                "confounders": getattr(res, "confounders", []) or [],
-                "evidence_support": getattr(res, "evidence_support", {}) or {},
-                "target_as": target_as_val,
-            }
-        except Exception as e:
-            logger.warning(f"[HCAF] causal_engine_call_failed: {e}")
+        except (AttributeError, TypeError, ValueError) as e:
+            logger.warning(f"[HCAF] aea_call_failed: {e}")
             context.hcaf_attribution_status = "failed"
             return None
+
+        direction_val = verdict.direction if verdict.committed else "unknown"
+        logger.info(
+            f"[AEA] direction={direction_val} reason={verdict.reason} "
+            f"vetoes={verdict.vetoes} p={verdict.p_value:.4f} "
+            f"placebos={verdict.n_placebos} lag={verdict.lag}"
+        )
+
+        return {
+            "direction": direction_val,
+            "committed": verdict.committed,
+            "reason": verdict.reason,
+            "vetoes": dict(verdict.vetoes),
+            "tau_routing": verdict.tau_routing,
+            "tau_traffic": verdict.tau_traffic,
+            "lag": verdict.lag,
+            "effect": verdict.effect,
+            "p_value": verdict.p_value,
+            "n_placebos": verdict.n_placebos,
+            "horizon": verdict.horizon,
+            "mechanism": verdict.mechanism,
+            "tests": verdict.tests,
+            "n_buckets": min(len(routing_series), len(traffic_series)),
+            "strength": "strong" if verdict.committed else "none",
+            "strength_score": 1.0 if verdict.committed else 0.0,
+            "confidence": 1.0 if verdict.committed else 0.0,
+            "is_causal": verdict.committed,
+            "convergence": 1.0 if verdict.committed else 0.0,
+            "routing_causes_traffic": direction_val == "routing_to_traffic",
+            "traffic_causes_routing": direction_val == "traffic_to_routing",
+            "explanation": aea_explanation(verdict),
+            "limitations": aea_limitations(verdict),
+            "novel_findings": [],
+            "confounders": [],
+            "evidence_support": {
+                "method": "aea_veto_test",
+                "vetoes": dict(verdict.vetoes),
+                "reason": verdict.reason,
+                "p_value": verdict.p_value,
+                "n_placebos": verdict.n_placebos,
+                "lag": verdict.lag,
+                "tau_routing": verdict.tau_routing,
+                "tau_traffic": verdict.tau_traffic,
+                "horizon": verdict.horizon,
+                "mechanism": verdict.mechanism,
+                "tests": verdict.tests,
+            },
+            "target_as": target_as_val,
+        }
 
     @staticmethod
     def collect_causal_evidence(routing_result, traffic_result):
@@ -1756,10 +1619,11 @@ class WorkflowEngine:
         }
         return {name: value for name, value in raw_evidence.items() if name in allowed}
 
-    def build_evidence_chain(self, context):
+    async def build_evidence_chain(self, context):
         """Run EvidenceChainBuilder on the traffic/routing/bayesian/causal inputs and stash the chain on the context."""
         try:
             builder = EvidenceChainBuilder()
+            agent_judgement = self.extract_agent_judgement(context)
             chain = builder.build(
                 traffic_result=context.traffic_result or {},
                 routing_result=context.routing_result or {},
@@ -1767,34 +1631,192 @@ class WorkflowEngine:
                 bayesian_result=context.bayesian_result,
                 asn=str(context.asn),
                 time_range=f"{context.start_time} to {context.end_time}",
+                agent_judgement=agent_judgement,
             )
             chain_dict = builder.to_dict(chain)
             logger.info(f"evidence chain built: verdict={chain.verdict}, confidence={chain.confidence:.1%}")
+            arb = chain.arbitration or {}
+            if arb.get("agent_overrode_rule"):
+                logger.info(
+                    f"[Arbitration] agent overrode the detector rule: "
+                    f"{arb.get('rule_verdict')} -> {arb.get('agent_proposed_verdict')} "
+                    f"(confidence {arb.get('agent_confidence'):.2f})"
+                )
+            # Enumerate the verdict classes this decision rejected, and
+            await self.record_rejected_verdicts(context, builder, chain.verdict)
+            await self.record_arbitration(context, arb)
             return chain_dict
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"evidence chain build failed: {e}")
             return None
+
+    def extract_agent_judgement(self, context) -> dict:
+        """Pull the reasoning agent's structured proposal out of the run.
+
+        The reasoning agent classifies the incident and scores its own
+        confidence.  Those are the agent's own opinion, so they are what
+        the verdict arbitration is allowed to consider — but the
+        arbitration still applies a confidence floor and only accepts a
+        proposal expressed in the five-class vocabulary.
+        """
+        reasoning = context.reasoning_result or {}
+        if not isinstance(reasoning, dict):
+            return {}
+
+        classification = reasoning.get("llm_classification") or {}
+        if not isinstance(classification, dict):
+            classification = {}
+        if classification.get("source") != "llm":
+            return {}
+
+        final_classification = reasoning.get("final_classification") or {}
+        if isinstance(final_classification, dict):
+            integrated = final_classification.get("integrated_findings")
+            if isinstance(integrated, dict) and integrated.get("incident_type"):
+                classification = {
+                    **classification,
+                    "incident_type": integrated.get("incident_type"),
+                }
+
+        verdict = classification.get("incident_type") or ""
+        if not verdict:
+            return {}
+        return {
+            "verdict": verdict,
+            "confidence": classification.get("confidence", 0.0),
+            "cause": classification.get("cause") or classification.get("incident_type") or "",
+            "reasoning": classification.get("reasoning") or "",
+            "sub_type": classification.get("sub_type") or "",
+            "alternative_types": classification.get("alternative_types") or [],
+        }
+
+    async def record_arbitration(self, context, arbitration: dict) -> None:
+        """Write the rule/agent arbitration onto the blackboard."""
+        if not arbitration:
+            return
+        bb = context.get_blackboard()
+        await bb.write("verdict", "arbitration", arbitration)
+        if arbitration.get("agent_overrode_rule"):
+            await bb.add_alternative({
+                "source": "EvidenceChainBuilder",
+                "kind": "rejected_verdict",
+                "alternative": arbitration.get("rule_verdict"),
+                "reason": (
+                    f"detector rule proposed {arbitration.get('rule_verdict')}; "
+                    f"reasoning agent proposed "
+                    f"{arbitration.get('agent_proposed_verdict')} at confidence "
+                    f"{arbitration.get('agent_confidence')}"
+                ),
+            })
+
+    async def record_rejected_verdicts(self, context, builder, chosen_verdict: str) -> None:
+        """Write the rejected verdict classes to the board as alternatives."""
+        try:
+            rejected = builder.enumerate_rejected_verdicts(
+                traffic_result=context.traffic_result or {},
+                routing_result=context.routing_result or {},
+                causal_analysis=context.causal_analysis,
+                bayesian_result=context.bayesian_result,
+                chosen_verdict=chosen_verdict,
+            )
+            if not rejected:
+                return
+            bb = context.get_blackboard()
+            for alternative, reason in rejected:
+                await bb.add_alternative({
+                    "source": "EvidenceChainBuilder",
+                    "alternative": alternative,
+                    "summary": f"Competing verdict class rejected: {alternative}",
+                    "competes_with": chosen_verdict,
+                    "rejected_because": reason,
+                    "confidence": 1.0,
+                    "derived_from": ["evidence_chain.verdict"],
+                })
+        except (AttributeError) as exc:  # noqa: BLE001
+            logger.warning(f"[Workflow] failed to record rejected verdicts: {exc}")
 
     # ── Skip-reasoning policy ─────────────────────────────────────────────
     _TIER_ORDER = {"INSUFFICIENT": 0, "C1": 1, "C2": 2, "C3": 3}
 
-    def should_skip_reasoning(self, context):
+    def record_stage_execution(self, context, stage: str, *, ran: bool,
+                                detail: str = ""):
+        """Record that a coordination stage did or did not run.
+
+        The component ablation is a claim about attribution, and a
+        claim that is not checked is not a measurement.  This writes
+        the run's own account of which stages executed, so the
+        evaluation can compare the arms against it: an arm that
+        disabled one stage but also skipped another would show up as
+        a mismatch rather than as a larger delta.
         """
-        Whether to short-circuit the reasoning stage.
+        record = context.stage_execution
+        if not isinstance(record, dict):  # pragma: no cover - defensive
+            return
+        entry = record.get(stage) or {}
+        entry["ran"] = bool(ran)
+        if detail:
+            entry["detail"] = str(detail)
+        record[stage] = entry
 
-        Reasoning is skipped only when:
-          1. ``skip_unnecessary_analysis`` is enabled (env-controlled), AND
-          2. No traffic/routing anomalies were detected, AND
-          3. HCAF tier is below the configured minimum OR HCAF score is below
-             the configured minimum.
+    def should_skip_reasoning(self, context):
+        """Whether to short-circuit the reasoning stage.
 
-        This avoids the previous bug where ``HCAF tier=C1 score=0.86`` cases
-        (e.g. AS12479) were still skipped and produced empty evidence boards.
+        The skip policy exists to avoid paying for reasoning when the
+        data plainly shows there is nothing to reason about.  It is a
+        *cost* optimisation, and it is not part of what any ablation
+        arm measures.
+
+        A component ablation disables exactly one stage so that the
+        delta against the full agent is attributable to that stage
+        alone.  The joint-evidence tier is the gate below, and the tier
+        is an *output* of the joint-evidence stage: ablating that stage
+        drops the tier to INSUFFICIENT, and using that as grounds to
+        skip the reasoning stage would make the measured delta belong
+        to two stages rather than one.  Using a stage's own absence as
+        evidence against the next stage is never sound.
+
+        So during an ablation run the gate is suspended entirely.  Every
+        stage that is not itself ablated runs, which is what makes the
+        arms comparable to each other: the "no joint evidence" arm then
+        differs from the full agent only in the joint-evidence stage,
+        and the "no reasoning" arm only in the reasoning stage.
+
+        The decision is recorded in the validation notes so that a run
+        can be audited afterwards rather than the property being taken
+        on trust.
         """
         if not self.skip_unnecessary_analysis:
             return False
 
         if context.anomalies_detected:
+            return False
+
+        # Any active ablation suspends the cost gate.  This is broader
+        # than the joint-evidence case on purpose: the gate reads the
+        # joint tier and the HCAF score, and *any* ablation arm must
+        # run the stages it did not disable, whatever the tier happens
+        # to be.
+        #
+        # The campaign switch extends the same treatment to the "full"
+        # baseline arm.  The single-variable property belongs to the
+        # comparison, not to one arm: if the baseline could skip
+        # reasoning while an ablated arm could not, the measured delta
+        # would belong to the stage under test *and* to the gate, which
+        # is the same confound this gate was the source of in the first
+        # place.  Every arm therefore runs every stage it did not
+        # disable.
+        active = [name for name, off in (self.ablate or {}).items() if off]
+        if active or ablation_campaign_active():
+            context.validation_notes.append({
+                "case": "reasoning_not_skipped",
+                "severity": "info",
+                "message": (
+                    f"Component ablation active ({', '.join(sorted(active)) or 'full baseline'}): "
+                    "the skip-reasoning cost gate is suspended so that every "
+                    "stage that is not itself ablated still runs. This keeps "
+                    "the arm single-variable."
+                ),
+            })
             return False
 
         tier = getattr(context, "joint_tier", None) or "INSUFFICIENT"
@@ -1831,37 +1853,52 @@ class WorkflowEngine:
         })
         return True
 
-    async def _handle_reasoning(self, context):
+    async def handle_reasoning(self, context):
         from agents.reasoning_agent import run_reasoning_agent
-        from agents.core import Blackboard
         from agents.hypothesis_manager import HypothesisAgent
 
         if self.should_skip_reasoning(context):
             skip_reason = context.validation_notes[-1].get("message", "skipped") if context.validation_notes else "no_anomalies_detected"
             context.reasoning_result = {"success": True, "skipped": True, "reason": skip_reason}
+            self.record_stage_execution(
+                context, "reasoning", ran=False, detail=skip_reason)
             return WorkflowEvent.REASONING_COMPLETE
 
         try:
             reasoning_start = context.start_time
             reasoning_end = context.end_time
 
-            # pass pre-generated claims to avoid duplicate HypothesisAgent work
-            context.reasoning_result = run_reasoning_agent(
-                asn=context.asn,
-                start_time=reasoning_start,
-                end_time=reasoning_end,
-                pre_computed_routing=context.routing_result,
-                pre_computed_traffic=context.traffic_result,
-                buffer_hours=0,
-                workflow_claims=None,  # Will be populated after HypothesisAgent
-                run_id=context.message_bus_run_id or "",
-            )
-
-            # ── Shared Blackboard: use existing (enhanced) or create new ──
-            if context.enhanced and context.shared_blackboard:
-                bb = context.shared_blackboard
+            if self.ablate.get("reasoning"):
+                logger.info("[Reasoning] ablated — skipping multi-round reasoning")
+                context.reasoning_result = {
+                    "success": True,
+                    "skipped": True,
+                    "reason": "reasoning ablated",
+                    "rounds_performed": 0,
+                    "reasoning_trace": ["Reasoning stage ablated for component ablation."],
+                }
+                self.record_stage_execution(
+                    context, "reasoning", ran=False,
+                    detail="ablated by BGP_TRACER_ABLATE_REASONING")
             else:
-                bb = Blackboard()
+                # pass pre-generated claims to avoid duplicate HypothesisAgent work
+                context.reasoning_result = run_reasoning_agent(
+                    asn=context.asn,
+                    start_time=reasoning_start,
+                    end_time=reasoning_end,
+                    pre_computed_routing=context.routing_result,
+                    pre_computed_traffic=context.traffic_result,
+                    buffer_hours=0,
+                    workflow_claims=None,  # Will be populated after HypothesisAgent
+                    run_id=context.message_bus_run_id or "",
+                )
+                self.record_stage_execution(
+                    context, "reasoning", ran=True,
+                    detail=f"rounds={context.reasoning_result.get('rounds_performed')}"
+                           if isinstance(context.reasoning_result, dict) else "ran")
+
+            # ── Shared Blackboard: one board for the whole run ──
+            bb = context.get_blackboard()
 
             await bb.write("traffic", "result", context.traffic_result or {})
             await bb.write("routing", "result", context.routing_result or {})
@@ -1890,105 +1927,85 @@ class WorkflowEngine:
                     "tags": ["routing", "workflow"],
                 })
 
-            # ── Hypothesis generation (always needed) ──
-            hypothesis_agent = HypothesisAgent(bb)
-            await hypothesis_agent.start()
-            hyp_result = await hypothesis_agent.step()
-            claims = await bb.read("diagnosis", "claims", []) or []
+            # ── Hypothesis generation ──
+            if self.ablate.get("hypothesis"):
+                logger.info("[HypothesisAgent] ablated — skipping hypothesis generation")
+                claims = []
+                self.record_stage_execution(
+                    context, "hypothesis", ran=False,
+                    detail="ablated by BGP_TRACER_ABLATE_HYPOTHESIS")
+            else:
+                hypothesis_agent = HypothesisAgent(bb)
+                await hypothesis_agent.start()
+                hyp_result = await hypothesis_agent.step()
+                claims = await bb.read("diagnosis", "claims", []) or []
+                self.record_stage_execution(
+                    context, "hypothesis", ran=True,
+                    detail=f"claims={len(claims or [])}")
+
+            # Promote the generated hypotheses into the typed claim records
+            for claim in claims:
+                if not isinstance(claim, dict):
+                    claim = getattr(claim, "__dict__", None) or {}
+                if not claim:
+                    continue
+                try:
+                    await bb.add_claim({
+                        "source": "HypothesisAgent",
+                        "kind": claim.get("kind") or "hypothesis",
+                        "summary": claim.get("summary") or "",
+                        "confidence": float(claim.get("confidence", 0.5) or 0.0),
+                        "status": claim.get("status") or "proposed",
+                        "evidence_ids": list(claim.get("evidence_ids") or []),
+                        "supports": list(claim.get("supporting_evidence") or []),
+                        "contradicts": list(claim.get("contradicting_evidence") or []),
+                        "assumptions": list(claim.get("assumptions") or []),
+                        "uncertainty": list(claim.get("uncertainty") or []),
+                        "derived_from": list(claim.get("derived_from") or []),
+                    })
+                except (AttributeError) as exc:  # noqa: BLE001
+                    logger.warning(f"[Workflow] failed to promote hypothesis to claim: {exc}")
+
+            # Persist the board onto the context. Without this the local
+            board = await bb.read_evidence_board()
+            context.evidence_records = board.get("observations", []) or []
+            context.diagnosis_claims = claims
+            context.verification_records = board.get("verdicts", []) or []
+            context.contradictions = board.get("challenges", []) or []
+            context.evidence_alternatives = board.get("alternatives", []) or []
+            context.evidence_gaps = board.get("gaps", []) or []
+
+            # Rebuild the evidence chain now that the reasoning agent has
+            # judged.  The chain was first built in the joint-evidence
+            # stage, before any agent had an opinion; this second build
+            # lets the agent's structured proposal arbitrate against the
+            # detector rule, and records the disagreement either way.
+            rebuilt = await self.build_evidence_chain(context)
+            if rebuilt:
+                context.evidence_chain = rebuilt
 
             # ── Enhanced mode: LLM debate + online evaluation + reactive decisions ──
-            # The debate/reactive-decision path was deleted 2026-09-29. What
-            # remains above (reasoning_result + generated claims) is what the
-            # downstream VALIDATION state consumes, so the stage is complete.
-            #
-            # BUG FIX 2026-10-05: the success path used to fall out of the
-            # `try` without returning, so this handler returned None. The
-            # runner does `next_event = await handler(context)` and then
-            # `get_next_state(REASONING, None)`, which found no transition and
-            # returned `current` -- i.e. REASONING again. Every enhanced /
-            # traffic_first run spun in the REASONING state until the global
-            # workflow timeout fired and forced report generation, so the
-            # workflow burned its entire time budget and the run was recorded
-            # as a timeout rather than completing. Returning the event is what
-            # actually advances REASONING -> VALIDATION.
             return WorkflowEvent.REASONING_COMPLETE
         except Exception as e:
             logger.error(f"Reasoning failed: {e}")
             raise RetryableError(f"Reasoning error: {e}")
 
-    def apply_reasoning_causal_evidence(self, context):
-        """Re-score claims after independently supplied verification arrives in reasoning."""
-        evidence = context.reasoning_result.get("causal_evidence")
-        if not isinstance(evidence, dict):
-            return
-        traffic = dict(context.traffic_result or {})
-        # Keep provenance supplied by a data connector or operator record separate
-        # from model-generated classifications and correlation calculations.
-        traffic["causal_evidence"] = evidence
-        context.traffic_result = traffic
-        refreshed = self.compute_causal_analysis(context)
-        if refreshed:
-            context.causal_analysis = refreshed
-            context.joint_alert = refreshed
-            context.evidence_chain = self.build_evidence_chain(context)
-            context.reasoning_result["causal_analysis"] = refreshed
-
-    async def _run_legacy_diagnosis_pipeline(self, bb, context):
-        """
-        Legacy diagnosis pipeline (used when enhanced mode debate fails or is disabled).
-
-        Reads claims generated by HypothesisAgent from Blackboard and surfaces them
-        as the diagnosis result. If no claims exist, falls back to the routing result
-        so the report can still render a defensible conclusion.
-        """
-        claims = await bb.read("diagnosis", "claims", []) or []
-        if claims:
-            top = max(claims, key=lambda c: c.get("confidence", 0) if isinstance(c, dict) else 0)
-            context.diagnosis_result = {
-                "claim_id": top.get("id"),
-                "kind": top.get("kind"),
-                "summary": top.get("summary"),
-                "confidence": top.get("confidence"),
-            }
-            context.verification_result = {"source": "HypothesisAgent", "claim_count": len(claims)}
-        else:
-            # No claims produced — synthesise a minimal diagnosis from routing data
-            rr = context.routing_result or {}
-            hijack_count = (
-                len(rr.get("origin_hijacked") or [])
-                + len(rr.get("forge_hijacked") or [])
-                + len(rr.get("origin_hijacking") or [])
-                + len(rr.get("forge_hijacking") or [])
-            )
-            leak_count = len(rr.get("route_leaks") or [])
-            context.diagnosis_result = {
-                "claim_id": "auto",
-                "kind": "origin_hijack" if hijack_count else ("route_leak" if leak_count else "unknown"),
-                "summary": f"Detected {hijack_count} hijack events, {leak_count} route leaks from routing analysis.",
-                "confidence": 0.5,
-            }
-            context.verification_result = {"source": "routing_fallback", "claim_count": 0}
-
-    
-    async def _handle_validation(self, context):
+    async def handle_validation(self, context):
         quality_score = self.calculate_quality_score(context)
         context.confidence_score = quality_score
         context.data_quality = self.assess_data_quality(context)
+
+        # ── Record the missing / degraded inputs as first-class records ──
+        try:
+            await self.record_evidence_gaps(context, quality_score)
+        except (AttributeError) as exc:  # noqa: BLE001
+            logger.warning(f"[Validation] failed to record evidence gaps: {exc}")
+
         # Victim traffic is evidence for the final report, so collect it
-        # before report generation regardless of mode. Bug fix (2026-09-13):
-        # the previous implementation required ``context.shared_blackboard``
-        # (which is only created in enhanced mode), so non-enhanced runs
-        # silently dropped the victim-traffic evidence path and the report
-        # always showed an empty victim_traffic_results / prefix_traffic_results.
-        bb_for_victim = context.shared_blackboard
-        if bb_for_victim is None:
-            # Synthesise a Blackboard for victim-traffic writes only; the
-            # ReportAgent will read from the real one in _handle_report_generation.
-            from agents.core import Blackboard as _BB
-            bb_for_victim = _BB()
+        bb_for_victim = context.get_blackboard()
         if context.victim_asns:
             await bb_for_victim.write("routing", "victim_asns", context.victim_asns)
-            await self._fetch_victim_traffic(context, bb_for_victim)
+            await self.fetch_victim_traffic(context, bb_for_victim)
         if quality_score < 0.5:
             context.validation_notes.append({
                 "case": "low_data_quality",
@@ -2000,12 +2017,155 @@ class WorkflowEngine:
         # must be produced so operators can distinguish it from a pipeline error.
         return WorkflowEvent.VALIDATION_PASSED
 
-    async def _fetch_victim_traffic(self, context, bb):
-        """
-        Fetch traffic data for victim ASes discovered from routing events.
+    async def record_evidence_gaps(self, context, quality_score: float) -> None:
+        """Write the missing / degraded inputs to the board as typed gaps."""
+        bb = context.get_blackboard()
+        traffic = context.traffic_result or {}
+        routing = context.routing_result or {}
+
+        def unavailable(result: dict) -> str:
+            if not result:
+                return "missing"
+            if result.get("data_available") is False:
+                return "missing"
+            if result.get("success") is False:
+                return "degraded"
+            return ""
+
+        traffic_state = unavailable(traffic)
+        if traffic_state:
+            await bb.add_gap({
+                "source": "WorkflowEngine",
+                "kind": "traffic_data_unavailable",
+                "summary": (
+                    f"Traffic evidence unavailable ({traffic.get('no_data_reason') or traffic.get('error') or 'no data'})"
+                ),
+                "severity": traffic_state,
+                "impact": (
+                    "The traffic side of the correlation is unobserved; a "
+                    "routing-only verdict cannot be distinguished from a "
+                    "routing-and-traffic verdict."
+                ),
+                "confidence": 1.0,
+                "derived_from": ["traffic.result"],
+            })
+
+        routing_state = unavailable(routing)
+        if routing_state:
+            await bb.add_gap({
+                "source": "WorkflowEngine",
+                "kind": "routing_data_unavailable",
+                "summary": (
+                    f"Routing evidence unavailable ({routing.get('no_data_reason') or routing.get('error') or 'no data'})"
+                ),
+                "severity": routing_state,
+                "impact": (
+                    "The routing side of the correlation is unobserved; a "
+                    "traffic-only anomaly cannot be attributed to a BGP cause."
+                ),
+                "confidence": 1.0,
+                "derived_from": ["routing.result"],
+            })
+
+        # A cross-layer mismatch is a gap in the *correlation* itself: one
+        # side fired and the other did not, so the pair cannot support a
+        # causal reading in either direction.
+        traffic_anomalies = bool(
+            traffic.get("anomalies_detected")
+            or traffic.get("anomaly_count")
+            or traffic.get("anomalies")
+        )
+        routing_anomalies = bool(
+            routing.get("origin_hijacked") or routing.get("origin_hijacking")
+            or routing.get("forge_hijacked") or routing.get("forge_hijacking")
+            or routing.get("route_leaks") or routing.get("anomaly_count")
+        )
+
+        # The leak detector saturates on this corpus: it reports a truncated
+        # result set for most windows, and a truncated leak count carries no
+        # information about *which* prefixes were leaked.  A downstream reader
+        # of the board would otherwise take the leak count at face value, so
+        # the saturation is recorded as a first-class degraded input.
+        if routing.get("leak_results_truncated"):
+            await bb.add_gap({
+                "source": "WorkflowEngine",
+                "kind": "leak_detector_saturated",
+                "summary": (
+                    "Route-leak detection hit the detector's result limit; the "
+                    "reported leak count is a floor, not a total."
+                ),
+                "severity": "degraded",
+                "impact": (
+                    "The leak count cannot support a route-leak conclusion on "
+                    "its own, because the detector ran out of room before it "
+                    "ran out of leaks."
+                ),
+                "confidence": 1.0,
+                "derived_from": ["routing.result"],
+            })
+        if routing.get("leak_analysis_skipped"):
+            await bb.add_gap({
+                "source": "WorkflowEngine",
+                "kind": "leak_analysis_not_run",
+                "summary": "Route-leak detection did not run for this window.",
+                "severity": "missing",
+                "impact": (
+                    "No route-leak evidence exists for this window; the "
+                    "absence of a leak finding is not evidence of no leak."
+                ),
+                "confidence": 1.0,
+                "derived_from": ["routing.result"],
+            })
+
+        if traffic_anomalies != routing_anomalies:
+            await bb.add_gap({
+                "source": "WorkflowEngine",
+                "kind": "cross_layer_mismatch",
+                "summary": (
+                    ("Traffic anomalies present without a routing cause"
+                     if traffic_anomalies else
+                     "Routing anomalies present without a measurable traffic effect")
+                ),
+                "severity": "degraded",
+                "impact": (
+                    "One layer of the correlation is silent, so the direction "
+                    "of causation is not established by this evidence."
+                ),
+                "confidence": 0.8,
+                "derived_from": ["traffic.result", "routing.result"],
+            })
+
+        if quality_score < 0.5:
+            await bb.add_gap({
+                "source": "WorkflowEngine",
+                "kind": "low_evidence_completeness",
+                "summary": (
+                    f"Evidence completeness score {quality_score:.2f} is below the 0.50 threshold"
+                ),
+                "severity": "degraded",
+                "impact": "The verdict rests on partial evidence and should be treated as provisional.",
+                "confidence": 1.0,
+                "derived_from": ["validation.quality_score"],
+            })
+
+        # A falsification card that found no alternative explanation is not
+        # a gap; but a *failed* causal attribution is, because it removes
+        # the directional reading of the evidence.
+        if getattr(context, "hcaf_attribution_status", "") == "failed":
+            await bb.add_gap({
+                "source": "WorkflowEngine",
+                "kind": "causal_attribution_unavailable",
+                "summary": "Causal attribution did not produce a result for this window.",
+                "severity": "degraded",
+                "impact": "The direction of causation between routing and traffic is not established.",
+                "confidence": 1.0,
+                "derived_from": ["hcaf_attribution_status"],
+            })
+
+    async def fetch_victim_traffic(self, context, bb):
+        """Fetch traffic data for victim ASes discovered from routing events.
         Writes results to blackboard under 'routing' section.
-        Non-blocking (fire-and-forget from caller).
-        """
+        Non-blocking (fire-and-forget from caller)."""
         from agents.traffic_agent import run_traffic_agent
         try:
             start = context.start_time
@@ -2021,24 +2181,34 @@ class WorkflowEngine:
                         run_traffic_agent, asn=vas, start_time=start, end_time=end
                     )
                     return vas, result if isinstance(result, dict) else {"success": False}
-                except Exception as exc:
+                except (ValueError) as exc:
                     return vas, {"success": False, "data_available": False, "error": str(exc)}
 
             pairs = await asyncio.gather(*(fetch(vas) for vas in victim_asns))
             results = dict(pairs)
             await bb.write("routing", "victim_traffic_results", results)
             logger.info(f"[workflow] Fetched victim traffic for {len(results)} ASes")
-        except Exception as exc:
+        except (AttributeError) as exc:
             logger.warning(f"[workflow] Victim traffic fetch failed: {exc}")
     
-    async def _handle_data_enrichment(self, context):
+    async def handle_data_enrichment(self, context):
         """Enrich context with additional data (org info, relationships, ThreatIntel, etc.)."""
         from agents.coordination_utils import (
             lookup_org_info,
             query_as_relationships,
             query_as_prefixes
         )
-        from tools.tool_implementations import _lookup_as_threat_intel
+        from tools.tool_implementations import lookup_as_threat_intel
+
+        if self.ablate.get("enrichment"):
+            logger.info("[Enrichment] ablated — skipping auxiliary enrichment")
+            context.org_info = None
+            context.as_relationships = None
+            context.as_prefixes = None
+            self.record_stage_execution(
+                context, "enrichment", ran=False,
+                detail="ablated by BGP_TRACER_ABLATE_ENRICHMENT")
+            return WorkflowEvent.DATA_COLLECTED
         
         # Load data files from reasoning result AND routing result if available
         asrel_file = None
@@ -2075,7 +2245,7 @@ class WorkflowEngine:
         rr = context.routing_result or {}
         hijack_section = rr.get("hijack") or {}
 
-        def _safe_getattr(obj, attr, default=None):
+        def safe_getattr(obj, attr, default=None):
             """Access dict key or object attribute, returning default on failure."""
             if isinstance(obj, dict):
                 return obj.get(attr, default)
@@ -2083,17 +2253,17 @@ class WorkflowEngine:
 
         if rr:
             for ev in (rr.get("origin_hijacked") or hijack_section.get("origin_hijacked") or []):
-                if _safe_getattr(ev, "hijacker_as"):
-                    attacker_asn_for_intel = str(_safe_getattr(ev, "hijacker_as") or _safe_getattr(ev, "hijacker_asn"))
+                if safe_getattr(ev, "hijacker_as"):
+                    attacker_asn_for_intel = str(safe_getattr(ev, "hijacker_as") or safe_getattr(ev, "hijacker_asn"))
                     break
             if not attacker_asn_for_intel:
                 for ev in (rr.get("origin_hijacking") or hijack_section.get("origin_hijacking") or []):
-                    if _safe_getattr(ev, "origin_as"):
-                        attacker_asn_for_intel = str(_safe_getattr(ev, "origin_as"))
+                    if safe_getattr(ev, "origin_as"):
+                        attacker_asn_for_intel = str(safe_getattr(ev, "origin_as"))
                         break
             if attacker_asn_for_intel:
                 try:
-                    threat_intel_result = await _lookup_as_threat_intel(
+                    threat_intel_result = await lookup_as_threat_intel(
                         {
                             "attacker_asn": attacker_asn_for_intel,
                             "victim_asn": str(context.asn),
@@ -2106,7 +2276,7 @@ class WorkflowEngine:
                         f"[workflow] Threat intel: {threat_intel_result.get('threat_level', 'N/A')} "
                         f"(risk_score={threat_intel_result.get('risk_score', 'N/A')})"
                     )
-                except Exception as exc:
+                except (AttributeError) as exc:
                     logger.warning(f"[workflow] Threat intel lookup failed: {exc}")
 
         # Propagate ThreatIntel to blackboard
@@ -2114,23 +2284,21 @@ class WorkflowEngine:
             await context.shared_blackboard.write(
                 "routing", "threat_intel_result", threat_intel_result
             )
-        
+
+        self.record_stage_execution(
+            context, "enrichment", ran=True,
+            detail="org/relationships/prefixes resolved")
         return WorkflowEvent.DATA_COLLECTED
     
-    async def _handle_report_generation(self, context):
+    async def handle_report_generation(self, context):
         """Generate final report — MultiAgentReportAgent in enhanced mode, original ReportAgent otherwise."""
-        from agents.core import Blackboard
         from agents.report_agent import ReportAgent
         from utils.logger import logger as log
 
-        # Use shared Blackboard in enhanced mode
-        bb = Blackboard()  # shared blackboard (enhanced path removed 2026-09-29)
+        # One Blackboard per run, shared by every stage (see
+        # ``WorkflowContext.get_blackboard``).
+        bb = context.get_blackboard()
 
-        # Bug fix: seed the report Blackboard with config (asn, start_time,
-        # end_time). Without these, ReportAgent returns "Missing asn in
-        # blackboard" and the deterministic fallback also fails. The
-        # traffic/routing handlers write their own copies; this report-side
-        # seed keeps the report path self-contained.
         await bb.write("config", "asn", context.asn)
         await bb.write("config", "start_time", context.start_time)
         await bb.write("config", "end_time", context.end_time)
@@ -2140,9 +2308,6 @@ class WorkflowEngine:
         await bb.write("validation", "causal_analysis", context.causal_analysis or {})
         await bb.write("validation", "joint_alert", context.joint_alert or context.causal_analysis or {})
         # ── Three-card joint-evidence (C1/C2/C3 tier) ──────────────────────
-        # Written here so both the async _generate_report_html and the
-        # standalone generate_report_html entry points can read them from
-        # the blackboard / passed-in payload without any schema changes.
         await bb.write("validation", "joint_tier", getattr(context, "joint_tier", "") or "")
         await bb.write("validation", "joint_score", getattr(context, "joint_score", 0.0) or 0.0)
         await bb.write("validation", "joint_evidence_cards", getattr(context, "joint_evidence_cards", []) or [])
@@ -2151,6 +2316,23 @@ class WorkflowEngine:
         await bb.write("validation", "hcaf_attribution_status", context.hcaf_attribution_status or "skipped")
         await bb.write("evidence", "chain", context.evidence_chain or {})
         await bb.write("evidence", "validation_notes", context.validation_notes)
+
+        # Re-sync the typed record lists from the board. The gap records are
+        board_snapshot = await bb.read_evidence_board()
+        context.evidence_records = board_snapshot.get("observations", []) or []
+        context.evidence_alternatives = board_snapshot.get("alternatives", []) or []
+        context.evidence_gaps = board_snapshot.get("gaps", []) or []
+        context.contradictions = board_snapshot.get("challenges", []) or []
+        context.verification_records = board_snapshot.get("verdicts", []) or []
+
+        # The board's typed record surface is the last of the six
+        # ablatable stages, so its state is recorded here, where the
+        # surface is read back.
+        self.record_stage_execution(
+            context, "evidence_board",
+            ran=not bb.record_surface_off(),
+            detail=("typed record surface off" if bb.record_surface_off()
+                    else f"observations={len(context.evidence_records)}"))
 
         await bb.write("traffic", "result", context.traffic_result)
         await bb.write("routing", "result", context.routing_result)
@@ -2164,11 +2346,12 @@ class WorkflowEngine:
             "verdict": context.verification_result,
             "experiment_metrics": context.experiment_metrics,
         })
-        await bb.update_section("evidence", {
-            "observations": context.evidence_records,
-            "claims": context.diagnosis_claims,
-            "challenges": context.contradictions,
-            "verdicts": context.verification_records,
+        # Merge (not replace) the typed record lists into the evidence
+        await bb.merge_evidence({
+            "observations": context.evidence_records or [],
+            "claims": context.diagnosis_claims or [],
+            "challenges": context.contradictions or [],
+            "verdicts": context.verification_records or [],
             "metrics": [
                 {
                     "record_id": f"workflow-metrics-{context.asn}",
@@ -2179,28 +2362,12 @@ class WorkflowEngine:
                     "payload": context.experiment_metrics or {},
                 }
             ],
-            "messages": [],
-        })
+        }, _writer="WorkflowEngine.report")
 
         # ── Enhanced mode: route to report generation ──
-        # Enhanced mode removed 2026-09-29; always run the legacy
-        # ReportAgent (1 LLM call). Set BGP_TRACER_RUN_MULTI_AGENT=1
-        # to opt back into the multi-agent path.
-        legacy_html = await self._run_legacy_report(bb, context, ReportAgent, log)
+        legacy_html = await self.run_legacy_report(bb, context, ReportAgent, log)
         html = legacy_html or bb._sections.get("report", {}).get("html") or ""
 
-        # Bug fix 2026-09-13 (BUG-R102): the unconditional
-        # ``html = bb._sections.get("report", {}).get("html") or ""``
-        # immediately below was a no-op safety net that silently
-        # overwrote ``legacy_html`` with whatever happened to be in
-        # the Blackboard at this moment. When ``_run_legacy_report``
-        # returned a non-empty HTML but the Blackboard had been
-        # cleared by an earlier step, the report would still come
-        # through correctly via this branch (since the Blackboard
-        # was re-read by ``_run_legacy_report`` itself), but the
-        # unconditional reassignment was misleading and could mask
-        # future regressions. Replace it with a smarter merge that
-        # prefers the longer / more complete of the two values.
         bb_html = bb._sections.get("report", {}).get("html") or ""
         if bb_html and len(bb_html) > len(html or ""):
             html = bb_html
@@ -2218,7 +2385,7 @@ class WorkflowEngine:
                 )
                 context.report_path = path
                 log.info(f"Report saved: {path}")
-            except Exception as e:
+            except (AttributeError) as e:
                 log.warning(f"Failed to save report: {e}")
 
         context.final_result = context.final_result or {}
@@ -2226,18 +2393,15 @@ class WorkflowEngine:
         context.final_result["report_path"] = context.report_path
         return WorkflowEvent.REPORT_GENERATED
 
-    async def _run_legacy_report(self, bb, context, ReportAgent, log):
+    async def run_legacy_report(self, bb, context, ReportAgent, log):
         """Run the legacy single-agent ReportAgent and return its HTML.
-
+        
         When the LLM-driven path fails (timeout / empty / balance validation)
         AND REPORT_REQUIRE_LLM is NOT set, fall back to the deterministic
         HTML renderer so the user always receives a useful report rather
         than a workflow-level error.  The deterministic fallback uses the
         same structured payload the LLM would have seen — it is not a
-        hardcoded prose template, it is data-driven HTML.
-        """
-        # Bug fix: forward the enhanced flag so the report includes the
-        # debate / evaluation / reactive-decision artefacts in enhanced mode.
+        hardcoded prose template, it is data-driven HTML."""
         agent = ReportAgent(bb, enhanced=bool(getattr(context, "enhanced", False)))
         await agent.start()
         result = await agent.step()
@@ -2251,7 +2415,7 @@ class WorkflowEngine:
             # so the caller can use it as the final report.
             try:
                 legacy_html = await bb.read("report", "html") or ""
-            except Exception:
+            except (ValueError):
                 legacy_html = ""
             if legacy_html:
                 return legacy_html
@@ -2283,7 +2447,7 @@ class WorkflowEngine:
                 log.info("[workflow] Deterministic fallback HTML generated "
                          f"({len(fallback_html)} chars)")
                 return fallback_html
-        except Exception as fb_err:
+        except (AttributeError) as fb_err:
             log.error(f"[workflow] Deterministic fallback also failed: {fb_err!r}")
 
         # If fallback also fails AND REPORT_REQUIRE_LLM is set, raise so
@@ -2300,15 +2464,15 @@ class WorkflowEngine:
         # Otherwise return empty (orchestrator already saw the fallback attempt)
         return ""
 
-    async def _handle_complete(self, context):
+    async def handle_complete(self, context):
         """Handle completion state."""
         return WorkflowEvent.COMPLETE
     
-    async def _handle_error(self, context):
+    async def handle_error(self, context):
         """Handle error state."""
         return WorkflowEvent.ERROR
     
-    # ==================== Quality Assessment ====================
+# Quality Assessment
     
     def assess_data_quality(self, context):
         """Assess overall data quality."""
@@ -2327,9 +2491,6 @@ class WorkflowEngine:
         factors = 0
 
         # Traffic data quality — only count when data is actually available.
-        # An AS that Cloudflare Radar doesn't sample would otherwise inflate
-        # the score with success=True but no points, masking the F1=0
-        # no-data vs no-anomaly ambiguity.
         if context.traffic_result:
             factors += 1
             traffic_data_available = context.traffic_result.get(
@@ -2355,31 +2516,9 @@ class WorkflowEngine:
         if factors > 0:
             return min(1.0, score / (factors * 0.5))
         return 0.0
-    
-    # ==================== Metrics ====================
-    
-    def get_metrics(self):
-        """Get workflow execution metrics."""
-        avg_time = (
-            self.metrics["total_execution_time_ms"] / self.metrics["total_runs"]
-            if self.metrics["total_runs"] > 0 else 0
-        )
-        
-        return {
-            "total_runs": self.metrics["total_runs"],
-            "successful_runs": self.metrics["successful_runs"],
-            "failed_runs": self.metrics["failed_runs"],
-            "success_rate": (
-                self.metrics["successful_runs"] / self.metrics["total_runs"]
-                if self.metrics["total_runs"] > 0 else 0
-            ),
-            "average_execution_time_ms": avg_time,
-            "parallel_execution_enabled": self.parallel_execution,
-            "skip_unnecessary_analysis_enabled": self.skip_unnecessary_analysis
-        }
 
 
-# ==================== Convenience Functions ====================
+# Convenience Functions
 
 async def run_workflow(
     user_input = None,
@@ -2399,33 +2538,10 @@ async def run_workflow(
     precomputed_routing: dict = None,
     precomputed_traffic: dict = None,
 ):
-    """
-    Run the complete workflow with the given parameters.
-
-    This is the main entry point for workflow execution.
-
-    Args:
-        user_input: Natural language description of the analysis
-        asn: AS number to analyze
-        start_time: Start time in ISO format
-        end_time: End time in ISO format
-        max_retries: Maximum retry attempts for failed operations
-        analysis_mode: Analysis mode selection
-            - "traffic_first": Traffic first, routing on demand (RECOMMENDED, default)
-            - "react": LLM-driven ReAct analysis
-        enable_mitm: Whether to enable MITM (mitm_label) detection (default: False)
-                     When False, skips forge hijack detection and ES usage
-        buffer_hours: Buffer hours before/after traffic anomaly windows before routing analysis
-                      None = use BUFFER_HOURS from config (default: 2.0); 0 = strict time range only
-        checkpoint: Optional object for resumable execution, exposing the
-            duck-typed API used by the state handlers (``has`` / ``save`` /
-            ``load``). A concrete ``CheckpointManager`` used to live here and
-            was removed during slimming, so the type is intentionally left
-            un-annotated rather than naming a class that no longer exists.
-
+    """Run the complete workflow with the given parameters.
+    
     Returns:
-        WorkflowContext with all results and execution trace
-    """
+    WorkflowContext with all results and execution trace"""
     engine = WorkflowEngine(
         max_retries=max_retries,
         parallel_execution=False,  # Disable old parallel mode, use smart cascade
@@ -2457,8 +2573,6 @@ async def run_workflow(
         as_role=as_role,
         precomputed_routing=precomputed_routing,
         precomputed_traffic=precomputed_traffic,
-        # Bug fix: seed message_bus_run_id with a stable identifier even when
-        # not enhanced, so TokenBudget can accumulate tokens per run.
         message_bus_run_id=f"{asn}_{str(start_time).replace(' ', '_').replace(':', '')}_"
                            f"{'enhanced' if enhanced else 'base'}",
     )
@@ -2493,22 +2607,6 @@ def snapshot_context(context: "WorkflowContext"):
     return make_json_safe(d)
 
 
-def get_workflow_architecture_diagram():
-    """Return a text summary of the workflow architecture."""
-    return """Workflow Architecture (v3.0 Smart Cascade)
-============================================
-  UserInput → Traffic Quick Screen → [Routing on demand]
-                                          → Cross-Validation
-                                          → Reasoning → Report → COMPLETE
-
-Modes: TRAFFIC_FIRST (recommended) | REACT (LLM-driven)
-
-Special Cases:
-  ⚠ Traffic OK + Routing Anomaly → Warning (potential hidden risk)
-  ✓ Both OK → Quick confirmation
-  ✗ Both Anomalous → Deep correlation
-    """
-
 
 def parse_timestamp_value(ts):
     """Parse timestamps from multiple string formats."""
@@ -2533,17 +2631,12 @@ def parse_timestamp_value(ts):
                 continue
     try:
         return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-    except Exception:
+    except (ValueError):
         return None
 
 
 def extract_anomaly_windows(anomalies, buffer_hours = 2):
-    """
-    Extract time windows from traffic anomaly timestamps.
-
-    Buffer is applied HERE — each cluster gets ±buffer_hours padding.
-    union_anomaly_windows should NOT apply buffer again.
-    """
+    """Extract time windows from traffic anomaly timestamps."""
     from datetime import timedelta
     if not anomalies:
         return []
@@ -2574,24 +2667,15 @@ def extract_anomaly_windows(anomalies, buffer_hours = 2):
             "end": (cur_end + timedelta(hours=buffer_hours)).strftime("%Y-%m-%d %H:%M"),
         })
         return windows
-    except Exception:
+    except (ValueError):
         return []
 
 
 def union_anomaly_windows(windows, buffer_hours = 2):
-    """
-    Merge multiple anomaly windows into a single unified window that covers all anomalies.
-
-    IMPORTANT: Buffer is applied by extract_anomaly_windows already.
-    This function only merges the (already-buffered) windows and does NOT add buffer again.
-
-    Args:
-        windows: list of {"start": "...", "end": "..."} from extract_anomaly_windows
-        buffer_hours: unused; kept for backward-compatible signature
+    """Merge multiple anomaly windows into a single unified window that covers all anomalies.
     
     Returns:
-        A single {"start": "...", "end": "..."} covering all windows
-    """
+    A single {"start": "...", "end": "..."} covering all windows"""
     if not windows:
         return None
     
@@ -2621,7 +2705,7 @@ def union_anomaly_windows(windows, buffer_hours = 2):
         result_end = global_end.strftime("%Y-%m-%d %H:%M")
         
         return {"start": result_start, "end": result_end}
-    except Exception:
+    except (KeyError, IndexError):
         return windows[0] if windows else None
 
 
@@ -2634,5 +2718,4 @@ __all__ = [
     "RetryableError",
     "AnalysisMode",
     "run_workflow",
-    "get_workflow_architecture_diagram",
 ]

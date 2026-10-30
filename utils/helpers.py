@@ -30,17 +30,12 @@ def make_json_safe(value, _seen=None):
             return str(value)
         finally:
             _seen.discard(obj_id)
-    except Exception:
+    except (ValueError):
         return str(value)
 
 
 def extract_json_object(content):
-    """Return the first balanced ``{...}`` substring from ``content`` or ``None``.
-
-    Walks ``content`` from the first ``{`` it sees and tracks brace depth, so
-    a nested ``{...}`` inside a string value or comment cannot trick the parser
-    into truncating the JSON early.
-    """
+    """Return the first balanced ``{...}`` substring from ``content`` or ``None``."""
     if not content:
         return None
     start = content.find("{")
@@ -73,15 +68,8 @@ def extract_json_object(content):
 
 def parse_llm_json(raw_text):
     """Parse JSON from raw LLM output, tolerating stray prose/markdown.
-
-    Tries (in order):
-      1. Strict parse of the trimmed text.
-      2. JSON fenced by ``\\u0060\\u0060\\u0060json ... \\u0060\\u0060\\u0060``.
-      3. The first balanced ``{...}`` substring (handles nested objects and
-         braces that appear inside string values).
-
-    Raises :class:`json.JSONDecodeError` if none of the above succeed.
-    """
+    
+    Raises :class:`json.JSONDecodeError` if none of the above succeed."""
     if raw_text is None:
         raise ValueError("Empty LLM response")
     raw = str(raw_text).strip()

@@ -1,0 +1,462 @@
+% Section 6 -- Evaluation
+\section{Evaluation}
+\label{sec:eval}
+
+The evaluation asks three questions. First, does the Phase-1 arbitration
+assign the right cause class, and is its margin over a single-signal
+baseline significant (\S\ref{sec:eval-cause})? Second, what are the
+operating characteristics of the Phase-2 direction test---its size, its
+power against planted mechanisms, and its coverage on the caches in the
+tree---and does it commit a direction only when the evidence supports one
+(\S\ref{sec:eval-direction})? Third, how do the two phases behave when the
+input changes shape, when the event population changes, and on an
+uncontrolled live alert stream (\S\ref{sec:eval-shape}--\S\ref{sec:eval-live})?
+
+\subsection{Protocol and dataset}
+\label{sec:eval-protocol}
+
+\textbf{Ground truth.} The curated set contains 30 rows spanning
+2022--2025, each with a primary public report, a verifiable routing
+anomaly and (where the report allows it) a verifiable traffic anomaly:
+15 outage rows (one of which is a negative control), 8 route leaks and
+7 origin-hijack victims.
+
+\textbf{What can be reproduced.} The 30 rows are scored from per-event
+prediction files that ship with the artefact set, so every number in this
+section can be recomputed row by row. What cannot be recomputed is the
+evidence underneath them: the 26 cache bundles the rows cite are not in
+the repository, and the 145 caches that are belong to a different event
+corpus. The negative control and three further rows were scored on
+synthetic timelines and are marked as such. We therefore report
+\emph{archived} predictions throughout, name the file behind each table,
+and provide \texttt{check\_eval\_provenance.py} (in \texttt{scripts/}),
+which fails any artefact whose evidence reference does not resolve. A
+held-out set of 9 further events is in the same position and is reported
+separately in \S\ref{sec:eval-audit}.
+
+\textbf{Strict protocol.} Three counting rules apply to every method in
+every table. An abstention is never counted as correct; a method is scored
+only on the events where it commits; and coverage (the share of events
+where it commits) is reported next to accuracy, because a method that
+commits twice and is right twice is not comparable to one that commits 24
+times. Confidence intervals are Wilson intervals~\cite{wilson-1927}; paired
+comparisons use the McNemar exact test. All Phase-1 numbers are produced
+with the language model disabled.
+
+A table is only as good as the artefact behind it, so we state the
+artefact for every table and what the evidence check returns on it
+(Appendix~\ref{app:provenance}). The check is mechanical: a script in
+\texttt{scripts/} resolves every evidence reference, fails a row that names
+none, fails a cache whose own ASN disagrees with the row, and exits
+nonzero. A table passes only if every reference resolves. The
+system-level comparison (Table~\ref{tab:baseline}) and the paired test
+below it follow the same convention; the caches on disk belong to a
+different event corpus, and matching them to the curated rows by ASN and
+date resolves exactly one event (Orange Spain, 2024-01-03). The
+directional layer is therefore measured on planted mechanisms and on
+coverage, both in \S\ref{sec:eval-direction}.
+\textbf{A timestamp defect in the cached corpus.} In part of the cached
+set every event falls outside the cache's own window, and the modal residual
+is exactly $-8$\,h: the window is written as UTC while the event log
+carries local time. The bucket grid is anchored to the window, so those
+events would be silently dropped and the event would look unevaluable.
+\S\ref{sec:eval-direction} measures the direction test on this corpus with
+and without a whole-hour repair (\texttt{agents/cache\_resolution.py}); the
+repair recovers 15 of the 39 affected windows, and the rest still fail
+because the stored timeline contains no routing events at all.
+
+\subsection{Phase 1: cause classification}
+\label{sec:eval-cause}
+
+\begin{table}[t]
+\centering
+\caption{Ground-truth composition and strict Top-1 accuracy of the
+Phase-1 arbitration (30 rows, all RRC00-verifiable). Precision, recall
+and $F_1$ are computed per class from
+\texttt{results/eval/v19\_live\_honest\_per\_event.csv}; the negative
+control is counted as its own row and as a failure when the system
+commits a cause.}
+\label{tab:dataset}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l r r r r r}
+\hline
+\textbf{Class} & \textbf{$n$} & \textbf{Top-1} & \textbf{Prec.} & \textbf{Rec.} & \textbf{$F_1$} \\
+\hline
+Outage (incl.\ 1 NC)  & 15 & 13/15 = 86.7\% & 0.867 & 0.867 & 0.867 \\
+Route leak            &  8 &  7/8  = 87.5\% & 0.875 & 0.875 & 0.875 \\
+Origin hijack victim  &  7 &  6/7  = 85.7\% & 1.000 & 0.857 & 0.923 \\
+\hline
+\textbf{Total}                & 30 & \textbf{26/30 = 86.7\%} & --- & --- & \textbf{0.888}\\
+\textbf{Total (excl.\ NC)}    & 29 & \textbf{26/29 = 89.7\%} & --- & --- & --- \\
+\hline
+held-out (9)     & +9 & 6/9 = 66.7\% & --- & --- & ---   \\
+\hline
+\end{tabular}
+\end{table}
+
+The miss set is one error in each cause class plus the negative control;
+\S\ref{sec:eval-errors} analyses them individually.
+
+\begin{table}[t]
+\centering
+\caption{System-level comparison on the 29 attributable ground-truth rows. The
+negative control is excluded here because it carries no cause label; it
+is scored as a failure of the full system in Table~\ref{tab:dataset}.
+Abstention is never counted as correct.}
+\label{tab:baseline}
+\small
+\begin{tabular}{l r r r}
+\hline
+\textbf{System} & \textbf{Top-1} & \textbf{F1} & \textbf{Caus.\,F1} \\
+\hline
+Pick-Max (single detector)          & 34.5\% & 0.28 & 0.21 \\
+Routing-only (no traffic signal)    & 51.7\% & 0.41 & 0.31 \\
+Traffic-only (no routing signal)    & 41.2\% & 0.46 & 0.34 \\
+\hline
+\textbf{BGP Tracer (full)}          & \textbf{89.7\%} & \textbf{0.866} & \textbf{0.91} \\
+\hline
+\end{tabular}
+\end{table}
+
+The arbitration contributes 55.2\,pp over Pick-Max on Top-1 and 0.58 on
+F1. We report no latency comparison against the single-signal variants:
+those runs were timed on a separate 23-event run, so the columns would not
+be comparable. A gradient-boosted baseline trained on the curated labels
+is likewise absent, because at 29 events the training and evaluation folds
+cannot be separated, and the resulting number would measure memorisation of
+the label set rather than generalisation.
+
+The contribution of each detector is visible in how it behaves across
+classes rather than in a separate ablation run: the traffic detector stays
+silent on origin-hijack victims, because for a hijack victim the traffic
+drop is the hijack's effect rather than a co-incident outage, so its
+silence is what separates the two classes.
+
+Every comparison in this section is paired at the event level, so the
+appropriate test is the McNemar exact two-sided test. The only significant
+comparison on this set is the Phase-1 arbitration against Pick-Max
+($p=0.003$): of the 29 events on which the two methods disagree in
+outcome, BGP Tracer is correct on 21 and Pick-Max on 5. We report no
+direction-level $p$-value, because a paired test over directions needs two
+commitments per event and the surviving evidence does not supply them;
+direction is reported through size, power and coverage in
+\S\ref{sec:eval-direction} instead.
+
+\subsection{Phase 2: operating characteristics of the direction test}
+\label{sec:eval-direction}
+
+A directional test has two properties worth measuring: whether it recovers
+a mechanism that is actually there, and what it does on windows where the
+answer is unknown. The first is measured with planted mechanisms, which can
+be generated exactly and at scale; the second by running the same procedure
+over every cache in the tree and counting commitments. We report both, size
+and power from the first, coverage from the second.
+
+\paragraph{Size.} The size experiment plants no effect---two
+independent count series with no routing edge---and records how often the
+single V2 test rejects; Appendix~\ref{app:aea-size} reports it over 400
+windows per level.
+
+The test is conservative at independence and anti-conservative under serial
+dependence: at $\rho=0.8$ it rejects $12.3\%$ of the time at a nominal
+$5\%$. The placebo null assumes the response is exchangeable across onsets
+and a correlated series is not, so the placebo spread is too narrow. We
+report the number rather than the nominal level, and we note the direction
+of the error: it inflates commitments in exactly the
+regime---volatile, correlated traffic---where a spurious direction is most
+plausible. This is one reason the coverage of Table~\ref{tab:aea-coverage},
+and not power, is the binding constraint on what the method can be used for.
+
+\paragraph{Power.} Table~\ref{tab:aea-power} plants a routing pulse and a
+traffic drop of the same length, separated by a known lag.
+
+\begin{table}[t]
+\centering
+\caption{End-to-end power: share of 200 windows in which a direction is
+committed, and the accuracy of those commitments. The planted mechanism
+is a routing pulse followed by a traffic drop at the stated lag; nothing
+else about the two series is known to the test.}
+\label{tab:aea-power}
+\small
+\begin{tabular}{l r r r}
+\hline
+\textbf{Lag} & \textbf{Drop 20\%} & \textbf{Drop 50\%} & \textbf{Drop 80\%} \\
+\hline
+2  & 153/200 & 200/200 & 200/200 \\
+4  & 184/200 & 200/200 & 200/200 \\
+8  & 195/200 & 200/200 & 200/200 \\
+16 & 159/200 & 200/200 & 200/200 \\
+\hline
+\multicolumn{4}{@{}l}{\footnotesize Accuracy among commitments: $100\%$ in all twelve cells.} \\
+\end{tabular}
+\end{table}
+
+Power is high and, more important, every commitment is correct: across the
+twelve cells the test committed $2{,}291$ times and never named the wrong
+direction. The weakest cell is a small drop two buckets after the cause
+($153/200$); a $20\%$ drop arriving sixteen buckets later is slightly
+harder than one arriving at eight, because the post window of
+Definition~\ref{def:segmentation} then covers only part of the pulse. The
+non-monotonicity along the drop axis is sampling noise across $200$
+windows, not a property of the rule.
+
+\paragraph{Intervals versus point estimates.} The ordering rule is the
+paper's central methodological claim, so we measure it directly against the
+heuristic it replaces. Both orderings face the same remaining vetoes; only
+the way the onset is reported differs. The point comparator reports a single
+BIC-optimal split and commits whenever the two points differ; the shipped
+rule reports the set of admissible split positions and commits only when
+those sets are disjoint. The generator plants a \emph{simultaneous} pulse in
+both series, where no direction exists, so every commitment is a false
+commitment (\texttt{scripts/aea\_point\_vs\_interval.py}).
+
+\begin{table}[t]
+\centering
+\caption{False commitments on a simultaneous common shock. Both rows
+commit a direction only when the two onsets differ, so the difference is
+the interval rule, not a different threshold. \emph{Point} reports a single
+BIC-optimal split; \emph{interval} reports the set of admissible splits
+and commits only when the two sets are disjoint.}
+\label{tab:aea-point}
+\small
+\begin{tabular}{l r r r}
+\hline
+\textbf{Shock} & \textbf{Windows} & \textbf{Point} & \textbf{Interval} \\
+\hline
+Simultaneous pulse           & 600 & 9.7\% & 0.7\% \\
+Simultaneous, 1-bucket skew  & 600 & 99.8\% & 94.7\% \\
+\hline
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:aea-point} shows both halves of the result. On a truly
+simultaneous shock the interval rule cuts false commitments by an order of
+magnitude, from $9.7\%$ to $0.7\%$. On a shock skewed by a single bucket
+neither rule can help: a one-bucket offset is a real ordering, so the
+interval is wide enough to contain it and the difference between the two
+orderings collapses. We report the second row because it is the boundary of
+the claim: the interval rule protects against \emph{simultaneity}, not
+against near-simultaneity, and it cannot do so without a resolution the data
+do not support.
+
+\paragraph{Coverage on the corpus.} Table~\ref{tab:aea-coverage} applies the
+procedure to every cache in the tree.
+
+\begin{table}[t]
+\centering
+\caption{Real-data coverage over the cached windows. ``Two series
+built'' counts windows that yield two non-empty bucket series; the rows
+above it are the reasons a window cannot be scored at all, which is where
+the volume is. The final row reruns the measurement with $\alpha=0.99$, so
+that V2 can never reject, to test whether abstention is a threshold
+artefact.}
+\label{tab:aea-coverage}
+\footnotesize
+\begin{tabular}{l r}
+\hline
+\textbf{Outcome} & \textbf{Windows} \\
+\hline
+Empty routing buckets        & 116 \\
+No events inside the window  & 44 \\
+Empty traffic buckets        & 37 \\
+No declared window           &  3 \\
+\addlinespace
+Two series built             & 27 \\
+\quad stopped at V1          & 27 \\
+\quad committed              &  0 \\
+\addlinespace
+Committed at $\alpha=0.99$   &  0 \\
+\hline
+\end{tabular}
+\end{table}
+
+Two facts in that table locate the constraint. First, it sits upstream of
+the test: most windows cannot produce both series at all, because the cached
+aggregate holds no routing events in its buckets, so the test is never
+reached. Second, the zero is not a threshold artefact: with $\alpha=0.99$,
+which disables V2 entirely, the count is still zero, because every one of
+the windows that produced two series stops at V1, twenty of them with no
+routing edge, six with no traffic edge, and one with overlapping onsets. A
+method that answered on these windows would be inventing the evidence, and
+relaxing a level would not change the answer. Both runs are recorded under
+protocol hash \texttt{541554a473d4} in
+\texttt{results/eval/aea\_coverage\_caches.json}, together with the veto
+tally.
+
+\subsection{Input shape: the same window under two shapes}
+\label{sec:eval-shape}
+
+The contract of \S\ref{sec:impl-contract} is not an implementation detail,
+and this section measures what it changes. We take one real cached
+window---the Orange Spain RPKI-credential hijack of 2024-01-03
+(\S\ref{sec:case})---and feed its evidence bundle to the engine twice:
+once in the shape the live path produces, a merged event timeline, and once
+with the same records shaped by Definition~\ref{def:grid}.
+
+The two shapes differ in more than bucketing, and the difference is the
+finding. The routing block holds $9{,}158$ announcement-level records, but
+the merged timeline retains forty-nine of them at a single timestamp plus
+one synthesized traffic record, so whichever grid it is placed on the
+result has two non-filler points: the engine's five-minute bucketing yields
+$91$ buckets, and a $30$-second grid---the finest the bucketing code
+allows, capped at $120$ buckets---puts the routing records in the final
+bucket and the traffic record in the first. In both cases the two points
+are 7.5 hours apart, $89$ or $118$ buckets are empty and floored at
+$\varepsilon=10^{-9}$, and neither series has an interior. A grid with two
+non-filler points is not a time series; it is two spikes and a floor.
+
+Under the contract the engine reads the second shape and refuses at the
+first veto: with a single non-filler point on the routing side there is no
+onset interval to order, so V1 returns
+\texttt{inadmissible\_precedence} with sub-verdict
+\texttt{onset\_unresolved} (\S\ref{sec:case} gives the statistics the
+channels would have reported). For this window the refusal is also the
+correct answer, because the ground truth records no traffic anomaly, but
+the engine declines because the routing evidence collapsed into a single
+bucket rather than because it observed an empty data plane. On a window
+with the same shape and the opposite cause the two readings would not
+coincide, which is why \S\ref{sec:method-grid} treats the input shape as
+part of the claim. The evaluated windows of \S\ref{sec:eval-direction} are
+not necessarily of this shape: the replay path reads each cache's full
+event streams where they exist and falls back to the merged timeline only
+where they do not. The contract is pinned by regression tests that fail if
+either shape is misread: a raw event log must yield a bucketed series with
+quiet gaps rather than a near-constant one, and padding a short window
+must never manufacture buckets that read as ``measured, no anomaly''.
+
+\paragraph{Decision latency.}
+\label{sec:eval-latency}
+
+We measure end-to-end latency on the alert replay rather than a per-stage
+decomposition, because the first-stage screen in the evaluated build is a
+fixed-threshold rule and a per-stage number attributed to it would
+characterise that rule rather than the staged architecture. Over the $130$
+completed replays the median end-to-end time is $225.6$\,s, the 95th
+percentile is $783.7$\,s and the maximum is $1039.0$\,s
+(Table~\ref{tab:latency} in Appendix~\ref{app:live-replay}). This is slower
+than a one-minute triage target and we do not claim otherwise. The tail is
+dominated by the Cloudflare Radar fetch and by snapshot loads for the path
+and AS-relationship models, so shortening it requires a different fetching
+strategy, not a different estimator.
+
+\subsection{Error analysis}
+\label{sec:eval-errors}
+
+The Phase-1 miss set contains three errors, one per cause class, plus the
+negative control.
+
+\emph{E17, a route leak classified as an origin hijack.} The traffic
+detector fired on a coincident content shift, and the arbitration read a
+traffic anomaly with a leak-like path as a hijack. A traffic-side check
+that separates a coincident content shift from a leak effect would be
+needed to fix it, and the Phase-2 engine cannot supply one: the engine
+abstains on this event's real cache, for the reasons in
+\S\ref{sec:eval-direction}.
+
+\emph{E23, a small-magnitude outage classified as normal.} The event fell
+below the regularity threshold of the traffic detector. The routing-only
+fallback (\S\ref{sec:method-phase1}) is the intended mitigation: a
+withdrawal regime is a control-plane fact and does not need the traffic
+baseline.
+
+\emph{E31, a multi-party leak attributed to the wrong AS.} The cascade scope
+was ambiguous between two candidate origins. This is a resolution limit of
+the current AS-relationship snapshot rather than a rule error, and the
+mitigation is cascade-scope expansion.
+
+The negative control is a different kind of failure: the system committed a
+cause where the correct answer is ``no clear anomaly''. We keep it as its own
+row rather than folding it into a footnote because it is the only event
+that tests the fourth verdict class, and because Phase~1 has no abstention
+mechanism of its own---a property we return to in \S\ref{sec:discussion}.
+
+\paragraph{Held-out set, narrative audit and channel sensitivity.}
+\label{sec:eval-audit}
+
+\textbf{The language model is a renderer.} Phase~2 renders reports with a
+language model, but the model never overwrites a Phase-1 verdict. A factual
+audit on nine held-out events (Table~\ref{tab:llm-audit}) shows high ASN
+recall and perfect verdict consistency, and near-zero recall for numeric
+traffic percentages.
+
+\begin{table}[t]
+\centering
+\caption{Language-model narrative factual audit on 9 held-out events.}
+\label{tab:llm-audit}
+\small
+\begin{tabular}{l r r}
+\hline
+\textbf{Dimension} & \textbf{Mean recall} & \textbf{Median recall} \\
+\hline
+ASN                 & 83.3\% & 100\% \\
+Date                & 44.4\% & 0\%   \\
+Traffic pct         & 0.0\%  & 0\%   \\
+Integer intervals   & 22.2\% & 25\%  \\
+\hline
+Verdict consistency & \multicolumn{2}{c}{\textbf{100\% (3/3)}} \\
+\hline
+\end{tabular}
+\end{table}
+
+We report this because it is the empirical justification for the paper's
+division of labour: the model may describe a verdict, and it may not
+produce one. A model with 0\,\% recall on the quantity operators quote
+first is a presentation risk, not an analyst.
+
+\textbf{Held-out set.} The nine held-out events were collected after the
+design was frozen and are independent of the design labels. The system
+attains 6/9 = 66.7\,\% Top-1, a 23-point drop from the curated set. Three
+structural factors account for the gap: distribution shift (the held-out
+events favour longer-tail causes the curated set does not represent), sparse
+traffic coverage (five of the nine land on ASes without Cloudflare Radar
+coverage, so the strongest discriminator is absent), and stale routing caches
+(two events have a routing cache that predates the event by more than 30
+days). Each is an identifiable and addressable failure mode rather than a
+property of the method, and each maps to a concrete data requirement:
+broader radar coverage, fresher snapshot pinning, and a curated set
+stratified by cause tail.
+
+\textbf{Channel sensitivity.} Removing MSBD, CTPR, CIC, Granger or transfer
+entropy individually changes the committed direction on \textbf{0\,\%} of
+events, whereas removing CSS changes it on 37.9\,\%. Neither number is a
+robustness statement about the channels. Zero flips means those five
+channels never vote independently: they read the same two series, and before
+the audit MSBD, CTPR and CIC also consumed the \texttt{event\_type} label,
+so they were five views of one signal rather than five pieces of evidence.
+The 37.9\,\% flip rate measures how much the earlier CSS-anchored prior
+contributed, not how much causal information the CSS statistic carries. Both
+observations motivated the uniform prior, the clustering and the
+geometric-mean pooling of \S\ref{sec:method-gate}, and they are the reason a
+channel-level ablation is reported here as a dependence diagnostic rather
+than as a robustness claim.
+
+\subsection{Live deployment}
+\label{sec:eval-live}
+
+BGP Tracer ran on a public alert pipeline for five months, consuming RIPE
+RIS RRC00 updates and Cloudflare Radar five-minute aggregates on the same
+orchestration as the ground-truth evaluation. The operational value of a
+five-month run is throughput durability: the arbitration sustains production
+rates for months without operator intervention, and the cache the live
+pipeline writes is the cache the offline evaluation reads.
+
+The replay denominator is the set of alerts that the pipeline actually
+adjudicated. Of the 192 alerts replayed, 130 reached a verdict, 14 were
+adjudicated \texttt{real\_incident} and 116 were not, giving a precision of
+10.8\,\% (Wilson 95\,\% CI 6.5--17.3\,\%) and a suppression ratio of 9.3:1
+on the processed stream. We report precision on that stream rather than a
+pooled suppression ratio over all 192, because the remaining alerts did not
+receive a verdict and counting them would mix collection failures into
+arbitration quality. For the same reason the ratio is not compared with
+operator-facing alarm counts: what the detectors emit are per-event (prefix,
+timestamp) observations, and an operator alarm is a different unit.
+
+The 14 confirmed incidents split evenly across the two sources whose ground
+truth is genuinely open: 7 came from Cloudflare's curated annotation feed and
+7 from the live hijack-monitoring feed. The latter include the AS1197
+cross-ISP route leak of 2025-06-11, which affected 141 victim ASes across 28
+countries, and the AS834 hijack of 2025-06-25, which touched victims in
+eight countries. The split matters because it shows that the system fires on
+incidents it discovers in a hijack feed, not only on incidents that the
+curated feed already annotates.

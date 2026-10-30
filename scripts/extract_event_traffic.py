@@ -1,11 +1,9 @@
-#!/usr/bin/env python3
 """
 Per-event traffic analysis: compute min/max z-score and pct drop vs baseline.
 Output: enriched CSV with traffic stats per event.
 """
+#!/usr/bin/env python3
 import os
-import sys
-import json
 import csv
 import time
 import glob
@@ -13,10 +11,12 @@ import polars as pl
 import numpy as np
 from pathlib import Path
 from datetime import datetime, timedelta
+import sys
+import json
 
 TRAFFIC_DIR = Path('data/traffic')
-GT_CSV = 'data_check/ground_truth_collection/final_balanced_dataset_v17_30.csv'
-OUT_CSV = 'data_check/ground_truth_collection/final_balanced_v18_30.csv'
+GT_CSV = 'data_check/ground_truth_collection/final_ground_truth.csv'
+OUT_CSV = 'data_check/ground_truth_collection/final_ground_truth_traffic.csv'
 OUT_DIR = Path('data/groundtruth_v18')
 
 
@@ -37,7 +37,7 @@ def find_traffic_file(asn, date):
             e = datetime.fromisoformat(end_str.rstrip('Z'))
             if s <= target + timedelta(days=1) and e >= target:
                 candidates.append((f, s, e))
-        except Exception:
+        except (ValueError):
             continue
     if not candidates:
         return None
@@ -127,7 +127,7 @@ def main():
             continue
         try:
             stats = analyze_event_traffic(victim, start_utc, end_utc)
-        except Exception as ex:
+        except (AttributeError) as ex:
             new_rows.append({**e, 'traffic_z_min_v18': '', 'traffic_pct_drop_v18': '', 'traffic_status_v18': f'error: {ex}'})
             print(f'[{i:2d}] {eid} ERROR: {ex}')
             continue

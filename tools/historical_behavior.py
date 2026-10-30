@@ -1,36 +1,10 @@
-"""
-Tool B4: AS Historical Behavior & Incident History
-===============================================
-
-Tracks the past behavior of an AS — specifically, whether it has been involved
-in BGP incidents (hijacks, leaks, outages) historically.
-
-This is the "criminal record" lookup for ASes. Human analysts ALWAYS check:
-  "Has this AS done this before?"
-
-Key insight: first-time offenders vs. repeat offenders need completely different
-explanations:
-  - First-time → misconfiguration, accidental, account compromised
-  - Repeat offender → intentional, long-term campaign, possibly state-sponsored
-
-Data sources:
-  - BGPStream Historical Events: https://bgpstream.caida.org/
-  - BGPView historical AS events
-  - RIPE RIS historical incident feed
-  - Your own historical_cases/ ground truth dataset
-  - RouteViews archive (offline, expensive)
-
-Free APIs:
-  - BGPView.io: https://api.bgpview.io/asn/{asn}/events
-  - RIPEstat: https://stat.ripe.net/ris/origins
-  - Local: /data/bgp_tracer/data/historical_cases/ (ground truth JSON)
-"""
+"""Tool B4: AS Historical Behavior & Incident History
+==============================================="""
 
 from __future__ import annotations
 
 import asyncio
 import json
-import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -39,6 +13,7 @@ import httpx
 
 from tools.tool_registry import ToolParameter, register_tool
 from utils.logger import logger
+import re
 
 # ── External APIs ─────────────────────────────────────────────────────────────
 
@@ -51,7 +26,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 HISTORICAL_CASES_DIR = PROJECT_ROOT / "data" / "historical_cases"
 
 
-async def _fetch_bgpview_events(asn: str, days: int = 365) -> list[dict]:
+async def fetch_bgpview_events(asn: str, days: int = 365) -> list[dict]:
     """Fetch historical BGP events for an AS from BGPView.io."""
     url = BGPVIEW_EVENTS_URL.format(asn=asn)
     params = {
@@ -75,13 +50,14 @@ async def _fetch_bgpview_events(asn: str, days: int = 365) -> list[dict]:
                     }
                     for ev in events
                 ]
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
         logger.warning(f"[hist] BGPView events fetch failed: {e}")
     return []
 
 
-async def _fetch_ripestat_incidents(asn_id: str) -> list[dict]:
+async def fetch_ripestat_incidents(asn_id: str) -> list[dict]:
     """Fetch RIPE RIS incident history for an AS."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     params = {"resource": f"AS{asn}"}
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -98,18 +74,13 @@ async def _fetch_ripestat_incidents(asn_id: str) -> list[dict]:
                 }
                 for inc in incidents
             ]
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
         logger.warning(f"[hist] RIPEstat incidents fetch failed: {e}")
     return []
 
 
-def _load_local_historical_cases(asn: str, timeframe_days: int = 730) -> list[dict]:
-    """
-    Load our own ground truth historical cases for this AS.
-
-    Ground truth format (from data/historical_cases/):
-    Each case JSON contains: asn, event_type, date, description, confirmed, etc.
-    """
+def load_local_historical_cases(asn: str, timeframe_days: int = 730) -> list[dict]:
+    """Load our own ground truth historical cases for this AS."""
     cases = []
     if not HISTORICAL_CASES_DIR.exists():
         return cases
@@ -133,7 +104,7 @@ def _load_local_historical_cases(asn: str, timeframe_days: int = 730) -> list[di
                 case_date = datetime.strptime(date_str[:10], "%Y-%m-%d")
                 if case_date < cutoff:
                     continue
-            except Exception:
+            except (ValueError):
                 pass
 
             cases.append({
@@ -145,22 +116,14 @@ def _load_local_historical_cases(asn: str, timeframe_days: int = 730) -> list[di
                 "severity": data.get("severity"),
                 "source": "local_ground_truth",
             })
-        except Exception:
+        except (ValueError):
             pass
 
     return cases
 
 
-def _analyze_reoffense_pattern(events: list[dict]) -> dict[str, Any]:
-    """
-    Analyze if an AS shows a pattern of repeat offenses.
-
-    Human analysts look for:
-      - Same event type repeating → intentional campaign
-      - Same prefix targeted → targeted attack
-      - Increasing frequency → escalating behavior
-      - Same technique across events → known MO (modus operandi)
-    """
+def analyze_reoffense_pattern(events: list[dict]) -> dict[str, Any]:
+    """Analyze if an AS shows a pattern of repeat offenses."""
     if not events:
         return {
             "is_repeat_offender": False,
@@ -202,7 +165,7 @@ def _analyze_reoffense_pattern(events: list[dict]) -> dict[str, Any]:
         if d:
             try:
                 dates.append(datetime.strptime(str(d)[:10], "%Y-%m-%d"))
-            except Exception:
+            except (ValueError):
                 pass
 
     frequency = "unknown"
@@ -233,7 +196,7 @@ def _analyze_reoffense_pattern(events: list[dict]) -> dict[str, Any]:
     }
 
 
-def _build_reoffense_narrative(pattern: dict, events: list[dict]) -> str:
+def build_reoffense_narrative(pattern: dict, events: list[dict]) -> str:
     """Build a human-readable narrative about the AS's history."""
     if not pattern["is_repeat_offender"]:
         return (
@@ -269,29 +232,17 @@ def _build_reoffense_narrative(pattern: dict, events: list[dict]) -> str:
     return " ".join(parts)
 
 
-async def _historical_behavior_lookup(tool_input: dict, session) -> dict[str, Any]:
-    """
-    Look up an AS's historical BGP incident record.
-
-    This answers: "Has this AS been involved in incidents before?
-    Is this a first-time offender or a repeat offender?"
-
-    Required params:
-        asn (str): AS number to investigate
-
-    Optional params:
-        timeframe_days (int): how far back to look (default: 730 days / 2 years)
-        include_local (bool): include our own ground truth cases (default: True)
-
+async def historical_behavior_lookup(tool_input: dict, session) -> dict[str, Any]:
+    """Look up an AS's historical BGP incident record.
+    
     Returns:
-        - bgpview_events: events from BGPView.io
-        - ripestat_incidents: incidents from RIPEstat
-        - local_cases: our own ground truth cases
-        - reoffense_pattern: analysis of repeat-offense patterns
-        - narrative: human-readable history summary
-        - risk_assessment: based on history
-        - observation: LLM-readable summary
-    """
+    - bgpview_events: events from BGPView.io
+    - ripestat_incidents: incidents from RIPEstat
+    - local_cases: our own ground truth cases
+    - reoffense_pattern: analysis of repeat-offense patterns
+    - narrative: human-readable history summary
+    - risk_assessment: based on history
+    - observation: LLM-readable summary"""
     asn = str(tool_input.get("asn", "")).lstrip("AS")
     timeframe_days = int(tool_input.get("timeframe_days", 730))
     include_local = tool_input.get("include_local", True)
@@ -300,9 +251,9 @@ async def _historical_behavior_lookup(tool_input: dict, session) -> dict[str, An
 
     # Fetch from all sources concurrently
     bgpview_events, ripestat_incidents, local_cases = await asyncio.gather(
-        _fetch_bgpview_events(asn, days=min(timeframe_days, 365)),
-        _fetch_ripestat_incidents(asn),
-        asyncio.to_thread(_load_local_historical_cases, asn, timeframe_days) if include_local else asyncio.coroutine(lambda: [])(),
+        fetch_bgpview_events(asn, days=min(timeframe_days, 365)),
+        fetch_ripestat_incidents(asn),
+        asyncio.to_thread(load_local_historical_cases, asn, timeframe_days) if include_local else asyncio.coroutine(lambda: [])(),
     )
 
     # Combine all events
@@ -310,10 +261,10 @@ async def _historical_behavior_lookup(tool_input: dict, session) -> dict[str, An
     all_events.sort(key=lambda e: e.get("date", ""), reverse=True)
 
     # Analyze reoffense pattern
-    pattern = _analyze_reoffense_pattern(all_events)
+    pattern = analyze_reoffense_pattern(all_events)
 
     # Build narrative
-    narrative = _build_reoffense_narrative(pattern, local_cases)
+    narrative = build_reoffense_narrative(pattern, local_cases)
 
     # Risk assessment
     risk_factors = []
@@ -389,5 +340,5 @@ register_tool(
         ToolParameter("timeframe_days", "How far back to look (default: 730 days / 2 years)", "string", required=False),
         ToolParameter("include_local", "Include our own ground truth cases (default: True)", "string", required=False),
     ],
-    handler=_historical_behavior_lookup,
+    handler=historical_behavior_lookup,
 )

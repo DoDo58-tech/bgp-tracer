@@ -1,16 +1,11 @@
 """IPv6 prefix loader — loads per-AS IPv6 prefix lists from the local cache
 at ``data/prefix2as/ipv6_cache/ipv6_prefixes_AS<asn>.json``.
 
-Each cache file is a JSON object of the form::
-
-    {"asn": "10753", "prefixes": ["2400:8a20:...", ...]}
-
 If a cache file is missing for the requested ASN, the loader returns an
 empty list (same fallback as before) so downstream code proceeds without
 errors.  A single one-shot INFO message is logged the first time a cache
 hit happens (and again the first time a miss happens after a hit so
-operators can see whether the cache is covering their workload).
-"""
+operators can see whether the cache is covering their workload)."""
 from __future__ import annotations
 
 import os
@@ -28,27 +23,26 @@ _HIT_LOGGED = False
 _MISS_LOGGED = False
 
 
-def _strip_asn(asn):
+def strip_asn(asn):
     s = str(asn).strip().upper()
     if s.startswith("AS"):
         s = s[2:]
     return s
 
 
-def _cache_path(asn_id):
-    return os.path.join(_CACHE_DIR, f"ipv6_prefixes_AS{asn}.json")
+def cache_path(asn_id):
+    return os.path.join(_CACHE_DIR, f"ipv6_prefixes_AS{asn_id}.json")
 
 
 def load_ipv6_prefixes_for_as(asn) -> List[str]:
     """Return IPv6 prefixes originated by ``asn`` from the local cache.
-
+    
     Returns ``[]`` if no cache file is found, so downstream code proceeds
     cleanly.  Cache files contain a JSON object ``{"asn": ..., "prefixes":
-    [...]}``; only the ``prefixes`` list is returned.
-    """
+    [...]}``; only the ``prefixes`` list is returned."""
     global _HIT_LOGGED, _MISS_LOGGED
-    asn_clean = _strip_asn(asn)
-    path = _cache_path(asn_clean)
+    asn_clean = strip_asn(asn)
+    path = cache_path(asn_clean)
     if not os.path.exists(path):
         if not _MISS_LOGGED:
             logger.info(
@@ -63,7 +57,7 @@ def load_ipv6_prefixes_for_as(asn) -> List[str]:
         with open(path) as f:
             data = json.load(f)
         prefixes = data.get("prefixes") or []
-    except Exception as e:
+    except (AttributeError) as e:
         logger.warning(f"[ipv6_prefix_loader] failed to parse {path}: {e}")
         return []
 
@@ -82,12 +76,8 @@ def merge_prefix2as_with_ipv6(
     ipv6_prefixes: Iterable[str] = (),
     asn=None,
 ) -> Dict[str, List[str]]:
-    """Merge an IPv6 prefix list into a ``prefix -> [asn]`` mapping.
-
-    The ``prefix2as`` argument uses *list values* (CAIDA's exported schema),
-    so we extend the existing list rather than overwriting it.
-    """
-    asn_clean = _strip_asn(asn) if asn is not None else None
+    """Merge an IPv6 prefix list into a ``prefix -> [asn]`` mapping."""
+    asn_clean = strip_asn(asn) if asn is not None else None
     for pfx in ipv6_prefixes:
         pfx = str(pfx).strip()
         if not pfx:

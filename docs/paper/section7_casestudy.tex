@@ -1,0 +1,143 @@
+% Section 7 -- Case study
+\section{Case study: the Orange Spain credential hijack, 2024-01-03}
+\label{sec:case}
+
+The case study is chosen because it is the event where the gap between
+what happened and what the telemetry records is widest, and because it
+shows how the system behaves when the control plane moves and the data
+plane does not.
+
+\subsection{What happened}
+
+On 2024-01-03 an attacker used stolen RIPE NCC credentials---the
+account had no second factor---to log into Orange Spain's (AS12479)
+RIPE account and publish invalid RPKI ROAs for Orange Spain address
+space, pointing the origins at AS49581, which is not an Orange
+ASN~\cite{apnic-orange-2024}. Networks performing RPKI origin
+validation began rejecting Orange Spain announcements at approximately
+14:20 UTC; AS5511, Orange Spain's transit provider, propagated the
+affected /12s. Reachability was mostly restored by 18:00 UTC, after the
+invalid ROAs were removed. Roughly two million addresses were affected.
+
+Three features make this event a good test. The cause is
+\emph{control-plane initiated and data-plane visible}: a routing
+configuration change produced a reachability effect. The victim is the
+announcer, so the detector's ``who is the attacker'' question and the
+ground truth's ``who was harmed'' question point at the same AS. And the
+ground truth records \emph{no traffic anomaly} for the window
+(\texttt{has\_traffic\_signal = false}, \texttt{traffic\_hiz = 0}):
+the outage was visible to validating networks as unreachability, not to
+the vantage point's traffic series as a volume change.
+
+\subsection{What the cache contains}
+
+We replay the cached bundle for this event (window 14:45--18:00 UTC,
+the closest cached window to the incident).
+
+\textbf{Control plane.} The routing block holds 9{,}158
+announcement-level detection records spanning 14:54:29 to 18:04:20, all
+typed \texttt{origin\_hijacking}. The merged timeline that the engine
+reads is a bounded view of that list: it retains the first $50$ entries,
+of which $49$ are routing records---all stamped 14:54:29---and one is
+the synthesized traffic record discussed below. The retained count is not
+a measurement of hijack intensity. Every record carries
+\texttt{expected\_origin: null}---the window was collected in the
+pipeline's light mode, in which the expected-origin baseline is not
+built---so the detector flags \emph{the victim's own announcements} and
+attributes them to \texttt{hijacker\_as = 12479} with
+\texttt{victim\_as = null} and \texttt{role = attacker}. The cache's own
+summary fields disagree with its lists in the same way: it reports
+\texttt{total\_prefix\_hijacks = 0} and
+\texttt{leak\_analysis\_skipped = true} with the reason
+\texttt{light\_mode}, while the hijack list it contains is non-empty. The
+ground truth, by contrast, records five hijacked events with
+\texttt{hijacker\_as = AS5511} between 14:39 and 16:03 and 220 routing
+events in the window. The cache and the ground truth therefore disagree
+in both magnitude and role: 9{,}158 flags against the victim's own AS,
+versus 5 events against the transit provider.
+
+\textbf{Data plane.} The traffic block holds 134 five-minute data
+points, \texttt{anomaly\_count = 0}, and a baseline that was never
+built: \texttt{baseline\_weeks\_available} = 0,
+\texttt{baseline\_method} = \texttt{non\_periodic\_fallback}, periodicity
+confidence 0.0, and \texttt{historical\_avg = 0.0}. The same block
+reports a peak-to-trough drop of 81.7\,\% over the expanded window. The
+``no anomaly'' verdict is therefore a statement about the baseline, not
+about the traffic---a distinction the cache preserves and the aggregate
+count does not. The single traffic record in the correlation timeline is
+timestamped 07:22:30, outside the incident window, and carries
+\texttt{cluster\_anomaly\_count = 0} and \texttt{pct\_change = 0.0}
+while reporting severity 0.82 and
+\texttt{synthesized\_from = expanded\_window}: it is a window-midpoint
+synthesis rather than an observation.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\linewidth]{figs/fig_case_orange.pdf}
+\caption{The cached window for the Orange Spain event on five-minute
+buckets. (a) The routing block as recorded---all 9{,}158
+announcement-level detections, 25 of the 39 buckets non-empty---where
+the density is created by a missing expected-origin baseline in light
+mode, each record flagging the victim's own announcement, rather than
+by the scale of the hijack. The merged timeline the engine reads is a
+bounded view of this block that retains the first $50$ entries, all
+stamped 14:54:29 (\S\ref{sec:eval-shape}), so the routing side collapses
+to a single spike. (b) What Phase~2 sees of the same window on its own
+five-minute grid: one routing point at bucket 90 and the synthesized
+traffic record at bucket 0, with the other 89 buckets empty and floored
+at $\varepsilon$. Neither series has an interior, so no onset interval
+can be formed and V1 refuses with \texttt{onset\_unresolved}. The figure
+reproduces what the artefact contains; it is not a depiction of the
+incident's traffic impact.}
+\label{fig:case}
+\end{figure}
+
+\subsection{What the system says, and what that is worth}
+
+Under the Phase-1 mapping, a window with routing detections and no
+traffic observation is the \texttt{silent\_alert} pattern: something
+moved in the control plane and the data plane did not register it. For
+this event that pattern is the correct \emph{description} of the
+telemetry, and it is also the correct description of the incident, for
+different reasons---the traffic series has no baseline, and the
+incident's data-plane effect is a validation-driven unreachability
+rather than a volume change at the vantage point. A verdict that
+conflates the two would be right for the wrong reason, which is the
+failure mode \S\ref{sec:intro} attributes to single-signal systems.
+
+Phase~2 abstains, and \S\ref{sec:eval-shape} gives the arithmetic. The
+50-entry timeline becomes a grid of 91 buckets (the engine's own
+five-minute bucketing) or 120 (a 30-second grid, capped), with exactly
+two non-filler buckets in either case: the routing spike at one end, the
+synthesized traffic record at the other---a point placed at the midpoint
+of a 33-hour traffic window, 7.5 hours from the only routing evidence.
+CSS returns $p = 1.0$ rather than attribute a traffic pre/post shift of
+$0.11\sigma$; transfer entropy estimates $0.03$\,nats in the $R\to T$
+direction against a shuffle null of $0.061\pm0.004$ ($p = 1.0$). The
+engine does not reach either statistic: with one non-filler point per
+side there is no onset to place on an interval, so V1 returns
+\texttt{inadmissible\_precedence} with sub-verdict
+\texttt{onset\_unresolved}.
+
+It is worth being explicit about why that abstention is the right output
+rather than a missed opportunity. The ground truth for this event contains
+no traffic anomaly. An engine that committed $R\to T$ here because the
+point estimates happened to fall that way would have been \emph{right by
+luck}: right about the incident, wrong about the evidence, and therefore
+wrong on the next event with the same shape but the opposite cause.
+
+\subsection{Lessons}
+
+Three artefacts in one window masqueraded as evidence: a detector firing
+without its baseline (\texttt{expected\_origin} = null), a traffic
+verdict computed against a baseline that does not exist
+(\texttt{historical\_avg} = 0.0), and a synthesized record standing in
+for an observation (\texttt{cluster\_anomaly\_count} = 0 with a non-zero
+severity). Each is individually plausible and each would have survived a
+review that looked only at the verdict. The reusable lesson is that a
+refusal is only as good as the provenance it records: the vetoes can
+decline to commit, but they cannot know that a firing detector had no
+baseline unless the cache says so. That is why the three-state recording
+of \S\ref{sec:impl} matters more than any single accuracy number in this
+paper, and why the case study is a study of instrumentation rather than
+of attribution.

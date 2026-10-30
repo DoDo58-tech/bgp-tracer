@@ -1,0 +1,364 @@
+% Section 5b -- The agent coordination layer
+\section{The Agent Coordination Layer}
+\label{sec:agent}
+
+The phases above decide \emph{what} the evidence supports. This section
+describes the layer that decides \emph{which evidence to gather}, records
+what it gathered, and keeps the pipeline alive when a component fails. We
+state its design, then measure what it is worth: the decision it produces
+relative to a monolithic alternative and to the pure-detector rules, on a
+39-event ground-truth corpus and on 14 events the corpus was never
+developed against; its behaviour under injected component failures; and the
+auditability of its output.
+
+\subsection{Design}
+
+The coordination layer is a set of specialised agents that exchange typed
+records through a shared \emph{Evidence Blackboard} rather than through
+free text. The Blackboard is a partitioned store with eight sections, one
+per stage of the analysis. Two properties make it usable as an audit
+surface rather than merely as a message bus. First, \emph{write-once
+semantics}: a detector's output for a given window is immutable, so a stage
+that re-reports an anomaly cannot quietly restate it and no stage can edit
+another's measurement. Second, \emph{typed records with provenance}: every
+observation carries the detector that produced it and whether it was
+measured or inferred, every claim names the observations it rests on, and
+every challenge names the observation that contradicts it. A reader can
+therefore ask why a conclusion was reached and get the chain rather than a
+paraphrase.
+
+Two agents close a decision loop. The \emph{reasoning agent} is
+evidence-driven: each round it inspects the evidence collected so far,
+identifies which specific facts are missing, selects the retrieval or
+structured-fact tool that can close that gap, and applies the result to the
+evidence pool, with a completeness test deciding whether another round is
+warranted; its action is selected by rule over the evidence state. The
+\emph{ReAct agent} is autonomous: it alternates a Think step, in which a
+language model proposes a tool call or a final answer, with an Act step
+that executes the chosen tool against real network data and an Observe
+step that folds the tool's return value back into the context. The loop is
+bounded at six rounds. Eighteen tools are available, covering traffic and
+routing analysis, correlation testing, RPKI validation, AS topology and
+relationship lookup, threat intelligence, IRR registry records, historical
+behaviour, and report generation; a tool error is reported to the model as
+an observation rather than being fatal. The remaining agents---traffic,
+routing, hypothesis, report, and the enrichment supervisor---execute a
+bounded, ordered procedure and do not choose a next action.
+
+Whether an agent ``has a Think--Act--Observe loop'' is a question about
+control flow, not about how many model calls it makes, so we answer it
+mechanically and re-derive the classification by a script that ships with
+the artefact (Appendix~\ref{app:agent-appendix}): a module closes a loop
+when a \emph{decision} selects an action from a set at runtime, an
+\emph{action} calls a tool or another agent, and a \emph{feedback path}
+returns the outcome into the next decision's context. A runtime trace
+confirms the ReAct classification independently: on a representative
+hijack window the loop ran six rounds and took six \emph{different}
+actions, with each round's observation present in the next round's
+context.
+
+
+
+\subsection{What the agent is worth}
+\label{sec:agent-monolithic}
+
+We compare the coordination layer against two alternatives on identical
+evidence. The \emph{monolithic arm} receives the same Phase-1 evidence
+packet---the same traffic summary, the same routing counts, the same outage
+score---in a single prompt and returns a single JSON verdict, with no
+coordination, no Blackboard, no validation gate, no retry ladder, and no
+report stage. The \emph{rules arm} is the deterministic physical rule with
+no language model at all. The arms therefore differ only in the machinery,
+not in the data or in the decision vocabulary.
+
+On ten cached windows, drawn two from each Phase-1 verdict class, the two
+arms committed to the \emph{same} normalised verdict in all ten cases, so
+this section does not claim the agent layer improves classification on that
+small mechanism sample. The monolithic arm reaches that verdict in a median
+of $1.2$\,s using a median of $653$ tokens; the agent pipeline takes a
+median of $46.6$\,s and $41{,}668$ tokens---about thirty-eight times the
+latency and sixty-four times the tokens of asking the model directly
+(Table~\ref{tab:agent-ablation}).
+
+\begin{table}[t]
+\centering
+\caption{Agent coordination layer versus a monolithic single-prompt
+baseline on identical Phase-1 evidence, over ten cached windows drawn
+equally from the five verdict classes. Latency and tokens are medians.
+The audit column is the number of operator questions about the verdict
+that the arm's output can answer, averaged over the 39-event corpus
+(\S\ref{sec:agent-explain}).}
+\label{tab:agent-ablation}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrr@{}}
+\hline
+\textbf{Arm} & \textbf{Latency} & \textbf{Tokens} & \textbf{Artefact}
+  & \textbf{Audit} \\
+\hline
+Monolithic     & $1.2$\,s   & $653$      & JSON verdict   & $1.7/6$ \\
+Agent pipeline & $46.6$\,s & $41{,}668$ & HTML + record & $5.6/6$ \\
+ReAct          & $168.0$\,s & $4{,}938$  & HTML + trace   & --- \\
+\hline
+\end{tabular}
+\end{table}
+
+On the 39-event ground-truth corpus the arms separate cleanly
+(Table~\ref{tab:agent-gt}). The monolithic one-shot LLM reaches $4/39$
+($0.10$); the full agent pipeline reaches $22/39$ ($0.56$); the
+pure-detector rules with no language model reach $19/39$ ($0.49$). The
+corpus excludes one ASN/window pair that carries two conflicting cause
+labels (CANTV 2024-08-01 is labelled both outage and route leak) and one
+event whose cache never regenerated; scoring both labels against a single
+cache would reward double-counting, so the exclusion is declared in the
+scorer rather than hidden.
+
+\paragraph{How the arbitration was fixed.}
+An earlier version of this table read $19/39$ for both the agent and the
+rules, because the cause axis let the agent's free-text proposal override
+the deterministic physical reading whenever its own stated confidence
+cleared $0.60$---a gate that is not a quality gate. The arbitration now
+requires corroboration by an independent control-plane record, and the
+measurement behind that change is in Appendix~\ref{app:agent-wash}.
+
+\paragraph{How much of the gain is the agent's?}
+\label{sec:eval-agent-reach}
+
+The corroboration gate is an \emph{and} between two independent signals:
+the agent proposes a hijack, and a physical record corroborates it. Both
+must be present. That construction has a cost---whenever the record is
+present and the agent proposes something else, a correct physical reading is
+discarded---and it raises the question the reader should ask of any
+architecture with a language model in it: is the model load-bearing, or is
+it in front of a deterministic gate?
+
+We answered it by replacing the agent's proposal with a fixed label and
+re-scoring (\texttt{scripts/agent\_contribution.py}). On the 39-event
+corpus the constant-proposal control reaches the same $22/39$ as the
+agent's own proposal. On the 14 held-out events, which were absent from the
+corpus the cause rule was developed against and were scored once with the
+gate the development corpus selected, the agent-proposal gate reaches
+$9/14$ while the constant-proposal control reaches $10/14$. The difference
+is one event and the paired exact test gives $p=1.0$.
+
+The reason is visible in the per-event table: the agent's proposal is
+consulted on two of the 39 development events, and on those two it is right
+exactly as often as the rule it would displace. The proposal is
+almost always overridden by the corroboration requirement, and where that
+requirement does not bite, the agent agrees with the rule.
+
+\paragraph{Where the corpus itself is the limit.}
+\label{sec:eval-agent-leak-limit}
+
+Eight of the ten route-leak events are physically indistinguishable from
+hijack in the cached telemetry. The leak detector fires on every event in
+the corpus, saturating at its $5000$-record truncation limit on $11$ of
+$17$ outage events, $8$ of $10$ leak events and $5$ of $12$ hijack
+events, so its output carries no information about which class the event
+belongs to. We tested the plausible discriminators directly, with a
+permutation test on each (\texttt{scripts/leak\_identifiability\_verdict.py}): the
+withdrawal ratio, the traffic-drop magnitude, the announcement retention,
+the withdrawal rate, the leak probability, the origin-versus-path change
+features, and the victim's presence in the announced path. None separates
+the class at the $0.05$ level. The single exception is the presence of the
+leaking ASN in the routing block (AUC $0.88$, $p<0.001$), which fires on
+$8$ of $10$ leak events against $0$ of $17$ outage events---but it
+requires the ground truth to supply the leaking ASN, so it cannot be used
+by a classifier that has to find the leak itself. The corpus's leak labels
+therefore rest on external reporting, not on a routing signature, and we
+report leak recall separately rather than tuning a threshold to hide it.
+
+The per-class split is instructive. The rules are stronger on outage
+($12/17$ against the agent's $9/17$), where the withdrawal and traffic
+signature is decisive. The agent is stronger on origin hijack ($12/12$
+against the rules' $7/12$), where the rules' default answer is a detector
+fallback rather than a measurement. The arbitration takes each where it is
+strong, which is why the combination beats either alone. Of the $9$ events
+on which the two arms still disagree, the agent is right on $6$ and the
+rules on $3$; McNemar's exact two-sided test gives $p=0.51$ and the
+bootstrap interval on the accuracy difference is $[-0.08,\,+0.23]$, so at
+$n=39$ the aggregate delta is suggestive rather than significant. The
+per-class movement is the defensible claim: origin-hijack recall goes from
+$0.58$ to $1.00$ while every other class is held or improved.
+
+\begin{table}[t]
+\centering
+\caption{Cause accuracy on the 39-event balanced corpus and on 14
+held-out events absent from it. All arms run on identical cached detector
+evidence through structural cache resolution (no oracle selection); the
+conflicting-label window (AS8048 2024-08-01) is excluded from every arm.
+The held-out column is the out-of-sample estimate; its gate was selected
+on the 39-event corpus and the held-out events were scored once.}
+\label{tab:agent-gt}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\hline
+\textbf{Arm} & \textbf{Overall} & \textbf{Outage} & \textbf{Leak} & \textbf{Hijack}
+  & \textbf{Held-out} \\
+\hline
+Monolithic LLM & $4/39$ ($0.10$) & $0/17$ & $0/10$ & $4/12$ & --- \\
+Full agent     & $22/39$ ($0.56$) & $9/17$ & $1/10$ & $12/12$ & $9/14$ \\
+Rules only     & $19/39$ ($0.49$) & $12/17$ & $0/10$ & $7/12$ & $6/14$ \\
+\hline
+\end{tabular}
+\end{table}
+
+We read the whole table as a result about \emph{where the value of a
+language model in an operational system lies}. On the small ten-window
+mechanism sample the monolithic arm is exactly as accurate and thirty
+times cheaper; on the 39-event corpus it collapses to $0.10$ while the
+agent holds $0.56$. The gap is not in the model---both arms call the same
+model---but in the machinery around it: the monolithic arm gets one pass
+over a summary and must commit, while the agent pipeline re-reads the
+evidence through arbitration, hypothesis, and the physical veto. What the
+monolithic arm cannot do in either sample is produce the object an operator
+actually needs. It returns a verdict and a sentence. The agent pipeline
+returns the same verdict attached to a full HTML report, a decision trace,
+a set of typed evidence records, a set of claims with their supporting and
+contradicting evidence named, and a machine-readable statement of what was
+missing from the analysis. The additional $40{,}000$ tokens buy an artefact
+that can be audited, not a better label.
+
+\subsection{Graceful degradation}
+\label{sec:agent-degradation}
+
+An operational system is judged as much by what it does when a component
+fails as by what it does when everything works. We inject controlled
+failures at four points in the pipeline and measure the consequence. The
+faults are deterministic and local: the report model call is disabled; the
+report model call raises; the reasoning stage is bypassed; and the report
+agent raises before producing any output. The control run is the unmodified
+pipeline.
+
+Table~\ref{tab:agent-degradation} gives the result. In all four fault
+conditions, over the events tested, the pipeline completed, produced a
+report artefact, and returned the \emph{same verdict as the control run}.
+The faults change the richness of the output, not the decision.
+
+\begin{table}[t]
+\centering
+\caption{Behaviour under injected component failures. \emph{Verdict
+stable} counts runs whose verdict equals the control run's verdict for
+the same event. \emph{Artefact} is the class of document produced.
+A degraded stage reduces the richness of the artefact; it does not alter
+the decision and does not lose the evidence trail.}
+\label{tab:agent-degradation}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}llrrr@{}}
+\hline
+\textbf{Injected fault} & \textbf{Artefact} & \textbf{Completed}
+  & \textbf{Verdict stable} & \textbf{Evidence kept} \\
+\hline
+None (control)      & LLM report          & yes & ---      & yes \\
+Report model off    & deterministic HTML  & yes & $2/2$    & yes \\
+Report model raises & deterministic HTML  & yes & $2/2$    & yes \\
+Reasoning bypassed  & LLM report          & yes & $2/2$    & n/a \\
+Report agent raises & deterministic HTML  & yes & $2/2$    & yes \\
+\hline
+\end{tabular}
+\end{table}
+
+The mechanism is a four-level ladder: the model produces the report; a
+transient upstream failure is retried with exponential backoff; when the
+model cannot be used at all, the report is rendered deterministically from
+the same evidence table, in the same document structure, with the real
+measured values; and if even that cannot be produced, the run terminates
+with a machine-readable abstention that names the failed stage, rather than
+with a partial document an operator might mistake for a finding. Because
+the verdict is computed from the evidence chain rather than from the
+report, a report-stage fault cannot change the decision, which is exactly
+what the table measures.
+
+\subsection{What the Blackboard contributes}
+\label{sec:agent-explain}
+
+The claim that an agent system is more explainable than a single prompt is
+often made and rarely measured. We measure it against a fixed rubric of six
+questions an operator asks after reading a verdict, and we score the
+answers mechanically, by the presence of a typed record rather than by
+judging prose. The questions are: is a producing component named for the
+verdict; is a numeric quantity traceable to a named field; is the time
+window attached to the claim; is at least one rejected alternative
+recorded; is at least one missing or degraded input recorded; and is there
+a step-by-step derivation of how the verdict arose.
+
+\begin{table}[t]
+\centering
+\caption{Answerability of the two arms' outputs on a six-question audit
+rubric, scored by the presence of typed records, over the full 39-event
+corpus. Q1 names a producing component; Q2 traces a quantity to a named
+field; Q3 attaches the window to the claim; Q4 records a rejected
+alternative; Q5 records a missing or degraded input; Q6 records a
+step-by-step derivation.}
+\label{tab:agent-explain}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrrr@{}}
+\hline
+\textbf{Arm} & \textbf{Q1} & \textbf{Q2} & \textbf{Q3} & \textbf{Q4}
+  & \textbf{Q5} & \textbf{Q6} \\
+\hline
+Monolithic     & 1.00 & 0.05 & 0.28 & 0.00 & 0.36 & 0.00 \\
+Agent pipeline & 1.00 & 1.00 & 1.00 & 0.82 & 0.74 & 1.00 \\
+\hline
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:agent-explain} shows the result. The monolithic arm can
+name a verdict and often name a cause, but it cannot tie a number to the
+field it came from, it does not attach the window to its claim, and it has
+no derivation to offer because it made one call. The agent pipeline traces
+quantities to named fields, attaches the window to its claims, and carries
+an eleven-step derivation. The mean rubric score is $0.927$ for the agent
+pipeline against $0.282$ for the monolithic arm, a factor of three on a
+scale where the monolithic arm can score at most one point per question by
+naming the right thing. The sharpest separation is Q4: the agent pipeline
+records a rejected alternative---a hypothesis it considered and discarded,
+with the reason---on $82\%$ of the corpus, against $0\%$ for the
+monolithic arm, which has nowhere to put one. Q5 is the weaker column for
+the agent arm, and the reason is partly structural: a missing input is
+only visible to a stage that tried to fetch it, so the rate is bounded by
+how often a tool call actually fails. It is not, however, bounded by
+failure alone, because a degraded input that was successfully fetched
+must still be recognised as degraded. The route-leak detector saturates
+on most of this corpus, hitting its result cap while leaks remain, which
+makes the reported leak count a floor rather than a total; the pipeline
+records that as a degraded input with its consequence, so $74\%$ of the
+corpus carries a recorded missing or degraded input, against $36\%$ for
+the monolithic arm, which notices only when the degradation happens to be
+mentioned in free text. The honest reading is that the agent pipeline
+answers five of the six questions reliably and the sixth whenever the
+degradation is either a tool failure or a partial detector result; the
+monolithic arm answers one reliably and the other five only by luck.
+
+\subsection{Reading the two together}
+
+Read together, the measurements say that the layer is where \emph{operational
+safety} and \emph{auditability} lie rather than where raw accuracy lies.
+Four independent component failures leave the verdict untouched and still
+produce a document containing the real measurements, because the decision
+is computed from the evidence chain and the document is rendered from it,
+which a single prompt does not have; and the output is a verdict plus the
+records that produced it, answering on average $5.6$ of six operator
+questions against $1.7$ for the monolithic arm.
+
+The component ablation and the constant-proposal control qualify both. The
+agent layer's measurable contribution on this corpus is \emph{narrower than
+its architecture}: the stage that carries the decision is the multi-round
+reasoner, whose removal costs $0.094$ in accuracy with a paired confidence
+interval entirely below zero (Appendix~\ref{app:agent-ablation}); the
+proposal itself is consulted on a small minority of events, and a fixed
+label in place of the proposal reproduces the accuracy. We state this
+because the alternative is to imply a breadth of contribution the data do
+not show. The remaining question is why not use the cheaper rules arm
+($19/39$ against $22/39$): its output is only as useful as the threshold
+it was given, and a threshold is exactly what an operator cannot audit.
+The agent layer costs more because it keeps the evidence instead of
+summarising it, and the value of keeping it appears only when something
+fails, when someone asks why, or when a second consumer needs the same
+record for a different purpose: the Blackboard is a durable interface
+between the analysis and its consumers, so its cost is paid once rather
+than per report. An evaluation with a single reader and no failures would
+not justify it.

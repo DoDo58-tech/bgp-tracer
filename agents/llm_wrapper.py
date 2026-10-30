@@ -1,18 +1,5 @@
-"""
-Unified LLM call wrapper
-========================
-
-Every LLM call inside the agent pipeline should go through ``llm_complete``
-so that:
-
-  1. Token usage is recorded into ``TokenBudget`` (per run_id, no leakage).
-  2. Errors are logged uniformly with agent / round context.
-  3. ``record_llm_call`` is the only place that touches ``TokenBudget``.
-
-This replaces ad-hoc ``self.llm.complete(...)`` scattered across agents,
-which previously caused ``experiment_metrics.token_count`` to be near-empty
-in default ``traffic_first`` mode.
-"""
+"""Unified LLM call wrapper
+========================"""
 
 from __future__ import annotations
 
@@ -33,20 +20,10 @@ def llm_complete(
     timeout: Optional[float] = None,
     **kwargs,
 ) -> Any:
-    """
-    Wrap ``llm.complete`` with token-budget recording and uniform error handling.
-
-    Args:
-        llm: an LLM client exposing ``complete(prompt, ...)``.
-        prompt: str or chat-format list.
-        run_id: workflow run identifier (used by TokenBudget).
-        agent_name: short name of the caller for token-budget attribution.
-        json_mode, max_retries, timeout: forwarded to ``llm.complete``.
-        **kwargs: forwarded to ``llm.complete``.
-
+    """Wrap ``llm.complete`` with token-budget recording and uniform error handling.
+    
     Returns:
-        The LLM response object. Token usage (if available) is recorded.
-    """
+    The LLM response object. Token usage (if available) is recorded."""
     _t0 = time.perf_counter()
     try:
         response = llm.complete(
@@ -67,7 +44,7 @@ def llm_complete(
     try:
         from agents.payload_builder import record_llm_call
         record_llm_call(run_id, agent_name, prompt_text, response)
-    except Exception as exc:
+    except (AttributeError) as exc:
         logger.debug(f"[{agent_name}] record_llm_call skipped: {exc}")
 
     logger.info(

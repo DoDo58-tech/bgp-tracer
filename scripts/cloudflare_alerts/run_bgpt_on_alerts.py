@@ -1,36 +1,5 @@
+"""Run BGP Tracer on the Cloudflare alert feed and aggregate verdicts."""
 #!/usr/bin/env python3
-"""Run BGP Tracer on the Cloudflare alert feed and aggregate verdicts.
-
-Pipeline:
-
-  raw_alerts.json                       (from fetch_cloudflare_alerts.py)
-        │
-        ▼
-  per-alert (asn, start, end) tuples   ◀── 这里决定要跑 BGP Tracer 的输入
-        │
-        ▼
-  chief_agent.analyze_quick(...)        (per-alert, subprocess-isolated)
-        │
-        ▼
-  per_alert_verdict.jsonl              (one record per alert: verdict, traffic,
-                                         routing, correlation, ...)
-        │
-        ▼
-  dangerous_alerts.csv                 (alerts BGP Tracer kept as "real incident")
-
-Each alert is run in its own subprocess so that crashes (e.g. from pybgpstream
-or bgpdump) cannot corrupt the shared process pool. A hard timeout kills
-unresponsive workers.
-
-Output structure:
-
-    results/cloudflare_alerts/
-        ├── raw/                          (input from fetch script)
-        ├── per_alert_verdict.jsonl       (one line per alert)
-        ├── dangerous_alerts.csv          (verdict = real_incident)
-        ├── skipped_alerts.csv            (no ASN, no usable window, etc.)
-        └── run_summary.json             (run statistics)
-"""
 from __future__ import annotations
 
 import argparse
@@ -44,10 +13,10 @@ import sys
 import tempfile
 import threading
 import time
-from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from collections import Counter, defaultdict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -83,7 +52,7 @@ NON_ACTION = {
 
 
 # ── Time window utilities ───────────────────────────────────────────────
-def _parse_iso(s: Optional[str]) -> Optional[datetime]:
+def parse_iso(s: Optional[str]) -> Optional[datetime]:
     if not s:
         return None
     s = s.strip().rstrip("Z")
@@ -105,8 +74,8 @@ def make_window(
 ) -> Optional[Tuple[str, str]]:
     """Return ("YYYY-MM-DD HH:MM", "YYYY-MM-DD HH:MM") suitable for analyze_quick."""
     from datetime import timedelta as _td
-    start_dt = _parse_iso(start_iso)
-    end_dt = _parse_iso(end_iso)
+    start_dt = parse_iso(start_iso)
+    end_dt = parse_iso(end_iso)
     if start_dt and end_dt:
         anchor = start_dt + (end_dt - start_dt) / 2
     elif start_dt:
@@ -233,11 +202,7 @@ print(json.dumps(rec, ensure_ascii=False, default=str))
 
 
 def run_one_subprocess(alert: Dict[str, Any], timeout_s: int) -> Dict[str, Any]:
-    """Run one alert through BGP Tracer in a fresh subprocess.
-
-    Each alert runs in its own process with a hard timeout. This prevents any
-    single crash from affecting other alerts or the main process.
-    """
+    """Run one alert through BGP Tracer in a fresh subprocess."""
     tmp_input = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
     try:
         tmp_input.write(json.dumps(alert, default=str))
@@ -359,7 +324,7 @@ def main() -> int:
             if line:
                 try:
                     done_ids.add(json.loads(line).get("alert_id", ""))
-                except Exception:
+                except (ValueError):
                     pass
         skipped = sum(1 for a in todo if a.get("alert_id", "") in done_ids)
         todo = [a for a in todo if a.get("alert_id", "") not in done_ids]
@@ -373,7 +338,7 @@ def main() -> int:
         records: List[Dict[str, Any]] = []
         records_lock = threading.Lock()
 
-        def _process_one(i: int, alert: Dict[str, Any]) -> Dict[str, Any]:
+        def process_one(i: int, alert: Dict[str, Any]) -> Dict[str, Any]:
             alert_id = alert.get("alert_id", f"unknown:{i}")
             log.info("--- alert %d/%d: %s (AS%s) starting ---",
                      i + 1, len(todo), alert_id, alert.get("asn", "?"))
@@ -404,7 +369,7 @@ def main() -> int:
         # Run alerts in parallel using ThreadPoolExecutor + subprocess.run
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=args.workers) as ex:
-            futures = [ex.submit(_process_one, i, a) for i, a in enumerate(todo)]
+            futures = [ex.submit(process_one, i, a) for i, a in enumerate(todo)]
             for fut in concurrent.futures.as_completed(futures):
                 rec = fut.result()
                 completed += 1
@@ -426,7 +391,7 @@ def main() -> int:
         if line:
             try:
                 all_records.append(json.loads(line))
-            except Exception:
+            except (ValueError):
                 pass
 
     by_status: Dict[str, int] = {}

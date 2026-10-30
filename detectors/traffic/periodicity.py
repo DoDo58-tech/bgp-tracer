@@ -49,7 +49,7 @@ def detect_period_automatically(time_series, timestamps=None):
             avg = float(np.mean(daily_peaks))
             if avg > 0.15:
                 candidates.append({"period": "daily", "confidence": avg, "method": f"acf_daily_{len(daily_peaks)}peaks"})
-    except Exception as e:
+    except (AttributeError) as e:
         logger.warning(f"ACF period detection failed: {e}")
 
     try:
@@ -78,7 +78,7 @@ def detect_period_automatically(time_series, timestamps=None):
                 candidates.append({"period": "daily", "confidence": fft_conf, "method": "fft_daily"})
             elif abs(period_pts - EXPECTED_WEEKLY) < EXPECTED_WEEKLY * 0.4:
                 candidates.append({"period": "weekly", "confidence": fft_conf, "method": "fft_weekly"})
-    except Exception as e:
+    except (AttributeError) as e:
         logger.warning(f"FFT period detection failed: {e}")
 
     try:
@@ -87,7 +87,7 @@ def detect_period_automatically(time_series, timestamps=None):
             strength = float(np.var(decomp.seasonal) / np.var(decomp.resid + decomp.seasonal))
             if strength > 0.12:
                 candidates.append({"period": "daily", "confidence": strength, "method": "stl_daily"})
-    except Exception as e:
+    except (AttributeError) as e:
         logger.warning(f"STL decomposition failed: {e}")
 
     daily_best = max([c for c in candidates if c["period"] == "daily"], key=lambda x: x["confidence"], default=None)

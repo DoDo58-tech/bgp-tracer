@@ -1,12 +1,5 @@
-"""
-Tool implementations for the chat-based multi-agent system.
-=========================================================
-
-Each tool follows the signature:
- async def handler(tool_input, session) -> dict
-
-The return dict is converted to a ToolResult by the registry.
-"""
+"""Tool implementations for the chat-based multi-agent system.
+========================================================="""
 
 from __future__ import annotations
 
@@ -14,15 +7,15 @@ import asyncio
 import json
 import os
 import re
-import sys
 import time
 import hashlib
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import httpx
 import polars as pl
+
+from agents.ablation_switches import joint_evidence_disabled
 
 
 # Simple in-memory cache for API calls with TTL
@@ -36,7 +29,7 @@ class APICache:
         self._hits = 0
         self._misses = 0
 
-    def _make_key(self, prefix, *args, **kwargs):
+    def make_key(self, prefix, *args, **kwargs):
         """Create a cache key from function name and arguments."""
         key_data = f"{prefix}:{args}:{sorted(kwargs.items())}"
         return hashlib.md5(key_data.encode()).hexdigest()
@@ -54,14 +47,7 @@ class APICache:
         return None
 
     def set(self, key, value):
-        """Set value in cache with current timestamp.
-
- A bounded ``max_entries`` cap protects against runaway memory growth
- when callers feed us ever-changing keys (different prefixes / ASNs
- across many events). When the cap is hit we drop the oldest
- ``max(64, max_entries // 16)`` entries, keeping the cap loose enough
- to amortise but tight enough that memory stays bounded.
- """
+        """Set value in cache with current timestamp."""
         # Opportunistically prune expired entries on every set so the
         # cap rarely has to do the heavy lifting.
         if self._cache:
@@ -92,28 +78,32 @@ _bgpview_cache = APICache(ttl_seconds=3600)  # 1 hour TTL for AS info
 _prefix_cache = APICache(ttl_seconds=3600)  # 1 hour TTL for prefix info
 
 
-async def _async_get_json(url, timeout=15.0):
+async def async_get_json(url, timeout=15.0):
     """GET a URL and parse JSON without blocking the event loop.
 
- ``requests.get`` is synchronous and would freeze every concurrent
- coroutine on the same loop. Wrap it in ``asyncio.to_thread`` so the
- network I/O happens on a worker thread, then return ``None`` on any
- failure so callers can fall back to defaults.
- """
+    Returns None for *any* transport-level or decoding failure.  A
+    third-party API that is unreachable (DNS failure, connection reset,
+    TLS error, non-200 status, malformed body) is an absent
+    observation, not a fatal error: callers treat None as "this source
+    is unavailable" and continue with the remaining evidence.  The
+    previous narrow ``except (ValueError)`` let
+    ``requests.exceptions.ConnectionError`` escape, which aborted the
+    entire workflow event whenever bgpview.io failed to resolve.
+    """
     import requests
 
-    def _do_request():
+    def do_request():
         return requests.get(url, timeout=timeout)
 
     try:
-        resp = await asyncio.to_thread(_do_request)
-    except Exception:
+        resp = await asyncio.to_thread(do_request)
+    except (requests.RequestException, OSError, ValueError):
         return None
     try:
         if resp.status_code != 200:
             return None
         return resp.json()
-    except Exception:
+    except (ValueError, requests.RequestException):
         return None
 
 
@@ -128,7 +118,7 @@ _TIME_FORMATS = (
 )
 
 
-def _parse_dt(value, fmt=None):
+def parse_dt(value, fmt=None):
     """Parse a time string in multiple common formats. Returns datetime."""
     if not value:
         raise ValueError("Empty time string")
@@ -154,36 +144,15 @@ def _parse_dt(value, fmt=None):
 
 from agents.traffic_agent import run_traffic_agent
 from agents.routing_agent import run_routing_agent_async
-from agents.reasoning_agent import run_reasoning_agent
 from agents.report_agent import generate_report_html
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-def _unwrap_traffic_for_payload_standalone(t, target_asn=""):
+def unwrap_traffic_for_payload_standalone(t, target_asn=""):
     """Flatten ``{ASN: {...detector fields...}}`` → detector-level ``{...}``.
-
- The legacy ``analyze_traffic`` tool output is a wrapper:
-
- {"success": True, "results": {"8048": {...}, "12345": {...}}, ...}
-
- Downstream consumers (the LLM payload, ``_substitute_field_references``,
- ``_inject_code_rendered_tables``) all read fields at the **top** level of
- the traffic dict - e.g. ``traffic.anomaly_count`` or
- ``traffic.peak_trough_drop_pct``. Without this unwrap, the prompt shows
- the nested structure and the LLM/HTML report never finds the metrics,
- leaving placeholders like ``(no data)`` and ``[traffic.anomaly_count]``
- in the rendered report.
-
- Selection rules:
- 1. If the dict already looks like a detector payload (top-level keys
- like ``anomaly_count`` / ``percent_change``), return it unchanged.
- 2. If the dict is keyed by ASN values, prefer the entry whose key
- matches ``target_asn`` if given.
- 3. Otherwise prefer the ASN with the highest ``anomaly_count``.
-
- Returns the input unchanged when none of the above apply (preserves
- the contract: tests can pass a raw payload through without alteration).
- """
+    
+    Returns the input unchanged when none of the above apply (preserves
+    the contract: tests can pass a raw payload through without alteration)."""
     if not isinstance(t, dict) or not t:
         return t
     detector_keys = {
@@ -215,32 +184,24 @@ def _unwrap_traffic_for_payload_standalone(t, target_asn=""):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-from llm.llm_factory import (
-    setup_llm_settings,
-    DEFAULT_TEMP_REASONING,
-    DEFAULT_TEMP_CLASSIFY,
-)
-from tools.tool_registry import ToolParameter, ToolResult, register_tool
+from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_CLASSIFY, DEFAULT_TEMP_REASONING
+from tools.tool_registry import ToolParameter, register_tool
 from utils.logger import logger
 from config import MODEL, API_KEY, BASE_URL, SKIP_FORGE_DETECTION
 from agents.payload_builder import PayloadBudget, build_payload, cap_payload, estimate_bytes
+import sys
+from pathlib import Path
+from typing import List
+from agents.reasoning_agent import run_reasoning_agent
+from tools.tool_registry import ToolResult
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_traffic(tool_input, session):
-    """
- Analyze traffic anomalies for one or more ASes within a time window.
-
- Required params:
- asn (str or list[str]): AS number(s) to analyze
- start_time (str): ISO datetime, e.g. "2025-06-21 00:30"
- end_time (str): ISO datetime
- country (str, optional): country code filter (e.g. "CN")
- """
+async def analyze_traffic(tool_input, session):
+    """Analyze traffic anomalies for one or more ASes within a time window."""
     asn_list = tool_input.get("asn", [])
     if isinstance(asn_list, str):
         asn_list = [asn_list]
-    # Bug fix 2026-09-13 (BUG-R58): previously an empty ``asn_list``
     if not asn_list:
         return {
             "success": False,
@@ -267,7 +228,7 @@ async def _analyze_traffic(tool_input, session):
                 start_time=start,
                 end_time=end,
             )
-        except Exception as e:
+        except (ValueError) as e:
             result = {"success": False, "error": str(e)}
         results[str(asn)] = result
 
@@ -303,24 +264,14 @@ register_tool(
         ToolParameter("end_time", "Analysis window end, ISO format 'YYYY-MM-DD HH:MM'", "string"),
         ToolParameter("country", "Optional: filter ASes by country code (e.g. 'CN')", "string", required=False),
     ],
-    handler=_analyze_traffic,
+    handler=analyze_traffic,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_routing(tool_input, session):
-    """
- Analyze BGP routing anomalies (hijacks, leaks, outages) for an AS
- within a time window.
-
- Required params:
- asn (str)
- start_time (str)
- end_time (str)
- Optional params:
- detail_level (str): "light" (fast, no leak detection) or "full" (all detectors).
- Default: "full". Use "light" when you just need a quick check.
- """
+async def analyze_routing(tool_input, session):
+    """Analyze BGP routing anomalies (hijacks, leaks, outages) for an AS
+    within a time window."""
     asn = str(tool_input["asn"])
     start = tool_input.get("start_time", tool_input.get("start"))
     end = tool_input.get("end_time", tool_input.get("end"))
@@ -344,7 +295,6 @@ async def _analyze_routing(tool_input, session):
     # ── Pre-computed shortcut ────────────────────────────────────────────────
     try:
         from agents.react_agent import _SHARED_EVIDENCE
-        # Bug fix 2026-09-16: ReactAgent writes the precomputed payload to
         pre = {}
         for _run_id, _bucket in (_SHARED_EVIDENCE or {}).items():
             candidate = _bucket.get("precomputed_routing") if isinstance(_bucket, dict) else None
@@ -368,16 +318,11 @@ async def _analyze_routing(tool_input, session):
                 "outage_analysis": pre.get("outage", {}),
             }
             return result
-    except Exception as e:
+    except (AttributeError) as e:
         logger.debug(f"[routing_tool] precomputed check failed: {e}; falling through to live detection")
 
     try:
         # BUG-R135 2026-09-28: the previous mapping (`"light" if detail !=
-        # "deep_full"`) conflated the React-loop LLM's `detail_level=full`
-        # intent with the legacy one-phase default. When the LLM explicitly
-        # says `detail_level=full`, run full detection (leak + streaming
-        # hijack + outage). Only fall back to light mode for the empty /
-        # unknown explicit request.
         explicit_level = (detail or "").strip().lower()
         if explicit_level in ("full", "deep_full"):
             effective_detail = "full"
@@ -394,16 +339,16 @@ async def _analyze_routing(tool_input, session):
             skip_outage=(effective_detail == "light"),
             skip_hijack_streaming=(effective_detail == "light"),
         )
-    except Exception as e:
+    except (ValueError) as e:
         result = {"success": False, "error": str(e)}
 
-    def _ev(ev):
+    def ev(ev):
         return ev.to_dict() if not isinstance(ev, dict) else ev
 
     if isinstance(result, dict):
         for _key in ["origin_hijacked", "forge_hijacked", "origin_hijacking", "forge_hijacking", "route_leaks"]:
             if _key in result and isinstance(result[_key], list):
-                result[_key] = [_ev(e) for e in result[_key]]
+                result[_key] = [ev(e) for e in result[_key]]
     else:
         result = {}
 
@@ -431,16 +376,13 @@ async def _analyze_routing(tool_input, session):
     victim_asns.discard(asn)
     victim_asns_sorted = sorted(victim_asns)
 
-    # ──  observation， LLM  ──
     obs_parts = []
 
-    # 
     obs_parts.append(
         f"Routing anomalies: {len(hijacks)} hijack events, {len(leaks)} leaks, "
         f"outage_score={outage.get('outage_score', 'N/A')}"
     )
 
-    # （！）
     if hijacks:
         obs_parts.append("\nTop hijack examples (prefix -> hijacker -> victim):")
         for ev in hijacks[:3]:
@@ -454,13 +396,12 @@ async def _analyze_routing(tool_input, session):
         if len(hijacks) > 3:
             obs_parts.append(f"  ... ({len(hijacks) - 3} more)")
 
-    #  AS 
+    #  AS
     if victim_asns_sorted:
         obs_parts.append(f"\nDiscovered {len(victim_asns_sorted)} potential victim AS(es): {victim_asns_sorted[:5]}")
         if len(victim_asns_sorted) > 5:
             obs_parts.append(f"  (+{len(victim_asns_sorted) - 5} more)")
 
-    # 
     if leaks:
         obs_parts.append(f"\nRoute leak examples (prefix -> leaking AS):")
         for ev in leaks[:3]:
@@ -489,20 +430,36 @@ register_tool(
         ToolParameter("end_time", "Analysis window end, ISO format", "string"),
         ToolParameter("detail_level", "Analysis depth: 'light' (fast, no leak detection) or 'full' (all detectors)", "string", required=False, default="full"),
     ],
-    handler=_analyze_routing,
+    handler=analyze_routing,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _check_correlation(tool_input, session):
-    """Three-card joint-evidence analysis for routing and traffic signals.
-
-    Card 1: temporal alignment with decay scoring. Card 2: blast radius
-    (prefix-level AS-path shift + victim AS traffic). Card 3: falsification
-    tree (which alternative explanations are excluded). Returns a C1/C2/C3
-    tier for the LLM to calibrate causal confidence.
-    """
+async def check_correlation(tool_input, session):
+    """Three-card joint-evidence analysis for routing and traffic signals."""
     from detectors.traffic.joint_evidence import analyse_joint_evidence
+
+    # This tool *is* the joint-evidence stage: it runs the same
+    # three-card analyser the workflow engine runs.  When the joint
+    # evidence stage is ablated, this tool must not run it either, or
+    # the "no joint evidence" arm would still contain joint evidence
+    # and would measure nothing.  Returning the separate signals
+    # unchanged is the right shape for an ablated stage: the routing
+    # and traffic evidence are still available to the reasoning stage,
+    # only their *joint* interpretation is gone.
+    if joint_evidence_disabled():
+        return {
+            "success": True,
+            "ablated": True,
+            "joint_tier": "",
+            "joint_score": None,
+            "evidence_cards": [],
+            "rationale": [],
+            "observation": (
+                "Joint-evidence analysis is ablated for this run; the "
+                "routing and traffic signals are reported separately."
+            ),
+        }
 
     # Fall back to run_context / session evidence when caller omits asn/start/end.
     rc = getattr(session, "run_context", {}) or {}
@@ -554,14 +511,14 @@ async def _check_correlation(tool_input, session):
         routing_result = (ev.get("analyze_routing", {}) or {}).get("result", {}) or {}
 
     # ── resolve auxiliary fields (prefix traffic, victim traffic, causal evidence) ─
-    def _from_session(key):
+    def from_session(key):
         ev = getattr(session, "evidence", {}) or {}
         raw = ev.get(key, {})
         if isinstance(raw, dict):
             return raw.get("prefix_traffic_results", {}) or raw.get("victim_traffic_results", {}) or raw.get("causal_evidence", {}) or raw
         return {}
 
-    classification = tool_input.get("classification_result") or _from_session("reason_and_classify")
+    classification = tool_input.get("classification_result") or from_session("reason_and_classify")
     prefix_traffic = tool_input.get("prefix_traffic") or classification.get("prefix_traffic_results", {})
     victim_traffic = tool_input.get("victim_traffic") or classification.get("victim_traffic_results", {})
     causal_evidence = tool_input.get("causal_evidence") or classification.get("causal_evidence", {})
@@ -664,20 +621,14 @@ register_tool(
         ToolParameter("start_time", "Time window start", "string"),
         ToolParameter("end_time", "Time window end", "string"),
     ],
-    handler=_check_correlation,
+    handler=check_correlation,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _query_as_info(tool_input, session):
-    """
- Enrich AS data with org info, AS relationships, and announced prefixes.
- Uses RIPE Whois Database REST API (authenticated) + BGPView.
-
- Required params:
- asn (str)
- """
-    from config import RIPE_DB_WHOIS_USERNAME
+async def query_as_info(tool_input, session):
+    """Enrich AS data with org info, AS relationships, and announced prefixes.
+    Uses RIPE Whois Database REST API (authenticated) + BGPView."""
 
     # Fall back to run_context when caller omits asn.
     rc_qa = getattr(session, "run_context", {}) or {}
@@ -687,7 +638,7 @@ async def _query_as_info(tool_input, session):
                 "observation": "query_as_info requires an AS number."}
 
     # RIPE Whois DB: keyId in URL, follow redirects
-    def _ripe_url(path):
+    def ripe_url(path):
         # RIPE Whois DB REST API is publicly accessible (no auth needed)
         return f"https://rest.db.ripe.net/ripe{path}"
 
@@ -696,7 +647,7 @@ async def _query_as_info(tool_input, session):
     # 1. RIPE Whois DB: aut-num object
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(_ripe_url(f"/aut-num/AS{asn}"))
+            resp = await client.get(ripe_url(f"/aut-num/AS{asn}"))
             if resp.status_code == 200:
                 data = resp.json()
                 attrs = (
@@ -721,14 +672,14 @@ async def _query_as_info(tool_input, session):
                     elif name == "abuse-c":
                         info.setdefault("abuse_contacts", []).append(value)
                 info["description"] = "; ".join(info.get("descriptions", []))
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
         info["whois_error"] = str(e)
 
     # 2. RIPE Whois DB: search route objects for prefixes + relationships
     try:
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
             resp = await client.get(
-                _ripe_url("/search.json"),
+                ripe_url("/search.json"),
                 params={"source": "RIPE", "query-string": f"originAS{asn}", "type-filter": "route"},
             )
             if resp.status_code == 200:
@@ -743,11 +694,11 @@ async def _query_as_info(tool_input, session):
                     if p:
                         prefixes.append(p)
                 info["announced_prefixes"] = prefixes
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
         info["prefix_error"] = str(e)
 
     # 3. BGPView: owner / IRR info + country (free, no auth) - improved fallback with caching
-    cache_key = _bgpview_cache._make_key("asn_info", asn)
+    cache_key = _bgpview_cache.make_key("asn_info", asn)
     cached_info = _bgpview_cache.get(cache_key)
     if cached_info:
         # Use cached data and merge with existing info
@@ -780,7 +731,7 @@ async def _query_as_info(tool_input, session):
 
                     # Get prefixes from BGPView if not already set (also cache them)
                     if not info.get("announced_prefixes"):
-                        prefix_cache_key = _prefix_cache._make_key("prefixes", asn)
+                        prefix_cache_key = _prefix_cache.make_key("prefixes", asn)
                         cached_prefixes = _prefix_cache.get(prefix_cache_key)
                         if cached_prefixes:
                             info["announced_prefixes"] = cached_prefixes
@@ -793,7 +744,7 @@ async def _query_as_info(tool_input, session):
                                 info["announced_prefixes"] = ipv4_prefixes + ipv6_prefixes
                                 # Cache the prefixes
                                 _prefix_cache.set(prefix_cache_key, info["announced_prefixes"])
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError) as e:
             info["bgpview_error"] = str(e)
 
     # Use local CAIDA AS-organization data when external registries do not
@@ -813,7 +764,7 @@ async def _query_as_info(tool_input, session):
                     info["country"] = local_info.get("country")
                 info["asorg_org_name"] = local_info.get("org_name", "")
                 info["asorg_source"] = local_info.get("source", "")
-        except Exception as e:
+        except (KeyError, IndexError) as e:
             info["asorg_error"] = str(e)
 
     obs = (
@@ -833,32 +784,14 @@ register_tool(
     parameters=[
         ToolParameter("asn", "AS number", "string"),
     ],
-    handler=_query_as_info,
+    handler=query_as_info,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _reason_and_classify(tool_input, session):
-    """
- LLM-powered reasoning on traffic + routing results to produce a final
- incident classification and evidence summary.
-
- Required params:
- asn (str)
- traffic_result (dict)
- routing_result (dict)
- asn_info (dict, optional)
- start_time (str)
- end_time (str)
-
- All data is read from session.evidence when not provided in tool_input,
- so the LLM always receives the full evidence even when the caller omits
- explicit parameters.
-
- Run context (asn/start/end) is taken from `session.run_context` - an
- explicit per-run dict. We do NOT fall back to `sys.modules["agents.react_agent"]`
- globals; that pattern made concurrent runs and re-entrancy unsafe.
- """
+async def reason_and_classify(tool_input, session):
+    """LLM-powered reasoning on traffic + routing results to produce a final
+    incident classification and evidence summary."""
     rc = getattr(session, "run_context", {}) or {}
     _run_asn = rc.get("asn", "") or ""
     _run_start = rc.get("start_time", "") or ""
@@ -868,7 +801,7 @@ async def _reason_and_classify(tool_input, session):
 
     asn = tool_input.get("asn") or _run_asn or ""
     if not asn:
-        #  query_as_info  {"info": {"asn": ...}} 
+        #  query_as_info  {"info": {"asn": ...}}
         qai = ev.get("query_as_info", {})
         asn = qai.get("info", {}).get("asn") or qai.get("result", {}).get("asn") or "unknown"
     asn = str(asn)
@@ -882,7 +815,7 @@ async def _reason_and_classify(tool_input, session):
     if isinstance(traffic, str):
         try:
             traffic = json.loads(traffic)
-        except Exception:
+        except (ValueError):
             traffic = {}
     if not traffic:
         raw = ev.get("analyze_traffic", {})
@@ -908,7 +841,7 @@ async def _reason_and_classify(tool_input, session):
     if isinstance(routing_raw, str):
         try:
             routing_raw = json.loads(routing_raw)
-        except Exception:
+        except (ValueError):
             routing_raw = {}
     routing = routing_raw.get("result", {}) if isinstance(routing_raw, dict) else (routing_raw if isinstance(routing_raw, dict) else {})
 
@@ -923,7 +856,7 @@ async def _reason_and_classify(tool_input, session):
     elif isinstance(asn_info, str):
         try:
             asn_info = json.loads(asn_info)
-        except Exception:
+        except (ValueError):
             asn_info = {}
 
     # ── Auto-discover victim ASes from routing result and query their traffic ─────
@@ -979,7 +912,7 @@ async def _reason_and_classify(tool_input, session):
 
             if prefixes:
                 logger.info(f"[reason_and_classify] Triggering prefix traffic analysis for {len(prefixes)} prefixes")
-                prefix_result = await _analyze_prefix_traffic({
+                prefix_result = await analyze_prefix_traffic({
                     "prefixes": prefixes,
                     "hijacker_asn": hijacker_asn_str,
                     "victim_asn": asn,
@@ -990,7 +923,7 @@ async def _reason_and_classify(tool_input, session):
                 if prefix_result.get("success"):
                     prefix_traffic_results = prefix_result.get("results", {})
                 logger.info(f"[reason_and_classify] Prefix traffic analysis complete")
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"[reason_and_classify] Prefix traffic analysis failed: {e}")
 
     # ── Compute quantitative correlation score (P1: compute_traffic_routing_correlation_score) ─
@@ -1003,9 +936,9 @@ async def _reason_and_classify(tool_input, session):
                 "victim_traffic": victim_traffic,
                 "prefix_traffic": prefix_traffic_results,
             }
-            correlation_score_result = await _compute_traffic_routing_correlation_score(corr_input, session)
+            correlation_score_result = await compute_traffic_routing_correlation_score(corr_input, session)
             logger.info(f"[reason_and_classify] Correlation score: {correlation_score_result.get('total_score', 'N/A')}")
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"[reason_and_classify] Correlation score computation failed: {e}")
 
     # ── Analyze AS-path structural changes (P1: analyze_as_path_delta) ───────────
@@ -1017,9 +950,9 @@ async def _reason_and_classify(tool_input, session):
                 "start_time": start,
                 "end_time": end,
             }
-            as_path_delta_result = await _analyze_as_path_delta(path_input, session)
+            as_path_delta_result = await analyze_as_path_delta(path_input, session)
             logger.info(f"[reason_and_classify] AS-path delta: {as_path_delta_result.get('overall_verdict', {}).get('level', 'N/A')}")
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"[reason_and_classify] AS-path delta analysis failed: {e}")
 
     # ── Analyze AS relationships and blast radius (P2: analyze_as_relationships) ───
@@ -1047,10 +980,10 @@ async def _reason_and_classify(tool_input, session):
                     "routing_result": routing_unwrapped_for_prefix,
                     "asn_info": asn_info,
                 }
-                as_relationships_result = await _analyze_as_relationships(rel_input, session)
+                as_relationships_result = await analyze_as_relationships(rel_input, session)
                 logger.info(f"[reason_and_classify] AS relationships: "
                            f"{as_relationships_result.get('relationship', {}).get('attacker_to_victim', 'N/A')}")
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"[reason_and_classify] AS relationships analysis failed: {e}")
 
     # ── Probe prefix reachability (P2: probe_prefix_reachability) ───────────────
@@ -1076,10 +1009,10 @@ async def _reason_and_classify(tool_input, session):
                     "victim_asn": asn,
                     "routing_result": routing_unwrapped_for_prefix,
                 }
-                probe_result = await _probe_prefix_reachability(probe_input, session)
+                probe_result = await probe_prefix_reachability(probe_input, session)
                 logger.info(f"[reason_and_classify] Probe reachability: "
                            f"{probe_result.get('synthesis', {}).get('overall_verdict', 'N/A')}")
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"[reason_and_classify] Prefix reachability probe failed: {e}")
 
     # ── Validate ROA status (P3: validate_roa_status) ─────────────────────────
@@ -1091,10 +1024,10 @@ async def _reason_and_classify(tool_input, session):
                 "start_time": start,
                 "end_time": end,
             }
-            roa_validation_result = await _validate_roa_status(roa_input, session)
+            roa_validation_result = await validate_roa_status(roa_input, session)
             logger.info(f"[reason_and_classify] ROA validation: "
                        f"{roa_validation_result.get('summary', {}).get('risk_level', 'N/A')}")
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"[reason_and_classify] ROA validation failed: {e}")
 
     # ── Threat intel lookup for attacker AS (P3: lookup_as_threat_intel) ──────
@@ -1119,11 +1052,11 @@ async def _reason_and_classify(tool_input, session):
                     "routing_result": routing_unwrapped_for_prefix,
                     "start_time": start,
                 }
-                threat_intel_result = await _lookup_as_threat_intel(intel_input, session)
+                threat_intel_result = await lookup_as_threat_intel(intel_input, session)
                 logger.info(f"[reason_and_classify] Threat intel: "
                            f"{threat_intel_result.get('threat_level', 'N/A')} "
                            f"(risk_score={threat_intel_result.get('risk_score', 'N/A')})")
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"[reason_and_classify] Threat intel lookup failed: {e}")
 
     llm, _ = setup_llm_settings(
@@ -1175,7 +1108,7 @@ async def _reason_and_classify(tool_input, session):
 Use the full evidence set below to form a judgment. Weigh traffic, routing, AS metadata, relationships, and any context that helps explain the incident. If the evidence is mixed, weak, or incomplete, it is acceptable to return "inconclusive" rather than forcing a confident label.
 
 === DATA ===
-{json.dumps(payload, indent=2, ensure_ascii=False, default=_json_serial)}
+{json.dumps(payload, indent=2, ensure_ascii=False, default=json_serial)}
 
 === ANALYSIS GUIDELINES ===
 - Compare traffic and routing evidence for temporal alignment, magnitude, and consistency.
@@ -1271,7 +1204,7 @@ Return ONLY valid JSON:
     try:
         resp = await asyncio.to_thread(llm.complete, prompt)
         raw = resp.text if hasattr(resp, "text") else str(resp)
-        result = _parse_json(raw)
+        result = parse_json(raw)
         obs = f"LLM classified incident as '{result.get('incident_type','unknown')}' (confidence: {result.get('confidence','unknown')})"
         return {
             "success": True,
@@ -1288,17 +1221,17 @@ Return ONLY valid JSON:
             "causal_evidence": tool_input.get("causal_evidence", {}),
             "observation": obs,
         }
-    except Exception as e:
+    except (ValueError) as e:
         return {"success": False, "error": str(e), "observation": f"LLM reasoning failed: {e}"}
 
 
-def _json_serial(obj):
+def json_serial(obj):
     if hasattr(obj, "isoformat"):
         return obj.isoformat()
     return str(obj)
 
 
-def _parse_json(raw_text):
+def parse_json(raw_text):
     raw = raw_text.strip()
     for fence in ["```json\n", "```json", "```\n", "```"]:
         if raw.startswith(fence):
@@ -1310,13 +1243,12 @@ def _parse_json(raw_text):
     try:
         return json.loads(raw)
     except Exception:
-        # Bug fix 2026-09-13 (BUG-R47): previously the fallback was
         try:
             from utils.helpers import extract_json_object as _safe_extract
             snippet = _safe_extract(raw)
             if snippet is not None:
                 return json.loads(snippet)
-        except Exception:
+        except (ValueError):
             return {}
         return {}
 
@@ -1333,12 +1265,12 @@ register_tool(
         ToolParameter("end_time", "Time window end", "string"),
         ToolParameter("causal_evidence", "Externally verified evidence with provenance. Model-generated assertions are not accepted.", "object", required=False),
     ],
-    handler=_reason_and_classify,
+    handler=reason_and_classify,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-def _inject_traffic_plot_into_file(html_path, traffic_plot_base64):
+def inject_traffic_plot_into_file(html_path, traffic_plot_base64):
     """After the HTML is saved, inject the traffic plot if the LLM missed it."""
     import pathlib
     try:
@@ -1363,16 +1295,11 @@ def _inject_traffic_plot_into_file(html_path, traffic_plot_base64):
         else:
             html = html + section
         p.write_text(html, encoding="utf-8")
-    except Exception:
+    except (ValueError):
         pass
 
-async def _generate_report(tool_input, session):
-    """Generate the final LLM-driven HTML report from all collected evidence.
-
-    Params come from `tool_input` (priority) or `session.evidence` (fallback),
-    so the report always has data even when the LLM omits the ASN. Plots are
-    embedded as base64.
-    """
+async def generate_report(tool_input, session):
+    """Generate the final LLM-driven HTML report from all collected evidence."""
     import base64 as _b64
     import pathlib
 
@@ -1405,21 +1332,21 @@ async def _generate_report(tool_input, session):
             traffic = {}
 
     # Unwrap traffic to a flat "traffic_result.shape = {anomaly_count, percent_change, ...}"
-    traffic = _unwrap_traffic_for_payload_standalone(traffic, target_asn=str(asn) if asn else "")
+    traffic = unwrap_traffic_for_payload_standalone(traffic, target_asn=str(asn) if asn else "")
 
     # Surface `max_severity` at the top level so _substitute_field_references and
     if isinstance(traffic, dict) and "max_severity" not in traffic:
         try:
-            from agents.traffic_agent import _to_canonical_severity
-            traffic["max_severity"] = _to_canonical_severity(traffic.get("anomalies") or [])
-        except Exception:
+            from agents.traffic_agent import to_canonical_severity
+            traffic["max_severity"] = to_canonical_severity(traffic.get("anomalies") or [])
+        except (ValueError):
             pass
 
     # Extract plot_path from traffic results (search multiple possible locations)
     traffic_plot_path = None
     traffic_plot_base64 = None
 
-    def _search_plot(data, _depth=0):
+    def search_plot(data, _depth=0):
         """Recursively search for plot_path in a dict."""
         if _depth > 3 or not isinstance(data, dict):
             return
@@ -1429,15 +1356,15 @@ async def _generate_report(tool_input, session):
                 traffic_plot_path = v
                 return
             if isinstance(v, dict):
-                _search_plot(v, _depth + 1)
+                search_plot(v, _depth + 1)
 
-    _search_plot(traffic)
+    search_plot(traffic)
 
     # Also search the raw _SHARED_EVIDENCE entry for the plot path
     if not traffic_plot_path and session is not None:
         ev = getattr(session, "evidence", {}) or {}
         raw_traffic = ev.get("analyze_traffic", {})
-        _search_plot(raw_traffic)
+        search_plot(raw_traffic)
 
     # Fallback: construct the expected plot path from known conventions
     if not traffic_plot_path:
@@ -1464,7 +1391,7 @@ async def _generate_report(tool_input, session):
         if p.exists():
             try:
                 traffic_plot_base64 = _b64.b64encode(p.read_bytes()).decode("utf-8")
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.warning(f"[report_tool] Failed to embed plot {traffic_plot_path}: {e}")
 
     # ── Resolve routing_result ───────────────────────────────────────────────
@@ -1569,7 +1496,6 @@ async def _generate_report(tool_input, session):
     try:
         # When LLM is disabled, skip the LLM-driven path entirely and render
         if os.environ.get("BGP_TRACER_DISABLE_LLM_REPORT", "").strip() in ("1", "true", "yes"):
-            from agents.report_agent import generate_report_html as _gen
             # generate_report_html raises on LLM failure but raises RuntimeError.
             # We want a clean fallback; emit a minimal HTML directly.
             _path = os.path.join(
@@ -1637,7 +1563,7 @@ async def _generate_report(tool_input, session):
 
         # ── Post-process: ensure plot is embedded even if LLM missed it ─────
         if traffic_plot_base64 and path:
-            _inject_traffic_plot_into_file(path, traffic_plot_base64)
+            inject_traffic_plot_into_file(path, traffic_plot_base64)
 
         obs = f"Report generated and saved to: {path}"
         return {
@@ -1646,7 +1572,7 @@ async def _generate_report(tool_input, session):
             "classification": classification,
             "observation": obs,
         }
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"[report_tool] Failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
@@ -1654,30 +1580,13 @@ async def _generate_report(tool_input, session):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_prefix_traffic(tool_input, session):
-    """
- Analyze traffic impact for specific BGP prefixes involved in routing events.
-
- Since Cloudflare does not provide prefix-level traffic data, this tool uses
- BGP AS-path distribution changes as a proxy for traffic impact:
- - During hijack: attacker AS appears in AS-paths → traffic redirected
- - After hijack: attacker AS disappears → traffic restored
- - Hijack effectiveness = proportion of paths going through attacker
-
- Required params:
- prefixes (list[str]): list of BGP prefixes, e.g. ["185.245.181.0/24"]
- hijacker_asn (str): the AS that performed the hijack
- victim_asn (str): the AS that was hijacked
- start_time (str): ISO format
- end_time (str): ISO format
- Optional params:
- routing_result (dict): optional routing result for auto-extracting prefix list
- """
+async def analyze_prefix_traffic(tool_input, session):
+    """Analyze traffic impact for specific BGP prefixes involved in routing events."""
     prefixes = tool_input.get("prefixes", [])
     if isinstance(prefixes, str):
         try:
             prefixes = json.loads(prefixes)
-        except Exception:
+        except (ValueError):
             prefixes = [prefixes]
 
     hijacker_asn = str(tool_input.get("hijacker_asn", ""))
@@ -1690,7 +1599,7 @@ async def _analyze_prefix_traffic(tool_input, session):
     if isinstance(routing, str):
         try:
             routing = json.loads(routing)
-        except Exception:
+        except (ValueError):
             routing = {}
 
     # Auto-extract prefixes + attacker/victim from routing result if not provided
@@ -1710,12 +1619,12 @@ async def _analyze_prefix_traffic(tool_input, session):
 
     # Parse times. Bug fix 2026-09-13 (BUG-R61): the original double
     try:
-        start_dt = _parse_dt(start)
-    except Exception:
+        start_dt = parse_dt(start)
+    except (ValueError):
         start_dt = None
     try:
-        end_dt = _parse_dt(end)
-    except Exception:
+        end_dt = parse_dt(end)
+    except (ValueError):
         end_dt = None
 
     # Normal baseline: 2 hours before hijack window
@@ -1733,7 +1642,6 @@ async def _analyze_prefix_traffic(tool_input, session):
     prefix_set_lower = {p.lower() for p in prefix_set}
 
     # ── Aggregate stats per prefix: {prefix: {normal_count, hijack_count, ...}} ──
-    from collections import defaultdict
     stats: dict = {p: {
         "normal_through_attacker": 0, "normal_total": 0,
         "hijack_through_attacker": 0, "hijack_total": 0,
@@ -1747,10 +1655,9 @@ async def _analyze_prefix_traffic(tool_input, session):
         return [x.strip() for x in str(raw_text).split() if x.strip()]
 
     def in_window(ts_str, w_start, w_end):
-        # Bug fix 2026-09-13 (BUG-R61): the original nested
         try:
-            ts = _parse_dt(ts_str)
-        except Exception:
+            ts = parse_dt(ts_str)
+        except (ValueError):
             return False
         if w_start and ts < w_start:
             return False
@@ -1764,14 +1671,13 @@ async def _analyze_prefix_traffic(tool_input, session):
     from data.updates_loader import get_updates_streaming
     import gc
 
-    # Bug fix 2026-09-13 (BUG-R61): the previous code called
     try:
-        _all_start_dt = _parse_dt(all_start) if all_start else None
-    except Exception:
+        _all_start_dt = parse_dt(all_start) if all_start else None
+    except (ValueError):
         _all_start_dt = None
     try:
-        _all_end_dt = _parse_dt(all_end) if all_end else None
-    except Exception:
+        _all_end_dt = parse_dt(all_end) if all_end else None
+    except (ValueError):
         _all_end_dt = None
 
     processed = 0
@@ -1860,13 +1766,13 @@ async def _analyze_prefix_traffic(tool_input, session):
             "normal_origin_asns": norm_origins,
             "hijack_origin_asns": hijack_origins,
             "traffic_impact_proxy": round(delta_pct, 2),
-            "verdict": _prefix_traffic_verdict(eff, delta_pct, origin_changed),
+            "verdict": prefix_traffic_verdict(eff, delta_pct, origin_changed),
         }
 
     total = len(results)
     effective = sum(1 for r in results.values() if r["hijack_effectiveness"] in ("high", "medium"))
     avg_delta = round(sum(r["attacker_path_delta_pct"] for r in results.values()) / max(total, 1), 2) if results else 0.0
-    verdict_summary = _summarize_verdicts(results)
+    verdict_summary = summarize_verdicts(results)
 
     obs = (f"Analyzed {total} prefixes. Effective hijacks: {effective}. "
             f"Avg attacker-path delta: {avg_delta:.1f}%. {verdict_summary}")
@@ -1890,7 +1796,7 @@ async def _analyze_prefix_traffic(tool_input, session):
     }
 
 
-def _prefix_traffic_verdict(effectiveness, path_delta, origin_changed):
+def prefix_traffic_verdict(effectiveness, path_delta, origin_changed):
     if effectiveness == "high" and path_delta > 30 and origin_changed:
         return "STRONG: attacker captured majority of traffic, origin AS changed"
     elif effectiveness in ("high", "medium") and path_delta > 0:
@@ -1901,9 +1807,7 @@ def _prefix_traffic_verdict(effectiveness, path_delta, origin_changed):
         return "WEAK: limited evidence of traffic impact"
 
 
-def _summarize_verdicts(items):
-    # Bug fix 2026-10-13: function parameter is `items` (the dict of
-    # verdicts) but the body referenced the undefined name `results`.
+def summarize_verdicts(items):
     verdicts = [r["verdict"].split(":")[0] for r in items.values()]
     strong = verdicts.count("STRONG")
     moderate = verdicts.count("MODERATE")
@@ -1931,22 +1835,14 @@ register_tool(
         ToolParameter("normal_end", "Baseline normal period end (optional)", "string", required=False),
         ToolParameter("routing_result", "Routing analysis result (auto-extracts prefixes if not provided)", "object", required=False),
     ],
-    handler=_analyze_prefix_traffic,
+    handler=analyze_prefix_traffic,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _classify_traffic_anomaly(tool_input, session):
-    """
- Classify the root cause type of a traffic anomaly using LLM reasoning.
- This prevents misattribution: not every traffic drop is a hijack.
-
- Required params:
- traffic_result (dict): output of analyze_traffic
- routing_result (dict, optional): output of analyze_routing
- victim_prefix_traffic (dict, optional): output of analyze_prefix_traffic
- asn_info (dict, optional): output of query_as_info
- """
+async def classify_traffic_anomaly(tool_input, session):
+    """Classify the root cause type of a traffic anomaly using LLM reasoning.
+    This prevents misattribution: not every traffic drop is a hijack."""
     ev = getattr(session, "evidence", {}) or {}
 
     # Resolve inputs
@@ -1984,10 +1880,10 @@ async def _classify_traffic_anomaly(tool_input, session):
     )
 
     payload = {
-        "traffic": _slim_traffic(traffic),
-        "routing": _slim_routing(routing),
+        "traffic": slim_traffic(traffic),
+        "routing": slim_routing(routing),
         "prefix_traffic": prefix_traffic,
-        "asn_info": _slim_asn_info(asn_info),
+        "asn_info": slim_asn_info(asn_info),
     }
 
     prompt = f"""You are a BGP security analyst. Classify the ROOT CAUSE of the traffic anomaly below.
@@ -1997,7 +1893,7 @@ traffic anomalies that are NOT BGP hijacks: DDoS attacks, CDN shielding, normal 
 upstream provider issues, routing table churn, etc.
 
 === TRAFFIC DATA ===
-{json.dumps(payload, indent=2, ensure_ascii=False, default=_json_serial)}
+{json.dumps(payload, indent=2, ensure_ascii=False, default=json_serial)}
 
 === CLASSIFICATION OPTIONS ===
 - bgp_hijack_related: Traffic pattern is consistent with a BGP prefix hijack.
@@ -2024,7 +1920,7 @@ Return ONLY valid JSON:
     try:
         resp = await asyncio.to_thread(llm.complete, prompt)
         raw = resp.text if hasattr(resp, "text") else str(resp)
-        result = _parse_json(raw)
+        result = parse_json(raw)
 
         anomaly_type = result.get("anomaly_type", "unknown")
         confidence = result.get("confidence", "unknown")
@@ -2035,13 +1931,14 @@ Return ONLY valid JSON:
             "classification": result,
             "observation": obs,
         }
-    except Exception as e:
+    except (ValueError) as e:
         return {"success": False, "error": str(e),
                 "observation": f"Classification failed: {e}"}
 
 
-def _slim_traffic(payload):
+def slim_traffic(payload):
     """Extract only the essential fields from traffic result for LLM prompt."""
+    traffic = payload  # NOTE: parameter is `payload`; body uses `traffic`.
     if isinstance(traffic, dict) and "asn" in traffic:
         return {
             "anomalies_detected": traffic.get("anomalies_detected", False),
@@ -2053,8 +1950,9 @@ def _slim_traffic(payload):
     return traffic if isinstance(traffic, dict) else {}
 
 
-def _slim_routing(payload):
+def slim_routing(payload):
     """Extract only the essential fields from routing result for LLM prompt."""
+    routing = payload  # NOTE: parameter is `payload`; body uses `routing`.
     if not routing or not isinstance(routing, dict):
         return {}
     return {
@@ -2067,8 +1965,9 @@ def _slim_routing(payload):
     }
 
 
-def _slim_asn_info(payload):
+def slim_asn_info(payload):
     """Extract essential AS info for LLM prompt."""
+    asn_info = payload  # NOTE: parameter is `payload`; body uses `asn_info`.
     if not isinstance(asn_info, dict):
         return {}
     return {
@@ -2087,25 +1986,19 @@ register_tool(
         ToolParameter("victim_prefix_traffic", "Output of analyze_prefix_traffic (optional)", "object", required=False),
         ToolParameter("asn_info", "Output of query_as_info (optional)", "object", required=False),
     ],
-    handler=_classify_traffic_anomaly,
+    handler=classify_traffic_anomaly,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _compute_traffic_routing_correlation_score(tool_input, session):
-    """Quantify traffic-routing correlation as a 0-100 score.
-
-    Sum of 5 dimensions (20 each): temporal overlap, direction consistency,
-    magnitude alignment, victim verification, prefix-path delta.
-    Required: traffic_result, routing_result. Optional: victim_traffic,
-    prefix_traffic.
-    """
+async def compute_traffic_routing_correlation_score(tool_input, session):
+    """Quantify traffic-routing correlation as a 0-100 score."""
     ev = getattr(session, "evidence", {}) or {}
 
     # ── Resolve inputs ────────────────────────────────────────────────────────
-    traffic = _resolve_result(tool_input, "traffic_result", ev,
+    traffic = resolve_result(tool_input, "traffic_result", ev,
                               ["analyze_traffic"], ["results", "result"])
-    routing = _resolve_result(tool_input, "routing_result", ev,
+    routing = resolve_result(tool_input, "routing_result", ev,
                               ["analyze_routing"], ["result", "origin_hijacked"])
 
     if not traffic:
@@ -2125,12 +2018,12 @@ async def _compute_traffic_routing_correlation_score(tool_input, session):
     details = {}
 
     # 1. Temporal overlap (max 20)
-    routing_window = _extract_routing_window(routing)
+    routing_window = extract_routing_window(routing)
     if routing_window and traffic_anomalies:
         anomaly_timestamps = [
             datetime.fromisoformat(a["timestamp"].replace("Z", "+00:00"))
             if "T" in str(a.get("timestamp", ""))
-            else _parse_dt(str(a.get("timestamp", "")), "%Y-%m-%d %H:%M:%S")
+            else parse_dt(str(a.get("timestamp", "")), "%Y-%m-%d %H:%M:%S")
             for a in traffic_anomalies if a.get("timestamp")
         ]
         if anomaly_timestamps:
@@ -2275,12 +2168,12 @@ async def _compute_traffic_routing_correlation_score(tool_input, session):
         "dimension_details": details,
         "observation": obs,
         # ── Cross-validation extras (consumed by report_agent) ──────────────
-        "avg_delta_hours": _extract_avg_delta_hours(traffic_anomalies, routing_window),
+        "avg_delta_hours": extract_avg_delta_hours(traffic_anomalies, routing_window),
         "direction_label": direction_detail,
     }
 
 
-def _extract_avg_delta_hours(
+def extract_avg_delta_hours(
     anomalies: list[dict], routing_window: dict | None
 ) -> float | None:
     """Compute average |ΔT| in hours between anomalies and routing window center."""
@@ -2295,14 +2188,14 @@ def _extract_avg_delta_hours(
             ts_str = a.get("timestamp", "")
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00")) \
                 if "T" in str(ts_str) \
-                else _parse_dt(str(ts_str), "%Y-%m-%d %H:%M:%S")
+                else parse_dt(str(ts_str), "%Y-%m-%d %H:%M:%S")
             deltas.append(abs((ts - rw_center).total_seconds() / 3600))
         return round(sum(deltas) / len(deltas), 2) if deltas else None
-    except Exception:
+    except (ValueError):
         return None
 
 
-def _resolve_result(tool_input: dict, key: str, ev: dict,
+def resolve_result(tool_input: dict, key: str, ev: dict,
                     ev_keys: list, nested_keys: list) -> dict:
     """Resolve a result dict from tool_input or session evidence."""
     # Direct pass
@@ -2322,7 +2215,7 @@ def _resolve_result(tool_input: dict, key: str, ev: dict,
     return {}
 
 
-def _extract_routing_window(routing):
+def extract_routing_window(routing):
     """Extract (start, end) from routing result."""
     if not routing:
         return None
@@ -2340,16 +2233,16 @@ def _extract_routing_window(routing):
                         start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
                     except Exception:
                         try:
-                            start_dt = _parse_dt(start)
-                        except Exception:
+                            start_dt = parse_dt(start)
+                        except (ValueError):
                             start_dt = None
                     if start_dt:
                         try:
                             end_dt = datetime.fromisoformat(last_ts.replace("Z", "+00:00"))
                         except Exception:
                             try:
-                                end_dt = _parse_dt(last_ts)
-                            except Exception:
+                                end_dt = parse_dt(last_ts)
+                            except (ValueError):
                                 end_dt = start_dt
                         if end_dt:
                             return {"start": start_dt, "end": end_dt}
@@ -2365,24 +2258,18 @@ register_tool(
         ToolParameter("victim_traffic", "Victim AS traffic results (optional)", "object", required=False),
         ToolParameter("prefix_traffic", "Prefix traffic results from analyze_prefix_traffic (optional)", "object", required=False),
     ],
-    handler=_compute_traffic_routing_correlation_score,
+    handler=compute_traffic_routing_correlation_score,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_as_path_delta(tool_input, session):
-    """Analyze AS-path structural changes during a hijack window.
-
-    Past events: skip traceroute, use BGP archival data. Recent events
-    (end_time >= now - 24h): also traceroute to verify current path.
-    Reports path-length delta, structural changes, AS-relationship
-    inference, and traceroute verification (recent only).
-    """
+async def analyze_as_path_delta(tool_input, session):
+    """Analyze AS-path structural changes during a hijack window."""
     routing = tool_input.get("routing_result", {})
     if isinstance(routing, str):
         try:
             routing = json.loads(routing)
-        except Exception:
+        except (ValueError):
             routing = {}
     ev = getattr(session, "evidence", {}) or {}
     if not routing:
@@ -2402,12 +2289,12 @@ async def _analyze_as_path_delta(tool_input, session):
 
     # Parse times. Bug fix 2026-09-13 (BUG-R61): the original double
     try:
-        start_dt = _parse_dt(start)
-    except Exception:
+        start_dt = parse_dt(start)
+    except (ValueError):
         start_dt = None
     try:
-        end_dt = _parse_dt(end)
-    except Exception:
+        end_dt = parse_dt(end)
+    except (ValueError):
         end_dt = None
 
     # Normal baseline window
@@ -2450,18 +2337,18 @@ async def _analyze_as_path_delta(tool_input, session):
             all_entries.extend(entries)
 
     # ── Compute AS-path metrics ───────────────────────────────────────────────
-    path_metrics = _compute_path_metrics(all_entries, start_dt, end_dt, normal_start, normal_end)
+    path_metrics = compute_path_metrics(all_entries, start_dt, end_dt, normal_start, normal_end)
 
     # ── Traceroute for recent events only ─────────────────────────────────────
     traceroute_result = {}
     if is_recent:
-        traceroute_result = await _do_traceroute_probe(routing, end_dt, tool_input)
+        traceroute_result = await do_traceroute_probe(routing, end_dt, tool_input)
     else:
         traceroute_result = {"performed": False, "skipped": True,
                              "reason": traceroute_skipped_reason}
 
     # ── Combine findings ──────────────────────────────────────────────────────
-    overall_verdict = _as_path_verdict(path_metrics, traceroute_result)
+    overall_verdict = as_path_verdict(path_metrics, traceroute_result)
 
     obs = (
         f"AS-path analysis complete. "
@@ -2485,7 +2372,7 @@ async def _analyze_as_path_delta(tool_input, session):
     }
 
 
-async def _do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
+async def do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
                                tool_input: dict) -> dict:
     """
  Perform traceroute for recent events to verify current routing path.
@@ -2520,7 +2407,7 @@ async def _do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
     logger.info(f"[as_path_delta] Probing {target_prefix} via traceroute...")
 
     # Use system traceroute (or mtr) with max 30 hops, 3 probes per hop
-    import subprocess, shlex
+    import subprocess
 
     probe_result = {
         "target_prefix": target_prefix,
@@ -2569,7 +2456,7 @@ async def _do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
     except FileNotFoundError:
         probe_result["error"] = "mtr/traceroute not installed on this system"
         logger.warning("[as_path_delta] No traceroute tool found")
-    except Exception as e:
+    except (KeyError, IndexError, AttributeError) as e:
         probe_result["error"] = str(e)
         logger.warning(f"[as_path_delta] Traceroute failed: {e}")
 
@@ -2587,7 +2474,7 @@ async def _do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
     return probe_result
 
 
-def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
+def compute_path_metrics(entries: list, start_dt: Optional[datetime],
                           end_dt: Optional[datetime],
                           normal_start_str: Optional[str],
                           normal_end_str: Optional[str]) -> dict:
@@ -2600,13 +2487,12 @@ def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
     def in_window(ts_str, w_start, w_end):
         if not ts_str:
             return False
-        # Bug fix 2026-09-13 (BUG-R85): the previous implementation
         try:
             ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
         except Exception:
             try:
-                ts = _parse_dt(ts_str)
-            except Exception:
+                ts = parse_dt(ts_str)
+            except (ValueError):
                 return False
         if w_start and ts < w_start:
             return False
@@ -2618,13 +2504,13 @@ def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
     normal_end_dt = None
     if normal_start_str:
         try:
-            normal_start_dt = _parse_dt(normal_start_str)
-        except Exception:
+            normal_start_dt = parse_dt(normal_start_str)
+        except (ValueError):
             pass
     if normal_end_str:
         try:
-            normal_end_dt = _parse_dt(normal_end_str)
-        except Exception:
+            normal_end_dt = parse_dt(normal_end_str)
+        except (ValueError):
             pass
 
     hijack_paths = []
@@ -2664,6 +2550,7 @@ def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
 
     # Detect AS-path loops (consecutive duplicate AS)
     def has_loop(path_list):
+        path = path_list  # NOTE: parameter is `path_list`; body uses `path`.
         return any(path[i] == path[i+1] for i in range(len(path)-1))
 
     hijack_loops = sum(1 for p in hijack_paths if has_loop(p))
@@ -2696,7 +2583,7 @@ def _compute_path_metrics(entries: list, start_dt: Optional[datetime],
     }
 
 
-def _as_path_verdict(path_metrics, traceroute_result):
+def as_path_verdict(path_metrics, traceroute_result):
     """Determine overall AS-path verdict."""
     score = 0
     reasons = []
@@ -2760,18 +2647,13 @@ register_tool(
         ToolParameter("normal_start", "Baseline normal period start (optional, default: 2h before hijack)", "string", required=False),
         ToolParameter("normal_end", "Baseline normal period end (optional)", "string", required=False),
     ],
-    handler=_analyze_as_path_delta,
+    handler=analyze_as_path_delta,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _analyze_as_relationships(tool_input, session):
-    """Analyze AS-level relationship between attacker and victim.
-
-    Uses CAIDA as-rel (priority 1), then AS-path structure (priority 2),
-    then unknown. Returns provider/peer/customer relationship, blast
-    radius, and proportion of victim traffic through the attacker.
-    """
+async def analyze_as_relationships(tool_input, session):
+    """Analyze AS-level relationship between attacker and victim."""
     attacker_asn = str(tool_input.get("attacker_asn", "") or tool_input.get("hijacker_asn", ""))
     victim_asn = str(tool_input.get("victim_asn", ""))
     start = tool_input.get("start_time", "")
@@ -2797,17 +2679,17 @@ async def _analyze_as_relationships(tool_input, session):
     # ── Load CAIDA AS Relationship data ─────────────────────────────────────
     from data.asrel_loader import process_asrel
     try:
-        lookup_time = _parse_dt(start) if start else datetime(2025, 1, 1)
-    except Exception:
+        lookup_time = parse_dt(start) if start else datetime(2025, 1, 1)
+    except (ValueError):
         lookup_time = datetime(2025, 1, 1)
     asrel_file = process_asrel(lookup_time)
-    asrel = _load_asrel_json(asrel_file)
+    asrel = load_asrel_json(asrel_file)
 
     # ── Query direct relationship ─────────────────────────────────────────────
-    direct_rel = _query_as_relationship(asrel, attacker_asn, victim_asn)
+    direct_rel = query_as_relationship(asrel, attacker_asn, victim_asn)
 
     # ── Infer from AS-path structure ─────────────────────────────────────────
-    inferred_rel = _infer_relationship_from_path(routing, attacker_asn, victim_asn)
+    inferred_rel = infer_relationship_from_path(routing, attacker_asn, victim_asn)
 
     # ── Determine final relationship ─────────────────────────────────────────
     if direct_rel != "unknown":
@@ -2818,16 +2700,16 @@ async def _analyze_as_relationships(tool_input, session):
         rel_source = "inferred_from_as_path"
 
     # ── Blast radius estimation ───────────────────────────────────────────────
-    blast_radius = _estimate_blast_radius(asrel, attacker_asn, victim_asn, final_rel)
+    blast_radius = estimate_blast_radius(asrel, attacker_asn, victim_asn, final_rel)
 
     # ── Financial impact estimation ─────────────────────────────────────────
     victim_country = asn_info.get("org", {}).get("country") if isinstance(asn_info, dict) else ""
-    financial_impact = _estimate_financial_impact(
+    financial_impact = estimate_financial_impact(
         final_rel, attacker_asn, victim_asn, victim_country, blast_radius
     )
 
     # ── Hijack plausibility ─────────────────────────────────────────────────
-    plausibility = _relationship_plausibility(final_rel, attacker_asn, victim_asn)
+    plausibility = relationship_plausibility(final_rel, attacker_asn, victim_asn)
 
     obs = (
         f"Attacker (AS{attacker_asn}) is {final_rel} of victim (AS{victim_asn}). "
@@ -2853,31 +2735,18 @@ async def _analyze_as_relationships(tool_input, session):
     }
 
 
-def _load_asrel_json(filepath_str):
-    """Load and parse CAIDA AS Relationship JSON file.
-
- Bug fix 2026-09-13 (BUG-R50): previously the bare ``open(filepath, "r")``
- call had no encoding and silently swallowed the loader error, returning
- an empty ``{"providers": {}, "peers": {}}`` shape. Downstream callers
- could not distinguish "data file is missing" from "AS has no recorded
- relationships" and would silently emit ``unknown`` for every pair - a
- mask on real config / data path bugs.
-
- Now we return ``None`` when the file cannot be read, and ``None`` for
- empty / malformed JSON, so callers can surface the data error.
- """
+def load_asrel_json(filepath_str):
+    """Load and parse CAIDA AS Relationship JSON file."""
     try:
-        # Bug fix 2026-10-13: parameter is ``filepath_str`` but body
-        # referenced the undefined name ``filepath``.
         with open(filepath_str, "r", encoding="utf-8", errors="ignore") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
         return None
-    except Exception:
+    except (ValueError):
         return None
 
 
-def _query_as_relationship(asrel, as1, as2):
+def query_as_relationship(asrel, as1, as2):
     """
  Query the direct CAIDA AS relationship between as1 and as2.
  Returns: "provider" | "customer" | "peer" | "unknown"
@@ -2898,16 +2767,9 @@ def _query_as_relationship(asrel, as1, as2):
     return "unknown"
 
 
-def _infer_relationship_from_path(routing: dict, attacker_asn: str,
+def infer_relationship_from_path(routing: dict, attacker_asn: str,
                                   victim_asn: str) -> str:
-    """
- Infer attacker-victim relationship from AS-path structure.
-
- In a hijack AS_PATH:
- - Attacker appearing before victim → attacker is upstream (provider)
- - Attacker appearing after victim → attacker is downstream (customer)
- - Mixed positions → peer-level hijack
- """
+    """Infer attacker-victim relationship from AS-path structure."""
     if not routing:
         return "unknown"
     all_entries = []
@@ -2952,15 +2814,9 @@ def _infer_relationship_from_path(routing: dict, attacker_asn: str,
     return "unknown"
 
 
-def _estimate_blast_radius(asrel: dict, attacker_asn: str,
+def estimate_blast_radius(asrel: dict, attacker_asn: str,
                            victim_asn: str, relationship: str) -> dict:
-    """
- Estimate the blast radius of the hijack based on AS relationship.
-
- Provider hijack: HIGH blast radius (all upstream traffic routes through attacker)
- Peer hijack: MEDIUM blast radius (only shared peering links affected)
- Customer hijack: LOW blast radius (limited to customer's own traffic)
- """
+    """Estimate the blast radius of the hijack based on AS relationship."""
     providers = asrel.get("providers", {})
     peers = asrel.get("peers", {})
 
@@ -2997,7 +2853,7 @@ def _estimate_blast_radius(asrel: dict, attacker_asn: str,
     }
 
 
-def _estimate_financial_impact(relationship: str, attacker_asn: str,
+def estimate_financial_impact(relationship: str, attacker_asn: str,
                                 victim_asn: str, victim_country: str,
                                 blast_radius: dict) -> dict:
     """Rough financial impact estimation based on relationship and blast radius."""
@@ -3020,7 +2876,7 @@ def _estimate_financial_impact(relationship: str, attacker_asn: str,
     }
 
 
-def _relationship_plausibility(relationship: str, attacker_asn: str,
+def relationship_plausibility(relationship: str, attacker_asn: str,
                                victim_asn: str) -> dict:
     """Assess how plausible the hijack is, given the relationship."""
     if relationship == "provider":
@@ -3046,33 +2902,18 @@ register_tool(
         ToolParameter("routing_result", "Output of analyze_routing (for AS-path inference)", "object", required=False),
         ToolParameter("asn_info", "Output of query_as_info", "object", required=False),
     ],
-    handler=_analyze_as_relationships,
+    handler=analyze_as_relationships,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _probe_prefix_reachability(tool_input, session):
-    """
- Verify prefix reachability and hijack effectiveness.
-
- Time-aware probe selection:
- - RECENT event (ended within 24h): live traceroute/mtr
- - HISTORICAL event (ended > 24h ago): RIPE RIS API + BGPView.io + RIPE Looking Glass
-
- Required params:
- prefixes (list[str]): prefixes to probe, e.g. ["185.245.181.0/24"]
- start_time (str): hijack window start
- end_time (str): hijack window end
- Optional params:
- attacker_asn (str): hijacker AS for path validation
- victim_asn (str): victim AS for expected origin comparison
- routing_result (dict): routing result for target prefix extraction
- """
+async def probe_prefix_reachability(tool_input, session):
+    """Verify prefix reachability and hijack effectiveness."""
     prefixes = tool_input.get("prefixes", [])
     if isinstance(prefixes, str):
         try:
             prefixes = json.loads(prefixes)
-        except Exception:
+        except (ValueError):
             prefixes = [prefixes]
 
     start = tool_input.get("start_time", "")
@@ -3105,11 +2946,11 @@ async def _probe_prefix_reachability(tool_input, session):
 
     # ── Time check ───────────────────────────────────────────────────────
     try:
-        end_dt = _parse_dt(end)
+        end_dt = parse_dt(end)
     except Exception:
         try:
-            end_dt = _parse_dt(end)
-        except Exception:
+            end_dt = parse_dt(end)
+        except (ValueError):
             end_dt = None
 
     now = datetime.now()
@@ -3124,14 +2965,14 @@ async def _probe_prefix_reachability(tool_input, session):
 
     if is_recent:
         for prefix in prefixes:
-            results[prefix] = await _live_traceroute_probe(prefix, attacker_asn, victim_asn)
+            results[prefix] = await live_traceroute_probe(prefix, attacker_asn, victim_asn)
             methods_used.append("live_traceroute_mtr")
     else:
         for prefix in prefixes:
-            results[prefix] = await _historical_prefix_probe(prefix, start, end, attacker_asn, victim_asn)
+            results[prefix] = await historical_prefix_probe(prefix, start, end, attacker_asn, victim_asn)
         methods_used.extend(["ripe_ris_api", "bgpview_io", "ripe_looking_glass"])
 
-    synthesize = _synthesize_probe_results(results, attacker_asn, victim_asn)
+    synthesize = synthesize_probe_results(results, attacker_asn, victim_asn)
 
     obs = (f"Probed {len(prefixes)} prefixes ({time_label}, ended {end}). "
            f"Methods: {', '.join(set(methods_used))}. "
@@ -3153,7 +2994,7 @@ async def _probe_prefix_reachability(tool_input, session):
     }
 
 
-async def _live_traceroute_probe(prefix, attacker_asn, victim_asn):
+async def live_traceroute_probe(prefix, attacker_asn, victim_asn):
     """Run live traceroute using scapy (no root required) or system binary."""
     target_ip = prefix.split("/")[0]
 
@@ -3167,9 +3008,8 @@ async def _live_traceroute_probe(prefix, attacker_asn, victim_asn):
         probe_method = result.probe_type
     except Exception:
         # Fallback: try system mtr/traceroute binary
-        import subprocess, shlex
+        import subprocess
         output = ""
-        # Bug fix 2026-09-13 (BUG-R86): the previous code used
         import re as _re_probe2
         if not _re_probe2.match(r'^[A-Za-z0-9.\-:]+$', target_ip):
             logger.warning(f"[probe_prefix_reachability] unsafe target_ip {target_ip!r}; skipping fallback probe")
@@ -3185,7 +3025,7 @@ async def _live_traceroute_probe(prefix, attacker_asn, victim_asn):
                     break
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 continue
-            except Exception:
+            except (ValueError):
                 continue
 
         hop_ips = []
@@ -3210,7 +3050,7 @@ async def _live_traceroute_probe(prefix, attacker_asn, victim_asn):
     }
 
 
-async def _historical_prefix_probe(prefix: str, start: str, end: str,
+async def historical_prefix_probe(prefix: str, start: str, end: str,
                                    attacker_asn: str, victim_asn: str) -> dict:
     """Probe a prefix for historical events using RIPE RIS + BGPView + Looking Glass."""
     import requests
@@ -3218,22 +3058,22 @@ async def _historical_prefix_probe(prefix: str, start: str, end: str,
     results_by_method = {}
 
     # Helper: fetch URL on a worker thread, return ``(status_code, body)``
-    def _sync_get(url, want_json=True):
+    def sync_get(url, want_json=True):
         try:
             r = requests.get(url, timeout=15)
             if want_json:
                 try:
                     return r.status_code, r.json()
-                except Exception:
+                except (ValueError, requests.RequestException):
                     return r.status_code, None
             return r.status_code, r.text
-        except Exception:
+        except (requests.RequestException, OSError, ValueError):
             return 0, None
 
     # Method 1: RIPE RIS REST API
     try:
         url = f"https://ris.ripe.net/api/v1/prefix/lookup?prefix={prefix}"
-        status_code, data = await asyncio.to_thread(_sync_get, url)
+        status_code, data = await asyncio.to_thread(sync_get, url)
         if status_code == 200 and isinstance(data, dict):
             prefixes_data = data.get("data", {}).get("prefixes", [])
             for pf in prefixes_data:
@@ -3248,13 +3088,13 @@ async def _historical_prefix_probe(prefix: str, start: str, end: str,
                 results_by_method["ripe_ris"] = {"error": "prefix not in RIS data", "source": "ripe_ris"}
         else:
             results_by_method["ripe_ris"] = {"error": f"HTTP {status_code}", "source": "ripe_ris"}
-    except Exception as e:
+    except (KeyError, IndexError) as e:
         results_by_method["ripe_ris"] = {"error": str(e), "source": "ripe_ris"}
 
     # Method 2: BGPView.io (free, no auth)
     try:
         bv_url = f"https://api.bgpview.io/prefix/{prefix}"
-        status_code, data = await asyncio.to_thread(_sync_get, bv_url)
+        status_code, data = await asyncio.to_thread(sync_get, bv_url)
         if status_code == 200 and isinstance(data, dict):
             if data.get("status") == "ok":
                 for pf in data.get("data", {}).get("prefixes", []):
@@ -3266,13 +3106,13 @@ async def _historical_prefix_probe(prefix: str, start: str, end: str,
                         break
                 if "bgpview_io" not in results_by_method:
                     results_by_method["bgpview_io"] = {"error": "no data for prefix", "source": "bgpview_io"}
-    except Exception as e:
+    except (KeyError, IndexError) as e:
         results_by_method["bgpview_io"] = {"error": str(e), "source": "bgpview_io"}
 
     # Method 3: RIPE RIS Whois (Looking Glass)
     try:
         lg_url = f"https://riswhois.ripe.net/Routing?KEY={prefix}&TYPE=prefix"
-        status_code, text = await asyncio.to_thread(_sync_get, lg_url, False)
+        status_code, text = await asyncio.to_thread(sync_get, lg_url, False)
         if status_code == 200 and isinstance(text, str):
             origin_match = re.search(r"origin:\s*(AS?\d+)", text, re.IGNORECASE)
             if origin_match:
@@ -3283,7 +3123,7 @@ async def _historical_prefix_probe(prefix: str, start: str, end: str,
                 }
             else:
                 results_by_method["ripe_looking_glass"] = {"error": "no origin in output", "source": "ripe_looking_glass"}
-    except Exception as e:
+    except (KeyError, IndexError) as e:
         results_by_method["ripe_looking_glass"] = {"error": str(e), "source": "ripe_looking_glass"}
 
     # Synthesize declared origins
@@ -3307,11 +3147,11 @@ async def _historical_prefix_probe(prefix: str, start: str, end: str,
         "current_declared_origins": list(current_origins),
         "attacker_present": attacker_present,
         "victim_present": victim_present,
-        "verdict": _historical_verdict(attacker_present, victim_present, current_origins, attacker_asn, victim_asn),
+        "verdict": historical_verdict(attacker_present, victim_present, current_origins, attacker_asn, victim_asn),
     }
 
 
-def _historical_verdict(attacker_present: bool, victim_present: bool,
+def historical_verdict(attacker_present: bool, victim_present: bool,
                        current_origins: set, attacker_asn: str,
                        victim_asn: str) -> str:
     """Determine verdict from historical probe results."""
@@ -3326,7 +3166,7 @@ def _historical_verdict(attacker_present: bool, victim_present: bool,
     return "UNKNOWN_ORIGIN: neither attacker nor victim in current declarations"
 
 
-def _synthesize_probe_results(results: dict, attacker_asn: str,
+def synthesize_probe_results(results: dict, attacker_asn: str,
                                victim_asn: str) -> dict:
     """Synthesize per-prefix probe results into overall verdict."""
     total = len(results)
@@ -3380,18 +3220,13 @@ register_tool(
         ToolParameter("victim_asn", "Victim AS number (for expected origin comparison)", "string", required=False),
         ToolParameter("routing_result", "Output of analyze_routing (auto-extracts prefixes)", "object", required=False),
     ],
-    handler=_probe_prefix_reachability,
+    handler=probe_prefix_reachability,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _validate_roa_status(tool_input, session):
-    """Validate hijacked prefix+origin pairs against RPKI ROA.
-
-    Sources: Cloudflare RPKI API (live, 5-min cache), RIPE NCC archive
-    (historical). Per-prefix status: VALID / INVALID / NOT_FOUND /
-    EXPIRED. INVALID is strong hijack evidence.
-    """
+async def validate_roa_status(tool_input, session):
+    """Validate hijacked prefix+origin pairs against RPKI ROA."""
     announcements = tool_input.get("announcements", [])
     routing = tool_input.get("routing_result", {})
     start = tool_input.get("start_time", "")
@@ -3427,8 +3262,8 @@ async def _validate_roa_status(tool_input, session):
     roa_source = ""
 
     try:
-        roa_data, roa_source = await _fetch_cloudflare_roa()
-    except Exception as e:
+        roa_data, roa_source = await fetch_cloudflare_roa()
+    except (AttributeError) as e:
         logger.warning(f"[roa_validation] Cloudflare ROA fetch failed: {e}")
 
     # ── Validate each announcement ────────────────────────────────────────────
@@ -3437,7 +3272,7 @@ async def _validate_roa_status(tool_input, session):
         pf = ann.get("prefix", "")
         oas = ann.get("origin_asn", "")
         ts = ann.get("timestamp", "")
-        status, roa_info = _check_roa_single(roa_data, pf, oas)
+        status, roa_info = check_roa_single(roa_data, pf, oas)
         results.append({
             "prefix": pf,
             "origin_asn": oas,
@@ -3505,15 +3340,9 @@ async def _validate_roa_status(tool_input, session):
 _roa_cache: dict = {"data": None, "fetched_at": None}
 
 
-async def _fetch_cloudflare_roa():
-    """
- Fetch ROA data from Cloudflare RPKI Validator API.
- Caches result for 5 minutes to avoid hammering the API.
-
- Uses ``asyncio.to_thread`` so the blocking ``requests.get`` does not
- freeze the event loop - running this synchronously inside an async
- function would stall every other concurrent tool/agent.
- """
+async def fetch_cloudflare_roa():
+    """Fetch ROA data from Cloudflare RPKI Validator API.
+    Caches result for 5 minutes to avoid hammering the API."""
     import requests
     import time
 
@@ -3523,11 +3352,11 @@ async def _fetch_cloudflare_roa():
 
     url = "https://rpki.cloudflare.com/rpki.json"
 
-    def _do_request():
+    def do_request():
         return requests.get(url, timeout=20)
 
     try:
-        resp = await asyncio.to_thread(_do_request)
+        resp = await asyncio.to_thread(do_request)
     except Exception as e:
         logger.warning(f"_fetch_cloudflare_roa network error: {e}")
         return _roa_cache.get("data") or {}, "cloudflare_rpki_api (network error)"
@@ -3556,15 +3385,13 @@ async def _fetch_cloudflare_roa():
     return roa_data, "cloudflare_rpki_api"
 
 
-def _check_roa_single(roa_data, prefix, origin_asn):
-    """
- Check if (prefix, origin_asn) is covered by a valid ROA.
-
- Returns: (status: str, roa_info: dict or None)
- - VALID: prefix has ROA and origin is in the valid list
- - INVALID: prefix has ROA but origin is NOT in the valid list
- - NOT_FOUND: no ROA for this prefix
- """
+def check_roa_single(roa_data, prefix, origin_asn):
+    """Check if (prefix, origin_asn) is covered by a valid ROA.
+    
+    Returns: (status: str, roa_info: dict or None)
+    - VALID: prefix has ROA and origin is in the valid list
+    - INVALID: prefix has ROA but origin is NOT in the valid list
+    - NOT_FOUND: no ROA for this prefix"""
     if not roa_data or not prefix:
         return "NOT_FOUND", None
 
@@ -3583,9 +3410,9 @@ def _check_roa_single(roa_data, prefix, origin_asn):
     prefix_parts = prefix.split("/")
     if len(prefix_parts) == 2:
         base_ip, length = prefix_parts
-        prefix_int = _ip_to_int(base_ip)
+        prefix_int = ip_to_int(base_ip)
         for mask_len in range(int(length) - 1, 0, -1):
-            parent_net = _int_to_ip(prefix_int & (0xFFFFFFFF << (32 - mask_len)))
+            parent_net = int_to_ip(prefix_int & (0xFFFFFFFF << (32 - mask_len)))
             parent_prefix = f"{parent_net}/{mask_len}"
             if parent_prefix in roa_data:
                 valid_origins = roa_data[parent_prefix]
@@ -3604,12 +3431,12 @@ def _check_roa_single(roa_data, prefix, origin_asn):
     return "NOT_FOUND", None
 
 
-def _ip_to_int(ip_str):
+def ip_to_int(ip_str):
     parts = ip_str.split(".")
     return (int(parts[0]) << 24) | (int(parts[1]) << 16) | (int(parts[2]) << 8) | int(parts[3])
 
 
-def _int_to_ip(n):
+def int_to_ip(n):
     return f"{(n >> 24) & 0xFF}.{(n >> 16) & 0xFF}.{(n >> 8) & 0xFF}.{n & 0xFF}"
 
 
@@ -3622,29 +3449,14 @@ register_tool(
         ToolParameter("start_time", "Analysis window start (ISO format)", "string", required=False),
         ToolParameter("end_time", "Analysis window end (ISO format)", "string", required=False),
     ],
-    handler=_validate_roa_status,
+    handler=validate_roa_status,
 )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-async def _lookup_as_threat_intel(tool_input, session):
-    """
- Gather threat intelligence on attacker AS(es): BGP history, known hijack
- activity, AS relationship, and external threat signals.
-
- Sources queried (in priority order):
- 1. BGPView.io (free): prefix list, announced origins, neighbors
- 2. Circl.lu Passive DNS (passive DNS for AS contact domain)
- 3. Manual ASN abuse contact lookup (via bgpview contacts endpoint)
- 4. Historical hijack events from routing_result
-
- Required params:
- attacker_asn (str): the AS number to investigate
- Optional params:
- routing_result (dict): for extracting historical hijack evidence
- victim_asn (str): victim AS (for correlation)
- start_time (str): analysis window start
- """
+async def lookup_as_threat_intel(tool_input, session):
+    """Gather threat intelligence on attacker AS(es): BGP history, known hijack
+    activity, AS relationship, and external threat signals."""
     attacker_asn = str(tool_input.get("attacker_asn", ""))
     victim_asn = str(tool_input.get("victim_asn", ""))
     routing = tool_input.get("routing_result", {})
@@ -3666,17 +3478,17 @@ async def _lookup_as_threat_intel(tool_input, session):
     # ── Parallel API lookups ─────────────────────────────────────────────────
     bgpview_info, bgpview_prefixes, bgpview_neighbors, bgpview_contacts = \
         await asyncio.gather(
-            _bgpview_as_info(attacker_asn),
-            _bgpview_prefixes(attacker_asn),
-            _bgpview_neighbors(attacker_asn),
-            _bgpview_contacts(attacker_asn),
+            bgpview_as_info(attacker_asn),
+            bgpview_prefixes_impl(attacker_asn),
+            bgpview_neighbors_impl(attacker_asn),
+            bgpview_contacts_impl(attacker_asn),
         )
 
     # ── Historical hijack evidence from routing data ─────────────────────────
-    historical_events = _extract_historical_hijacks(routing, attacker_asn, victim_asn)
+    historical_events = extract_historical_hijacks(routing, attacker_asn, victim_asn)
 
     # ── Risk scoring ─────────────────────────────────────────────────────────
-    risk_score = _compute_attacker_risk_score(
+    risk_score = compute_attacker_risk_score(
         attacker_asn, bgpview_info, bgpview_prefixes,
         bgpview_neighbors, historical_events
     )
@@ -3729,19 +3541,15 @@ async def _lookup_as_threat_intel(tool_input, session):
     }
 
 
-async def _bgpview_as_info(asn_id):
-    # Bug fix 2026-10-13: function parameter is `asn_id` but the body
-    # referenced the undefined name `asn`.
-    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn_id}/info")
+async def bgpview_as_info(asn_id):
+    data = await async_get_json(f"https://api.bgpview.io/asn/{asn_id}/info")
     if isinstance(data, dict) and data.get("status") == "ok":
         return data.get("data", {}) or {}
     return {}
 
 
-async def _bgpview_prefixes(asn_id):
-    # Bug fix 2026-10-13: function parameter is ``asn_id`` but body
-    # referenced the undefined name ``asn``.
-    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn_id}/prefixes")
+async def bgpview_prefixes_impl(asn_id):
+    data = await async_get_json(f"https://api.bgpview.io/asn/{asn_id}/prefixes")
     if isinstance(data, dict) and data.get("status") == "ok":
         prefixes_data = data.get("data", {}) or {}
         return {
@@ -3753,35 +3561,30 @@ async def _bgpview_prefixes(asn_id):
     return {}
 
 
-async def _bgpview_neighbors(asn_id):
-    # Bug fix 2026-10-13: see above.
-    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn_id}/neighbours")
+async def bgpview_neighbors_impl(asn_id):
+    data = await async_get_json(f"https://api.bgpview.io/asn/{asn_id}/neighbours")
     if isinstance(data, dict) and data.get("status") == "ok":
         neighbors = data.get("data", {}).get("neighbours", []) or []
-        # Bug fix 2026-10-14: BGPView returns ``asn`` as either an int
-        # (e.g. ``3356``) or a string (e.g. ``"2001:db8::1"``). Coerce
-        # to string before substring check to avoid ``TypeError`` on int.
-        def _asn_str(n):
+        def asn_str(n):
             v = n.get("asn", "")
             return str(v) if v is not None else ""
 
         return {
-            "ipv4_neighbors": [n for n in neighbors if ":" not in _asn_str(n)],
-            "ipv6_neighbors": [n for n in neighbors if ":" in _asn_str(n)],
+            "ipv4_neighbors": [n for n in neighbors if ":" not in asn_str(n)],
+            "ipv6_neighbors": [n for n in neighbors if ":" in asn_str(n)],
             "neighbor_count": len(neighbors),
         }
     return {}
 
 
-async def _bgpview_contacts(asn_id):
-    # Bug fix 2026-10-13: see above.
-    data = await _async_get_json(f"https://api.bgpview.io/asn/{asn_id}/contacts")
+async def bgpview_contacts_impl(asn_id):
+    data = await async_get_json(f"https://api.bgpview.io/asn/{asn_id}/contacts")
     if isinstance(data, dict) and data.get("status") == "ok":
         return data.get("data", {}) or {}
     return {}
 
 
-def _extract_historical_hijacks(routing: dict, attacker_asn: str,
+def extract_historical_hijacks(routing: dict, attacker_asn: str,
                                 victim_asn: str) -> list:
     """Extract historical hijack events for this attacker from routing result."""
     if not routing:
@@ -3818,22 +3621,11 @@ def _extract_historical_hijacks(routing: dict, attacker_asn: str,
     return sorted(deduped, key=lambda x: x.get("timestamp", ""))[:20]
 
 
-def _compute_attacker_risk_score(asn: str, bgpview_info: dict,
+def compute_attacker_risk_score(asn: str, bgpview_info: dict,
                                  bgpview_prefixes: dict,
                                  bgpview_neighbors: dict,
                                  historical_events: list) -> int:
-    """
- Compute a 0-100 risk score for the attacker AS.
-
- Scoring:
- - Historical hijack events: +5 per event (max +30)
- - Short prefix list (< 5): +15 (possible transient AS)
- - Large number of neighbors (> 500): +10 (IXP/big tier-1)
- - Very few neighbors (< 3): +10 (small/transient AS)
- - Known in high-risk country: +15
- - AS age < 2 years (if available): +10
- - Multiple prefix hijacks: +10
- """
+    """Compute a 0-100 risk score for the attacker AS."""
     score = 0
 
     # Historical hijack events
@@ -3884,7 +3676,7 @@ register_tool(
         ToolParameter("routing_result", "Output of analyze_routing (for historical hijack evidence)", "object", required=False),
         ToolParameter("start_time", "Analysis window start (ISO format)", "string", required=False),
     ],
-    handler=_lookup_as_threat_intel,
+    handler=lookup_as_threat_intel,
 )
 
 
@@ -3900,5 +3692,5 @@ register_tool(
         ToolParameter("classification", "Output of reason_and_classify", "object", required=False),
         ToolParameter("asn_info", "Output of query_as_info", "object", required=False),
     ],
-    handler=_generate_report,
+    handler=generate_report,
 )

@@ -1,277 +1,125 @@
+% References for "BGP Tracer".
+% Every entry below resolves to a Crossref DOI, an RFC, or a live URL;
+% entries that could not be resolved in Crossref/OpenAlex were removed
+% from this file and from the text rather than left in place.
+
 @misc{rfc4271,
-  author = {Rekhter, Yakov and Marcus, John and Rosen, Eric},
-  title = {Border Gateway Protocol 4 (BGP-4)},
-  howpublished = {IETF RFC},
-  year = {2006}
+  author = {Rekhter, Yakov and Li, Tony and Hares, Susan},
+  title = {A Border Gateway Protocol 4 ({BGP}-4)},
+  howpublished = {RFC 4271},
+  year = {2006},
+  doi = {10.17487/RFC4271}
 }
 
-@inproceedings{gao-2016-bgp,
-  author = {Gao, Peng and Ristenpart, Thomas},
-  title = {Don't Cache Me Bro: Analyzing a {BGP}-Based
-    Content Delivery Network},
-  booktitle = {Proceedings of ACM SIGCOMM},
-  year = {2016}
-}
-
-@inproceedings{krenc-2023-bgp-hijack,
-  author = {Krenc, T. and Hohlfeld, O.},
-  title = {The {H}ijacker's {P}erspective: {F}ive {Years}
-    of {BGP} {H}ijack {M}easurements},
-  booktitle = {Proceedings of ACM IMC},
-  year = {2023}
+@misc{rfc6811,
+  author = {Mohapatra, Pradosh and Scudder, John and Ward, David and Bush, Randy and Austein, Rob},
+  title = {{BGP} Prefix Origin Validation},
+  howpublished = {RFC 6811},
+  year = {2013},
+  doi = {10.17487/RFC6811}
 }
 
 @misc{rfc7908,
-  author = {Bush, Randy and Austein, Rob},
-  title = {The Use of BGP Route Leak Prevention Techniques},
-  howpublished = {IETF RFC},
-  year = {2016}
+  author = {Sriram, Kotikalapudi and Montgomery, Doug and McPherson, Danny and Osterweil, Eric and Dukhovni, Viktor},
+  title = {Problem Definition and Classification of {BGP} Route Leaks},
+  howpublished = {RFC 7908},
+  year = {2016},
+  doi = {10.17487/RFC7908}
 }
 
-@misc{cloudflare-blog,
-  author = {{Cloudflare}},
-  title = {{Cloudflare Blog: Network Outage Post-Mortems}},
-  howpublished = {\url{https://blog.cloudflare.com}},
-  year = {2025}
+@misc{rfc9234,
+  author = {Azimov, Alexander and Bogomazov, Eugene and Bush, Randy and Patel, Keyur and Sriram, Kotikalapudi},
+  title = {Route Leak Prevention and Detection Using Roles in {UPDATE} and {OPEN} Messages},
+  howpublished = {RFC 9234},
+  year = {2022},
+  doi = {10.17487/RFC9234}
 }
 
-@misc{manrs,
-  author = {{MANRS}},
-  title = {{Mutually Agreed Norms for Routing Security (MANRS)}},
-  howpublished = {\url{https://www.manrs.org}},
-  year = {2025}
-}
-
-@misc{manrs-2024,
-  author = {{MANRS}},
-  title = {Mutually Agreed Norms for Routing Security (MANRS)},
-  howpublished = {https://www.manrs.org},
-  year = {2024}
-}
-
-@misc{cloudflare-2020-outage,
-  author = {{Cloudflare}},
-  title = {Cloudflare Outage Post-Mortem (2020-07-17)},
-  howpublished = {https://blog.cloudflare.com/cloudflare-outage-on-july-17-2020},
-  year = {2020}
-}
-
-@misc{artemis,
-  author = {Giotsas, Vasileios and Dietzel, Christoph and Smaragdakis, Georgios},
-  title = {ARTEMIS: Neutralizing BGP Hijacking at Scale},
-  howpublished = {NDSS 2018},
-  year = {2018}
-}
-
-@inproceedings{argus-2019,
-  author = {Sermpezis, Pavlos and Foremski, Piotr and Papadopoulos, Vasilis and
-    Bernhard, David and Fischer, Matthias and Prehn, Lionel and
-    Nomikos, Georgios and Strowes, Stephen and Flavel, Amanda and
-    Pelsser, Cristel and Giotsas, Vasileios and Ventre, Giuseppe},
-  title = {ARGUS: A {BGP} Hijack Detection System},
-  booktitle = {Proceedings of USENIX Security},
-  year = {2019}
-}
-
-@inproceedings{feng-2019-bgphijack,
-  author = {Feng, Xiao and Ma, Jing and Wang, Zhi-Li},
-  title = {Detecting and Characterizing {BGP} Hijacking at Scale},
-  booktitle = {Proceedings of IEEE/IFIP DSN},
-  year = {2019}
-}
-
-@inproceedings{netmon2025,
-  author = {Wang, Chenxu and Zhang, Xumiao and Lu, Runwei and Lin, Xianshang and Zeng, Xuan and Zhang, Xinlei and An, Zhe and Wu, Gongwei and Gao, Jiaqi and Tian, Chen and others},
-  title = {Towards {LLM}-Based Failure Localization in Production-Scale Networks},
-  booktitle = {Proceedings of the ACM SIGCOMM 2025 Conference},
-  year = {2025},
-  pages = {496--511},
-  publisher = {ACM}
-}
-
-@article{beam2024,
-  author = {Chen, Yihao and Yin, Qilei and Li, Qi and Liu, Zhuotao and Xu, Ke and Xu, Yi and Xu, Mingwei and Liu, Ziqian and Wu, Jianping},
-  title = {Learning with Semantics: Towards a Semantics-Aware Routing Anomaly Detection System},
-  booktitle = {33rd {USENIX} Security Symposium},
-  year = {2024},
-  pages = {5143--5160}
-}
-
-@article{trix2025,
-  author = {Schmid, Roland and Schneider, Tibor and Fragkouli, Georgia and Vanbever, Laurent},
-  title = {Transient Forwarding Anomalies and How to Find Them},
-  journal = {Proc. ACM Netw.},
-  volume = {3},
-  number = {CoNEXT2},
-  pages = {Article 10},
-  year = {2025}
-}
-
-@inproceedings{pheme-2020,
-  author = {Chatzis, Nikolaos and Smaragdakis, Georgios and
-    B{\"o}ttger, Johannes and K{\"u}hne, Thomas and
-    Feldmann, Anja},
-  title = {PHEME: A {BGP} Hijack Detection Pipeline},
-  booktitle = {Proceedings of IEEE/IFIP Networking},
-  year = {2020}
-}
-
-@inproceedings{giotsas-2014-relaxed,
-  author = {Giotsas, Vasileios and Zhou, Shi and
-    Zhang, Lin and Claffy, Kc and
-    Baldi, Giuseppe and Papapanagiotou, Ilias and
-    Golberg, Sharon},
-  title = {Relaxed Path {AS} Path Validation},
-  booktitle = {Proceedings of ACM CoNEXT},
-  year = {2014}
-}
-
-@inproceedings{li-2019-bgp-security,
-  author = {Li, Qing and Zhang, Xianming and
-    Wu, Jianping and Yang, Xuan},
-  title = {An Empirical Analysis of {BGP} Anomaly Detection
-    and Mitigation},
-  booktitle = {Proceedings of IEEE/IFIP DSN},
-  year = {2019}
-}
-
-@inproceedings{keegan-2023-bgp-graph,
-  author = {Keegan, B. and Lerman, K. and Volinsky, C.},
-  title = {{AS}-{G}raph: {G}raph {N}eural {N}etworks for
-    {BGP} {A}nomaly {D}etection},
-  booktitle = {Proceedings of ACM WWW (Network Track)},
-  year = {2023}
-}
-
-@inproceedings{chao-2024-bgp-ml,
-  author = {Chao, P. and Feamster, N. and Gasser, O.},
-  title = {{ML}-{BGP}: {A} {M}achine-{L}earning {A}nalogue of
-    {BGP} {D}etection and {T}riage},
-  booktitle = {Proceedings of ACM SIGCOMM (poster)},
-  year = {2024}
-}
-
-@article{pearl-1995-pns,
-  author = {Pearl, Judea},
-  title = {Causal Diagrams for Empirical Research},
-  journal = {Biometrika},
-  volume = {82},
-  number = {4},
-  pages = {669--688},
-  year = {1995}
-}
-
-@book{pearl-causality-2009,
-  author = {Pearl, Judea},
-  title = {Causality: Models, Reasoning, and Inference},
-  publisher = {Cambridge University Press},
-  edition = {2nd},
-  year = {2009}
-}
-
-@inproceedings{tian-pearl-2000,
-  author = {Tian, Jin and Pearl, Judea},
-  title = {Probabilities of Causation: Bounds and Identification},
-  booktitle = {Proceedings of UAI},
-  year = {2000}
-}
-
-@inproceedings{iman-2022,
-  author = {Sermpezis, Pavlos and Papadopoulos, Vasilis and
-    Nomikos, Georgios and Ventre, Giuseppe},
-  title = {IMAN: An Inter-Domain Alert Management System for
-    {BGP} Anomaly Detection},
-  booktitle = {Proceedings of IEEE/IFIP DSN},
-  year = {2022}
-}
-
-@inproceedings{li-2018-prefixhijack,
-  author = {Li, Weidong and Zhang, Xingang and Bao, Zhihao and
-    Yin, Xiaofeng and Liu, Qi},
-  title = {A Real-Time {BGP} Hijacking Detection and Verification
-    System},
-  booktitle = {Proceedings of IEEE/IFIP DSN},
-  year = {2018}
-}
-
-@misc{cloudflare-radar,
-  author = {{Cloudflare}},
-  title = {{Cloudflare Radar}},
-  howpublished = {\url{https://radar.cloudflare.com}},
-  year = {2025}
-}
-
-@misc{ripe-atlas,
-  author = {{RIPE NCC}},
-  title = {{RIPE Atlas}: {A} Global {I}nternet {M}easurement {I}nfrastructure},
-  howpublished = {https://atlas.ripe.net},
-  year = {2024}
-}
-
-@article{ripeatlas-2015,
-  author = {Stafford, Roland and Chatzis, Nikolaos and
-    Kistler, Johannes and Giotsas, Vasileios and Smaragdakis, Georgios},
-  title = {RIPE Atlas: A Global Internet Measurement Network},
-  journal = {Internet Protocol Journal},
-  volume = {18},
-  number = {3},
-  pages = {2--26},
-  year = {2015}
+@article{artemis,
+  author = {Sermpezis, Pavlos and Kotronis, Vasileios and Gigis, Petros and Dimitropoulos, Xenofontas and Cicalese, Danilo},
+  title = {{ARTEMIS}: Neutralizing {BGP} Hijacking Within a Minute},
+  journal = {IEEE/ACM Transactions on Networking},
+  volume = {26},
+  number = {6},
+  pages = {2471--2486},
+  year = {2018},
+  doi = {10.1109/TNET.2018.2869798}
 }
 
 @inproceedings{netalyzr-2013,
-  author = {Sundaresan, Srikanth and Feamster, Nick and
-    Teixeira, Renata},
-  title = {Measuring the Performance of Network Traffic
-    Isolation with NetPolice},
-  booktitle = {Proceedings of ACM IMC},
-  year = {2013}
+  author = {Kreibich, Christian and Weaver, Nicholas and Nechaev, Boris and Paxson, Vern},
+  title = {Netalyzr: Illuminating the Edge Network},
+  booktitle = {Proceedings of the ACM SIGCOMM Internet Measurement Conference (IMC)},
+  pages = {246--259},
+  year = {2010},
+  doi = {10.1145/1879141.1879173}
 }
 
-@inproceedings{sharma-2019,
-  author = {Sharma, Pavan and Banerjee, Suman and
-    Crovella, Mark},
-  title = {An Empirical Study of {BGP} Route Anomalies
-    and their Impact on Network Performance},
-  booktitle = {Proceedings of IEEE/IFIP DSN},
-  year = {2019}
+@inproceedings{rpki-coming-of-age-2019,
+  author = {Chung, Taejoong and Aben, Emile and Bruijnzeels, Tim and Chandrasekaran, Balakrishnan and Choffnes, David and Levin, Dave and Mislove, Alan and van Rijswijk-Deij, Roland and Rula, John and Sullivan, Nick},
+  title = {{RPKI} is Coming of Age: A Longitudinal Study of {RPKI} Deployment and Its Impact on {BGP}},
+  booktitle = {Proceedings of the Internet Measurement Conference (IMC)},
+  pages = {406--419},
+  year = {2019},
+  doi = {10.1145/3355369.3355596}
 }
 
-@misc{cleveland-stl,
-  author = {Cleveland, Robert B. and Cleveland, William S. and McRae, Jean E. and Terpenning, Irma},
-  title = {{STL}: A Seasonal-Trend Decomposition Procedure Based on Loess},
-  howpublished = {Journal of Official Statistics, Vol. 6, No. 1, pp. 3--33},
-  year = {1990},
+@inproceedings{rovista-2023,
+  author = {Li, Weitong and Lin, Ying and Ashiq, Muhammad Ishaq and Aben, Emile and Fontugne, Romain and Chung, Taejoong and Mislove, Alan},
+  title = {{RoVista}: Measuring and Analyzing the Route Origin Validation ({ROV}) in {RPKI}},
+  booktitle = {Proceedings of the ACM Internet Measurement Conference (IMC)},
+  pages = {73--88},
+  year = {2023},
+  doi = {10.1145/3618257.3624806}
 }
 
-@article{van-der-laan-2014-target,
-  author = {van der Laan, Mark J. and Rose, Sherri},
-  title = {Targeted Learning: Causal Inference for
-    Observational and Experimental Data},
-  journal = {Springer Series in Statistics},
-  year = {2014}
+@article{rodday-2024-rpki,
+  author = {Rodday, Nils and Cunha, {\'I}talo and Bush, Randy and Katz-Bassett, Ethan and Rodosek, Gabi Dreo},
+  title = {The Resource Public Key Infrastructure ({RPKI}): A Survey on Measurements and Future Prospects},
+  journal = {IEEE Transactions on Network and Service Management},
+  volume = {21},
+  number = {2},
+  pages = {2353--2373},
+  year = {2024},
+  doi = {10.1109/TNSM.2023.3327455}
 }
 
-@article{rubin-2005-causal,
-  author = {Rubin, Donald B.},
-  title = {Causal Inference Using Potential Outcomes:
-    Design, Modeling, Decisions},
-  journal = {Journal of the American Statistical Association},
-  volume = {100},
-  number = {469},
-  pages = {322--331},
-  year = {2005}
+@inproceedings{beam2024,
+  author = {Chen, Yihao and Yin, Qilei and Li, Qi and Liu, Zhuotao and Xu, Ke},
+  title = {Learning with Semantics: Towards a Semantics-Aware Routing Anomaly Detection System},
+  booktitle = {arXiv preprint arXiv:2402.16025},
+  year = {2024},
+  doi = {10.48550/arXiv.2402.16025}
+}
+
+@inproceedings{caida-asrank,
+  author = {Luckie, Matthew and Huffaker, Bradley and Dhamdhere, Amogh and Giotsas, Vasileios and Claffy, kc},
+  title = {{AS} Relationships, Customer Cones, and Validation},
+  booktitle = {Proceedings of the ACM SIGCOMM Internet Measurement Conference (IMC)},
+  pages = {243--256},
+  year = {2013},
+  doi = {10.1145/2504730.2504735}
 }
 
 @article{granger-1969-investigating,
-  author = {Granger, C. W. J.},
-  title = {Investigating Causal Relations by Econometric Models and
-    Cross-Spectral Methods},
+  author = {Granger, Clive W. J.},
+  title = {Investigating Causal Relations by Econometric Models and Cross-Spectral Methods},
   journal = {Econometrica},
   volume = {37},
   number = {3},
   pages = {424--438},
-  year = {1969}
+  year = {1969},
+  doi = {10.2307/1912791}
+}
+
+@article{granger-1980-testing,
+  author = {Granger, Clive W. J.},
+  title = {Testing for Causality: A Personal Viewpoint},
+  journal = {Journal of Economic Dynamics and Control},
+  volume = {2},
+  pages = {329--352},
+  year = {1980},
+  doi = {10.1016/0165-1889(80)90069-X}
 }
 
 @article{schreiber-2000-te,
@@ -281,165 +129,30 @@
   volume = {85},
   number = {2},
   pages = {461--464},
-  year = {2000}
-}
-
-@article{routeviews-2003,
-  author = {Huffaker, Bradley and Fomenkov, Marina and
-    Plonka, Daniel and Claffy, Kc},
-  title = {Datasets: The Routeviews Project},
-  journal = {Internet Measurement Conference (IMC) Dataset Paper},
-  year = {2003}
-}
-
-@inproceedings{liu-2024-bgp-cause,
-  author = {Liu, B. and Chen, K. and Zhang, Y.},
-  title = {{CausalBGP}: {C}ounterfactual {A}ttribution of
-    {BGP} {A}nomaly {C}hains},
-  booktitle = {Proceedings of IEEE/IFIP DSN},
-  year = {2024}
-}
-
-@inproceedings{artemis-2018,
-  author = {Giotsas, Vasileios and Dietzel, Christoph and Smaragdakis, Georgios},
-  title = {ARTEMIS: Neutralizing BGP Hijacking at Scale},
-  booktitle = {Proceedings of NDSS},
-  year = {2018}
-}
-
-@article{cowley-2018,
-  author = {Cowley, Jason},
-  title = {On the Reliability of Internet Routing:
-    A Case Study},
-  journal = {PhD Thesis, University of Waikato},
-  year = {2018}
-}
-
-@inproceedings{shen-2023-bgp-anomaly,
-  author = {Shen, S. and Wang, X. and Liu, J.},
-  title = {Toward {R}eal-{T}ime {BGP} {A}nomaly {D}etection
-    with {Streaming} {ML}},
-  booktitle = {Proceedings of IEEE/IFIP DSN},
-  year = {2023}
-}
-
-@inproceedings{stream4r-2020,
-  author = {Testart, Cecilia and Bushart, Justin and Akiwate, Gautam and
-    Claffy, Kc and Snoeren, Alex C. and Livshits, Bradley},
-  title = {Stream4BoT: Streaming-Based Botnet Detection},
-  booktitle = {Proceedings of IEEE/IFIP DSN},
-  year = {2020}
-}
-
-@inproceedings{edwards-2014-bgp-policy,
-  author = {Edwards, James and G{\"u}rmeri, Kim and Mirdita, Doina and
-    Seyedi, Shailesh and Shmatikov, Vitaly and Weaver, Nicholas and
-    Zappala, Laurent},
-  title = {An {AS}-Level System for {BGP} Policy Verification},
-  booktitle = {Proceedings of ACM HotNets},
-  year = {2014}
-}
-
-@misc{peerlock,
-  author = {{MANRS}},
-  title = {{Peerlock - Route Leaks Prevention}},
-  howpublished = {\url{https://www.manrs.org}},
-  year = {2024}
-}
-
-@inproceedings{krerelay-2019,
-  author = {Chung, TaeHee and Aben, Emile and Hlavacek, Tim and
-    Bush, Randy},
-  title = {{K}re: {RPKI}-Based Route Validation: Strengths and Weaknesses},
-  booktitle = {Proceedings of ACM IMC},
-  year = {2019}
-}
-
-@article{cooper-2013-rpki,
-  author = {Cooper, Daniel M. and Heilman, Ethan and
-    Brodkin, Ethan and Heilman, Kat and Izhikevich, Miron},
-  title = {On the {BGP} Routing Policy Specification Problem},
-  journal = {Proceedings of the IETF},
-  year = {2013}
-}
-
-@article{cooper-2017-rpki,
-  author = {Cooper, Daniel M. and Heilman, Ethan and
-    Brodkin, Ethan and Heilman, Kat and Izhikevich, Miron},
-  title = {Route Origin Validation: A Survey of the State of
-    {RPKI} Deployment},
-  journal = {Proceedings of the IETF},
-  year = {2017}
-}
-
-@inproceedings{testart-2025-rpki,
-  author = {Testart, C. and Sperotto, A. and van Rijswijk-Deij, R.},
-  title = {Twenty Years of {RPKI}: {A} {M}easurement {S}tudy},
-  booktitle = {Proceedings of USENIX Security},
-  year = {2025}
-}
-
-@inproceedings{ahmad-2024-rpki-fail,
-  author = {Ahmad, M. and Hiller, M. and Gasser, O.},
-  title = {{RPKI} {L}ocal {V}iew: {W}hy {V}alidation {F}ails
-    at the {E}dge},
-  booktitle = {Proceedings of USENIX NSDI},
-  year = {2024}
-}
-
-@inproceedings{rost2025,
-  author = {Anahory, Yosef Edery and Kong, Jie and Scaglione, Nicholas and Furuness, Justin and Leibowitz, Hemi and Herzberg, Amir and Wang, Bing and Gilad, Yossi},
-  title = {Suppressing {BGP} Zombies with Route Status Transparency},
-  booktitle = {22nd {USENIX} Symposium on Networked Systems Design and Implementation (NSDI 25)},
-  year = {2025},
-  pages = {1349--1366}
-}
-
-@inproceedings{improv2025,
-  author = {Li, Weitong and Li, Yuze and Chung, Taejoong},
-  title = {{ImpROV}: Measurement and Practical Mitigation of Collateral Damage in {RPKI} Route Origin Validation},
-  booktitle = {34th {USENIX} Security Symposium},
-  year = {2025}
-}
-
-@article{granger-1980-testing,
-  author = {Granger, C. W. J.},
-  title = {Testing for Causality: A Personal Viewpoint},
-  journal = {Journal of Economic Dynamics and Control},
-  volume = {2},
-  pages = {329--352},
-  year = {1980}
-}
-
-@article{granger-2004-prize,
-  author = {Granger, Clive W. J.},
-  title = {Time Series Analysis, Cointegration, and Applications},
-  journal = {Nobel Prize Lecture},
-  year = {2004}
+  year = {2000},
+  doi = {10.1103/PhysRevLett.85.461}
 }
 
 @article{barnett-2009-granger-network,
-  author = {Barnett, Lionel and Barrett, Adam B. and
-    Seth, Anil K.},
-  title = {Granger Causality and Transfer Entropy Are Equivalent
-    for Gaussian Variables},
+  author = {Barnett, Lionel and Barrett, Adam B. and Seth, Anil K.},
+  title = {Granger Causality and Transfer Entropy Are Equivalent for {Gaussian} Variables},
   journal = {Physical Review Letters},
   volume = {103},
   number = {23},
   pages = {238701},
-  year = {2009}
+  year = {2009},
+  doi = {10.1103/PhysRevLett.103.238701}
 }
 
-@article{besserve-2010-te,
-  author = {Besserve, Michel and Shajarisales, Noga and
-    Sch{\"o}lkopf, Bernhard},
-  title = {Untangling Cause and Effect in Networks: Recent
-    Advances in Causal Inference},
-  journal = {Proceedings of the IEEE},
-  volume = {104},
-  number = {3},
-  pages = {534--555},
-  year = {2010}
+@article{pearl-1995-pns,
+  author = {Pearl, Judea},
+  title = {Causal Diagrams for Empirical Research},
+  journal = {Biometrika},
+  volume = {82},
+  number = {4},
+  pages = {669--688},
+  year = {1995},
+  doi = {10.1093/biomet/82.4.702}
 }
 
 @article{pearl1999,
@@ -447,561 +160,187 @@
   title = {Probabilities of Causation: Three Counterfactual Interpretations and Their Identification},
   journal = {Synthese},
   volume = {121},
-  number = {1/2},
+  number = {1--2},
   pages = {93--149},
   year = {1999}
 }
 
-@book{pearl2009,
-  author = {Pearl, Judea},
-  title = {Causality: Models, Reasoning, and Inference},
-  publisher = {Cambridge University Press},
-  year = {2009},
-  edition = {2nd}
+@article{shpitser-2008-pns,
+  author = {Shpitser, Ilya and Pearl, Judea},
+  title = {Complete Identification Methods for the Causal Hierarchy},
+  journal = {Journal of Machine Learning Research},
+  volume = {9},
+  pages = {1941--1979},
+  year = {2008},
+  url = {https://jmlr.org/papers/v9/shpitser08a.html}
 }
 
 @article{pearl-2014-pns-3,
   author = {Pearl, Judea},
-  title = {Interpretation and Identification of
-    Causal Mediation},
+  title = {Interpretation and Identification of Causal Mediation},
   journal = {Psychological Methods},
   volume = {19},
   number = {4},
   pages = {459--481},
-  year = {2014}
+  year = {2014},
+  doi = {10.1037/a0036434}
 }
 
-@inproceedings{shpitser-2008-pns,
-  author = {Shpitser, Ilya and Pearl, Judea},
-  title = {Complete Identification Methods for the
-    Causal Hierarchy},
-  booktitle = {Proceedings of UAI},
-  pages = {441--448},
-  year = {2008}
+@book{pearl-causality-2009,
+  author = {Pearl, Judea},
+  title = {Causality: Models, Reasoning, and Inference},
+  edition = {2nd},
+  publisher = {Cambridge University Press},
+  year = {2009},
+  doi = {10.1017/CBO9780511803161}
 }
 
-@misc{maley2018,
-  author = {Malinsky, Daniel and Shpitser, Ilya and Tchetgen Tchetgen, Eric J.},
-  title = {{Identification and Estimation of Causal Effects from Dependent Data}},
-  journal = {Advances in Neural Information Processing Systems},
-  year = {2018}
+@book{spirtes-cps-2000,
+  author = {Spirtes, Peter and Glymour, Clark and Scheines, Richard},
+  title = {Causation, Prediction, and Search},
+  edition = {2nd},
+  publisher = {MIT Press},
+  year = {2000}
+}
+
+@article{rubin-2005-causal,
+  author = {Rubin, Donald B.},
+  title = {Causal Inference Using Potential Outcomes: Design, Modeling, Decisions},
+  journal = {Journal of the American Statistical Association},
+  volume = {100},
+  number = {469},
+  pages = {322--331},
+  year = {2005},
+  doi = {10.1198/016214504000001880}
 }
 
 @article{imai-2010-mediation,
-  author = {Imai, Kosuke and Keele, Luke and Tingley, Dustin and
-    Yamamoto, Teppei},
+  author = {Imai, Kosuke and Keele, Luke and Tingley, Dustin},
   title = {A General Approach to Causal Mediation Analysis},
   journal = {Psychological Methods},
   volume = {15},
   number = {4},
   pages = {309--334},
-  year = {2010}
+  year = {2010},
+  doi = {10.1037/a0020761}
 }
 
-@misc{duarte2024,
-  author = {Duarte, Guilherme and Finkelstein, Noam and Knox, Dean and Moyer, Jonathan and Puranam, Prashant and Spirling, Arthur},
-  title = {{Continuous PNS: Identifying Causal Effects on Continuous Outcomes}},
-  journal = {arXiv preprint},
-  year = {2024}
+@article{chow-1970-rejection,
+  author = {Chow, C. K.},
+  title = {On Optimum Recognition Error and Reject Tradeoff},
+  journal = {IEEE Transactions on Information Theory},
+  volume = {16},
+  number = {1},
+  pages = {41--46},
+  year = {1970},
+  doi = {10.1109/TIT.1970.1054406}
 }
 
-@inproceedings{cho-2025-causal-bgp,
-  author = {Cho, J. and Sundaresan, S. and van der Merwe, J.},
-  title = {{Causal}-{BGP}: {B}ayesian {D}iscovery of {C}ausality
-    in {BGP} {A}nomaly {D}etection},
-  booktitle = {Proceedings of USENIX NSDI},
-  year = {2025}
+@inproceedings{geifman-2017-selective,
+  author = {Geifman, Yonatan and El-Yaniv, Ran},
+  title = {Selective Classification for Deep Neural Networks},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  volume = {30},
+  year = {2017},
+  url = {https://arxiv.org/abs/1706.04275}
 }
 
-@inproceedings{hu-2025-traffic-causal,
-  author = {Hu, W. and Mittal, P. and Feamster, N.},
-  title = {Network {C}ause {D}iscovery with {T}raffic
-    {T}elemetry: {A} {B}ayesian {A}pproach},
-  booktitle = {Proceedings of USENIX NSDI},
-  year = {2025}
-}
-
-@article{wilson-1927,
-  author = {Wilson, Edwin B.},
-  title = {Probable Inference, the Law of Succession, and
-    Statistical Inference},
-  journal = {Journal of the American Statistical Association},
-  volume = {22},
-  number = {158},
-  pages = {209--212},
-  year = {1927}
+@article{phipson-2010-permutation,
+  author = {Phipson, Belinda and Smyth, Gordon K.},
+  title = {Permutation {P}-values Should Never Be Zero: Calculating Exact {P}-values When Permutations Are Randomly Drawn},
+  journal = {Statistical Applications in Genetics and Molecular Biology},
+  volume = {9},
+  number = {1},
+  pages = {39},
+  year = {2010},
+  doi = {10.2202/1544-6115.1585}
 }
 
 @article{efron-1979-bootstrap,
   author = {Efron, Bradley},
   title = {Bootstrap Methods: Another Look at the Jackknife},
-  journal = {Annals of Statistics},
+  journal = {The Annals of Statistics},
   volume = {7},
   number = {1},
   pages = {1--26},
-  year = {1979}
+  year = {1979},
+  doi = {10.1214/aos/1176344552}
 }
 
-@book{efron-bootstrap-book-1993,
-  author = {Efron, Bradley and Tibshirani, Robert J.},
-  title = {An Introduction to the Bootstrap},
-  publisher = {Chapman \& Hall/CRC},
-  year = {1993}
+@article{wilson-1927,
+  author = {Wilson, Edwin B.},
+  title = {Probable Inference, the Law of Succession, and Statistical Inference},
+  journal = {Journal of the American Statistical Association},
+  volume = {22},
+  number = {158},
+  pages = {209--212},
+  year = {1927},
+  doi = {10.1080/01621459.1927.10502953}
 }
 
-@article{phipson-2010-permutation,
-  author = {Phipson, Belinda and Smyth, Gordon K.},
-  title = {Permutation P-values Should Never Be Zero:
-    Calculating Exact P-values When Permutations Are
-    Randomly Drawn},
-  journal = {Statistical Applications in Genetics and
-    Molecular Biology},
-  volume = {9},
+@article{cleveland-stl,
+  author = {Cleveland, Robert B. and Cleveland, William S. and McRae, Jean E. and Terpenning, Irma},
+  title = {{STL}: A Seasonal-Trend Decomposition Procedure Based on {Loess}},
+  journal = {Journal of Official Statistics},
+  volume = {6},
   number = {1},
-  year = {2010}
-}
-
-@inproceedings{toorop-rpki-imc-2020,
-  author = {de Kater, Carolin and M{\"u}hrem, Tugberk and
-    Jonker, Maarten and Vallentin, Ramin},
-  title = {A Systematic Look at {RPKI} Validation},
-  booktitle = {Proceedings of ACM IMC},
-  year = {2020}
-}
-
-@inproceedings{duan-2023-bgp-rpki,
-  author = {Duan, R. and Vervier, P.-A. and
-    Clavier, B. and Wang, T.},
-  title = {An {Empirical} {Study} of {RPKI} {Misconfigurations}
-    in {Production} {Networks}},
-  booktitle = {Proceedings of USENIX Security},
-  year = {2023}
-}
-
-@misc{apnic-2025-blog,
-  author = {{APNIC}},
-  title = {Internet Routing and Network Operations},
-  howpublished = {https://blog.apnic.net},
-  year = {2025}
-}
-
-@misc{apnic-blog,
-  author = {{APNIC}},
-  title = {{APNIC Blog: Internet Routing and Network Operations}},
-  howpublished = {\url{https://blog.apnic.net}},
-  year = {2025}
-}
-
-@article{ball2014,
-  author = {Ball, Peter and Billio, Monica and Cover, Arthur and
-    Diks, Cees and Fang, H.},
-  title = {The {N}etflix {P}rize: {C}ausal {I}nference in {C}ollaborative {F}iltering},
-  journal = {Journal of Machine Learning Research},
-  year = {2014}
-}
-
-@misc{bgpstream,
-  author = {Giotsas, Vasileios and Zhou, Shi and Foye, Matthew and Herzberg, Benjamin and Schmidt, Thomas C. and Zhang, Lin and Roughan, Matthew and Uhlig, Steve},
-  title = {BGPStream: A Software Framework for Live and Historical BGP Data Analysis},
-  howpublished = {Internet Measurement Conference (IMC) Tool Demo},
-  year = {2016}
-}
-
-@article{birge2007,
-  author = {Birg{\'e}, Lucien and Roos, Thomas},
-  title = {On Model Selection and the Miracle of Cross-Validation},
-  journal = {Annals of Statistics},
-  year = {2007}
-}
-
-@article{caida-asrank,
-  author = {Luckie, Matthew and Huffaker, Bradley and Dhamdhere, Amogh and
-    Fawcett, Venkat and Claffy, K.},
-  title = {{AS} Relationships, Customer Cones, and Validation},
-  journal = {IEEE/ACM Transactions on Networking},
-  year = {2013}
+  pages = {3--73},
+  year = {1990}
 }
 
 @misc{caida-asrel,
   author = {{CAIDA}},
-  title = {{CAIDA AS Relationships Dataset}},
-  howpublished = {\url{https://www.caida.org/catalog/datasets/as-relationships/}},
-  year = {2025}
+  title = {{AS} Relationships Dataset},
+  year = {2025},
+  howpublished = {\url{https://www.caida.org/catalog/datasets/as-relationships/}}
 }
 
-@article{caida-bgpstream-2016,
-  author = {Giotsas, Vasileios and Zhou, Shi and Foye, Matthew and
-    Herzberg, Benjamin and Schmidt, Thomas C. and Zhang, Lin and
-    Roughan, Matthew and Uhlig, Steve},
-  title = {BGPStream: A Software Framework for Live and Historical
-    {BGP} Data Analysis},
-  journal = {Internet Measurement Conference (IMC) Tool Demo},
-  year = {2016}
+@misc{manrs,
+  author = {{MANRS}},
+  title = {Mutually Agreed Norms for Routing Security},
+  year = {2025},
+  howpublished = {\url{https://www.manrs.org}}
 }
 
-@misc{cloudflare-2018-datacenter,
-  author = {{Cloudflare}},
-  title = {Cloudflare Outage Post-Mortem (2018-07-20)},
-  howpublished = {https://blog.cloudflare.com/cloudflare-outage-on-july-20-2018},
-  year = {2018}
-}
-
-@misc{cloudflare-2025-radar,
-  author = {{Cloudflare}},
-  title = {{Cloudflare Radar}},
-  howpublished = {https://radar.cloudflare.com},
-  year = {2025}
-}
-
-@misc{cloudflare-blog-2024,
-  author = {{Cloudflare}},
-  title = {Network Outage Post-Mortems},
-  howpublished = {https://blog.cloudflare.com},
-  year = {2024}
-}
-
-@proceedings{conext-2024,
-  title = {Proceedings of the {ACM} {CoNEXT} {Conference}},
-  year = {2024}
-}
-
-@proceedings{dsn-2023-best,
-  title = {Proceedings of the {IEEE/IFIP} International Conference on
-    Dependable Systems and Networks (DSN)},
-  year = {2023}
-}
-
-@inproceedings{dsn-2024-best,
-  title = {Proceedings of the {IEEE/IFIP} International Conference on
-    Dependable Systems and Networks (DSN)},
-  year = {2024}
-}
-
-@inproceedings{dsn-2025,
-  title = {Proceedings of the {IEEE/IFIP} International Conference on
-    Dependable Systems and Networks (DSN)},
-  year = {2025}
-}
-
-@article{efron94,
-  author = {Efron, Bradley and Tibshirani, Robert J.},
-  title = {An Introduction to the Bootstrap},
-  journal = {Chapman \& Hall/CRC Monographs on Statistics \& Applied Probability},
-  year = {1994}
-}
-
-@misc{fastly-observatory,
-  author = {{Fastly}},
-  title = {{Fastly} {O}bservatory},
-  howpublished = {https://observatory.fastly.com},
-  year = {2024}
-}
-
-@inproceedings{gill12,
-  author = {Gill, Phillipa and Schapira, Michael and Goldberg, Sharon},
-  title = {A Catalog of {BGP} Routing Policies},
-  booktitle = {Proceedings of ACM Sigcomm},
-  year = {2012}
-}
-
-@misc{granger-bgp-traffic,
-  author = {Gregoriou, G. and others},
-  title = {Granger Causality and {BGP}-{Traffic} Correlation Studies},
-  howpublished = {Various},
-  year = {2010}
-}
-
-@inproceedings{granger1969,
-  author = {Granger, C. W. J.},
-  title = {Investigating Causal Relations by Econometric Models and Cross-Spectral Methods},
-  booktitle = {Econometrica},
-  year = {1969}
-}
-
-@article{granger1980,
-  author = {Granger, C. W. J.},
-  title = {Testing for Causality: A Personal Viewpoint},
-  journal = {Journal of Economic Dynamics and Control},
-  year = {1980}
-}
-
-@misc{hcaf-v1,
-  author = {{Anonymous}},
-  title = {{A Hybrid Causal Attribution Framework for BGP-Traffic Anomalies (prior version)}},
-  howpublished = {Anonymous technical report, under review},
-  year = {2025}
-}
-
-@inproceedings{he-2024-bgp-measurement,
-  author = {He, Y. and Liu, Q. and Mao, Z. M. and
-    Rexford, J.},
-  title = {A Cross-Vantage View of {BGP} Route {H}ijacking
-    in the Wild},
-  booktitle = {Proceedings of ACM IMC},
-  year = {2024}
-}
-
-@proceedings{imc-2024-best,
-  title = {Proceedings of the {ACM} {Internet} {Measurement} {Conference} (IMC 2024)},
-  year = {2024}
-}
-
-@article{imc-2025,
-  title = {Proceedings of the {ACM} {Internet} {Measurement} {Conference} (IMC 2025)},
-  year = {2025}
-}
-
-@inproceedings{katsikeas-2022-bgp,
-  author = {Katsikeas, S. and Hesselbarth, S. and
-    G{\"u}ndogan, J. and
-    Hu, Y. and Kan, S. and Wirtz, J. and
-    P{\"u}schel, M.},
-  title = {{Route} {R}ank: {A} {Ranking}-{B}ased {A}nomaly
-    {D}etection {F}ramework for {BGP}},
-  booktitle = {Proceedings of IEEE/IFIP DSN},
-  year = {2022}
-}
-
-@misc{kentik,
-  author = {{Kentik}},
-  title = {{Kentik Network Observability}},
-  howpublished = {\url{https://www.kentik.com}},
-  year = {2025}
-}
-
-@misc{kentik-2025-blog,
-  author = {{Kentik}},
-  title = {Network Observability and Outage Post-Mortems},
-  howpublished = {https://www.kentik.com/blog},
-  year = {2025}
-}
-
-@misc{kentik-blog,
-  author = {{Kentik}},
-  title = {{Kentik Blog: Network Observability and Outage Post-Mortems}},
-  howpublished = {\url{https://www.kentik.com/blog}},
-  year = {2025}
-}
-
-@inproceedings{krerelay19,
-  author = {Chung, TaeHee and Aben, Emile and Hlavacek, Tim and
-    Bush, Randy},
-  title = {{K}re: {RPKI}-Based Route Validation: Strengths and Weaknesses},
-  booktitle = {Proceedings of ACM IMC},
-  year = {2019}
-}
-
-@inproceedings{lerer-2023-bgp,
-  author = {Lerer, A. and Schiff, N. and Gilad, Y.},
-  title = {Learning to Secure Routing at Scale: {A} {BGP} {RL} Approach},
-  booktitle = {Proceedings of USENIX Security},
-  year = {2023}
-}
-
-@inproceedings{lukaseder-2018,
-  author = {Lukaseder, Johannes and Bradatsch, Andreas and
-    Kargl, Frank},
-  title = {Ambushing the {BGP} Hijacker: A Quantitative
-    Analysis of Route Hijacking and Detection},
-  booktitle = {Proceedings of ACM/IEEE Symposium on
-    Architectures for Networking and Communications Systems (ANCS)},
-  year = {2018}
-}
-
-@proceedings{nsdi-2025,
-  title = {Proceedings of the {USENIX} {NSDI} {Symposium}},
-  year = {2025}
-}
-
-@article{pearl-2014-causality,
-  author = {Pearl, J.},
-  title = {Probabilistic {C}ausality in {D}eep {L}earning:
-    {T}he {C}ausal {B}ackbone},
-  journal = {Communications of the ACM},
-  volume = {67},
-  number = {5},
-  pages = {88--97},
-  year = {2024}
-}
-
-@misc{pearsoncausal,
-  author = {Pearson, Karl},
-  title = {On Lines and Planes of Closest Fit to Systems of Points in Space},
-  journal = {Philosophical Magazine},
-  series = {6},
-  volume = {2},
-  number = {11},
-  pages = {559--572},
-  year = {1901}
-}
-
-@inproceedings{preda-2019,
-  author = {Preda, Sebastian and Monnet, Fabien and
-    Duda, Andrzej},
-  title = {Detecting {BGP} Route Leaks: A Survey of
-    State-of-the-Art Methods},
-  booktitle = {Proceedings of IEEE/IFIP DSN Workshops},
-  year = {2019}
-}
-
-@inproceedings{ramakrishnan15,
-  author = {Ramakrishnan, N. and Butler, P. J. and Muthulingam, S. and
-    G. Brown, G.},
-  title = {An {ML}-Based Approach to {BGP} Anomaly Detection at Scale},
-  booktitle = {Proceedings of the ACM SIGCOMM Workshop on Big IP Data Analytics},
-  year = {2015}
-}
-
-@misc{review-policy,
-  author = {{DSN Program Committee}},
-  title = {{Reviewer Policy on Abstention Reporting}},
-  howpublished = {DSN 2026 review guidelines},
-  year = {2025}
-}
-
-@misc{rfc8212,
-  author = {Mauch, Jared and Sriram, Kotikalapudi and Okubo, Takaaki},
-  title = {{RFC 8212: Default External BGP (eBGP) Route Propagation Behavior without Policies}},
-  howpublished = {IETF RFC},
-  year = {2017}
+@misc{peerlock,
+  author = {{MANRS}},
+  title = {{Peerlock}: Route Leak Prevention},
+  year = {2024},
+  howpublished = {\url{https://www.manrs.org/initiatives/peerlock/}}
 }
 
 @misc{ripe-ris,
   author = {{RIPE NCC}},
-  title = {{Routing Information Service (RIS)}},
-  howpublished = {\url{https://www.ripe.net/analyse/internet-measurements/routing-information-service-ris}},
-  year = {2025}
-}
-
-@article{ripe-ris-2023,
-  author = {RIPE NCC},
-  title = {RIPE Routing Information Service (RIS): 20 Years of
-    Routing Data},
-  journal = {RIPE Labs Article},
-  year = {2023}
-}
-
-@misc{routeviews,
-  author = {{RouteViews}},
-  title = {{University of Oregon RouteViews Project}},
-  howpublished = {\url{http://www.routeviews.org}},
-  year = {2025}
+  title = {Routing Information Service ({RIS})},
+  year = {2025},
+  howpublished = {\url{https://www.ripe.net/analyse/internet-measurements/routing-information-service-ris/}}
 }
 
 @misc{rpki-validator,
-  author = {{NIST RPKI}},
-  title = {{RPKI Deployment Monitor}},
-  howpublished = {\url{https://rpki-monitor.antd.nist.gov}},
-  year = {2025}
+  author = {{NIST}},
+  title = {{NIST} {RPKI} Monitor},
+  year = {2025},
+  howpublished = {\url{https://rpki-monitor.antd.nist.gov}}
 }
 
-@article{schottdorf14,
-  author = {Schottd{\"o}rf, Oliver and Eglen, Stephen J. and Barry, Obi and
-    Cowley, Alison and Bollen, Johan},
-  title = {The Role of Statistics in the {N}euron--{D}rosophila Gap Junction},
-  journal = {Nature Neuroscience},
-  year = {2014},
-  note = {Causal inference via Granger causality in neuroscience}
+@misc{cloudflare-radar,
+  author = {{Cloudflare}},
+  title = {Cloudflare Radar},
+  year = {2025},
+  howpublished = {\url{https://radar.cloudflare.com}}
 }
 
-@proceedings{sigcomm-2024,
-  title = {Proceedings of the {ACM} {SIGCOMM} {Conference}},
-  year = {2024}
+@misc{ripe-atlas,
+  author = {{RIPE NCC}},
+  title = {{RIPE Atlas}: A Global Internet Measurement Network},
+  howpublished = {Internet Protocol Journal 18(3)},
+  year = {2015},
+  url = {https://www.ripe.net/publications/news/about-ripe-atlas}
 }
 
-@article{spirling-2024-bgp-rpki,
-  author = {Spirling, A. and Stewart, B. and
-    van der Merwe, J.},
-  title = {Where {RPKI} Falls Short: {A} {Q}uantitative {A}nalysis
-    of {Route} {Origin} {Validation} {G}aps},
-  journal = {Proceedings of the ACM on Networking},
-  year = {2024}
-}
-
-@inproceedings{spirtes-cps-2000,
-  author = {Spirtes, Peter and Glymour, Clark and Scheines, Richard},
-  title = {Causation, Prediction, and Search},
-  booktitle = {MIT Press},
-  edition = {2nd},
-  year = {2000}
-}
-
-@book{spirtes00,
-  author = {Spirtes, Peter and Glymour, Clark and Scheines, Richard},
-  title = {Causation, Prediction, and Search},
-  publisher = {MIT Press},
-  year = {2000},
-  edition = {2nd}
-}
-
-@misc{statsmodels-stl,
-  author = {{statsmodels Developers}},
-  title = {statsmodels: Statistical Modeling in Python},
-  howpublished = {\url{https://www.statsmodels.org/stable/generated/statsmodels.tsa.seasonal.STL.html}},
+@misc{apnic-orange-2024,
+  author = {Madory, Doug},
+  title = {Digging into the {Orange} {Espa\~na} Hack},
   year = {2024},
+  howpublished = {\url{https://blog.apnic.net/2024/01/26/digging-into-the-orange-espana-hack/}}
 }
-
-@article{steinbrecher06,
-  author = {Steinbrecher, Gy{\"{o}}rgy and Kr{\"{u}}ger, Thomas and
-    M{\"{u}}hlh{\"{a}}user, Max},
-  title = {Quantifying the Effect of {RPKI} and {BGPsec} Deployment on Routing Security},
-  journal = {Journal of Network and Systems Management},
-  year = {2006}
-}
-
-@article{tone-2019,
-  author = {Tone, Ryan and Schiller, Matus and L{\"u}ders, Cristel and
-    Snijders, Job and Akiwate, Gautam and Claffy, Kc and
-    Voitalov, Ivan and van Rijswijk-Deij, Roland and
-    Testart, Cecilia and Snoeren, Alex C.},
-  title = {Identifying and Analyzing {BGP} Route Leaks},
-  journal = {Proceedings of the IETF},
-  year = {2019}
-}
-
-@inproceedings{toorop20,
-  author = {de Kater, Carolin and M{\"{u}}hrem, Tugberk and Jonker, Maarten and
-    Vallentin, Ramin},
-  title = {A Systematic Look at {RPKI} Validation},
-  booktitle = {Proceedings of ACM IMC},
-  year = {2020}
-}
-
-@misc{transfer-entropy-internet,
-  author = {Dmochowski, P. and others},
-  title = {Transfer Entropy for Internet Traffic Analysis},
-  howpublished = {Various},
-  year = {2018}
-}
-
-@inproceedings{tsdistance,
-  author = {Serr\`a, Joan and Arcos, Josep Llu{\'\i}s},
-  title = {An Empirical Evaluation of Similarity Measures for Time Series Classification},
-  booktitle = {Proceedings of the 1st International Conference on Knowledge Discovery and Information Retrieval (KDIR)},
-  year = {2009},
-  pages = {318--324}
-}
-
-@proceedings{usenix-security-2024,
-  title = {Proceedings of the {USENIX} {Security} {Symposium}},
-  year = {2024}
-}
-
-@article{williamson-2024-causal,
-  author = {Williamson, B. and Duede, E.},
-  title = {Post-{P}earl Causality for Network Operations:
-    A Survey},
-  journal = {ACM Computing Surveys},
-  volume = {56},
-  number = {9},
-  pages = {1--36},
-  year = {2024}
-}
-
-@article{wilson27,
-  author = {Wilson, Edwin B.},
-  title = {Probable Inference, the Law of Succession, and Statistical Inference},
-  journal = {Journal of the American Statistical Association},
-  year = {1927}
-}
-

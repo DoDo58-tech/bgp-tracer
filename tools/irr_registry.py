@@ -1,42 +1,15 @@
-"""
-Tool B3: IRR (Internet Routing Registry) Lookup
-================================================
-
-Queries IRR databases to find registered routing policies, as-sets, and prefix
-authorizations for an AS. This is critical for answering:
-
-  "Is this AS allowed to announce this prefix?"
-
-IRR databases are the authoritative source for what prefixes an AS is supposed
-to announce. If an AS announces a prefix NOT in its IRR records, it's a strong
-signal of hijack. If it IS in IRR, it might be a misconfiguration.
-
-Multi-RIR approach (query all major IRRs in parallel):
-  - RADB (Route Attractor Database)    : https://www.radb.net    (primary, free WHOIS)
-  - RIPE NCC                             : https://www.ripe.net    (RIPE region)
-  - APNIC                                : https://www.apnic.net   (AP region)
-  - ARIN                                 : https://www.arin.net   (North America)
-  - NTTCOM                               : https://www.nttcom.net  (bulk WHOIS)
-  - Level3                              : whois.level3.net
-
-IRR objects queried:
-  - aut-num        : AS registration (policy, originases, desc)
-  - route/route6  : Prefix-to-AS authorization
-  - as-set        : AS set membership
-  - route-set     : Route set definitions
-
-Free: WHOIS protocol (port 43) against each IRR.
-"""
+"""Tool B3: IRR (Internet Routing Registry) Lookup
+================================================"""
 
 from __future__ import annotations
 
 import asyncio
-import re
-import socket
 from typing import Any
 
 from tools.tool_registry import ToolParameter, register_tool
 from utils.logger import logger
+import re
+import socket
 
 # ── IRR WHOIS servers ────────────────────────────────────────────────────────
 
@@ -55,7 +28,7 @@ IRR_SERVERS = {
 DEFAULT_SERVERS = ["RADB", "RIPE", "APNIC"]
 
 
-def _clean_whois(content):
+def clean_whois(content):
     """Remove WHOIS server banners and empty lines."""
     text = content
     lines = []
@@ -66,7 +39,7 @@ def _clean_whois(content):
     return "\n".join(lines)
 
 
-def _parse_aut_num(content: str) -> dict[str, Any]:
+def parse_aut_num(content: str) -> dict[str, Any]:
     """Parse aut-num (AS registration) object from IRR."""
     text = content
     result = {
@@ -99,7 +72,7 @@ def _parse_aut_num(content: str) -> dict[str, Any]:
     return result
 
 
-def _parse_route_objects(content: str) -> list[dict]:
+def parse_route_objects(content: str) -> list[dict]:
     """Parse route/route6 objects from IRR."""
     text = content
     objects = []
@@ -122,7 +95,7 @@ def _parse_route_objects(content: str) -> list[dict]:
     return objects
 
 
-async def _whois_query(server, query, timeout=10):
+async def whois_query(server, query, timeout=10):
     """Execute a WHOIS query against an IRR server."""
     reader = writer = None
     try:
@@ -136,7 +109,7 @@ async def _whois_query(server, query, timeout=10):
         return response.decode("utf-8", errors="ignore")
     except asyncio.TimeoutError:
         return f"[Timeout connecting to {server}]"
-    except Exception as e:
+    except (ValueError) as e:
         return f"[Error {server}: {e}]"
     finally:
         # Close the socket in a ``finally`` so any exception during
@@ -144,39 +117,39 @@ async def _whois_query(server, query, timeout=10):
             try:
                 writer.close()
                 await writer.wait_closed()
-            except Exception:
+            except (ValueError):
                 pass
 
 
-async def _query_irr_server(
+async def query_irr_server(
     server_name: str, asn: str, prefix: str = ""
 ) -> dict[str, Any]:
     """Query a single IRR server for AS info and prefix authorization."""
     server = IRR_SERVERS.get(server_name, server_name)
 
     # Query aut-num
-    aut_num_response = await _whois_query(server, f"-i as-name AS{asn}")
-    aut_num_clean = _clean_whois(aut_num_response)
-    aut_num_data = _parse_aut_num(aut_num_clean) if aut_num_clean else {}
+    aut_num_response = await whois_query(server, f"-i as-name AS{asn}")
+    aut_num_clean = clean_whois(aut_num_response)
+    aut_num_data = parse_aut_num(aut_num_clean) if aut_num_clean else {}
 
     # Query by origin AS
-    origin_response = await _whois_query(server, f"-i origin AS{asn}")
-    origin_clean = _clean_whois(origin_response)
-    route_objects = _parse_route_objects(origin_clean) if origin_clean else []
+    origin_response = await whois_query(server, f"-i origin AS{asn}")
+    origin_clean = clean_whois(origin_response)
+    route_objects = parse_route_objects(origin_clean) if origin_clean else []
 
     # Query specific prefix if provided
     prefix_result = None
     if prefix:
         # Try both route and route6
         for obj_type in ["-i origin -T route", "-i origin -T route6"]:
-            prefix_response = await _whois_query(server, f"{obj_type} {prefix}")
+            prefix_response = await whois_query(server, f"{obj_type} {prefix}")
             if "route" in prefix_response and "AS" in prefix_response:
-                prefix_result = _clean_whois(prefix_response)
+                prefix_result = clean_whois(prefix_response)
                 break
 
     # Query as-set membership
-    as_set_response = await _whois_query(server, f"-i as-name AS{asn}")
-    as_set_clean = _clean_whois(as_set_response)
+    as_set_response = await whois_query(server, f"-i as-name AS{asn}")
+    as_set_clean = clean_whois(as_set_response)
 
     # Determine if prefix is authorized by IRR
     authorized = False
@@ -196,7 +169,7 @@ async def _query_irr_server(
                     ):
                         authorized = True
                         break
-                except Exception:
+                except (ValueError):
                     pass
 
     return {
@@ -209,31 +182,16 @@ async def _query_irr_server(
     }
 
 
-async def _irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
-    """
-    Query Internet Routing Registry (IRR) databases for an AS.
-
-    IRR records tell us what prefixes an AS is SUPPOSED to announce.
-    This is critical for validating hijack detection:
-      - If a prefix is announced by an AS NOT in IRR → strong hijack signal
-      - If IRR says "this AS owns this prefix" → validates the announcement
-
-    Required params:
-        asn (str): AS number (e.g. "43927" or "AS43927")
-        servers (list[str], optional): which IRRs to query (default: ["RADB", "RIPE", "APNIC"])
-
-    Optional params:
-        prefix (str): specific prefix to check authorization for
-        check_as_set (bool): also check as-set membership (default: True)
-
+async def irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
+    """Query Internet Routing Registry (IRR) databases for an AS.
+    
     Returns:
-        - results_by_server: query results from each IRR
-        - authorized_prefixes: prefixes the AS is registered to announce
-        - unauthorized_prefixes: prefixes in routing data but NOT in IRR
-        - as_policy: routing policy (import/export) from IRR
-        - prefix_authorization: whether the specific prefix is IRR-authorized
-        - observation: LLM-readable summary
-    """
+    - results_by_server: query results from each IRR
+    - authorized_prefixes: prefixes the AS is registered to announce
+    - unauthorized_prefixes: prefixes in routing data but NOT in IRR
+    - as_policy: routing policy (import/export) from IRR
+    - prefix_authorization: whether the specific prefix is IRR-authorized
+    - observation: LLM-readable summary"""
     asn = str(tool_input.get("asn", "")).lstrip("AS")
     servers = tool_input.get("servers", DEFAULT_SERVERS)
     prefix = tool_input.get("prefix", "")
@@ -243,7 +201,7 @@ async def _irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
 
     # Query all servers in parallel
     tasks = [
-        _query_irr_server(server, asn, prefix)
+        query_irr_server(server, asn, prefix)
         for server in servers
     ]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -301,7 +259,7 @@ async def _irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
                             prefix_authorized = True
                             authorization_reason = f"Prefix {prefix} is covered by registered super-prefix {pfx}"
                             break
-                    except Exception:
+                    except (ValueError):
                         pass
         if not prefix_authorized:
             authorization_reason = f"Prefix {prefix} NOT found in IRR records — possible unauthorized announcement"
@@ -373,19 +331,14 @@ async def _irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
 
 async def lookup_prefix_origin_async(prefix_str: str) -> dict[str, Any]:
     """Convenience wrapper for probe_executor: query IRR for a prefix.
-
+    
     Returns a dict with at least:
-        - prefix (str): input prefix
-        - origins (list[str]): origin ASNs that IRR lists as authorized to
-          announce this prefix (across all queried servers).
-        - found (bool): whether any server had a route object for the prefix.
-        - data_source (str): which IRR server(s) replied successfully.
-
-    This is intentionally narrower than ``_irr_registry_lookup`` — the
-    probe only needs the origin AS, not the full routing policy. The
-    narrower scope keeps probe latency low (sub-second per prefix) so
-    the auto-probe section never blocks the report.
-    """
+    - prefix (str): input prefix
+    - origins (list[str]): origin ASNs that IRR lists as authorized to
+    announce this prefix (across all queried servers).
+    - found (bool): whether any server had a route object for the prefix.
+    - data_source (str): which IRR server(s) replied successfully."""
+    prefix = prefix_str  # NOTE: parameter is `prefix_str`; body uses `prefix`.
     prefixes_to_check = [prefix] if prefix else []
     if not prefixes_to_check:
         return {"prefix": prefix, "origins": [], "found": False, "data_source": "none"}
@@ -396,7 +349,7 @@ async def lookup_prefix_origin_async(prefix_str: str) -> dict[str, Any]:
 
     for server in DEFAULT_SERVERS:
         try:
-            result = await _query_irr_server(server, "", prefix)
+            result = await query_irr_server(server, "", prefix)
             for ro in result.get("route_objects") or []:
                 origin = ro.get("origin") or ro.get("origin_as")
                 if origin and str(origin) not in origins:
@@ -404,7 +357,7 @@ async def lookup_prefix_origin_async(prefix_str: str) -> dict[str, Any]:
             if result.get("route_objects"):
                 found = True
                 sources.append(server)
-        except Exception:
+        except (ValueError):
             continue
 
     return {
@@ -431,5 +384,5 @@ register_tool(
         ToolParameter("prefix", "Optional: specific prefix to check authorization for", "string", required=False),
         ToolParameter("check_as_set", "Also check as-set membership (default: True)", "string", required=False),
     ],
-    handler=_irr_registry_lookup,
+    handler=irr_registry_lookup,
 )

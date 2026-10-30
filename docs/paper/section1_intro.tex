@@ -116,11 +116,12 @@ BGP Tracer separates time-critical triage from deeper evidence
 synthesis. Phase~1 collects and aligns routing and traffic telemetry,
 runs deterministic detectors, and stores the resulting evidence in an
 auditable cache. It produces one of five core verdicts:
-\texttt{real\_incident}, \texttt{silent\_alert},
-\texttt{traffic\_only}, \texttt{correlation\_uncertain}, or
-\texttt{no\_clear\_anomaly}. Missing telemetry is reported separately
+\texttt{real\_incident}\allowbreak, \texttt{silent\_alert}\allowbreak,
+\texttt{traffic\_only}\allowbreak, \texttt{correlation\_uncertain}\allowbreak,
+or \texttt{no\_clear\_anomaly}.
+Missing telemetry is reported separately
 from an observed absence of anomalies. Phase~2 can consume this cache
-for deeper causal synthesis and report generation without repeating
+for deeper causal analysis and report generation without repeating
 the complete data-collection path. This division allows routine
 triage to follow a lightweight path while preserving the evidence
 needed for follow-up analysis.
@@ -138,28 +139,39 @@ is treated differently from a sustained deviation. This design retains
 coverage of heterogeneous networks while reducing false alarms caused
 by normal traffic variability.
 
-\paragraph{S3 --- PNS-inspired causal evidence synthesis
+\paragraph{S3 --- Admissibility-based directional attribution
 (Addresses C3).}
-BGP Tracer uses a breakpoint-anchored pre/post comparison as a
-PNS-inspired intervention proxy. The routing breakpoint defines the
-pre-event reference and post-event window for routing-to-traffic
-attribution, while the corresponding traffic breakpoint is used for
-the reverse direction. Bootstrap confidence intervals and permutation
-tests quantify the stability of the directional estimates. These
-estimates are combined with five evidence channels---multi-scale
-breakpoint detection, routing-path reconstruction, cascade-scope
-estimation, Granger prediction, and transfer entropy---through
-likelihood ratios. Granger and transfer entropy therefore provide
-supporting evidence rather than acting as sole adjudicators. Temporal
-precedence and consistency checks constrain the possible direction,
-and the engine can abstain when the evidence is insufficient or
-conflicting. We report the outcome of this design rather than assume
-it: on the 25 real-cache events with a verified direction, the
-synthesis commits on 2 and is wrong on both, while CSS alone and
-transfer entropy commit on 24 each. Direction attribution at the
-available telemetry density is therefore a negative result, and
-Section~\ref{sec:evaluation} reports it under a protocol that counts
-abstention as a cost rather than a correct answer.
+BGP Tracer reads the direction of an effect from the order of two onsets
+rather than from the size of two contrasts. Each series is segmented
+independently, the onset of the selected change is reported as an
+\emph{interval} rather than a point, and a direction is committed only
+when four vetoes pass: the onset intervals are disjoint and ordered
+(precedence); the selected model beats a no-change model with a
+significant split statistic (persistence); the response does not move
+this much on its own against placebo onsets (exclusivity); and the
+observation covers the affected entities (provenance), with a mirror
+check that a reversion is answered by a reversion (propagation). The
+conjunction is logical, so no weight, prior or floor binds the
+conditions, and every refusal returns the veto that failed together with
+the statistic behind it. Granger prediction, transfer entropy and
+cascade-scope estimation therefore enter as comparators rather than as
+adjudicators. \S\ref{sec:method-vetoes} defines the vetoes and
+\S\ref{sec:eval-direction} measures the size and power of the resulting
+test on planted mechanisms.
+
+\paragraph{S4 --- An auditable agent coordination layer.}
+BGP Tracer's analysis is carried by a layer of specialised agents that
+exchange typed records through a shared Evidence Blackboard rather than
+through free text. The Blackboard applies write-once semantics to
+telemetry, so a later stage cannot silently replace an earlier stage's
+measurement, and it stores the provenance of every observation, claim, and
+contradiction. The layer is designed so that a failed component reduces
+the richness of the report without altering the verdict, and so that the
+artefact an operator reads can be traced back to the evidence that
+produced it. We distinguish the agents that close a genuine
+decision--action--observation loop from those that execute a fixed
+procedure, and we measure the layer against a monolithic single-prompt
+baseline on identical evidence.
 
 The main contributions of this paper are as follows.
 
@@ -175,13 +187,28 @@ non-periodic traffic behaviour, avoiding the blanket exclusion of
 irregular ASes while reducing false alarms from ordinary temporal
 variation.
 
-\item \textbf{A PNS-inspired causal attribution method with explicit
-abstention.} We combine breakpoint-anchored pre/post estimation,
-significance testing, and five likelihood-ratio evidence channels to
-assess causal direction. Each verdict is traceable to its component
-evidence, and the method abstains when the available data do not
-justify a causal conclusion. On the real-cache evaluation it abstains
-on 23 of 25 events and is wrong on both commitments; we report this
-negative result rather than present the synthesis as a validated
-directional method.
+\item \textbf{An admissibility-based directional attribution method.} We
+report each onset as an interval rather than a point, order the two
+edges only when those intervals are disjoint, and admit a direction only
+if four vetoes pass: precedence, persistence, exclusivity against
+placebo onsets, and provenance and mirror checks. Each refusal returns
+the veto that failed together with the statistic behind it, the size and
+power of the component tests are measured separately on planted
+mechanisms, and the method abstains when the available data cannot
+identify a direction.
+
+\item \textbf{An auditable agent coordination layer with measured
+degradation behaviour.} Specialised agents exchange typed records
+through a shared Evidence Blackboard with write-once semantics and
+stored provenance. We characterise which agents close a genuine
+decision--action--observation loop, show that injected component
+failures leave the verdict unchanged while degrading only the
+richness of the report, and show on a 39-event ground-truth corpus
+that the layer raises cause accuracy over a monolithic single-prompt
+baseline on identical evidence ($0.56$ against $0.10$), answers
+$5.6$ of six operator audit questions from typed records where the
+baseline answers $1.7$, and---by ablating each coordination stage
+separately and repeating the sweep---that its decision-carrying work is
+concentrated in one stage rather than spread across the number of its
+stages.
 \end{enumerate}

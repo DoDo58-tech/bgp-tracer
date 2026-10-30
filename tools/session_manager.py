@@ -1,13 +1,5 @@
-"""
-Session Manager — conversation history and evidence store.
-=====================================================
-
-Each chat session has its own:
-  - conversation history (list of user/agent/tool turns)
-  - collected evidence (traffic, routing, AS info results)
-  - session context (current AS, time window, etc.)
-  - tool call history (for the RouterAgent to decide next steps)
-"""
+"""Session Manager — conversation history and evidence store.
+====================================================="""
 
 from __future__ import annotations
 
@@ -48,16 +40,7 @@ class Turn:
 
 
 class SessionManager:
-    """
-    Manages the state for a single chat session.
-
-    Usage:
-        session = SessionManager("AS135826", "2025-06-21 00:30", "2025-06-21 01:46")
-        session.add_user_turn("analyze AS135826 ...")
-        session.add_tool_turn("analyze_traffic", input, result)
-        session.add_agent_turn("Found traffic anomaly, now checking routing...")
-        history = session.get_history_for_llm()
-    """
+    """Manages the state for a single chat session."""
 
     def __init__(
         self,
@@ -111,23 +94,6 @@ class SessionManager:
             self.evidence[tool_name] = tool_result
         else:
             self.pending_tools.discard(tool_name)
-
-    def add_event(self, event_type, agent, payload: Dict[str, Any]):
-        self.turns.append(Turn(
-            role="agent",
-            content=f"Event: {event_type}",
-            tool_name=agent,
-            tool_result={"event_type": event_type, "payload": payload},
-        ))
-
-    def add_pending_tool(self, tool_name):
-        self.pending_tools.add(tool_name)
-
-    # ── Accessors ─────────────────────────────────────────────────────────────
-
-    def get_history_for_llm(self) -> List[dict]:
-        """Return the full conversation history formatted for injection into LLM prompts."""
-        return [t.to_dict() for t in self.turns]
 
     def get_evidence(self, tool_name):
         return self.evidence.get(tool_name)
@@ -191,26 +157,3 @@ class SessionManager:
         session.evidence = data.get("evidence", {})
         session.completed_tools = set(data.get("completed_tools", []))
         return session
-
-    # ── Convenience ───────────────────────────────────────────────────────────
-
-    def has_traffic(self):
-        return "analyze_traffic" in self.completed_tools and self.evidence.get("analyze_traffic", {}).get("success")
-
-    def has_routing(self):
-        return "analyze_routing" in self.completed_tools and self.evidence.get("analyze_routing", {}).get("success")
-
-    def has_correlation(self):
-        return "check_traffic_routing_correlation" in self.completed_tools
-
-    def has_asn_info(self):
-        return "query_as_info" in self.completed_tools
-
-    def has_classification(self):
-        return "reason_and_classify" in self.completed_tools
-
-    def has_report(self):
-        p = self.evidence.get("generate_report", {}).get("report_path")
-        if p:
-            self.report_path = p
-        return bool(p)

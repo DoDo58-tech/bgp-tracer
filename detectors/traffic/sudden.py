@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def _cluster_points(mask):
+def cluster_points(mask):
     clusters, current = [], []
     for i, v in enumerate(mask):
         if v:
@@ -15,7 +15,7 @@ def _cluster_points(mask):
     return clusters
 
 
-def _severity_from_ratio(ratio):
+def severity_from_ratio(ratio):
     return 'critical' if abs(ratio) > 1.0 else 'high' if abs(ratio) > 0.5 else 'medium'
 
 
@@ -38,7 +38,7 @@ def detect_anomalies_sudden_drop(current_values, historical_means, timestamps=No
                 score = max(score, (hm - cv) / hm)
         drop_scores[i] = score
     is_drop = drop_scores >= drop_threshold_ratio
-    for cluster in _cluster_points(is_drop):
+    for cluster in cluster_points(is_drop):
         if len(cluster) < min_consecutive:
             continue
         s, e = cluster[0], cluster[-1]
@@ -137,54 +137,6 @@ def detect_anomalies_sudden_jump(current_values, historical_means, timestamps=No
             filtered.extend(streak)
         anomalies = filtered
     return anomalies
-
-
-def detect_anomalies_sudden_change(current_values, historical_means, timestamps=None,
-                                   min_change_ratio=0.50, min_abs_change=0.10, consecutive_points=2,
-                                   smoothing_window=3):
-    anomalies = []
-    n = len(current_values)
-    if n == 0:
-        return anomalies
-    curr = np.array(current_values, dtype=float)
-    mean = np.array(historical_means, dtype=float) if len(historical_means) == n else np.full(n, np.nanmean(curr))
-    baseline = np.array([np.mean(curr[max(0, i - smoothing_window):i + 1]) for i in range(n)])
-    point_changes = np.zeros(n)
-    for i in range(1, n):
-        pv, cv = float(curr[i - 1]), float(curr[i])
-        point_changes[i] = (cv - pv) / (abs(pv) + 1e-10) if abs(pv) > 1e-6 else cv - pv
-    hist_changes = np.array([0.0 if np.isnan(m) or abs(m) < 1e-6 else (curr[i] - m) / abs(m)
-                             for i, m in enumerate(mean)])
-    is_jump = (point_changes > min_change_ratio) & (np.abs(curr - baseline) > min_abs_change) | (np.abs(hist_changes) > min_change_ratio)
-    is_drop = (point_changes < -min_change_ratio) & (np.abs(curr - baseline) > min_abs_change) | (np.abs(hist_changes) > min_change_ratio)
-
-    def make_record(cluster, ch_type, bl_arr, m_arr):
-        if len(cluster) < consecutive_points:
-            return None
-        s, e = cluster[0], cluster[-1]
-        prev_v = float(curr[s - 1]) if s > 0 else float(curr[s])
-        end_v = float(curr[e])
-        bl_v = float(bl_arr[s - 1]) if s > 0 else float(bl_arr[s])
-        mag = (end_v - prev_v) if ch_type == 'sudden_jump' else (prev_v - end_v)
-        ratio = mag / (abs(prev_v) + 1e-10) if abs(prev_v) > 1e-6 else 0.0
-        hm_v = m_arr[s] if not np.isnan(m_arr[s]) else float(bl_v)
-        return {
-            'index': s,
-            'timestamp': timestamps[s] if timestamps and s < len(timestamps) else None,
-            'change_type': ch_type, 'start_index': s, 'end_index': e,
-            'duration_points': len(cluster), 'magnitude': float(mag), 'ratio': float(ratio),
-            'baseline': float(bl_v), 'current_value': end_v, 'prev_value': prev_v,
-            'historical_mean': float(hm_v), 'method': 'sudden_change', 'severity': _severity_from_ratio(ratio),
-        }
-    for cluster in _cluster_points(is_jump):
-        r = make_record(cluster, 'sudden_jump', baseline, mean)
-        if r:
-            anomalies.append(r)
-    for cluster in _cluster_points(is_drop):
-        r = make_record(cluster, 'sudden_drop', baseline, mean)
-        if r:
-            anomalies.append(r)
-    return sorted(anomalies, key=lambda x: x['index'])
 
 
 def detect_anomalies_post_jump_drop(current_values, historical_means, timestamps=None,

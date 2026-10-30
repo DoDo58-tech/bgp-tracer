@@ -2,13 +2,15 @@
 \section*{Appendix}
 \addcontentsline{toc}{section}{Appendix}
 
-A.1 Coarse screen.  A candidate AS is admitted iff the
-quick score computed from the week-over-week baseline comparison
-clears the admission threshold.  The score aggregates a mean-level
-shift and a dispersion ratio, each capped and weighted, so the
-screen is monotone in the size of the deviation and independent of
-the event's absolute traffic volume.  Candidates that fail are
-marked \texttt{low-confidence} and routed to the degraded path.
+A.1 Coarse screen.  The candidate funnel begins with a fixed-threshold
+screen. The quick score aggregates a mean-level shift and a dispersion
+ratio against a week-over-week baseline, each capped and weighted, so
+the score is monotone in the size of the deviation and independent of
+absolute traffic volume. In the build evaluated here the admission
+threshold is set so that every candidate reaching the screen is
+evaluated downstream, which is why \S\ref{sec:eval-protocol} reports no
+candidate-reduction claim: a reduction ratio computed from this stage
+would characterise the threshold rather than the screen.
 \label{app:regularity}
 
 A.2 Arbitration rules.  Six disambiguation rules operate
@@ -20,58 +22,115 @@ leak}, \texttt{self-leak during outage},
 The ordering is not tuned on the evaluation set.
 \label{app:arbitration}
 
-A.3 Abstention analysis.  The engine abstains at three
-levels, and each level records its triggering statistic in
-the cache, so abstentions are auditable rather than silent.
-At the estimator level, the direction is committed only if
-the bootstrap 95\% CI of that direction excludes zero and
-the permutation $p$-value is below the significance
-threshold; a leading series may also disqualify the
-reverse direction outright.  At the synthesis level, the
-engine abstains if the best channel's direction confidence
-falls below the direction floor.  Finally, the Bayesian
-synthesis reports \texttt{unknown} if the normalized
-posterior of the dominant direction does not exceed the
-commit floor $\tau = 0.34$.
-\label{app:abstention}
+A.3 Abstention analysis.  A refusal is a verdict, and every refusal
+carries the veto that produced it together with the statistic behind it,
+so abstentions are auditable rather than silent
+(\S\ref{sec:method-vetoes}). The reasons form a closed vocabulary:
+\texttt{inadmissible\_precedence}, with the sub-verdicts
+\texttt{onset\_unresolved} and \texttt{overlapping\_onsets}, for a
+precedence that the onset intervals do not settle (V1);
+\texttt{not\_exclusive} when a placebo onset reproduces the effect as
+well as the candidate does (V2); \texttt{provenance\_disjoint} when the
+two evidence sets do not share the affected prefix (V3, which suspends
+rather than fails when the entity sets are unknown, so missing metadata
+cannot become a refutation); and \texttt{mirror\_contradicted} when the
+reverse-direction mirror of the effect is the stronger one (V4). A
+dependency that runs the wrong way in time returns
+\texttt{reactive\_incompatible}. Each record holds the two onset
+intervals, their lag, the placebo $p$ and its count, the horizon, the
+size of the shared scope and the two reversion offsets, which is what
+makes the coverage table of \S\ref{sec:eval-direction} interpretable one
+window at a time.
 
-A.4 Cache schema.  A versioned, content-addressed JSON store
-with schema-version, deterministic hash, structured payload,
-and input reference.  Every verdict, detector argument, and
+A.4 Placebo resolution and the size of the test.\label{app:aea-size}
+The V2 null is an exact
+permutation test with the add-one correction, so its smallest attainable
+$p$-value at $B$ placebo anchors is $1/(B+1)$. At $\alpha=0.05$ a window
+must therefore supply at least $19$ anchors before it can reject at all;
+the engine requires $20$. Two consequences follow, and both are visible
+in the measurements. First, a window whose pre-onset period cannot supply
+$20$ matched-horizon anchors can never commit, whatever its effect size,
+so the resolution of the placebo null is a property of the window and not
+only of the rule. Second, the size of the test degrades under serial
+dependence, because the placebo spread is computed on a correlated series
+whose onsets are not exchangeable: over 400 windows per level the test
+rejects $3.0\%$ of the time at $\rho=0$, $7.0\%$ at $\rho=0.5$, and
+$12.3\%$ at $\rho=0.8$, against a nominal $5\%$. The
+horizon itself is derived from the pre-onset capacity of the window rather
+than fixed in advance, so that every placebo uses exactly the horizon under
+test.
+
+A.5 Cache schema.  One JSON artefact per event, named by the AS of
+interest and the event window, written atomically and carrying the
+detector outputs, the arbitration record, the degraded-mode reasons and
+the decision provenance.  Every verdict, detector argument, and
 abstention record is reproducible from this single artefact.
 \label{app:cache}
 
 A.6 Live-replay accounting.  The 192-alert live replay is
-summarised into the evaluation cache
-(\texttt{results/cloudflare\_alerts/run\_summary.json}),
-which records the coverage rate, the per-source verdict
-breakdown, and the per-alert timing distribution underlying
-(L7).  Of 192 enqueued alerts, 130 completed adjudication and
-62 failed in the harness; the 130 adjudicated alerts yield 14
-\texttt{real\_incident} verdicts, split 7 curated and 7
-discovered.\label{app:live-replay}
+summarised into a single in-repo cache record that holds the
+per-source verdict breakdown and the per-alert timing distribution
+underlying Table~\ref{tab:latency}. Of 192 enqueued alerts, 130
+completed adjudication and 62 did not complete within the replay
+budget; the 130 adjudicated alerts yield 14
+\texttt{real\_incident} verdicts, split 7 curated and 7 discovered.
+The 62 incomplete replays are excluded from the precision denominator
+rather than counted as negatives, and we report no suppression ratio
+over the full 192.
 
-
-A.5 Confusion matrix.  Table~\ref{tab:dataset} reports
-Top-1 and F1; Figure~\ref{fig:confusion} shows the
-full attribution geometry.  The confusion matrix confirms
-that mis-attributions cluster at class boundaries:
-outages and route leaks share an AS-path signature,
-and hijack victims are confused with route leaks when
-multiple ASes announce the victim's prefix.
-\label{app:confusion}
-
-\begin{figure}[t]
+\begin{table}[!htbp]
 \centering
-\includegraphics[width=0.75\linewidth]{figs/fig_confusion.pdf}
-\caption{Row-normalised attribution confusion matrix.
-Diagonal cells show correct attribution; off-diagonal
-cells show the specific mis-attribution geometry.
-The 3 errors (1 outage, 1 leak, 1 hijack) all occur
-at class boundaries.\label{fig:confusion}}
-\end{figure}
+\caption{End-to-end latency on the Cloudflare Radar alert replay
+($n=130$ completed replays). Statistics are computed over the recorded
+\texttt{elapsed\_s} of every completed replay.}
+\label{tab:latency}
+\small
+\begin{tabular}{l r r}
+\hline
+\textbf{Statistic} & \textbf{Latency} & \textbf{Notes} \\
+\hline
+Minimum           & 46.2\,s  & 0.8\,min \\
+Median            & 225.6\,s & 3.8\,min \\
+95th percentile   & 783.7\,s & 13.1\,min \\
+Maximum           & 1039.0\,s & 17.3\,min \\
+\hline
+\end{tabular}
+\end{table}
+\label{app:live-replay}
 
-A.7 Detector-output geometry for the 2025 events.
+A.7 Confusion matrix.  Table~\ref{tab:dataset} reports Top-1 accuracy
+per cause; Table~\ref{tab:confusion} gives the full attribution
+geometry.  Every error crosses the route-leak class: two
+predictions land in the leak column (one outage, and one hijack
+victim whose prefix several ASes announce) and one leak row is
+committed as an outage, because the two share an AS-path
+signature.  The negative control, which carries no cause, is
+committed as a route leak and is counted as a failure in
+Table~\ref{tab:dataset}.
+
+\begin{table}[!htbp]
+\centering
+\caption{Row-normalised attribution confusion matrix over the 30
+ground-truth rows.  Entries are counts, with the row share in
+parentheses; correct attributions are bold.  No row commits the
+negative control, so that column is omitted.}
+\label{tab:confusion}
+\small
+\begin{tabular}{@{}l r r r r@{}}
+\hline
+\textbf{Ground truth} & \textbf{Outage} & \textbf{Leak} & \textbf{Hijack} & \textbf{$n$} \\
+\hline
+Outage (excl.\ NC) & \textbf{13} (93\%) & 1 (7\%)             & 0                 & 14 \\
+Route leak         & 1 (12\%)         & \textbf{7} (88\%)   & 0                 &  8 \\
+Origin hijack      & 0                & 1 (14\%)            & \textbf{6} (86\%)  &  7 \\
+Negative control   & 0                & 1 (100\%)           & 0                 &  1 \\
+\hline
+\textbf{Total}     & 14               & 10                  & 6                 & 30 \\
+\hline
+\end{tabular}
+\end{table}
+
+A.8 Detector-output geometry for the 2025 events.
 The 23 curated 2025 RRC00 events are projected into
 the 5-D detector-output space (hijack, hijacking,
 leak, outage, traffic) and reduced to two dimensions
@@ -82,7 +141,7 @@ at cluster boundaries. Released as
 \texttt{fig\_detector\_geometry.pdf}.
 \label{app:case-geo}
 
-A.8 Five-month deployment statistics.  Four panels:
+A.9 Five-month deployment statistics.  Four panels:
 rolling evaluation accuracy, daily raw-alarm trace
 against BGP Tracer verdicts, monthly cause
 distribution, and per-cause confidence histogram
@@ -90,3 +149,196 @@ showing bimodal profiles (hijack/leak concentrated,
 outage dispersed). Released as
 \texttt{fig\_deployment\_stats.pdf}.
 \label{app:deployment}
+
+A.10 Hard-case accuracy subsets.
+The table behind the regime discussion in the error analysis. The
+subsets overlap, so the event counts do not sum to 29.
+
+\begin{table}[!htbp]
+  \caption{Strict Top-1 accuracy on overlapping hard-case subsets.
+  Subsets overlap, so the event counts do not sum to 29.}
+  \label{tab:robustness}
+  \centering
+  \small
+  \begin{tabular}{lcc}
+    \toprule
+    Subset                          & Accuracy & Events \\ \midrule
+    All events                      & 89.7\%   & 29    \\
+    With a traffic signal           & 90.0\%   & 20    \\
+    Withdrawal-storm regime         & 85.7\%   & 21    \\
+    Hijack-dominant regime          & 71.4\%   & 7     \\ \bottomrule
+  \end{tabular}
+\end{table}
+
+A.11 Provenance of the reproducibility check.\label{app:provenance}
+The per-file rows behind
+Table~\ref{tab:provenance} are the artefact bundles listed by
+\texttt{scripts/check\_eval\_provenance.py}: the per-event prediction
+files for the cause classification, the calibration and coverage artefacts
+for the direction test, the shape and latency records, and the two
+held-out audit bundles. A bundle passes only when every evidence reference
+inside it resolves to a cache or a per-event file that is present and whose
+recorded ASN agrees with the row that cites it.
+
+\begin{table}[!htbp]
+\centering
+\caption{Artefacts behind \S\ref{sec:eval} and the result of the
+evidence check. The per-file rows are in the appendix; the operative
+column is the last one, and a table passes only if every reference
+resolves.}
+\label{tab:provenance}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrl@{}}
+\hline
+\textbf{Group} & \textbf{Artefacts} & \textbf{Evidence check} \\
+\hline
+Cause classification & 3 & pass \\
+Direction test     & 4 & pass \\
+Shape and latency  & 5 & pass \\
+Held-out audit     & 2 & pass \\
+\hline
+\end{tabular}
+\end{table}
+
+A.12 Loop structure of the agent layer.\label{app:agent-appendix}
+Table~\ref{tab:agent-loops} is the
+mechanical classification referred to in \S\ref{sec:agent-monolithic}: an
+agent closes a decision--action--observation loop when a decision selects
+an action from a set at runtime, the action calls a tool or another
+agent, and the outcome is fed back into the next decision's context.  The
+classification is re-derived from the source by a script that ships with
+the artefact, so a reader can check it against the implementation.
+\begin{table}[!htbp]
+\centering
+\caption{Loop structure of the agent layer, derived mechanically from
+control flow. \emph{Decision} is the selection of an action from a set at
+runtime; \emph{action} is a call into a tool or another agent;
+\emph{feedback} is the return of an outcome into the next decision.
+Only the ReAct agent's decision is model-chosen.}
+\label{tab:agent-loops}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lcccc@{}}
+\hline
+\textbf{Agent} & \textbf{Decision} & \textbf{Action} & \textbf{Feedback}
+  & \textbf{Loop type} \\
+\hline
+ReAct            & yes & yes & yes & autonomous \\
+Reasoning        & yes & yes & yes & evidence-driven \\
+Report           & no  & no  & yes & pipeline \\
+Traffic         & no  & no  & yes & pipeline \\
+Routing         & no  & yes & yes & pipeline \\
+Hypothesis       & no  & no  & yes & pipeline \\
+Supervisor      & yes & no  & no  & pipeline \\
+Orchestrator     & no  & yes & yes & pipeline \\
+\hline
+\end{tabular}
+\end{table}
+
+A.12b Which coordination stage earns its cost.\label{app:agent-ablation}
+The degradation measurement asks whether the pipeline survives a failure.
+The question this entry asks is different: of the six coordination
+stages, which ones actually change the decision? We ablate each one in
+turn through the engine's own stage switches---joint evidence generation,
+HCAF causal attribution, hypothesis generation, multi-round reasoning, the
+Evidence Blackboard, and external enrichment---and re-run the identical
+39-event corpus with the identical caches and scorer. Each arm disables
+exactly one stage, so the delta against the full pipeline is attributable
+to that stage alone. Because the pipeline calls a language model, a repeat
+is an independent draw of its stochastic part, and the \emph{spread} column
+of Table~\ref{tab:agent-component} is the run-to-run standard deviation of
+the per-repeat accuracy, which is therefore the noise floor a delta has to
+beat. Each arm was therefore run three times, and the delta is computed
+\emph{paired within each repeat}---both arms see the same events in the
+same repeat---so the pairing removes the event-level variance and the
+bootstrap interval is over the three paired differences.
+
+Table~\ref{tab:agent-component} is not a flattering table, and we present
+it as measured. One stage moves the decision decisively: disabling
+multi-round reasoning costs $0.094$ in accuracy, the paired difference is
+negative in all three repeats, and its 95\,\% bootstrap interval
+($[-0.128,-0.077]$) lies entirely below zero and far outside the noise
+floor. Two stages move it slightly and not significantly: the Evidence
+Blackboard ($-0.017$) and HCAF attribution ($-0.009$), whose intervals
+both include zero. The remaining three---joint evidence generation,
+hypothesis generation, and external enrichment---produce exactly the full
+pipeline's answers in all three repeats, so we do not claim they are
+load-bearing: at $n=39$ a small delta is not distinguishable from noise
+whatever sign it carries. No arm scores \emph{higher} than the full
+pipeline; where a component cannot be separated from the pipeline on this
+corpus, the pipeline's cost is not buying a different label.
+
+Scoring counts a resolved event whose pipeline run failed as a wrong
+answer rather than dropping it, so an arm cannot improve its accuracy by
+crashing on the events it cannot handle.
+
+That the stages do not move the label is not thereby evidence that they
+are useless: the Blackboard is what the auditability measurement in
+\S\ref{sec:agent-explain} scores, and the reasoning and enrichment stages
+are what the report and the trace are made of. The practical
+recommendation is a staged one: a deployment that cares only about the
+label can run the detector stack with arbitration and skip the rest, and
+the expensive stages are justified by the artefact they produce rather
+than by the accuracy they add.
+\begin{table}[!htbp]
+\centering
+\caption{Component ablation over the 39-event corpus, three repeats per
+arm. Each arm disables exactly one coordination stage and re-runs the same
+events with the same cached evidence and the same scorer.
+\emph{Accuracy} is the mean over the repeats; \emph{Delta} is the paired
+difference against the full pipeline within each repeat;
+\emph{95\,CI} is the bootstrap interval of that paired difference; and
+\emph{Spread} is the run-to-run standard deviation of the accuracy, the
+noise floor a delta has to beat.}
+\label{tab:agent-component}
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}lrrrr@{}}
+\hline
+\textbf{Ablated stage} & \textbf{Accuracy} & \textbf{Delta} & \textbf{95\,CI}
+  & \textbf{Spread} \\
+\hline
+None (full pipeline)  & $0.564$ & ---      & ---            & $0.000$ \\
+Joint evidence        & $0.564$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
+HCAF attribution      & $0.556$ & $-0.009$ & $[-0.026,+0.000]$ & $0.015$ \\
+Hypothesis generation & $0.564$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
+Multi-round reasoning & $0.470$ & $-0.094$ & $[-0.128,-0.077]$ & $0.030$ \\
+Evidence Blackboard   & $0.547$ & $-0.017$ & $[-0.026,+0.000]$ & $0.015$ \\
+External enrichment   & $0.564$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
+\hline
+\end{tabular}
+\end{table}
+
+A.13 Why the first version of the comparison was a wash.
+\label{app:agent-wash}
+An earlier version of this table read $19/39$ for both the agent and the
+rules. The reason was measurable, and it was a defect in the arbitration
+rather than in the agent: the cause axis let the agent's free-text proposal
+override the deterministic physical reading whenever the agent's own stated
+confidence cleared $0.60$. That gate is not a quality gate. On this corpus
+the agent's confidence does not predict whether its override is right:
+accuracy by confidence band is $0.50$, $0.40$ and $0.71$ for the
+$0.7$--$0.8$, $0.8$--$0.9$ and $0.9$--$1.0$ bands, so the middle band is
+\emph{less} accurate than the band below it. Gating on it let the agent
+override the rule on $35$ of $39$ events, $18$ correct against $17$ wrong
+---a coin flip (\texttt{results/eval/cause\_axis\_findings.json}).
+
+What does separate the agent's correct overrides from its incorrect ones
+is corroboration by an independent control-plane record. The hijack
+detector's records carry the origin that announced a prefix; a record
+whose origin is neither the victim nor one of the victim's legitimate
+origins is a hijack claim, while a record that names the victim itself is
+an artefact of a missing expected-origin baseline. Of the $16$ events on
+which the agent and the rule originally disagreed, the agent's proposal was
+corroborated on $10$ and it was right on $6$ of those; on the $6$
+disagreements with no corroboration it was right on $0$. The arbitration
+now asks for the record rather than for the agent's certainty, and adds one
+further case: when the traffic layer produced no data at all, the physical
+layer has no reachability measurement to offer and its answer is a
+detector default, so the agent's contextual reading decides. Measured on
+the corpus, this combination gained four events and lost none. The
+methodological point is worth stating plainly because it is a trap: a
+language model's confidence is not evidence about whether the model is
+right.
+

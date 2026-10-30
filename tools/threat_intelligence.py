@@ -1,24 +1,5 @@
-"""
-Tool B1: Threat Intelligence Lookup
-===================================
-
-Queries multiple threat intelligence feeds to determine if an AS or prefix
-has a known history of malicious activity.
-
-Feeds used:
-  - Spamhaus DROP/EDROP    : Known "Don't Route Or Peer" lists
-  - Spamhaus SBL          : Spamhaus Block List (known attack sources)
-  - CINS Score List        : CINS Army List (low reputation ASes)
-  - BGP Hankdou/BGPSEC Research: Historical BGP hijack incidents database
-  - Team Cymru Bogon Feed : Bogon prefix list
-
-Free APIs / data sources:
-  - Spamhaus DROP/EDROP: https://www.spamhaus.org/drop/
-  - CINS: https://cinsscore.org/list/ (or via BGPView threat_feeds)
-  - BGPView threat_feeds endpoint: https://api.bgpview.io/threat/threat_feeds
-  - Team Cymru WHOIS: whois -h whois.cymru.com " -v <IP> "
-  - GRIP (Georgia Tech): https://api.grip.inetintel.cc.gatech.edu/
-"""
+"""Tool B1: Threat Intelligence Lookup
+==================================="""
 
 from __future__ import annotations
 
@@ -50,7 +31,7 @@ BGPVIEW_THREAT_URL = "https://api.bgpview.io/threat/threat_feeds"
 GRIP_BASE = "https://api.grip.inetintel.cc.gatech.edu"
 
 
-async def _check_spamhaus_drop() -> dict[str, Any]:
+async def check_spamhaus_drop() -> dict[str, Any]:
     """Check if a prefix/IP is in Spamhaus DROP/EDROP block lists."""
     drop_prefixes: list[str] = []
     edrop_prefixes: list[str] = []
@@ -68,7 +49,7 @@ async def _check_spamhaus_drop() -> dict[str, Any]:
                 parts = line.split("|")
                 if parts:
                     drop_prefixes.append(parts[0].strip())
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
             logger.warning(f"[threat] Spamhaus DROP fetch failed: {e}")
 
         # Fetch EDROP
@@ -82,7 +63,7 @@ async def _check_spamhaus_drop() -> dict[str, Any]:
                 parts = line.split("|")
                 if parts:
                     edrop_prefixes.append(parts[0].strip())
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
             logger.warning(f"[threat] Spamhaus EDROP fetch failed: {e}")
 
     return {
@@ -93,7 +74,7 @@ async def _check_spamhaus_drop() -> dict[str, Any]:
     }
 
 
-async def _check_cins_list() -> tuple[list[str], bool]:
+async def check_cins_list() -> tuple[list[str], bool]:
     """Check if an AS is on the CINS Army List."""
     bad_asns: list[str] = []
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -108,12 +89,12 @@ async def _check_cins_list() -> tuple[list[str], bool]:
                 m = re.search(r"(?:AS)?(\d+)", line)
                 if m:
                     bad_asns.append(f"AS{m.group(1)}")
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
             logger.warning(f"[threat] CINS list fetch failed: {e}")
     return bad_asns[:20], len(bad_asns) > 0
 
 
-async def _check_bgpview_threat_feeds() -> dict[str, Any]:
+async def check_bgpview_threat_feeds() -> dict[str, Any]:
     """Fetch all BGPView threat feeds (Spamhaus, CINS, etc.)."""
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
@@ -128,22 +109,21 @@ async def _check_bgpview_threat_feeds() -> dict[str, Any]:
                     "cins_list": feeds.get("cins_list", []),
                     "emerging_threats": feeds.get("emerging_threats", []),
                 }
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
             logger.warning(f"[threat] BGPView threat feeds failed: {e}")
     return {}
 
 
-async def _query_cymru_bogon(asn_or_prefix_str: str) -> dict[str, Any]:
-    """
-    Query Team Cymru WHOIS for bogon/AS info.
+async def query_cymru_bogon(asn_or_prefix_str: str) -> dict[str, Any]:
+    """Query Team Cymru WHOIS for bogon/AS info.
     Command: whois -h whois.cymru.com " -v <AS_or_IP>"
-    Returns: AS info, prefix, country, BGPlay data availability.
-    """
+    Returns: AS info, prefix, country, BGPlay data availability."""
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_connection("whois.cymru.com", 43),
             timeout=10.0,
         )
+        asn_or_prefix = asn_or_prefix_str  # NOTE: parameter is `asn_or_prefix_str`.
         query = f" -v {asn_or_prefix}\n"
         writer.write(query.encode())
         await writer.drain()
@@ -163,25 +143,15 @@ async def _query_cymru_bogon(asn_or_prefix_str: str) -> dict[str, Any]:
                     result["registry"] = parts[3]
                     result["advertised"] = parts[4]
         return result
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
         logger.warning(f"[threat] Cymru WHOIS query failed: {e}")
         return {}
 
 
-async def _check_grip_incidents(
+async def check_grip_incidents(
     asn_or_prefix: str, timeframe_days: int = 365
 ) -> dict[str, Any]:
-    """
-    Query GRIP (Georgia Tech) for documented BGP incidents involving this AS/prefix.
-
-    GRIP documents real-world BGP anomalies with:
-      - Attacker clustering
-      - Victim analysis
-      - Temporal patterns
-      - Geographic spread
-
-    Free API: https://api.grip.inetintel.cc.gatech.edu/dev/json/events
-    """
+    """Query GRIP (Georgia Tech) for documented BGP incidents involving this AS/prefix."""
     params = {
         "startdate": f"{(datetime.now() - timedelta(days=timeframe_days)).strftime('%Y-%m-%d')}",
         "enddate": datetime.now().strftime("%Y-%m-%d"),
@@ -217,30 +187,22 @@ async def _check_grip_incidents(
                 "relevant_events": relevant,
                 "relevant_count": len(relevant),
             }
-        except Exception as e:
+        except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
             logger.warning(f"[threat] GRIP query failed: {e}")
     return {"total_events": 0, "relevant_events": [], "relevant_count": 0}
 
 
-async def _threat_intel_lookup(tool_input: dict, session) -> dict[str, Any]:
-    """
-    Unified threat intelligence lookup for an AS or prefix.
-
-    Required params:
-        asn (str): AS number to check (e.g. "43927")
-        prefix (str, optional): specific prefix to check
-        check_asn_history (bool): also check GRIP for historical incidents
-
+async def threat_intel_lookup(tool_input: dict, session) -> dict[str, Any]:
+    """Unified threat intelligence lookup for an AS or prefix.
+    
     Returns:
-        - spamhaus_status: DROP/EDROP match result
-        - cins_status: CINS Army List match result
-        - bgpview_feeds: BGPView aggregated threat feeds
-        - cymru_info: Team Cymru bogon/AS info
-        - grip_history: GRIP historical incident records
-        - risk_score: 0-100 composite risk score
-        - summary: human-readable threat assessment
-    """
-    from datetime import datetime, timedelta
+    - spamhaus_status: DROP/EDROP match result
+    - cins_status: CINS Army List match result
+    - bgpview_feeds: BGPView aggregated threat feeds
+    - cymru_info: Team Cymru bogon/AS info
+    - grip_history: GRIP historical incident records
+    - risk_score: 0-100 composite risk score
+    - summary: human-readable threat assessment"""
 
     asn = str(tool_input.get("asn", "")).lstrip("AS")
     prefix = tool_input.get("prefix", "")
@@ -249,7 +211,7 @@ async def _threat_intel_lookup(tool_input: dict, session) -> dict[str, Any]:
     logger.info(f"[threat_intel] Lookup for AS{asn}, prefix={prefix}")
 
     # ── 1. Spamhaus DROP/EDROP ─────────────────────────────────────────
-    spamhaus = await _check_spamhaus_drop()
+    spamhaus = await check_spamhaus_drop()
     is_in_drop = any(
         prefix and prefix.startswith(p) for p in spamhaus.get("drop_sample", [])
     )
@@ -258,19 +220,19 @@ async def _threat_intel_lookup(tool_input: dict, session) -> dict[str, Any]:
     )
 
     # ── 2. CINS Army List ──────────────────────────────────────────────
-    cins_list, cins_available = await _check_cins_list()
+    cins_list, cins_available = await check_cins_list()
     is_in_cins = f"AS{asn}" in cins_list
 
     # ── 3. BGPView Threat Feeds ────────────────────────────────────────
-    bgpview_feeds = await _check_bgpview_threat_feeds()
+    bgpview_feeds = await check_bgpview_threat_feeds()
 
     # ── 4. Team Cymru ─────────────────────────────────────────────────
-    cymru_info = await _query_cymru_bogon(asn)
+    cymru_info = await query_cymru_bogon(asn)
 
     # ── 5. GRIP Historical Incidents ───────────────────────────────────
     grip_history = {"relevant_count": 0, "relevant_events": []}
     if check_history:
-        grip_history = await _check_grip_incidents(asn)
+        grip_history = await check_grip_incidents(asn)
 
     # ── Composite Risk Score ───────────────────────────────────────────
     score = 0
@@ -352,5 +314,5 @@ register_tool(
         ToolParameter("prefix", "Optional: specific prefix to check against DROP lists", "string", required=False),
         ToolParameter("check_asn_history", "Also query GRIP for historical incidents (default: True)", "string", required=False),
     ],
-    handler=_threat_intel_lookup,
+    handler=threat_intel_lookup,
 )

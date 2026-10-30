@@ -119,7 +119,6 @@ bgp_tracer/
 │   ├── reasoning_agent.py        Cross-domain LLM reasoning
 │   ├── report_agent.py           LLM HTML report
 │   ├── react_agent.py            ReAct loop (legacy --mode react)
-│   ├── quick_report.py           Phase-1 HTML renderer (deterministic)
 │   ├── hardened_pipeline.py      Report section post-processing
 │   ├── hypothesis_manager.py     Hypothesis tracking
 │   ├── multi_role_classifier.py  LLM role classifier

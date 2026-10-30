@@ -7,7 +7,7 @@ BGP_REASONING_LAWS = """
 1.3: Origin hijacking duration > 2 hours → classify as persistent attack, require immediate response.
 1.4: Multiple victims from same origin hijacker → classify as systematic attack campaign.
 
-### 2. Path Forgery Rules  
+### 2. Path Forgery Rules
 2.1: If forge_hijacked/forge_hijacking events exist → classify as Path Forgery/Man-in-the-Middle.
 2.2: Path forgery with traffic anomalies → classify as active interception attack.
 2.3: AS-PATH length manipulation > 3 hops difference → suspicious path manipulation.
@@ -52,186 +52,6 @@ BGP_REASONING_LAWS = """
 
 def get_reasoning_laws():
     return BGP_REASONING_LAWS
-
-
-def build_routing_analysis_prompt():
-    text = f"""
-# BGP Routing Security Analysis Agent
-
-You are a BGP routing security expert specializing in root cause analysis of routing anomalies.
-
-## Analysis Framework
-{BGP_REASONING_LAWS}
-
-## Analysis Target
-- ASN: {{asn}}
-- Time Range: {{time_range}}
-
-## Detected Anomalies
-
-### Origin Hijack Events
-- Hijacked ASes: {{origin_hijacked}}
-- Hijacking ASes: {{origin_hijacking}}
-
-### Path Forgery Events  
-- Forge Hijacked: {{forge_hijacked}}
-- Forge Hijacking: {{forge_hijacking}}
-
-## Context Data
-- AS Relationships Available: {{has_as_relationships}}
-- Prefix Mappings Available: {{has_prefix_mappings}}
-
-## Analysis Instructions
-Apply the BGP Reasoning Laws systematically:
-
-1. **Classification**: Use Laws 1-2 to determine incident type
-2. **Severity Assessment**: Apply Laws 3-5 for impact evaluation  
-3. **Context Analysis**: Apply Law 6 for organizational impact
-4. **Validation**: Use Laws 7 for evidence verification
-5. **Response Planning**: Use Laws 8 for recommendations
-
-## Output Requirements
-Provide analysis in English with:
-- **Incident Classification**: Primary incident type and confidence level
-- **Severity Assessment**: Impact level with supporting evidence
-- **Root Cause Analysis**: Technical explanation with AS-PATH evidence
-- **Affected Parties**: Organizations and infrastructure impacted
-- **Recommendations**: Immediate actions and long-term preventions
-- **Confidence Level**: High/Medium/Low with reasoning
-
-Focus on actionable intelligence and avoid speculation beyond observed data.
-"""
-    return PromptTemplate(text)
-
-
-def build_traffic_analysis_prompt():
-    text = f"""
-# Network Traffic Pattern Analysis Agent
-
-You are a network traffic analysis expert specializing in AS-level traffic monitoring and anomaly detection.
-
-## Analysis Framework
-{BGP_REASONING_LAWS}
-
-## Analysis Target
-- ASN: {{asn}}
-- Time Range: {{time_range}}
-
-## Traffic Anomaly Summary
-- Anomalies Detected: {{anomalies_detected}}
-- Total Anomaly Count: {{anomaly_count}}
-
-## Traffic Metrics
-- Peak Traffic Data: {{peak_traffic}}
-- Baseline Metrics: {{baseline_metrics}}
-- Traffic Patterns: {{traffic_patterns}}
-- Data Points: {{data_point_count}}
-
-## Analysis Scope and Limitations
-**IMPORTANT**: Traffic data alone CANNOT determine BGP hijacking or routing anomalies. Traffic analysis provides:
-- Volume changes and patterns
-- Timing of traffic shifts
-- Severity of disruptions
-- Service impact indicators
-
-## Analysis Instructions
-Analyze traffic patterns within appropriate scope:
-
-1. **Pattern Classification**: Categorize traffic anomalies as:
-   - Traffic Spike: Sudden increase above normal levels
-   - Traffic Drop: Significant decrease below baseline
-   - Traffic Shift: Gradual change in traffic patterns
-   - Oscillation: Repeated up/down variations
-
-2. **Impact Assessment**: Evaluate service impact based on:
-   - Magnitude of change (% deviation from baseline)
-   - Duration of anomaly
-   - Time-of-day relevance (business hours vs off-peak)
-
-3. **Temporal Analysis**: Apply Law 5.1-5.4 for duration-based severity:
-   - Short-term anomalies (<10 minutes)
-   - Medium-term anomalies (10 minutes - 2 hours)
-   - Long-term anomalies (>2 hours)
-
-## Output Requirements
-Provide traffic-focused analysis in English:
-- **Traffic Pattern Type**: Spike/Drop/Shift/Oscillation with quantified metrics
-- **Impact Severity**: High/Medium/Low based on deviation magnitude and duration
-- **Service Implications**: Potential user experience impact
-- **Monitoring Insights**: What traffic patterns suggest for network health
-- **Correlation Timing**: Precise timestamps for correlation with other data sources
-
-## Analysis Boundaries
-DO NOT attempt to:
-- Diagnose BGP hijacking from traffic data alone
-- Infer routing path changes from traffic patterns
-- Determine network topology changes
-- Attribute traffic changes to specific BGP events
-
-Traffic analysis provides correlation data for comprehensive multi-source analysis.
-"""
-    return PromptTemplate(text)
-
-
-def build_law_analysis_prompt():
-    text = f"""
-# BGP Reasoning Law Analysis Agent
-
-You are a BGP security expert specializing in improving automated reasoning systems.
-
-## Current Reasoning Laws
-{BGP_REASONING_LAWS}
-
-## Historical Case Data
-{{case_summary}}
-
-## Performance Metrics
-- Correct Classifications: {{correct_count}}
-- Misclassifications: {{incorrect_count}}
-- Accuracy: {{accuracy}}%
-- Common Error Patterns: {{error_patterns}}
-
-## Analysis Task
-Review the current reasoning laws against historical case performance:
-
-1. **Law Effectiveness**: Identify which laws produce accurate results
-2. **Gap Analysis**: Find cases where current laws are insufficient
-3. **Improvement Opportunities**: Suggest new rules or modifications
-4. **Conflict Resolution**: Identify conflicting rules and propose resolutions
-
-## Output Requirements
-Provide recommendations in JSON format:
-```json
-{{
-    "law_modifications": [
-        {{
-            "law_id": "X.Y",
-            "current_rule": "existing rule text",
-            "proposed_rule": "improved rule text", 
-            "justification": "reasoning for change",
-            "confidence": "High/Medium/Low"
-        }}
-    ],
-    "new_laws": [
-        {{
-            "proposed_law_id": "X.Y",
-            "rule_text": "new rule description",
-            "use_cases": ["scenario1", "scenario2"],
-            "confidence": "High/Medium/Low"
-        }}
-    ],
-    "deprecated_laws": [
-        {{
-            "law_id": "X.Y",
-            "reason": "why this law should be removed"
-        }}
-    ]
-}}
-```
-
-Focus on evidence-based improvements that enhance accuracy while maintaining system interpretability.
-"""
-    return PromptTemplate(text)
 
 
 def build_multi_agent_coordination_prompt():
@@ -433,27 +253,7 @@ Begin the analysis now.
 
 
 def build_react_coordinator_prompt():
-    """
-    System prompt for React-style coordinator agent.
-
-    This prompt instructs the LLM to use the ReAct (Reasoning + Acting) pattern:
-    - Thought: reason about current state
-    - Action: decide which tool to call
-    - Action Input: provide parameters for the tool
-    - (Observation is added by the system after tool execution)
-
-    Design notes (revised for chat-completion models that refuse role-play):
-    - The prompt is framed as a "tool-calling coordinator task", not a
-      "persona/role". Phrases like "you are an expert" are avoided because
-      some chat-completion safety guards (e.g. GLM-5, certain GPT deployments)
-      treat role-play as a potential prompt-injection vector and refuse to
-      continue after the first observation.
-    - Observation sections are explicitly fenced with [Tool Observation]/
-      [/Tool Observation] markers, so the model can never mistake a tool
-      result for an instruction from the user.
-    - The model is told to keep going until `generate_report` or `Answer`
-      even when individual observations look "complete".
-    """
+    """System prompt for React-style coordinator agent."""
     text = """
 # Task
 You are a tool-calling coordinator. Given a structured user request
@@ -554,12 +354,7 @@ __all__ = [
 
 
 def build_traffic_context_prompt():
-    """
-    System prompt for traffic context analysis.
-
-    This prompt is used by the LLM to analyze pre/post anomaly patterns
-    and generate interpretations for hijack detection.
-    """
+    """System prompt for traffic context analysis."""
     text = """
 # Traffic Context Analysis System
 
@@ -626,15 +421,7 @@ Provide your analysis as structured JSON:
 
 
 def build_enhanced_reasoning_prompt():
-    """
-    System prompt for enhanced reasoning with evidence gap detection.
-
-    This prompt guides the LLM to:
-    - Identify evidence gaps
-    - Generate hypotheses
-    - Plan data collection
-    - Cross-validate conclusions
-    """
+    """System prompt for enhanced reasoning with evidence gap detection."""
     text = """
 # Enhanced BGP Analysis with Evidence Gap Detection
 

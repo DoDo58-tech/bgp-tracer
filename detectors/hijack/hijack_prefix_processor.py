@@ -17,7 +17,7 @@ def get_target_prefixes(target_as, prefix_to_as):
         logger.info(f"Found {len(target_prefixes)} prefixes for AS{target_as}")
         return target_prefixes
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error getting target prefixes for AS{target_as}: {e}")
         return []
 
@@ -34,29 +34,9 @@ def get_target_prefixes_batch(target_as_list, prefix_to_as):
         logger.info(f"Found {total_prefixes} total prefixes for {len(target_as_list)} ASes")
         return results
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error in batch prefix processing: {e}")
         return {}
-
-
-def validate_prefixes_exist(target_prefixes, prefix_to_as):
-    try:
-        valid_prefixes = []
-
-        for prefix in target_prefixes:
-            if prefix in prefix_to_as:
-                valid_prefixes.append(prefix)
-            else:
-                logger.warning(f"Prefix {prefix} not found in prefix-to-AS mapping")
-
-        if len(valid_prefixes) != len(target_prefixes):
-            logger.warning(f"Only {len(valid_prefixes)}/{len(target_prefixes)} target prefixes are valid")
-
-        return valid_prefixes
-
-    except Exception as e:
-        logger.error(f"Error validating prefixes: {e}")
-        return []
 
 
 class BinaryPrefixTrie:
@@ -92,7 +72,7 @@ class BinaryPrefixTrie:
             current['network'] = network
             self.prefix_count += 1
 
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Failed to insert prefix {prefix}: {e}")
 
     def is_subnet(self, prefix):
@@ -130,17 +110,17 @@ class BinaryPrefixTrie:
 
             return matched_prefix is not None
 
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Failed to check prefix {prefix}: {e}")
             return False
 
     def get_stats(self):
         return {
             'prefix_count': self.prefix_count,
-            'memory_usage': self._estimate_memory_usage()
+            'memory_usage': self.estimate_memory_usage()
         }
 
-    def _estimate_memory_usage(self):
+    def estimate_memory_usage(self):
         def count_nodes(node):
             count = 1 
             for child in node.values():
@@ -155,7 +135,3 @@ def build_prefix_trie(prefixes):
     for prefix in prefixes:
         trie.insert(prefix)
     return trie
-
-
-def is_subnet_of_trie(prefix, trie):
-    return trie.is_subnet(prefix)

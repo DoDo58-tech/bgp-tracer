@@ -4,17 +4,6 @@ from sklearn.preprocessing import StandardScaler
 from utils.logger import logger
 
 
-def _effective_std(mean_arr, std_arr):
-    """Floor for std deviation to avoid div-by-zero and noisy z-scores.
-
- P0 Fix 2026-09-07: floor 5% → 10% , z>3. 
- Starlink/Turkey : std , z=3+. 
- """
-    std_arr = np.asarray(std_arr, dtype=float)
-    floor = np.maximum(0.10 * np.maximum(np.abs(mean_arr), 1.0), 0.05)
-    return np.where(std_arr > 1e-6, std_arr, floor)
-
-
 def detect_anomalies_statistical(current_values, historical_means, historical_stds, threshold=3.0):
     curr = np.array(current_values, dtype=float)
     mean = np.array(historical_means, dtype=float)
@@ -134,6 +123,6 @@ def detect_anomalies_isolation_forest(current_values, historical_values, contami
                     "severity": "high" if -score > 0.6 else "medium" if -score > 0.4 else "low",
                 })
         return anomalies
-    except Exception as e:
+    except (AttributeError) as e:
         logger.warning(f"Isolation Forest detection failed: {e}")
         return []

@@ -1,28 +1,28 @@
-#!/usr/bin/env python3
 """
 Per-event routing feature extractor using parquet files.
 - One event at a time (low memory)
 - Saves per-event parquet + summary JSON
 """
-import os
-import sys
+#!/usr/bin/env python3
 import json
 import gc
 import csv
 import time
 import polars as pl
-import re
 from pathlib import Path
 from datetime import datetime, timedelta
+import os
+import sys
+import re
 
 PARQ_DIR = Path('data/updates_rrc00/parquet')
 OUT_DIR = Path('data/groundtruth_v18')
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-GT_CSV = 'data_check/ground_truth_collection/final_balanced_dataset_v17_30.csv'
+GT_CSV = 'data_check/ground_truth_collection/final_ground_truth.csv'
 
 
-def _parse_as(s):
+def parse_as(s):
     if not s or not isinstance(s, str):
         return None
     s = s.strip()
@@ -36,7 +36,7 @@ def _parse_as(s):
         return None
 
 
-def _bucket(ts_col):
+def bucket(ts_col):
     return ts_col.dt.truncate('5m').alias('bucket')
 
 
@@ -45,9 +45,9 @@ def extract_event(event):
     date = event['date']
     start_utc = event['start_time_utc']
     end_utc = event['end_time_utc']
-    victim_as = _parse_as(event.get('victim_as'))
-    attacker_as = _parse_as(event.get('attacker_as'))
-    leak_as = _parse_as(event.get('leak_as'))
+    victim_as = parse_as(event.get('victim_as'))
+    attacker_as = parse_as(event.get('attacker_as'))
+    leak_as = parse_as(event.get('leak_as'))
 
     targets = [x for x in (victim_as, attacker_as, leak_as) if x is not None]
     if not targets:
@@ -57,7 +57,7 @@ def extract_event(event):
     try:
         start_dt = datetime.fromisoformat(start_utc.replace('Z', '+00:00')).replace(tzinfo=None)
         end_dt = datetime.fromisoformat(end_utc.replace('Z', '+00:00')).replace(tzinfo=None)
-    except Exception as e:
+    except (KeyError, IndexError) as e:
         print(f'  ! bad timestamps for {event["event_id"]}: {e}')
         return None
     if end_dt <= start_dt:
@@ -87,7 +87,7 @@ def extract_event(event):
     for f in files:
         try:
             df = pl.read_parquet(f, columns=['type', 'announce', 'prefix', 'as_path', 'origin', 'timestamp', 'ts'])
-        except Exception:
+        except (ValueError):
             continue
         # Build ts: prefer ts (datetime), fall back to timestamp (str)
         if df['ts'].null_count() == len(df) or df['ts'].dtype == pl.Utf8:
@@ -183,7 +183,7 @@ def main():
         eid = e['event_id']
         try:
             r = extract_event(e)
-        except Exception as ex:
+        except (AttributeError) as ex:
             print(f'[{i:2d}] {eid:<55} ERROR: {ex}')
             results.append({'event_id': eid, 'error': str(ex)})
             continue

@@ -6,13 +6,10 @@ import tiktoken
 from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
 from llama_index.core import Settings
 from llama_index.core.llms import LLM, ChatMessage
-from llama_index.core.base.llms.types import (
-    CompletionResponse,
-    CompletionResponseGen,
-    ChatResponse,
-    ChatResponseGen,
-    MessageRole,
-)
+from llama_index.core.base.llms.types import CompletionResponse, ChatResponse, MessageRole, ChatResponseGen, CompletionResponseGen
+
+from agents.llm_cache import cache_enabled, cache_get, cache_put
+from agents.llm_cache import cache_key as make_cache_key
 
 
 # Temperature policy
@@ -34,7 +31,7 @@ except ImportError:
 # ── Thinking / reasoning-disable helper ─────────────────────────────────────
 _extra_body_disable: dict | None = None  # lazily parsed, cached at module level
 
-def _get_thinking_disable():
+def get_thinking_disable():
     global _extra_body_disable
     if _extra_body_disable is not None:
         return _extra_body_disable
@@ -44,13 +41,13 @@ def _get_thinking_disable():
         return None
     try:
         _extra_body_disable = _json.loads(raw)
-    except Exception:
+    except (ValueError):
         _extra_body_disable = None
     return _extra_body_disable
 
-def _merge_extra_body(caller_eb):
+def merge_extra_body(caller_eb):
     """Merge caller extra_body with vendor thinking-disable dict."""
-    disable = _get_thinking_disable()
+    disable = get_thinking_disable()
     if not disable and not caller_eb:
         return None
     if not disable:
@@ -61,13 +58,8 @@ def _merge_extra_body(caller_eb):
     merged = {**disable, **caller_eb}
     return merged
 
-def _extract_message_text(msg):
-    """Extract the visible assistant output from a chat completion message.
-
-    Some vendors (GLM-5, Kimi thinking mode) place reasoning output in
-    `reasoning_content` and the visible answer in `content`. We prioritize
-    `content` so callers don't receive CoT introspections as the final output.
-    """
+def extract_message_text(msg):
+    """Extract the visible assistant output from a chat completion message."""
     content = (getattr(msg, "content", "") or "")
     reasoning = (getattr(msg, "reasoning_content", "") or "")
     if content.strip():
@@ -77,44 +69,34 @@ def _extract_message_text(msg):
     return ""
 
 
-def _extract_delta_text(delta_obj):
-    """Extract visible assistant output from a streamed choice delta.
-
-    Always returns only the ``content`` field — the visible answer.
-
-    ``reasoning_content`` (the model's internal thinking trace) is NEVER
-    returned. This is essential for thinking models (S1-Base-Pro, Kimi
-    with thinking enabled, GLM-5) where the API streams the reasoning
-    trace and the visible answer as separate delta fields. The original
-    behaviour of appending both caused the thinking process to leak into
-    the visible HTML report output, which then triggered the deterministic
-    fallback renderer (BUG-R128, observed 2026-09-16).
-
-    For models that route everything through ``reasoning_content`` (rare
-    Kimi configurations), the report caller should set
-    ``LLM_THINKING_DISABLE`` to disable thinking mode so output flows
-    through ``content`` instead.
-    """
-    if delta is None:
+def extract_delta_text(delta_obj):
+    """Extract visible assistant output from a streamed choice delta."""
+    if delta_obj is None:
         return ""
     # Primary field: content (the visible answer).
     # Reasoning content is intentionally ignored.
-    c = getattr(delta, "content", None)
+    c = getattr(delta_obj, "content", None)
     return str(c) if c else ""
 
 
 def build_token_counter():
+    """Return the process-wide token counter, creating it on first use."""
+    global _GLOBAL_TOKEN_HANDLER
+    if _GLOBAL_TOKEN_HANDLER is not None:
+        return _GLOBAL_TOKEN_HANDLER
     try:
         enc = tiktoken.get_encoding("cl100k_base")
         handler = TokenCountingHandler(tokenizer=enc.encode)
-    except Exception:
+    except (AttributeError):
         handler = TokenCountingHandler(tokenizer=lambda s: list(s.encode("utf-8")))
+    _GLOBAL_TOKEN_HANDLER = handler
     register_token_counter(handler)
     return handler
 
 
 # ── Process-wide token counter (Bug fix: react path was reporting N/A) ─────
 _GLOBAL_TOKEN_HANDLERS: list = []
+_GLOBAL_TOKEN_HANDLER = None
 
 
 def register_token_counter(handler):
@@ -122,33 +104,33 @@ def register_token_counter(handler):
     try:
         if handler is not None and handler not in _GLOBAL_TOKEN_HANDLERS:
             _GLOBAL_TOKEN_HANDLERS.append(handler)
-    except Exception:
+    except (ValueError):
         pass
 
 
 def get_global_token_counter():
-    """Sum ``total_llm_token_count`` across every registered handler."""
+    """Total tokens recorded by the process-wide counter."""
+    if _GLOBAL_TOKEN_HANDLER is not None:
+        try:
+            return int(getattr(_GLOBAL_TOKEN_HANDLER, "total_llm_token_count", 0) or 0)
+        except (ValueError):
+            pass
     total = 0
+    seen = set()
     for h in list(_GLOBAL_TOKEN_HANDLERS):
+        if id(h) in seen:
+            continue
+        seen.add(id(h))
         try:
             total += int(getattr(h, "total_llm_token_count", 0) or 0)
-        except Exception:
+        except (ValueError):
             continue
     return total
 
 
-def _extract_usage_from_response(response) -> tuple[int, int]:
+def extract_usage_from_response(response) -> tuple[int, int]:
     """Best-effort extraction of (prompt_tokens, completion_tokens) from a
-    raw OpenAI / OpenAI-compatible response object.
-
-    OpenAI-compatible APIs always populate ``response.usage`` on
-    non-streaming chat/completion calls. The OpenAI SDK exposes this as
-    either:
-      - response.usage.prompt_tokens / completion_tokens
-      - response.usage.input_tokens / output_tokens (newer schema)
-      - response.usage.total_tokens (fallback, minus completion)
-    Returns (0, 0) when the field is missing or unreadable.
-    """
+    raw OpenAI / OpenAI-compatible response object."""
     if response is None:
         return 0, 0
     usage = getattr(response, "usage", None)
@@ -160,7 +142,7 @@ def _extract_usage_from_response(response) -> tuple[int, int]:
         ct = int(getattr(usage, "output_tokens", 0) or 0)
         if pt or ct:
             return pt, ct
-    except Exception:
+    except (ValueError):
         pass
     # Standard schema (prompt/completion tokens).
     try:
@@ -168,7 +150,7 @@ def _extract_usage_from_response(response) -> tuple[int, int]:
         ct = int(getattr(usage, "completion_tokens", 0) or 0)
         if pt or ct:
             return pt, ct
-    except Exception:
+    except (ValueError):
         pass
     # Fallback: total_tokens - completion when only totals reported.
     try:
@@ -176,22 +158,15 @@ def _extract_usage_from_response(response) -> tuple[int, int]:
         ct = int(getattr(usage, "completion_tokens", 0) or 0)
         if total and ct:
             return total - ct, ct
-    except Exception:
+    except (ValueError):
         pass
     return 0, 0
 
 
-def _record_token_usage_to_budget(response, agent_name="OpenAICompatibleLLM"):
+def record_token_usage_to_budget(response, agent_name="OpenAICompatibleLLM"):
     """Record (prompt_tokens, completion_tokens) into every TokenBudget
-    instance in ``_GLOBAL_TOKEN_HANDLERS``.
-
-    The OpenAI client returns ``response.usage`` but LlamaIndex's
-    TokenCountingHandler callbacks never fire for our ``chat``/
-    ``complete`` wrappers because we go straight to ``self.client.``
-    bypassing the callback pipeline. This function is the
-    reconciliation step that keeps the global counter in sync.
-    """
-    pt, ct = _extract_usage_from_response(response)
+    instance in ``_GLOBAL_TOKEN_HANDLERS``."""
+    pt, ct = extract_usage_from_response(response)
     if not (pt or ct):
         return
     for h in list(_GLOBAL_TOKEN_HANDLERS):
@@ -216,7 +191,7 @@ def _record_token_usage_to_budget(response, agent_name="OpenAICompatibleLLM"):
             # / ``total_llm_token_count`` properties that sum the list.
             if hasattr(h, "llm_token_counts"):
                 h.llm_token_counts.append(event)
-        except Exception:
+        except (ValueError):
             continue
 
 
@@ -225,7 +200,7 @@ def reset_global_token_counter():
     for h in list(_GLOBAL_TOKEN_HANDLERS):
         try:
             h.reset_counts()
-        except Exception:
+        except (ValueError):
             continue
 
 
@@ -235,11 +210,7 @@ import collections
 
 
 class LLMRateLimitedError(RuntimeError):
-    """Raised when the rate-limit circuit breaker is open.
-
-    Carries the original exception as ``__cause__`` and a structured
-    ``breaker_info`` dict for the caller to log/fallback on.
-    """
+    """Raised when the rate-limit circuit breaker is open."""
 
     def __init__(self, message, breaker_info=None):
         super().__init__(message)
@@ -259,21 +230,13 @@ class _RateLimitBreaker:
         self._cooldown_until: float = 0.0
 
     @staticmethod
-    def _now():
+    def now_impl():
         import time as _t
         return _t.monotonic()
 
     def record_hit(self):
-        """Record a 429. Returns True if the breaker just tripped open.
-
-        Two state transitions:
-          - Hit count reaches ``threshold``: trip the breaker. New calls
-            are blocked (``is_open() == True``) until cool-off elapses.
-          - Hit count stays below ``threshold``: apply a short soft
-            cool-off to throttle retries, but don't trip the breaker
-            (callers can still attempt after a few seconds).
-        """
-        now = self._now()
+        """Record a 429. Returns True if the breaker just tripped open."""
+        now = self.now_impl()
         window = float(os.environ.get("LLM_429_BREAKER_WINDOW_S", "60"))
         base_cooldown = float(os.environ.get("LLM_429_COOLDOWN_S", "5.0"))
         threshold = int(os.environ.get("LLM_429_BREAKER_THRESHOLD", "3"))
@@ -301,7 +264,7 @@ class _RateLimitBreaker:
 
         Only True when the breaker has TRIPPED (not just throttled).
         """
-        now = self._now()
+        now = self.now_impl()
         with self._lock:
             if self._tripped_at == 0.0 or now >= self._cooldown_until:
                 # Auto-recover: tripped-but-cooldown-elapsed → reset trip flag.
@@ -312,7 +275,7 @@ class _RateLimitBreaker:
             return True, self._cooldown_until - now
 
     def get_window_hits(self):
-        now = self._now()
+        now = self.now_impl()
         window = float(os.environ.get("LLM_429_BREAKER_WINDOW_S", "60"))
         with self._lock:
             cutoff = now - window
@@ -332,56 +295,13 @@ _RATE_LIMIT_BREAKER = _RateLimitBreaker()
 
 
 class BudgetExhausted(Exception):
-    """Raised when the LLM request budget (e.g. GLM-5 1000/5h) is exhausted.
-
-    Unlike 429 (which means "back off and retry"), this means "you have
-    used your allocation — stop requesting and report the failure to the caller."
-    """
+    """Raised when the LLM request budget (e.g. GLM-5 1000/5h) is exhausted."""
     pass
 
 
 class _BudgetTracker:
     """Rolling-window request budget tracker for API providers with hard
-    per-window quotas (e.g. GLM-5 on sfkey.cn: ~1000 requests / 5 hours).
-
-    Strategy:
-      1. Every LLM call (complete / chat) is recorded with its timestamp.
-      2. Before making a new call, we check:
-         - If window hits ≥ budget max → raise BudgetExhausted
-         - If window hits ≥ budget *warning_fraction → log a WARNING
-      3. Window is rolling (timestamps older than window are dropped).
-      4. If BudgetExhausted is raised, the caller gets a clean failure
-         instead of a useless 429 that wastes a request slot.
-
-    Usage in the calling code::
-
-        budget = get_budget_tracker()
-        budget.check_and_record()
-        # or
-        budget.record_call()  # record after a successful call
-        remaining, total = budget.remaining_budget()
-
-    Tunable via env vars:
-      LLM_BUDGET_MAX_CALLS  (default 950)   max calls in the window (5% headroom)
-      LLM_BUDGET_WINDOW_S   (default 18000) rolling window = 5 hours
-      LLM_BUDGET_WARN_AT    (default 0.80) warning threshold fraction
-      LLM_BUDGET_SHARED_FILE (default empty) — path to a shared file that
-                              persists call timestamps across subprocesses.
-                              When set, the tracker appends new call
-                              timestamps to the file and reads them back
-                              on construction. Used by the 4-mode batch
-                              driver so each chief_agent subprocess
-                              respects the running total.
-
-    Cross-process semantics with LLM_BUDGET_SHARED_FILE:
-      - Each subprocess reads the file at construction (loads all
-        timestamps into the deque).
-      - Each subprocess appends to the file on every call (with flock
-        so concurrent appends don't corrupt).
-      - The deque and file stay in sync within one process; the
-        budget check uses both, taking the larger used count as
-        the source of truth.
-    """
+    per-window quotas (e.g. GLM-5 on sfkey.cn: ~1000 requests / 5 hours)."""
 
     def __init__(self):
         self._lock = threading.RLock()  # reentrant: _append_shared is
@@ -393,15 +313,10 @@ class _BudgetTracker:
         self._shared_path: str = os.environ.get("LLM_BUDGET_SHARED_FILE", "").strip()
         self._mono_to_wall_offset: float = self._now_wall() - self._now_mono()
         if self._shared_path:
-            self._load_shared()
+            self.load_shared()
 
-    def _load_shared(self):
-        """Load historical call timestamps from the shared file.
-
-        File format: one timestamp per line (wall-clock seconds).
-        Convert to monotonic seconds so the deque comparison works
-        against the local monotonic clock.
-        """
+    def load_shared(self):
+        """Load historical call timestamps from the shared file."""
         try:
             p = Path(self._shared_path)
             if not p.exists():
@@ -409,7 +324,7 @@ class _BudgetTracker:
                 p.touch()
                 return
             now_mono = self._now_mono()
-            cutoff_wall = self._now_wall() - float(self._env("BUDGET_WINDOW_S", 18000, float))
+            cutoff_wall = self._now_wall() - float(self.env("BUDGET_WINDOW_S", 18000, float))
             with open(p, "r") as f:
                 for line in f:
                     line = line.strip()
@@ -424,18 +339,13 @@ class _BudgetTracker:
                         self._calls.append(ts_mono)
                     except ValueError:
                         pass
-        except Exception:
+        except (AttributeError):
             # Don't crash if file is unreadable; budget check will just
             # be conservative (only count in-process calls).
             self._calls.clear()
 
-    def _append_shared(self, ts_mono):
-        """Append a monotonic timestamp to the shared file as wall-clock.
-
-        To prevent the file from growing unbounded, periodically rotate it:
-        rewrite the file with only the timestamps inside the current window.
-        Rotation happens on every Nth append (default N=50).
-        """
+    def append_shared(self, ts_mono):
+        """Append a monotonic timestamp to the shared file as wall-clock."""
         if not self._shared_path:
             return
         try:
@@ -448,20 +358,15 @@ class _BudgetTracker:
             with self._lock:
                 self._append_count = getattr(self, "_append_count", 0) + 1
                 if self._append_count % rotate_every == 0:
-                    self._rotate_shared()
-        except Exception:
+                    self.rotate_shared()
+        except (ValueError):
             # Don't fail the LLM call just because the budget file
             pass
 
-    def _rotate_shared(self):
-        """Rewrite the shared file to contain only timestamps in the window.
-
-        Best-effort: on any failure, the file is left as-is and the next
-        rotation will retry. We deliberately avoid touching the in-memory
-        deque here — rotation is purely a file-side cleanup.
-        """
+    def rotate_shared(self):
+        """Rewrite the shared file to contain only timestamps in the window."""
         try:
-            cutoff_wall = self._now_wall() - float(self._env("BUDGET_WINDOW_S", 18000, float))
+            cutoff_wall = self._now_wall() - float(self.env("BUDGET_WINDOW_S", 18000, float))
             keep = []
             with open(self._shared_path, "r") as f:
                 for line in f:
@@ -479,16 +384,16 @@ class _BudgetTracker:
             with open(tmp, "w") as f:
                 f.writelines(keep)
             os.replace(tmp, self._shared_path)
-        except Exception:
+        except (ValueError):
             pass
 
     @staticmethod
-    def _env(key, default, dtype=float):
+    def env(key, default, dtype=float):
         return dtype(os.environ.get(f"LLM_{key}", str(default)))
 
-    def _window_len(self):
+    def window_len(self):
         now_mono = self._now_mono()
-        window_s = float(self._env("BUDGET_WINDOW_S", 18000, float))
+        window_s = float(self.env("BUDGET_WINDOW_S", 18000, float))
         cutoff = now_mono - window_s
         while self._calls and self._calls[0] < cutoff:
             self._calls.popleft()
@@ -496,21 +401,21 @@ class _BudgetTracker:
 
     def remaining_budget(self) -> tuple[int, int]:
         """Return (remaining_calls, max_calls)."""
-        used = self._window_len()
-        max_calls = int(self._env("BUDGET_MAX_CALLS", 950, int))
+        used = self.window_len()
+        max_calls = int(self.env("BUDGET_MAX_CALLS", 950, int))
         return max(0, max_calls - used), max_calls
 
     def check_and_record(self):
         """Check budget; if OK, record this call. Raises BudgetExhausted."""
-        used = self._window_len()
-        max_calls = int(self._env("BUDGET_MAX_CALLS", 950, int))
-        warn_at = float(self._env("BUDGET_WARN_AT", 0.80, float))
+        used = self.window_len()
+        max_calls = int(self.env("BUDGET_MAX_CALLS", 950, int))
+        warn_at = float(self.env("BUDGET_WARN_AT", 0.80, float))
         remaining = max(0, max_calls - used)
 
         if used >= max_calls:
             raise BudgetExhausted(
                 f"LLM budget exhausted: {used}/{max_calls} calls used in the "
-                f"{self._env('BUDGET_WINDOW_S', 18000, int)}s window. "
+                f"{self.env('BUDGET_WINDOW_S', 18000, int)}s window. "
                 f"Increase LLM_BUDGET_MAX_CALLS or wait for the window to rotate."
             )
 
@@ -529,7 +434,7 @@ class _BudgetTracker:
         with self._lock:
             ts_mono = self._now_mono()
             self._calls.append(ts_mono)
-            self._append_shared(ts_mono)
+            self.append_shared(ts_mono)
             self._warned = False  # reset warning flag when window rolls
 
     def record_call(self):
@@ -537,7 +442,7 @@ class _BudgetTracker:
         with self._lock:
             ts_mono = self._now_mono()
             self._calls.append(ts_mono)
-            self._append_shared(ts_mono)
+            self.append_shared(ts_mono)
             self._warned = False
 
     def reset(self):
@@ -624,15 +529,14 @@ class OpenAICompatibleLLM(LLM):
                 pool=min(10.0, request_timeout),
             )
 
-            # Bug fix 2026-09-14 (BUG-R200): the OpenAI SDK retries on
             sdk_max_retries = 0
 
-            self._client = OAI(
+            object.__setattr__(self, '_client', OAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
                 timeout=timeout,
                 max_retries=sdk_max_retries,
-            )
+            ))
         return self._client
 
     @property
@@ -651,7 +555,7 @@ class OpenAICompatibleLLM(LLM):
     def class_name(cls):
         return "OpenAICompatibleLLM"
 
-    def _get_encoding(self):
+    def get_encoding(self):
         try:
             return tiktoken.get_encoding("cl100k_base")
         except Exception:
@@ -661,7 +565,7 @@ class OpenAICompatibleLLM(LLM):
                 return tiktoken.get_encoding("cl100k_base")
 
     @staticmethod
-    def _is_retryable(exc):
+    def is_retryable(exc):
         err_lower = str(exc).lower()
         non_retryable = [
             "unprocessable entity",
@@ -685,11 +589,10 @@ class OpenAICompatibleLLM(LLM):
                 if code in (400, 401, 403, 404, 422):
                     return False
                 if code == 429:
-                    # Bug fix 2026-09-14 (BUG-R200): previously 429 was
                     return False
                 if code in (500, 502, 503, 504):
                     return True
-        except Exception:
+        except (ValueError):
             pass
         kw = [
             "500", "502", "503", "504",
@@ -702,24 +605,20 @@ class OpenAICompatibleLLM(LLM):
         return any(k in err_lower for k in kw)
 
     @staticmethod
-    def _is_rate_limit_error(exc):
+    def is_rate_limit_error(exc):
         """Return True iff this exception represents an upstream 429."""
         try:
             status = getattr(exc, "response", None)
             if status is not None and getattr(status, "status_code", None) == 429:
                 return True
-        except Exception:
+        except (ValueError):
             pass
         err_lower = str(exc).lower()
         return "429" in err_lower or "rate limit" in err_lower
 
     @staticmethod
-    def _breaker_guard():
-        """Raise ``LLMRateLimitedError`` immediately if the breaker is open.
-
-        Returning a value (None) means "proceed with the call". Used at
-        the top of every call site to short-circuit doomed requests.
-        """
+    def breaker_guard():
+        """Raise ``LLMRateLimitedError`` immediately if the breaker is open."""
         is_open, remaining = _RATE_LIMIT_BREAKER.is_open()
         if is_open:
             raise LLMRateLimitedError(
@@ -734,18 +633,14 @@ class OpenAICompatibleLLM(LLM):
             )
 
     @staticmethod
-    def _extract_json(content):
+    def extract_json(content):
         """Extract first JSON object from text. Supports:
         1. ```json ... ``` markdown code blocks (most reliable)
         2. ``` ... ``` any fenced code block
-        3. Bare { ... } with balanced depth tracking
-
-        JSON is parsed with strict=False so the LLM can embed raw newlines /
-        tabs inside string values (e.g. a full HTML report inside a JSON
-        field) without triggering the "Invalid control character" error.
-        """
+        3. Bare { ... } with balanced depth tracking"""
         import json as _json
 
+        text = content  # NOTE: parameter is `content`; body uses `text`.
         if isinstance(text, (dict, list)):
             return text, True
         if not isinstance(text, str) or not text:
@@ -791,23 +686,8 @@ class OpenAICompatibleLLM(LLM):
     def complete(self, prompt, formatted=False, max_retries: int = 3,
                  base_delay: float = 2.0, json_mode: bool = False,
                  _retry_default=None, **kwargs):
-        """
-        Call the LLM with application-level exponential-backoff retry
-        and optional JSON extraction.
-
-        json_mode=True: prepends a strict JSON-only system instruction so the
-        model knows it must output only JSON (not markdown prose or commentary).
-        Extraction retries up to max_retries before raising RuntimeError.
-
-        Bug fix 2026-09-14 (BUG-R200): HTTP 429 (rate limit) is no longer
-        retried by the application layer. Instead, every 429 hit is
-        recorded into a process-wide rate-limit circuit breaker, which
-        short-circuits subsequent calls in the cool-off window with a
-        dedicated ``LLMRateLimitedError``. The caller can then render the
-        deterministic fallback HTML instead of hanging on a doomed retry
-        chain that would otherwise drag the subprocess past the 900s
-        orchestration timeout.
-        """
+        """Call the LLM with application-level exponential-backoff retry
+        and optional JSON extraction."""
         from llama_index.core.base.llms.types import CompletionResponse
         # ── Budget tracker guard (entry) ───────────────────────────────
         from llm.llm_factory import get_budget_tracker, BudgetExhausted
@@ -818,7 +698,7 @@ class OpenAICompatibleLLM(LLM):
 
 
         # ── Circuit breaker guard (entry) ─────────────────────────────────
-        self._breaker_guard()
+        self.breaker_guard()
 
         last_exc: Exception = RuntimeError("sentinel")
 
@@ -832,32 +712,67 @@ class OpenAICompatibleLLM(LLM):
         if json_mode and not prompt.startswith("System:"):
             prompt = f"System: {_JSON_GUARD}\n\n{prompt}"
 
+        # ── Response cache ──────────────────────────────────────────────
+        # The evaluation harness re-runs the same pipeline over the same
+        # cached measurements many times.  When caching is on, an
+        # identical request replays the stored response instead of
+        # calling the provider, which is what makes the repeated
+        # ablation affordable.  Caching is opt-in because a cached run
+        # measures a fixed set of model outputs rather than the
+        # pipeline's end-to-end stochasticity.
+        cache_key = None
+        if cache_enabled():
+            cache_key = make_cache_key(
+                prompt,
+                model=self._model_name,
+                temperature=self.temperature,
+                json_mode=json_mode,
+                max_tokens=kwargs.get("max_tokens", self.max_tokens),
+            )
+            cached_text = cache_get(cache_key)
+            if cached_text is not None:
+                logger.info(
+                    f"[llm.complete] cache hit for model={self._model_name} "
+                    f"({len(cached_text)} chars)"
+                )
+                if not json_mode:
+                    return CompletionResponse(
+                        text=cached_text, raw=None, additional_kwargs={},
+                        logprobs=None,
+                    )
+                parsed_json, ok = self.extract_json(cached_text)
+                if ok:
+                    return CompletionResponse(
+                        text=_json.dumps(parsed_json, ensure_ascii=False),
+                        raw=None,
+                        additional_kwargs={"_parsed_json": parsed_json},
+                        logprobs=None,
+                    )
+
         for attempt in range(1, max_retries + 1):
             try:
                 last_exc = None  # clear on successful entry
                 # Allow caller to override max_tokens per-call (e.g. for
                 call_max_tokens = kwargs.get("max_tokens", self.max_tokens)
-                # Bug fix 2026-09-14 (BUG-R200 corollary): the OpenAI SDK
                 response = self.client.chat.completions.create(
                     model=self._model_name,
                     messages=[{"role": "user", "content": prompt}],
                     temperature=self.temperature,
                     max_tokens=call_max_tokens,
                     stream=False,
-                    extra_body=_merge_extra_body(kwargs.get("extra_body")),
+                    extra_body=merge_extra_body(kwargs.get("extra_body")),
                     # Disable SDK-level retries so we own the retry budget
                 )
-                text = _extract_message_text(response.choices[0].message)
+                text = extract_message_text(response.choices[0].message)
 
-                # Bug fix 2026-10-08 (TokenCount-not-firing): feed the
-                # usage back into the global handler because we bypassed
-                # LlamaIndex's callback pipeline.
                 try:
-                    _record_token_usage_to_budget(response, agent_name="llm.complete")
-                except Exception:
+                    record_token_usage_to_budget(response, agent_name="llm.complete")
+                except (ValueError):
                     pass
 
                 if not json_mode:
+                    if cache_key is not None:
+                        cache_put(cache_key, text, model=self._model_name)
                     return CompletionResponse(
                         text=text,
                         raw=response,
@@ -866,8 +781,10 @@ class OpenAICompatibleLLM(LLM):
                     )
 
                 # JSON extraction attempt
-                parsed_json, ok = self._extract_json(text)
+                parsed_json, ok = self.extract_json(text)
                 if ok:
+                    if cache_key is not None:
+                        cache_put(cache_key, text, model=self._model_name)
                     return CompletionResponse(
                         text=_json.dumps(parsed_json, ensure_ascii=False),
                         raw=response,
@@ -907,7 +824,7 @@ class OpenAICompatibleLLM(LLM):
             except Exception as e:
                 last_exc = e  # always preserve the actual error
                 # Rate-limit specific path: record into the breaker so
-                if self._is_rate_limit_error(e):
+                if self.is_rate_limit_error(e):
                     tripped = _RATE_LIMIT_BREAKER.record_hit()
                     if tripped:
                         from utils.logger import logger
@@ -927,7 +844,7 @@ class OpenAICompatibleLLM(LLM):
                     # Always raise on 429 — no application-level retry.
                     raise
 
-                if not self._is_retryable(e):
+                if not self.is_retryable(e):
                     from utils.logger import logger
                     logger.warning(f"[llm.complete] Non-retryable error: {e}")
                     raise
@@ -947,14 +864,13 @@ class OpenAICompatibleLLM(LLM):
             raise last_exc
 
     def stream_complete(self, prompt, formatted=False, **kwargs):
-        # Bug fix 2026-09-14 (BUG-R200): check the rate-limit circuit
         from llm.llm_factory import get_budget_tracker, BudgetExhausted
         try:
             get_budget_tracker().check_and_record()
         except BudgetExhausted:
             raise
 
-        self._breaker_guard()
+        self.breaker_guard()
         try:
             stream = self.client.chat.completions.create(
                 model=self._model_name,
@@ -962,14 +878,14 @@ class OpenAICompatibleLLM(LLM):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 stream=True,
-                extra_body=_merge_extra_body(kwargs.get("extra_body")),
+                extra_body=merge_extra_body(kwargs.get("extra_body")),
             )
             text_acc = ""
             for chunk in stream:
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
-                added = _extract_delta_text(delta)
+                added = extract_delta_text(delta)
                 if added:
                     text_acc += added
                     yield CompletionResponse(
@@ -979,7 +895,7 @@ class OpenAICompatibleLLM(LLM):
                         additional_kwargs={},
                     )
         except Exception as e:
-            if self._is_rate_limit_error(e):
+            if self.is_rate_limit_error(e):
                 tripped = _RATE_LIMIT_BREAKER.record_hit()
                 if tripped:
                     from utils.logger import logger
@@ -999,14 +915,13 @@ class OpenAICompatibleLLM(LLM):
             raise RuntimeError(f"LLM stream call failed: {e}") from e
 
     def chat(self, messages, **kwargs):
-        # Bug fix 2026-09-14 (BUG-R200): check the rate-limit circuit
         from llm.llm_factory import get_budget_tracker, BudgetExhausted
         try:
             get_budget_tracker().check_and_record()
         except BudgetExhausted:
             raise
 
-        self._breaker_guard()
+        self.breaker_guard()
         try:
             openai_messages = []
             for msg in messages:
@@ -1024,16 +939,12 @@ class OpenAICompatibleLLM(LLM):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 stream=False,
-                extra_body=_merge_extra_body(kwargs.get("extra_body")),
+                extra_body=merge_extra_body(kwargs.get("extra_body")),
             )
-            msg_content = _extract_message_text(response.choices[0].message)
-            # Bug fix 2026-10-08 (TokenCount-not-firing): the OpenAI
-            # wrapper bypasses LlamaIndex's callback pipeline so
-            # TokenCountingHandler never sees the response. Feed the
-            # usage back into the handler explicitly.
+            msg_content = extract_message_text(response.choices[0].message)
             try:
-                _record_token_usage_to_budget(response, agent_name="llm.chat")
-            except Exception:
+                record_token_usage_to_budget(response, agent_name="llm.chat")
+            except (ValueError):
                 pass
             return ChatResponse(
                 message=ChatMessage(
@@ -1045,8 +956,7 @@ class OpenAICompatibleLLM(LLM):
                 additional_kwargs={},
             )
         except Exception as e:
-            # Bug fix 2026-09-13 (BUG-R67): previously every chat()
-            if self._is_rate_limit_error(e):
+            if self.is_rate_limit_error(e):
                 tripped = _RATE_LIMIT_BREAKER.record_hit()
                 if tripped:
                     from utils.logger import logger
@@ -1096,14 +1006,14 @@ class OpenAICompatibleLLM(LLM):
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 stream=True,
-                extra_body=_merge_extra_body(kwargs.get("extra_body")),
+                extra_body=merge_extra_body(kwargs.get("extra_body")),
             )
             text_acc = ""
             for chunk in stream:
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
-                added = _extract_delta_text(delta)
+                added = extract_delta_text(delta)
                 if added:
                     text_acc += added
                     yield ChatResponse(
@@ -1197,17 +1107,14 @@ def setup_llm_settings(
         max_tokens=max_tokens,
     )
 
-    # Bug fix 2026-09-13 (BUG-R66): previously every call to
+    # ``build_token_counter`` already registered the single process-wide
+    # counter. Appending it again here bypassed that dedupe and made every
+    # response count twice for every stage that built a model.
     token_counter = build_token_counter()
-    _GLOBAL_TOKEN_HANDLERS.append(token_counter)
-    if len(_GLOBAL_TOKEN_HANDLERS) > _MAX_TOKEN_HANDLERS:
-        # Drop oldest entries first (FIFO). The list is treated as
-        # bounded: keep at most the last ``_MAX_TOKEN_HANDLERS``.
-        del _GLOBAL_TOKEN_HANDLERS[:-_MAX_TOKEN_HANDLERS]
 
     Settings.llm = llm
     Settings.callback_manager = CallbackManager([token_counter])
-    token_counter.reset_counts()
+    # Deliberately NOT reset here. ``setup_llm_settings`` runs once per agent
 
     return llm, token_counter
 

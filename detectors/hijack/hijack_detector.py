@@ -13,14 +13,13 @@ if str(project_root) not in sys.path:
 
 from utils.logger import logger
 from detectors.input_validation import InputValidationError, validate_detection_request
-from detectors.hijack import hijack_cache_manager
 from detectors.hijack.hijack_prefix_processor import get_target_prefixes_batch, build_prefix_trie
 from detectors.hijack.hijack_detector_core import detect_origin_hijacks, detect_forge_hijacks, analyze_connection_frequency
 from detectors.hijack.hijack_analyzer import save_alert_messages, StreamingAnomalyAggregator
 from detectors.unified_result import wrap, DetectionType
 
 from data.updates_loader import get_updates_streaming
-from data.prefix2as_loader import process_prefix2as
+from data.prefix2as_loader import process_prefix2as, load_prefix2as_json
 from data.asorg_loader import process_asorg
 from data.asrel_loader import process_asrel
 from config import MAX_WORKERS, IO_BUSY_THRESHOLD
@@ -32,18 +31,11 @@ import ipaddress as ipa
 MAX_ALERT_SAMPLE = 500
 
 # Maximum number of RRC00 chunks whose serialised rows may be in flight at
-# once.  A chunk is one 5-minute bucket and holds ~100k rows, so the previous
-# unbounded queue reached tens of GB on 24h windows.  A small multiple of the
-# worker count keeps the pipeline full while holding memory flat.
 CHUNK_INFLIGHT = int(os.environ.get("BGP_TRACER_CHUNK_INFLIGHT", "8"))
 
 
-def _group_alerts_by_asn(alerts):
-    """Bucket a chunk's alerts by the target AS they implicate.
-
-    The worker tags each alert with a transient ``__asn`` key; it is popped
-    here so the tag never reaches the aggregator or the report.
-    """
+def group_alerts_by_asn(alerts):
+    """Bucket a chunk's alerts by the target AS they implicate."""
     grouped: dict = {}
     for alert in alerts or []:
         if not isinstance(alert, dict):
@@ -55,13 +47,12 @@ def _group_alerts_by_asn(alerts):
     return grouped
 
 
-def _merge_chunk_alerts(batch_results, alerts):
+def merge_chunk_alerts(batch_results, alerts):
     """Fold one chunk's alerts into the per-AS accumulators and samples.
-
+    
     Must be called in chunk order so the retained alert samples read
-    chronologically.  Alerts for ASes outside this batch are dropped.
-    """
-    for asn, alerts_for_asn in _group_alerts_by_asn(alerts).items():
+    chronologically.  Alerts for ASes outside this batch are dropped."""
+    for asn, alerts_for_asn in group_alerts_by_asn(alerts).items():
         entry = batch_results.get(asn)
         if entry is None:
             continue
@@ -88,7 +79,7 @@ def _merge_chunk_alerts(batch_results, alerts):
                 sample.extend(hits[:room])
 
 
-def _build_covered_subnet_set(target_prefixes):
+def build_covered_subnet_set(target_prefixes):
     covered = set()
     for pf in target_prefixes:
         covered.add(pf) 
@@ -121,30 +112,13 @@ def _build_covered_subnet_set(target_prefixes):
                     next_pl = cur_net.prefixlen + 1
                     for sub in cur_net.subnets(new_prefix=next_pl):
                         frontier.append(str(sub))
-        except Exception:
+        except (ValueError):
             pass
     return len(covered), covered
 
 
 def load_full_day_bgp_data(start_time, end_time):
-    """Load BGP announcements covering exactly [start_time, end_time].
-
-    Historical note: this helper used to load the *entire calendar day* that
-    contained ``start_time`` and then filter down to the caller's window.
-    That was 24× the data the caller actually needed and dominated runtime
-    for small (≤1 h) events — which is the common case once the user has
-    pre-filtered to the suspected interval.
-
-    The current implementation asks ``iter_window_chunks`` for only the
-    requested window. The chunker still streams one 5-minute bucket at a
-    time, so memory cost stays bounded by the largest single bucket
-    (~30-80 MB compressed), and the caller gets the exact slice it asked
-    for. Downstream code that historically called this expecting a
-    "full day" DataFrame should be reviewed — most callers only need the
-    window, and the few that need baseline statistics should call
-    ``parquet_cache.load_window_announcements`` for an explicit baseline
-    window.
-    """
+    """Load BGP announcements covering exactly [start_time, end_time]."""
     from data.parquet_cache import iter_window_chunks
 
     try:
@@ -165,7 +139,7 @@ def load_full_day_bgp_data(start_time, end_time):
         gc.collect()
         return df
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error loading BGP window data: {e}")
         return pl.DataFrame()
 
@@ -181,9 +155,6 @@ def detect_hijacks_streaming(
     skip_forge_detection = True,  #  forge ( ES + , )
 ):
     # Validate BEFORE any I/O. Without this, a swapped call such as
-    # detect_hijacks("AS24940", start, end) parses the AS as a timestamp,
-    # runs to completion, and writes a results file with an inverted window
-    # and zero alerts -- a false negative shaped like a finding.
     try:
         target_as, _start_dt, _end_dt = validate_detection_request(
             target_as, start_time, end_time
@@ -251,9 +222,6 @@ def detect_hijacks_streaming(
                 "batch_mode": False,
                 "aggregated_alerts": as_result.get("aggregated_alerts", []),
                 # Unified schema: RIPE RIS updates are loaded from disk, so
-                # availability follows whether any rows were scanned. A run
-                # that processed 0 announcements has no data to judge and
-                # must not be reported as a clean negative.
                 "data_available": bool(as_result.get("total_announcements", 0)),
                 "no_data_reason": (
                     "" if as_result.get("total_announcements", 0)
@@ -277,7 +245,7 @@ def detect_hijacks_streaming(
             "no_data_reason": "ripestat_or_batch_failed",
         }, asn=target_as).to_dict()
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Hijack detection failed for AS{target_as}: {e}")
         import traceback as _tb_hijack
         _tb_hijack.print_exc()
@@ -318,44 +286,12 @@ def detect_hijacks(
     )
 
 
-def _process_chunk_worker(args):
+def process_chunk_worker(args):
     """Worker function for parallel chunk processing (Round-24 perf fix).
-
-    Runs in a ThreadPoolExecutor thread (shares process with the main thread,
-    so Polars GIL-release allows true parallelism). Receives a serialised
-    chunk + the pre-computed lookup state, returns the alerts produced by
-    this chunk as a list of small dicts (no shared state mutated).
-
-    Why a worker function instead of inlining the previous loop?
-    ============================================================
-    The main loop previously did this work sequentially. On a 9-hour BGP
-    window with 184 chunks (~7s/chunk) this added up to ~22 minutes of
-    CPU work sitting idle on a single core. The previous streaming
-    prefetcher overlapped parquet I/O with CPU work but the CPU work
-    itself was still single-threaded.
-
-    By splitting the pipeline into:
-      producer (main process): reads parquet via get_updates_streaming
-      workers (ProcessPool):   apply Polars filtering + per-AS detection
-    we can use up to BGP_TRACER_MAX_WORKERS CPU cores in parallel.
-
-    Args:
-        args: tuple of (chunk_records, params) where:
-          - chunk_records: list[dict] (parquet rows serialised as dicts)
-          - params: dict of pre-computed, pickle-friendly lookups:
-              * union_target_prefixes: list[str]
-              * covered_subnet_set:    list[str]
-              * cleaned_as_set:        list[str]
-              * cleaned_as_list:       list[str]
-              * skip_forge_detection:  bool
-              * prefix_to_as_subset:   dict[str, str]  — only the prefixes
-                that appear in the chunk are included; the full mapping
-                is huge and serialising it dominates the IPC cost.
-
+    
     Returns:
-        list of dicts: each dict is one alert produced by this chunk.
-        The main process merges these into batch_results[asn].
-    """
+    list of dicts: each dict is one alert produced by this chunk.
+    The main process merges these into batch_results[asn]."""
     import polars as pl
     import logging as _logging
     from detectors.hijack.hijack_detector_core import (
@@ -374,25 +310,24 @@ def _process_chunk_worker(args):
     if announcements.is_empty():
         return []
 
+    # The AS path is kept as it arrived.  An earlier version of this
+    # function removed repeated hops before scoring it, which silently
+    # changed the origin: an AS that prepends itself to its own path
+    # (13335 3356 13335) came out as 13335 3356, so the origin read as
+    # 3356 instead of 13335.  Every prefix the prepending AS announced
+    # was then attributed to the wrong origin, which is what turned
+    # legitimate announcements into hijack accusations.
     announcements = announcements.with_columns([
         pl.col("as-path")
           .str.strip_chars()
           .str.split(by=' ')
-          .list.unique()
-          .list.join(' ')
-          .alias('as-path'),
+          .alias('as_path_list'),
         pl.col('as-path')
           .str.strip_chars()
           .str.split(by=' ')
           .list.last()
           .alias('origin_as'),
     ])
-
-    announcements = announcements.with_columns(
-        pl.col("as-path").str.strip_chars()
-          .str.split(by=" ")
-          .alias("as_path_list")
-    )
 
     union_target_prefixes = set(params["union_target_prefixes"])
     covered_subnet_set = set(params["covered_subnet_set"])
@@ -413,13 +348,39 @@ def _process_chunk_worker(args):
 
     prefix_to_as = params.get("prefix_to_as_subset") or {}
     as_relationships_data = params.get("as_relationships_data") or {}
+    # The target's own prefixes, resolved once for the whole scan.
+    #
+    # `detect_origin_hijacks` needs to know which prefixes the target
+    # legitimately owns.  When it is not told, it derives that set by
+    # scanning the prefix-to-AS map it was given -- and the worker gives
+    # it a map trimmed to the prefixes that appear in this chunk.  A
+    # prefix the target owns but does not announce in this chunk is then
+    # invisible, and the announcement of it by someone else is not
+    # recognised as a hijack.
+    prefixes_by_as = params.get("prefixes_by_as") or None
 
     alerts = []
     worker_log = _logging.getLogger(__name__)
     for asn in cleaned_as_list:
         asn_str = str(asn)
+        # Two kinds of row matter for this AS:
+        #
+        #   * rows whose path mentions the AS -- the AS is in the path,
+        #     which is how it shows up as a hijacking *perpetrator*;
+        #   * rows for a prefix the AS owns -- someone else announcing
+        #     the AS's own prefix is how it shows up as a hijacking
+        #     *victim*, and such a path does not mention the AS at all.
+        #
+        # Filtering on the path alone therefore dropped every victim-side
+        # announcement, which is why the streaming detector reported no
+        # origin hijacks where the single-pass path reported hundreds.
         as_mask = announcements["as_path_list"].list.contains(asn_str)
-        df_asn = announcements.filter(as_mask)
+        owned_prefixes = (prefixes_by_as or {}).get(asn_str) if prefixes_by_as else None
+        if owned_prefixes:
+            owned_mask = announcements["prefix"].is_in(list(owned_prefixes))
+            df_asn = announcements.filter(as_mask | owned_mask)
+        else:
+            df_asn = announcements.filter(as_mask)
         if df_asn.is_empty():
             continue
 
@@ -430,7 +391,6 @@ def _process_chunk_worker(args):
                     df_asn,
                     as_relationships_data,
                     asn,
-                    None,  # hijack_cache_manager is process-local; skip
                     full_day_data=None,
                     prefix_to_as=prefix_to_as,
                     use_es=False,
@@ -442,7 +402,7 @@ def _process_chunk_worker(args):
                     if isinstance(alert, dict):
                         alert.setdefault("__asn", asn_str)
                         alerts.append(alert)
-            except Exception as e:
+            except (AttributeError) as e:
                 worker_log.debug(
                     f"[chunk-worker] forge detection failed for AS{asn}: {e}"
                 )
@@ -450,9 +410,9 @@ def _process_chunk_worker(args):
         try:
             origin_hijacks = detect_origin_hijacks(
                 analyzed_df, prefix_to_as, target_as=asn,
-                prefixes_by_as=None,
+                prefixes_by_as=prefixes_by_as,
             )
-        except Exception as e:
+        except (AttributeError) as e:
             worker_log.debug(
                 f"[chunk-worker] origin detection failed for AS{asn}: {e}"
             )
@@ -481,7 +441,7 @@ def detect_hijacks_batch(
     logger.info(f"Configuration: skip_forge={skip_forge_detection}, use_csv_for_origin={use_csv_for_origin}")
 
     # start_time / end_time can be passed in as either datetime objects
-    def _coerce_dt(value):
+    def coerce_dt(value):
         if value is None:
             return None
         if hasattr(value, "strftime"):
@@ -495,8 +455,8 @@ def detect_hijacks_batch(
                 continue
         return None
 
-    start_time_dt = _coerce_dt(start_time)
-    end_time_dt = _coerce_dt(end_time)
+    start_time_dt = coerce_dt(start_time)
+    end_time_dt = coerce_dt(end_time)
     if start_time_dt is not None:
         start_time = start_time_dt
     if end_time_dt is not None:
@@ -519,11 +479,12 @@ def detect_hijacks_batch(
         logger.error("Failed to load AS relationship data")
         as_relationships_data = {}
 
-    # 
     prefix2as_path = process_prefix2as(start_time)
-    if prefix2as_path:
-        with open(prefix2as_path, 'r', encoding='utf-8') as f:
-            prefix_to_as = json.load(f)
+    prefix_to_as = load_prefix2as_json(prefix2as_path)
+    if prefix_to_as is None:
+        prefix2as_path = process_prefix2as(start_time)
+        prefix_to_as = load_prefix2as_json(prefix2as_path) or {}
+    if prefix_to_as:
         logger.info(f"Loaded prefix-to-AS mappings from {prefix2as_path}")
     else:
         logger.error("Failed to load prefix-to-AS mappings")
@@ -545,7 +506,7 @@ def detect_hijacks_batch(
 
         if ipv6_prefixes_count > 0:
             logger.info(f"Total IPv6 prefixes added from RIPEstat: {ipv6_prefixes_count}")
-    except Exception as e:
+    except (AttributeError) as e:
         logger.warning(f"Failed to load IPv6 prefixes from RIPEstat: {e}")
 
     #  RPKI ROA （ IPv4/IPv6 ）
@@ -563,10 +524,9 @@ def detect_hijacks_batch(
             rpki_ipv4 = sum(1 for p in rpki_data if ':' not in p)
             rpki_ipv6 = sum(1 for p in rpki_data if ':' in p)
             logger.info(f"RPKI ROA: Added {added} prefixes (IPv4: {rpki_ipv4}, IPv6: {rpki_ipv6})")
-    except Exception as e:
+    except (AttributeError) as e:
         logger.warning(f"Failed to load RPKI ROA data: {e}")
 
-    # 
     prefixes_by_as = get_target_prefixes_batch(cleaned_as_list, prefix_to_as)
     union_target_prefixes = set().union(*prefixes_by_as.values()) if prefixes_by_as else set()
     cleaned_as_set = set(cleaned_as_list)
@@ -574,19 +534,16 @@ def detect_hijacks_batch(
     # Trie
     prefix_trie = build_prefix_trie(union_target_prefixes)
 
-    # （ map_elements ）
-    _covered_subnet_prefixes = _build_covered_subnet_set(union_target_prefixes)
+    _covered_subnet_prefixes = build_covered_subnet_set(union_target_prefixes)
     logger.info(f"Pre-computed {_covered_subnet_prefixes[0]} covered subnet prefixes for fast vectorized filtering")
     covered_subnet_set = _covered_subnet_prefixes[1]
 
-    # （Forge）
     full_day_data = None
     if validate_with_updates and not skip_forge_detection:
         logger.info("Pre-loading full day BGP data for forge hijack detection...")
         full_day_data = load_full_day_bgp_data(start_time, end_time)
         logger.info(f"Loaded {len(full_day_data) if full_day_data is not None else 0} announcements for full day analysis")
 
-    # 
     prefix_owner_map = {}
     for asn, pref_set in prefixes_by_as.items():
         for p in pref_set:
@@ -596,7 +553,6 @@ def detect_hijacks_batch(
         prefix_count = len(prefixes_by_as.get(asn, set()))
         logger.info(f"AS{asn}: {prefix_count} target prefixes")
     
-    # （per-AS  + ）
     batch_results = {}
     for asn in cleaned_as_list:
         batch_results[asn] = {
@@ -643,15 +599,6 @@ def detect_hijacks_batch(
             _t0 = _t.monotonic()
 
             # Bounded in-flight window.  Queuing every 5-minute bucket of the
-            # scan window as serialised Python dicts before dispatching any
-            # work pre-allocated tens of GB on wide windows, and the kernel
-            # SIGKILLed the process.  Keeping at most CHUNK_INFLIGHT chunks
-            # resident makes peak memory a function of the cap rather than of
-            # the window width.
-            #
-            # Futures live in a deque drained from the head, so alerts merge in
-            # temporal (chunk) order and each chunk is freed as soon as it has
-            # been collected.
             _total_alerts = 0
             _stream = get_updates_streaming(
                 start_time, end_time,
@@ -674,7 +621,7 @@ def detect_hijacks_batch(
                         _keep_cols = ["prefix", "as-path", "A/W", "timestamp"]
                         _cols_present = [c for c in _keep_cols if c in df_chunk.columns]
                         _chunk_records = df_chunk.select(_cols_present).to_dicts()
-                    except Exception as _exc:
+                    except (AttributeError) as _exc:
                         logger.debug(f"[chunk-iter] serialise failed: {_exc}; skipping {chunk_count}")
                         continue
 
@@ -684,7 +631,7 @@ def detect_hijacks_batch(
                         p: prefix_to_as[p] for p in _seen_prefixes if p in prefix_to_as
                     }
                     _pending.append(
-                        _ex.submit(_process_chunk_worker, (_chunk_records, _params))
+                        _ex.submit(process_chunk_worker, (_chunk_records, _params))
                     )
                     total_processed_rows += len(_chunk_records)
                     del df_chunk, _chunk_records, _params
@@ -692,7 +639,7 @@ def detect_hijacks_batch(
                 if _pending:
                     _alerts = _pending.popleft().result()
                     _total_alerts += len(_alerts)
-                    _merge_chunk_alerts(batch_results, _alerts)
+                    merge_chunk_alerts(batch_results, _alerts)
                     del _alerts
 
             logger.info(
@@ -705,7 +652,7 @@ def detect_hijacks_batch(
                 _mb = psutil.Process().memory_info().rss / 1024 / 1024
                 memory_peaks.append(_mb)
                 logger.info(f"[chunk-iter] memory after parallel run: {_mb:.1f}MB")
-            except Exception:
+            except (ValueError):
                 pass
 
     else:
@@ -724,7 +671,6 @@ def detect_hijacks_batch(
             chunk_rows = len(df_chunk)
             logger.info(f"Processing chunk {chunk_count} with {chunk_rows} rows")
 
-            # ： Announce 
             announcements = df_chunk.filter(pl.col('A/W') == 'A').select(['prefix', 'as-path', 'timestamp'])
             if announcements.is_empty():
                 logger.info(f"Chunk {chunk_count} has no announcements, skipping")
@@ -751,7 +697,6 @@ def detect_hijacks_batch(
                   .alias('origin_as'),
             ])
 
-            # （polars）
             # 1: prefix（O(N) hash lookup）
             mask1 = announcements['prefix'].is_in(union_target_prefixes)
 
@@ -778,7 +723,6 @@ def detect_hijacks_batch(
                 logger.info(f"Chunk {chunk_count}: no relevant announcements after filtering")
                 continue
 
-            # AS（AS Polars ）
             for asn in cleaned_as_list:
                 asn_str = str(asn)
                 as_mask = announcements["as_path_list"].list.contains(asn_str)
@@ -793,7 +737,6 @@ def detect_hijacks_batch(
                         df_asn,
                         as_relationships_data,
                         asn,
-                        hijack_cache_manager,
                         full_day_data=full_day_data,
                         prefix_to_as=prefix_to_as,
                         use_es=True  # ES enabled when MITM detection is active
@@ -817,7 +760,6 @@ def detect_hijacks_batch(
                             target_list.extend(key_list[:remaining])
                 batch_results[asn]["total_announcements"] += len(df_asn)
 
-            # ：chunk
             del announcements
             # gc.collect() removed: when running the parallel branch the main
             chunk_time = time.time() - chunk_start_time
@@ -896,7 +838,7 @@ def detect_hijacks_batch(
                     end_timestamp=end_ts,
                 )
                 validated_connections[validation_key] = frequency_result
-            except Exception as e:
+            except (KeyError, IndexError, AttributeError) as e:
                 logger.warning(f"Error validating connection {validation_key}: {e}")
                 validated_connections[validation_key] = {'is_suspicious': True, 'error': str(e)}
 
@@ -934,12 +876,10 @@ def detect_hijacks_batch(
     
     asorg_path = process_asorg(start_time)
     
-    # ASfinalize，
     all_final_results = {}
     for asn in cleaned_as_list:
         result_data = batch_results[asn]
 
-        # 
         aggregated_alerts = result_data["_aggregator"].finalize()
         all_anomalies_count = sum(
             len(lst) for lst in
@@ -970,10 +910,6 @@ def detect_hijacks_batch(
             "total_announcements": result_data["total_announcements"],
             "analysis_timestamp": datetime.now().isoformat(),
             # Unified schema fields. Availability must reflect whether any
-            # BGP rows were actually scanned: a run that loaded the window
-            # but processed 0 announcements had no data to judge, and
-            # reporting data_available=True would turn it into a false
-            # negative that a scoring script counts as a clean miss.
             "data_available": bool(result_data["total_announcements"]),
             "no_data_reason": (
                 "" if result_data["total_announcements"] else "no_announcements_in_window"
@@ -993,17 +929,12 @@ def detect_hijacks_batch(
                 result_data["origin_hijacked"]
             )
 
-        # alert（，）
         for key in ("origin_hijacked", "origin_hijacking", "forge_hijack", "forge_hijacking"):
             result_data[key].clear()
 
-        #  batch_results  AS 
+        #  batch_results  AS
         del batch_results[asn]
 
-    # Bug fix 2026-10-13: gc.collect() was previously called once per AS
-    # inside the cleaned_as_list loop, wasting ~50-200ms per call. Move
-    # the single collection AFTER the loop so we sweep once after all
-    # per-AS state is released.
     gc.collect()
 
     logger.info(f"Batch detection completed for {len(cleaned_as_list)} AS")
@@ -1033,11 +964,6 @@ def detect_hijacks_batch(
         "analysis_timestamp": datetime.now().isoformat(),
         "data_source": "csv_streaming",
         # The CAIDA as-relationship snapshot this run was configured with.
-        # Downstream consumers (the HCAF cascade estimator) need the *path*
-        # to the file, not the in-memory dict, because they resolve
-        # provider/peer/customer edges by ASN at analysis time. Without this
-        # key the as-rel data never leaves the detector and the cascade
-        # estimator silently degrades to a single-node graph.
         "as_rel_file": asrel_result if isinstance(asrel_result, str) and asrel_result else None,
         "prefix2as_file": prefix2as_path if prefix2as_path else None,
         "asorg_file": asorg_path if asorg_path else None,
@@ -1048,6 +974,3 @@ def detect_hijacks_batch(
             "memory_peak_mb": max(memory_peaks) if memory_peaks else 0
         }
     }
-
-
-

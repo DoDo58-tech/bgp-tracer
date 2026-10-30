@@ -20,63 +20,6 @@ def detect_anomalies_sustained_outage(current_values, historical_means, historic
     return anomalies
 
 
-def detect_anomalies_sustained_deviation(current_values, historical_means, timestamps=None,
-                                          lower_threshold_ratio=0.7, upper_threshold_ratio=1.3,
-                                          min_consecutive=2, deviation_type="both"):
-    anomalies = []
-    n = len(current_values)
-    if n < 2:
-        return anomalies
-    curr = np.array(current_values, dtype=float)
-    mean = np.array(historical_means, dtype=float)
-    lower_flags, upper_flags = [], []
-    for i in range(n):
-        mv = mean[i] if i < len(mean) and not np.isnan(mean[i]) else float(np.nanmean(mean))
-        cv = curr[i]
-        if abs(mv) > 1e-6:
-            r = cv / mv
-        else:
-            r = 1.0
-        lower_flags.append(r < lower_threshold_ratio)
-        upper_flags.append(r > upper_threshold_ratio)
-
-    def extract(flags, flag_type, threshold):
-        result = []
-        i = 0
-        while i < n:
-            if flags[i]:
-                s = i
-                while i < n and flags[i]:
-                    i += 1
-                e = i - 1
-                seg_len = e - s + 1
-                if seg_len >= min_consecutive:
-                    seg_v = curr[s:e + 1]
-                    seg_m = mean[s:e + 1]
-                    avg_v, avg_m = float(np.nanmean(seg_v)), float(np.nanmean(seg_m))
-                    ratio = avg_v / avg_m if abs(avg_m) > 1e-6 else 1.0
-                    sev = 'critical' if (flag_type == "sustained_low" and ratio < 0.5) or \
-                                        (flag_type == "sustained_high" and ratio > 2.0) else \
-                          'high' if (flag_type == "sustained_low" and ratio < 0.7) or \
-                                    (flag_type == "sustained_high" and ratio > 1.5) else 'medium'
-                    result.append({
-                        'start_index': s, 'end_index': e, 'length': seg_len,
-                        'start_timestamp': timestamps[s] if timestamps and s < len(timestamps) else None,
-                        'end_timestamp': timestamps[e] if timestamps and e < len(timestamps) else None,
-                        'segment_avg_value': avg_v, 'segment_avg_mean': avg_m,
-                        'avg_deviation_ratio': float(ratio),
-                        'change_type': flag_type, 'method': 'sustained_deviation', 'severity': sev,
-                    })
-            i += 1
-        return result
-
-    if deviation_type in ["lower", "both"]:
-        anomalies.extend(extract(lower_flags, "sustained_low", lower_threshold_ratio))
-    if deviation_type in ["upper", "both"]:
-        anomalies.extend(extract(upper_flags, "sustained_high", upper_threshold_ratio))
-    return anomalies
-
-
 def detect_anomalies_moving_average(current_values, threshold=2.5, window_size=12):
     anomalies = []
     for i in range(window_size, len(current_values)):

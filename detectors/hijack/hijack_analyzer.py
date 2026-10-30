@@ -8,68 +8,6 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.logger import logger
 
 
-def aggregate_anomalies(anomalies):
-    try:
-        import collections.abc
-        if isinstance(anomalies, collections.abc.Iterator):
-            anomalies = iter(anomalies)
-        elif not anomalies:
-            return []
-
-        logger.info("Starting memory-efficient anomaly aggregation")
-
-        aggregated = {}
-        time_window_seconds = 300
-
-        for anomaly in anomalies:
-            try:
-                anomaly_type = anomaly.get('type', 'unknown')
-                prefix = anomaly.get('prefix', 'unknown')
-                timestamp = anomaly.get('timestamp', '')
-
-                try:
-                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                    time_key = int(dt.timestamp() // time_window_seconds) * time_window_seconds
-                except Exception:
-                    time_key = 0
-
-                group_key = f"{anomaly_type}|{prefix}|{time_key}"
-
-                if group_key not in aggregated:
-                    aggregated[group_key] = {
-                        'type': anomaly_type,
-                        'prefix': prefix,
-                        'time_window_start': time_key,
-                        'count': 0,
-                        'first_seen': timestamp,
-                        'last_seen': timestamp,
-                        'confidence': anomaly.get('confidence', 'low')
-                    }
-
-                agg = aggregated[group_key]
-                agg['count'] += 1
-                agg['last_seen'] = timestamp
-
-                if agg['count'] >= 5:
-                    agg['confidence'] = 'high'
-                elif agg['count'] >= 2:
-                    agg['confidence'] = 'medium'
-
-            except Exception as e:
-                logger.warning(f"Error aggregating anomaly: {e}")
-                continue
-
-        result = list(aggregated.values())
-        result.sort(key=lambda x: x['count'], reverse=True)
-
-        logger.info(f"Aggregated {len(result)} anomaly groups")
-        return result
-
-    except Exception as e:
-        logger.error(f"Error aggregating anomalies: {e}")
-        return []
-
-
 class StreamingAnomalyAggregator:
     def __init__(self):
         self._groups: dict = {}
@@ -89,7 +27,7 @@ class StreamingAnomalyAggregator:
                 try:
                     dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                     time_key = int(dt.timestamp() // self._time_window_seconds) * self._time_window_seconds
-                except Exception:
+                except (ValueError):
                     time_key = 0
 
                 key = f"{atype}|{prefix}|{time_key}"
@@ -114,7 +52,7 @@ class StreamingAnomalyAggregator:
                 elif g['count'] >= 2:
                     g['confidence'] = 'medium'
 
-            except Exception:
+            except (ValueError):
                 continue
 
         # Allow GC to reclaim the chunk list immediately
@@ -126,29 +64,6 @@ class StreamingAnomalyAggregator:
         result.sort(key=lambda x: x['count'], reverse=True)
         self._groups.clear()
         return result
-
-    def group_count(self):
-        return len(self._groups)
-
-
-def pick_timestamp(current, candidate, prefer_min = True):
-    try:
-        if not current:
-            return candidate
-        if not candidate:
-            return current
-
-        dt_current = datetime.fromisoformat(current.replace('Z', '+00:00'))
-        dt_candidate = datetime.fromisoformat(candidate.replace('Z', '+00:00'))
-
-        if prefer_min:
-            return current if dt_current <= dt_candidate else candidate
-        else:
-            return current if dt_current >= dt_candidate else candidate
-
-    except Exception as e:
-        logger.warning(f"Error comparing timestamps: {e}")
-        return current or candidate
 
 
 def save_alert_messages(target_as, start_time, end_time,
@@ -195,7 +110,7 @@ def save_alert_messages(target_as, start_time, end_time,
         logger.info(f"Saved {alert_data['alerts']['total_alerts']} hijack alerts to {alert_file}")
         return str(alert_file)
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error saving alert messages: {e}")
         return ""
 
@@ -217,108 +132,6 @@ def assess_alert_severity(alerts):
         else:
             return "low"
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error assessing alert severity: {e}")
         return "unknown"
-
-
-def _generate_hijack_recommendations(summary):
-    """Actionable next steps derived from the aggregated alert summary."""
-    recommendations = []
-    total = summary.get('total_alerts', 0)
-    prefixes = summary.get('affected_prefixes', []) or []
-
-    if not total:
-        return ["No hijack alerts in this window; no action required."]
-
-    recommendations.append(
-        f"Validate RPKI/ROA state for {len(prefixes)} affected prefix(es) "
-        f"against the authoritative RIR and IRR records."
-    )
-    if summary.get('severity_levels', {}).get('critical'):
-        recommendations.append(
-            "Critical-confidence alerts present: escalate to the upstream "
-            "provider and prepare a BGP filtering / RT blackhole plan."
-        )
-    recommendations.append(
-        "Collect route collector views (RouteViews/RIS) for the window to "
-        "confirm the hijacking AS-PATH independently of alert sources."
-    )
-    if summary.get('alert_types', {}).get('origin'):
-        recommendations.append(
-            "For origin hijacks, publish a TA/ROA withdrawal request with the "
-            "affected origin AS before re-announcing legitimate routes."
-        )
-    return recommendations
-
-
-def _assess_hijack_risk(summary):
-    """Structured risk verdict for the aggregated alert summary."""
-    total = summary.get('total_alerts', 0)
-    levels = summary.get('severity_levels', {}) or {}
-    high_conf = levels.get('high', 0)
-    if high_conf >= 5 or total >= 10:
-        severity = 'critical'
-    elif high_conf >= 2 or total >= 5:
-        severity = 'high'
-    elif high_conf >= 1 or total >= 2:
-        severity = 'medium'
-    else:
-        severity = 'low'
-    return {
-        'severity': severity,
-        'total_alerts': total,
-        'high_confidence_alerts': high_conf,
-        'affected_prefix_count': len(summary.get('affected_prefixes', []) or []),
-        'requires_escalation': bool(high_conf) or total >= 5,
-    }
-
-
-def generate_hijack_report(target_as, alerts,
-                          analysis_period):
-    try:
-        report = {
-            'target_as': target_as,
-            'analysis_period': analysis_period,
-            'report_generated_at': datetime.now().isoformat(),
-            'summary': {
-                'total_alerts': len(alerts),
-                'alert_types': {},
-                'severity_levels': {},
-                'time_distribution': {},
-                'affected_prefixes': set()
-            },
-            'details': {
-                'alerts': alerts,
-                'recommendations': [],
-                'risk_assessment': {}
-            }
-        }
-
-        for alert in alerts:
-            alert_type = alert.get('type', 'unknown')
-            report['summary']['alert_types'][alert_type] = report['summary']['alert_types'].get(alert_type, 0) + 1
-
-            severity = alert.get('confidence', 'low')
-            report['summary']['severity_levels'][severity] = report['summary']['severity_levels'].get(severity, 0) + 1
-
-            prefix = alert.get('prefix', '')
-            if prefix:
-                report['summary']['affected_prefixes'].add(prefix)
-
-        report['summary']['affected_prefixes'] = list(report['summary']['affected_prefixes'])
-
-        report['details']['recommendations'] = _generate_hijack_recommendations(report['summary'])
-
-        report['details']['risk_assessment'] = _assess_hijack_risk(report['summary'])
-
-        return report
-
-    except Exception as e:
-        logger.error(f"Error generating hijack report: {e}")
-        return {
-            'target_as': target_as,
-            'error': str(e),
-            'report_generated_at': datetime.now().isoformat()
-        }
-

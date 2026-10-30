@@ -1,0 +1,20 @@
+{
+  "dataset": "data_check/ground_truth_collection/final_ground_truth.csv",
+  "n_pool": 66,
+  "n_accepted": 17,
+  "n_rejected": 49,
+  "per_class": {
+    "outage": 10,
+    "route_leak": 3,
+    "origin_hijack_victim": 4
+  },
+  "rejection_reasons": {
+    "circular_label_from_rrc00_observation": 9,
+    "cause_outside_label_set": 1,
+    "traffic_impact_not_confirmed": 9,
+    "traffic_unavailable": 10,
+    "routing_signal_not_visible": 19,
+    "superseded_by_stronger_routing_evidence": 1
+  },
+  "rule": "independent public source + routing anomaly visible in RRC00 + measurable traffic impact that a control network does not show"
+}

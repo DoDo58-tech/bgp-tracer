@@ -1,43 +1,12 @@
-"""Traditional causal-attribution baselines for HCAF ablation.
-
-Each baseline takes the same routing + traffic timeline as
-``CausalAttributionEngine.analyze`` and returns a ``(direction,
-confidence)`` tuple. They are intentionally simpler than HCAF so that
-the paper's §6 ablation table demonstrates the value of multi-method
-synthesis (MSBD + CTPR + CIC + Granger + confounder detection) over a
-single statistical baseline.
-
-Direction convention (matches HCAF):
-    "routing_to_traffic"  — routing change preceded traffic change
-    "traffic_to_routing"  — traffic change preceded routing change
-    "unknown"             — insufficient evidence
-
-Baselines:
-    pearson_only        — global Pearson correlation on aligned series.
-                          If r(routing, traffic) > 0.5, treat as
-                          co-moving (direction undecidable); if strong
-                          cross-correlation at a specific lag, use that
-                          lag's sign to decide direction.
-    granger_only        — pure Granger causality on the same series.
-                          Skips HCAF's MSBD/CTPR/CIC synthesis.
-    timestamp_distance  — non-statistical: nearest-neighbor distance
-                          between the first routing event and the first
-                          traffic event. Whichever came first wins. This
-                          is the most naive baseline and is what a
-                          reviewer would expect to be the worst.
-
-All three share ``baseline_attribution(routing_timeline, traffic_timeline)``
-and return ``dict(direction, confidence, method, ...)`` so they can be
-called uniformly from the ablation harness in
-``tests/test_hcaf_vs_baselines.py``.
-"""
+"""Traditional causal-attribution baselines for HCAF ablation."""
 from __future__ import annotations
 
 import logging
 import math
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -60,27 +29,18 @@ class BaselineResult:
     details: Dict[str, Any] = field(default_factory=dict)
 
 
-def _to_aligned_series(
+def to_aligned_series(
     routing_timeline: List[dict],
     traffic_timeline: List[dict],
 ) -> Tuple[List[float], List[float]]:
-    """Normalize timelines to two parallel scalar lists on the common window.
-
-    Each input timeline is a list of dicts with at least ``score`` and
-    ``timestamp``. We extract ``score`` in order. When the two series have
-    different lengths we **truncate to the shorter** one: both are produced on
-    the same bucket grid, so index ``i`` is the same interval in both, and
-    padding the shorter one with zeros (the previous behaviour) invented
-    "measured, no anomaly" buckets that never existed — which drags the post
-    mean down and biases every lag-based baseline.
-    """
+    """Normalize timelines to two parallel scalar lists on the common window."""
     r = [float(p.get("score", 0) or 0) for p in routing_timeline]
     t = [float(p.get("score", 0) or 0) for p in traffic_timeline]
     n = min(len(r), len(t))
     return r[:n], t[:n]
 
 
-def _safe_first_timestamp(timeline: List[dict]):
+def safe_first_timestamp(timeline: List[dict]):
     """Return the first parseable timestamp in a timeline, or None."""
     for p in timeline:
         ts = p.get("timestamp")
@@ -94,30 +54,18 @@ def _safe_first_timestamp(timeline: List[dict]):
     return None
 
 
-# ─────────────────────────────────────────────────────────────────────
 # Baseline 1: Pearson correlation only
-# ─────────────────────────────────────────────────────────────────────
 def pearson_baseline(
     routing_timeline: List[dict],
     traffic_timeline: List[dict],
 ) -> BaselineResult:
-    """Pearson correlation at lags 0..3 on aligned series.
-
-    Decision rule:
-            * Pearson r at any lag > 0.5  → co-movement, but direction
-              still undecidable. Return ``unknown`` with confidence =
-              abs(max_corr). This is a known weakness of pure Pearson.
-            * |max_corr| ≤ 0.5  → ``unknown`` with low confidence.
-
-    The baseline is intentionally weak on direction — that's the point.
-    A multi-method HCAF needed to do better than this in §6.
-    """
+    """Pearson correlation at lags 0..3 on aligned series."""
     if not NUMPY_OK or not routing_timeline or not traffic_timeline:
         return BaselineResult(
             direction="unknown", confidence=0.0, method="pearson",
             details={"reason": "numpy missing or empty timeline"},
         )
-    r, t = _to_aligned_series(routing_timeline, traffic_timeline)
+    r, t = to_aligned_series(routing_timeline, traffic_timeline)
     if len(r) < 4:
         return BaselineResult(
             direction="unknown", confidence=0.0, method="pearson",
@@ -157,13 +105,6 @@ def pearson_baseline(
     direction = "unknown"
     if abs(max_corr) > 0.5:
         # A *negative* correlation between routing and traffic, with the
-        # routing series leading, is the classic BGP signature: routing
-        # announcements (or withdrawals) surge first, traffic follows
-        # in the opposite direction. Anti-correlated lag > 0 ⇒
-        # ``routing_to_traffic``. Anti-correlated lag < 0 ⇒
-        # ``traffic_to_routing``. Positively correlated series with a
-        # positive lag ⇒ ``routing_to_traffic`` (e.g. traffic rise
-        # following a re-route).
         if max_corr < 0:
             if best_lag > 0:
                 direction = "routing_to_traffic"
@@ -182,20 +123,17 @@ def pearson_baseline(
     )
 
 
-# ─────────────────────────────────────────────────────────────────────
 # Baseline 2: Granger causality only
-# ─────────────────────────────────────────────────────────────────────
 def granger_baseline(
     routing_timeline: List[dict],
     traffic_timeline: List[dict],
 ) -> BaselineResult:
     """Pure Granger causality (no MSBD/CTPR/CIC synthesis).
-
+    
     Returns ``routing_to_traffic`` if Granger test rejects "traffic
     does NOT Granger-cause routing" with p<0.05, else
     ``traffic_to_routing``. This baseline intentionally skips the
-    confounder check that HCAF does.
-    """
+    confounder check that HCAF does."""
     if not routing_timeline or not traffic_timeline:
         return BaselineResult(
             direction="unknown", confidence=0.0, method="granger",
@@ -208,7 +146,7 @@ def granger_baseline(
             direction="unknown", confidence=0.0, method="granger",
             details={"reason": "statsmodels not installed"},
         )
-    r, t = _to_aligned_series(routing_timeline, traffic_timeline)
+    r, t = to_aligned_series(routing_timeline, traffic_timeline)
     if len(r) < 8:
         return BaselineResult(
             direction="unknown", confidence=0.0, method="granger",
@@ -222,19 +160,6 @@ def granger_baseline(
             details={"reason": "zero-variance series"},
         )
     # Granger test: H0 = "x does NOT Granger-cause y". We test both
-    # directions and pick the one whose null is rejected more strongly.
-    #
-    # For Granger, direction is decided by *which series is the response*
-    # (column 0) — not by the sign of the lag-coefficient, which the
-    # pure test does not return. So:
-    #   (arr_t, arr_r)  →  response=traffic, predictor=routing
-    #                      rejection ⇒ "routing_to_traffic"
-    #   (arr_r, arr_t)  →  response=routing, predictor=traffic
-    #                      rejection ⇒ "traffic_to_routing"
-    # statsmodels grangercausalitytests returns a dict keyed by lag;
-    # each value is (test_dicts, regression_results). ssr_ftest in
-    # recent versions is a tuple (F_stat, p_value, df_denom, df_num).
-    # Older versions returned a dict with key ``ssr_ftest_pvalue``.
     n = min(len(arr_r), len(arr_t))
     granger_lag = max(1, min(3, n - 2))
     try:
@@ -273,21 +198,14 @@ def granger_baseline(
     )
 
 
-# ─────────────────────────────────────────────────────────────────────
 # Baseline 3: timestamp distance (no statistics at all)
-# ─────────────────────────────────────────────────────────────────────
 def timestamp_distance_baseline(
     routing_timeline: List[dict],
     traffic_timeline: List[dict],
 ) -> BaselineResult:
-    """Pick the side that moved first by raw timestamp.
-
-    No statistics, no lag analysis, just ``argmin(routing_t0,
-    traffic_t0)``. This is the worst-performing baseline we expect,
-    included so the ablation table has a "naive" anchor.
-    """
-    r_t0 = _safe_first_timestamp(routing_timeline)
-    t_t0 = _safe_first_timestamp(traffic_timeline)
+    """Pick the side that moved first by raw timestamp."""
+    r_t0 = safe_first_timestamp(routing_timeline)
+    t_t0 = safe_first_timestamp(traffic_timeline)
     if r_t0 is None or t_t0 is None:
         return BaselineResult(
             direction="unknown", confidence=0.0, method="timestamp_distance",
@@ -313,12 +231,8 @@ def timestamp_distance_baseline(
     )
 
 
-# ─────────────────────────────────────────────────────────────────────
 # Public entry point
-# ─────────────────────────────────────────────────────────────────────
-# ─────────────────────────────────────────────────────────────────────
 # Baseline 4: Transfer Entropy (non-linear, non-Gaussian)
-# ─────────────────────────────────────────────────────────────────────
 def transfer_entropy_baseline(
     routing_timeline: List[dict],
     traffic_timeline: List[dict],
@@ -326,52 +240,13 @@ def transfer_entropy_baseline(
     bins: int = 4,
     n_perm: int = 200,
 ) -> BaselineResult:
-    """Estimate directional transfer entropy (Schreiber 2000) at lag 1.
-
-    TE(X → Y) = Σ P(y_t, y_t-1, x_t-lag) · log[ P(y_t | y_t-1, x_t-lag)
-                                              / P(y_t | y_t-1) ]
-
-    Unlike Granger (linear + Gaussian), TE captures non-linear causal
-    direction in arbitrary distributions. For BGP+traffic attribution
-    this matters because:
-        * routing announcements are bursts (non-Gaussian)
-        * traffic response to BGP events is non-linear (trough ≠ -peak)
-
-    Implementation:
-        * Discretise each series into `bins` quantile bins.
-        * Compute joint counts for the 3-variable joint distribution.
-        * Compute conditional counts.
-        * Convert to probabilities via Laplace smoothing.
-        * Surrogate baseline: shuffle the *source* series' lag window
-          `n_perm` times and recompute TE.  A separate null is built for
-          each direction — TE(R→T) against a routing-shuffle null and
-          TE(T→R) against a traffic-shuffle null — because the two
-          statistics are computed on different variables.
-
-    Decision rule (per direction ``d``, with ``¬d`` the opposite):
-        * commit to ``d`` iff
-              p_d < 0.05                     (empirical permutation test)
-          AND TE(d) > μ_null_d + 2·σ_null_d
-          AND TE(d) > 1.2 · TE(¬d)
-        * otherwise → unknown.
-
-    Two defects this rule fixes relative to the earlier implementation:
-      (1) a single routing-shuffle null was used to test *both* directions,
-          so TE(T→R) was compared against a distribution belonging to
-          TE(R→T);
-      (2) two fallback branches committed on a bare ``TE(d) > 1.2·TE(¬d)``
-          ratio without any significance check, which reported a direction
-          from noise.
-
-    Confidence = clamp(|TE(R → T) − TE(T → R)| / max(TE), 0, 1) when a
-    direction is committed, else 0.
-    """
+    """Estimate directional transfer entropy (Schreiber 2000) at lag 1."""
     if not NUMPY_OK or not routing_timeline or not traffic_timeline:
         return BaselineResult(
             direction="unknown", confidence=0.0, method="transfer_entropy",
             details={"reason": "numpy missing or empty timeline"},
         )
-    r_series, t_series = _to_aligned_series(routing_timeline, traffic_timeline)
+    r_series, t_series = to_aligned_series(routing_timeline, traffic_timeline)
     if len(r_series) < max(2 * lag + 4, 8):
         return BaselineResult(
             direction="unknown", confidence=0.0, method="transfer_entropy",
@@ -385,23 +260,18 @@ def transfer_entropy_baseline(
             details={"reason": "zero-variance series"},
         )
     try:
-        te_rt = _transfer_entropy_scalar(r_arr, t_arr, lag=lag, bins=bins)
-        te_tr = _transfer_entropy_scalar(t_arr, r_arr, lag=lag, bins=bins)
-    except Exception as e:
+        te_rt = transfer_entropy_scalar(r_arr, t_arr, lag=lag, bins=bins)
+        te_tr = transfer_entropy_scalar(t_arr, r_arr, lag=lag, bins=bins)
+    except (AttributeError) as e:
         return BaselineResult(
             direction="unknown", confidence=0.0, method="transfer_entropy",
             details={"reason": f"TE computation failed: {type(e).__name__}: {e}"},
         )
     # Surrogate baselines: each direction needs ITS OWN null. The null for
     # TE(R -> T) is built by destroying R's temporal order while holding T
-    # fixed; the null for TE(T -> R) is built by destroying T's order while
-    # holding R fixed. Previously a single null -- the routing-shuffle one --
-    # gated BOTH directions, so sig_tr was tested against a distribution
-    # derived from the wrong surrogate. That systematically mis-set the
-    # significance of the T -> R channel.
     rng = np.random.default_rng(42)
 
-    def _surrogate_null(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
+    def surrogate_null(src: np.ndarray, dst: np.ndarray) -> np.ndarray:
         """Null distribution for TE(src -> dst) by shuffling src's lag window."""
         out = np.empty(n_perm, dtype=float)
         for k in range(n_perm):
@@ -410,13 +280,13 @@ def transfer_entropy_baseline(
             rng.shuffle(block)
             shuffled[lag:] = block
             try:
-                out[k] = _transfer_entropy_scalar(shuffled, dst, lag=lag, bins=bins)
-            except Exception:
+                out[k] = transfer_entropy_scalar(shuffled, dst, lag=lag, bins=bins)
+            except (KeyError, IndexError):
                 out[k] = 0.0
         return out
 
-    null_rt = _surrogate_null(r_arr, t_arr)
-    null_tr = _surrogate_null(t_arr, r_arr)
+    null_rt = surrogate_null(r_arr, t_arr)
+    null_tr = surrogate_null(t_arr, r_arr)
     null_rt_mean = float(null_rt.mean())
     null_rt_std = float(null_rt.std())
     null_tr_mean = float(null_tr.mean())
@@ -428,11 +298,6 @@ def transfer_entropy_baseline(
     p_tr = float((1 + int((null_tr >= te_tr).sum())) / (n_perm + 1))
 
     # Decision rule (see docstring):
-    #   * each direction is tested against its OWN surrogate null;
-    #   * significance requires p < 0.05 AND a 2σ margin over the null mean;
-    #   * the significant direction must also dominate the opposite one by
-    #     20%.  The old code committed on the 1.2x ratio alone when
-    #     significance failed — that is a direction produced by noise.
     sig_rt = bool(p_rt < 0.05 and te_rt > null_rt_mean + 2.0 * null_rt_std)
     sig_tr = bool(p_tr < 0.05 and te_tr > null_tr_mean + 2.0 * null_tr_std)
     if sig_rt and te_rt > 1.2 * max(te_tr, 1e-12):
@@ -472,17 +337,13 @@ def transfer_entropy_baseline(
     )
 
 
-def _transfer_entropy_scalar(
+def transfer_entropy_scalar(
     source: np.ndarray,
     target: np.ndarray,
     lag: int,
     bins: int,
 ) -> float:
-    """Scalar TE(source → target) at the given lag.
-
-    TE = Σ_{s_t, s_t-lag, t_t} p(s_t, s_t-lag, t_t) ·
-         log[ p(t_t | s_t, s_t-lag) / p(t_t | s_t-lag) ]
-    """
+    """Scalar TE(source → target) at the given lag."""
     n = min(len(source), len(target))
     if n <= lag + 2:
         return 0.0
@@ -492,10 +353,7 @@ def _transfer_entropy_scalar(
     t_lag = target[: n - lag]
 
     # Discretise each into `bins` quantile bins (handles skewed series
-    # like BGP burst counts). NaN-safe quantile assignment; if all values
-    # are identical we fall back to ordinal encoding so the bin index
-    # still carries *temporal* information.
-    def _digitise(x):
+    def digitise(x):
         if len(x) < bins:
             return np.zeros(len(x), dtype=int)
         # Use unique quantiles so we never collapse to a single bin.
@@ -508,10 +366,10 @@ def _transfer_entropy_scalar(
             return np.argsort(np.argsort(x)) % bins
         return np.clip(np.searchsorted(edges, x), 0, len(edges)).astype(int)
 
-    s_t_d = _digitise(s_t)
-    s_lag_d = _digitise(s_lag)
-    t_t_d = _digitise(t_t)
-    t_lag_d = _digitise(t_lag)
+    s_t_d = digitise(s_t)
+    s_lag_d = digitise(s_lag)
+    t_t_d = digitise(t_t)
+    t_lag_d = digitise(t_lag)
 
     m = len(t_t_d)
     # Laplace smoothing constant
@@ -525,9 +383,6 @@ def _transfer_entropy_scalar(
         joint_1[t_t_d[i], t_lag_d[i]] += 1
 
     # Compute the conditional probabilities:
-    #   p_3[t_t, t_lag, s_t, s_lag] = P(t_t | t_lag, s_t, s_lag)
-    #   p_1[t_t, t_lag]             = P(t_t | t_lag)
-    # Marginal over t_t gives the weighting p_3_marginal for the TE formula.
     sum_3 = joint_3.sum(axis=0)  # shape (bins_t_lag, bins_s_t, bins_s_lag)
     sum_1 = joint_1.sum(axis=0)  # shape (bins_t_lag,)
     p_3 = (joint_3 + alpha) / (sum_3[None, :, :, :] + alpha * bins)
@@ -541,35 +396,15 @@ def _transfer_entropy_scalar(
     return max(te, 0.0)
 
 
-# -----------------------------------------------------------------------------
 # PC-style conditional independence baseline (added in v34 paper preparation)
-# -----------------------------------------------------------------------------
 def pc_conditional_independence_baseline(
     routing_timeline: List[dict],
     traffic_timeline: List[dict],
     max_lag: int = 3,
 ) -> BaselineResult:
-    """PC-style conditional independence baseline.
-
-    For each candidate lag, compute the partial correlation between
-    the routing series and the lagged traffic series after regressing
-    out the traffic's own past. The lag with the largest absolute
-    partial correlation determines the direction; a non-significant
-    partial correlation (|ρ| < 0.3) yields "unknown".
-
-    This is a *time-series-adapted* PC test (Spirtes et al. 2000) that
-    is a strict generalisation of Pearson: it explicitly conditions on
-    the traffic's own lag, removing autocorrelation that the uncondi-
-    tioned Pearson would absorb. The empirical result on the v17
-    ground-truth is direction accuracy 3/17 = 18% on real events
-    (slightly above Granger's 0% but below transfer entropy's 47%);
-    the underperformance is consistent with the design intent of
-    HCAF: the BGP-telemetry domain violates the smoothness pre-
-    condition that the PC test assumes, and the abstention is the
-    honest answer.
-    """
+    """PC-style conditional independence baseline."""
     from numpy.linalg import lstsq
-    r_series, t_series = _to_aligned_series(routing_timeline, traffic_timeline)
+    r_series, t_series = to_aligned_series(routing_timeline, traffic_timeline)
     n = min(len(r_series), len(t_series))
     if n < max_lag + 2:
         return BaselineResult(
@@ -602,7 +437,7 @@ def pc_conditional_independence_baseline(
         try:
             coef, *_ = lstsq(X, y, rcond=None)
             t_resid = y - X @ coef
-        except Exception:
+        except (ValueError):
             continue
         # Regress r[t-lag] on r[t-lag-1..r-lag-lag] → residuals
         # r is in the range [0, n); we want r[lag-1:n-1] (size n-lag)
@@ -619,7 +454,7 @@ def pc_conditional_independence_baseline(
         try:
             coef2, *_ = lstsq(X2, x, rcond=None)
             r_resid = x - X2 @ coef2
-        except Exception:
+        except (ValueError):
             continue
         # Partial correlation between r_resid and t_resid
         m = min(len(r_resid), len(t_resid))
@@ -636,9 +471,6 @@ def pc_conditional_independence_baseline(
     confidence = min(1.0, abs(best_partial) / 0.5)  # normalise to 0-1
     if abs(best_partial) < 0.15:
         # Not significant — abstain (the threshold is calibrated
-        # against the v17 real-data distribution where partial
-        # correlations are systematically attenuated by sparse
-        # traffic data; we document this in the paper §6.3.)
         return BaselineResult(
             direction="unknown", confidence=0.0,
             method="pc_conditional_independence",
@@ -662,27 +494,9 @@ BASELINES = {
 }
 
 
-def baseline_attribution(
-    method: str,
-    routing_timeline: List[dict],
-    traffic_timeline: List[dict],
-) -> BaselineResult:
-    """Run one baseline and return a BaselineResult.
-
-    Args:
-        method: one of "pearson", "granger", "timestamp_distance".
-        routing_timeline, traffic_timeline: same shape as
-            ``CausalAttributionEngine.analyze`` expects.
-    """
-    fn = BASELINES.get(method)
-    if fn is None:
-        raise ValueError(f"Unknown baseline: {method}; choices: {list(BASELINES)}")
-    return fn(routing_timeline, traffic_timeline)
-
-
 def run_all_baselines(
     routing_timeline: List[dict],
     traffic_timeline: List[dict],
 ) -> Dict[str, BaselineResult]:
-    """Run all three baselines and return their results keyed by method name."""
+    """Run all the baselines and return their results keyed by method name."""
     return {name: fn(routing_timeline, traffic_timeline) for name, fn in BASELINES.items()}

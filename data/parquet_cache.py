@@ -1,36 +1,4 @@
-"""Parquet index cache for decoded BGP updates.
-
-Layered cache strategy (in priority order):
-  1. {file}.parquet  – pre-parsed Polars-friendly binary (5-25x smaller than txt)
-  2. decoded/*.txt   – already bgpdump-decoded text
-  3. .gz             – raw MRT gz archived by RIPE RIS
-  4. Network         – download from RIPE RIS, then decode
-
-Reads never block on the network: if only a .gz is available locally it is
-decoded in-process and the parquet cache is (re)written on the fly.
-
-The cache is BYTE-KEYED, not time-keyed: a parquet file is considered valid
-iff the underlying txt/gz fingerprint (size + mtime) matches the recorded
-fingerprint stored as a small sidecar `.meta.json`. If the upstream .gz is
-replaced (rare but happens during RIS replays), the cache is invalidated.
-
-Public API
-==========
-
-- iter_window_chunks(start, end, *, raw=False, on_missing='skip')
-    Iterate chunked Polars DataFrames covering [start, end].
-    `raw=False` (default) returns only Announce (type=A) rows; this matches
-    what the detectors need.
-
-- load_window_announcements(start, end)
-    Materialise a single DataFrame for the whole window (small events only).
-
-- parquet_path_for(path)
-    Map a decoded txt or .gz path to its parquet cache file.
-
-- cache_stats()
-    Report (count, total_size_mb) of the parquet index.
-"""
+"""Parquet index cache for decoded BGP updates."""
 
 from __future__ import annotations
 
@@ -55,7 +23,7 @@ try:
         decode_gz_to_txt,
         download_data,
     )
-except Exception:  # pragma: no cover - circular import guard
+except (ValueError):  # pragma: no cover - circular import guard
     is_valid_gz_file = None
     decode_gz_to_txt = None
     download_data = None
@@ -74,12 +42,46 @@ _COLUMNS = [
     "communities", "atomic_aggregate", "aggregator", "unknown",
 ]
 
+# The parsed timestamp is read alongside the raw columns so that the
+# per-bucket window filter can actually run.  It is kept out of
+# ``_COLUMNS`` because that list doubles as the raw MRT field order.
+_READ_COLUMNS = _COLUMNS + ["ts"]
+
 _TIMESTAMP_PATTERN = re.compile(
     r"^(?:BGP4MP\|)?(\d{2})/(\d{2})/(\d{2})\s+(\d{2}):(\d{2}):(\d{2})"
 )
 
+# The decoded MRT feed writes its timestamp as "YYYY-MM-DD HH:MM:SS".
+# Older archives used bgpdump's "MM/DD/YY HH:MM:SS".  Both are accepted
+# here because the parquet cache is built from whatever archive the
+# bucket came from, and a strict single format silently nulls the whole
+# `ts` column for one of the two eras.
+_TS_FORMATS = ["%Y-%m-%d %H:%M:%S", "%m/%d/%y %H:%M:%S", "%m/%d/%Y %H:%M:%S"]
 
-def _ensure_dirs():
+
+def _parse_timestamp_expr():
+    """Parse the MRT timestamp column, tolerating both archive formats.
+
+    Polars' ``strptime`` takes a single format string, so the formats are
+    tried in order and the first one that yields a value wins per row.
+    A strict single format silently nulls the whole column for the other
+    era, and a null ``ts`` disables the per-bucket window filter.
+    """
+    expr = pl.lit(None, dtype=pl.Datetime)
+    for fmt in _TS_FORMATS:
+        parsed = pl.col("timestamp").str.strptime(
+            pl.Datetime, format=fmt, strict=False
+        )
+        expr = pl.coalesce([expr, parsed])
+    return expr
+
+# Cache schema version.  Bumping it invalidates every existing parquet
+# file, because version 1 stored announcements only and version 2 stores
+# withdrawals as well.
+_PARQUET_SCHEMA_VERSION = 2
+
+
+def ensure_dirs():
     PARQUET_DIR.mkdir(parents=True, exist_ok=True)
     DECODED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -102,49 +104,30 @@ def meta_path_for(parquet):
     return parquet.with_suffix(".meta.json")
 
 
-def _source_fingerprint(path):
-    """Return a fingerprint that survives `touch` and unstable mtime ns.
-
-    Uses size + inode + second-precision mtime.  Sticking to
-    ``st_mtime_ns`` made valid caches get invalidated whenever a tool
-    rewrote the decoded file with coarser timestamps (e.g. NFS, FUSE,
-    ``noatime`` mounts).
-    """
+def source_fingerprint(path):
+    """Return a fingerprint that survives `touch` and unstable mtime ns."""
     st = path.stat()
     return f"{st.st_size}:{st.st_ino}:{int(st.st_mtime)}"
 
 
-def _read_meta(parquet):
+def read_meta(parquet):
     mp = meta_path_for(parquet)
     if not mp.exists():
         return None
     try:
         return json.loads(mp.read_text())
-    except Exception:
+    except (ValueError):
         return None
 
 
-def _write_meta(parquet, source):
-    """Persist cache metadata atomically.
-
-    Bug fix 2026-09-13 (BUG-R93):
-      1. The previous code used a plain ``mp.write_text(...)`` which
-         truncated and rewrote the meta file non-atomically. Two
-         concurrent processes (or a reader arriving mid-write) could
-         see a partially-written JSON object and bail, deleting the
-         parquet on the next cache validation even though the cache
-         itself was intact. Use the tmp-then-os.replace pattern that
-         the rest of the codebase already adopts.
-      2. ``datetime.utcnow()`` was deprecated in Python 3.12 in favour
-         of ``datetime.now(timezone.utc)``. While the former still
-         works, the deprecation warnings pollute CI logs and the
-         behaviour is identical, so we move to the recommended form.
-    """
+def write_meta(parquet, source):
+    """Persist cache metadata atomically."""
     mp = meta_path_for(parquet)
     payload = json.dumps({
         "source": str(source),
-        "fingerprint": _source_fingerprint(source),
+        "fingerprint": source_fingerprint(source),
         "parquet_size": parquet.stat().st_size,
+        "schema_version": _PARQUET_SCHEMA_VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }, indent=2)
     try:
@@ -164,17 +147,31 @@ def _write_meta(parquet, source):
             pass
 
 
-def _is_cache_valid(parquet, source):
+def _parquet_version_matches(parquet) -> bool:
+    """True when the cached parquet carries the current schema version."""
+    meta = read_meta(parquet)
+    if meta is None:
+        return False
+    return meta.get("schema_version") == _PARQUET_SCHEMA_VERSION
+
+
+def is_cache_valid(parquet, source):
     if not parquet.exists():
+        return False
+    meta = read_meta(parquet)
+    if meta is None:
+        return False
+    # A cache written by an older schema version cannot be reused: the
+    # withdrawal records it lacks are exactly what the outage detector
+    # needs, and a stale file would silently score every event as
+    # "no withdrawal, therefore no outage".
+    if meta.get("schema_version") != _PARQUET_SCHEMA_VERSION:
         return False
     if source is None:
         return True
     if not source.exists():
         return False
-    meta = _read_meta(parquet)
-    if meta is None:
-        return False
-    return meta.get("fingerprint") == _source_fingerprint(source)
+    return meta.get("fingerprint") == source_fingerprint(source)
 
 
 _SCHEMA = {
@@ -187,13 +184,8 @@ _SCHEMA = {
 }
 
 
-def _align_to_canonical(df):
-    """Ensure every required column exists; missing columns become null.
-
-    Polars parquet requires consistent schemas across reads. MRT files vary in
-    column count (8–15 depending on router config) so we coerce each into the
-    canonical schema before writing.
-    """
+def align_to_canonical(df):
+    """Ensure every required column exists; missing columns become null."""
     out = df
     for col, dtype in _SCHEMA.items():
         if col not in out.columns:
@@ -201,42 +193,54 @@ def _align_to_canonical(df):
     return out.select(list(_SCHEMA.keys()))
 
 
-def _txt_to_announcements_df(txt_path):
+def txt_to_announcements_df(txt_path, include_withdrawals: bool = False):
+    """Read a decoded MRT file into the canonical frame.
+
+    ``include_withdrawals`` keeps the ``W`` records.  They are dropped by
+    default because every existing consumer (leak, hijack) only reasons
+    about announcements, and keeping them would inflate the frame for no
+    benefit.  The outage detector needs them -- a withdrawal is the
+    physical signature of a route loss -- so it asks for them explicitly.
+    """
     df = pl.read_csv(
         txt_path,
         separator="|",
         has_header=False,
         schema_overrides={f"column_{i}": pl.Utf8 for i in range(1, 16)},
         ignore_errors=True,
+        # A decoded MRT file occasionally carries a line with more
+        # pipe-separated fields than the schema declares.  Without this
+        # the whole file fails to parse, which loses every update in
+        # the window -- not just the offending line.
+        truncate_ragged_lines=True,
         low_memory=False,
     )
     # Re-map whatever columns are present onto canonical names.
     keep_idx = sorted(int(c.split("_")[1]) for c in df.columns if c.startswith("column_"))
     rename = {f"column_{i}": _COLUMNS[i - 1] for i in keep_idx if 1 <= i <= len(_COLUMNS)}
     df = df.rename(rename)
-    df = df.filter(pl.col("announce") == "A")
+    if not include_withdrawals:
+        df = df.filter(pl.col("announce") == "A")
     if df.is_empty():
         return df
     df = df.with_columns(
-        pl.col("timestamp").str.strptime(
-            pl.Datetime, format="%m/%d/%y %H:%M:%S", strict=False
-        ).alias("ts")
+        _parse_timestamp_expr().alias("ts")
     )
-    return _align_to_canonical(df)
+    return align_to_canonical(df)
 
 
-def _ensure_parquet(src_path):
-    _ensure_dirs()
+def ensure_parquet(src_path):
+    ensure_dirs()
     parquet = parquet_path_for(src_path)
-    if _is_cache_valid(parquet, src_path):
+    if is_cache_valid(parquet, src_path):
         return parquet
 
     try:
         if src_path.suffix == ".gz":
-            df = _read_gz_into_df(src_path)
+            df = read_gz_into_df(src_path)
         else:
-            df = _txt_to_announcements_df(src_path)
-    except Exception as exc:
+            df = txt_to_announcements_df(src_path, include_withdrawals=True)
+    except (AttributeError) as exc:
         logger.warning(f"_ensure_parquet failed for {src_path.name}: {exc}")
         return None
 
@@ -248,16 +252,16 @@ def _ensure_parquet(src_path):
     tmp = parquet.with_suffix(".parquet.tmp")
     df.write_parquet(tmp, compression="zstd", compression_level=3)
     tmp.replace(parquet)
-    _write_meta(parquet, src_path)
+    write_meta(parquet, src_path)
     return parquet
 
 
-def _read_gz_into_df(gz_path):
+def read_gz_into_df(gz_path):
     rows = []
     with gzip.open(gz_path, "rt", encoding="utf-8", errors="ignore") as f:
         for line in f:
             line = line.strip()
-            if not line or "|A|" not in line:
+            if not line or "|A|" not in line and "|W|" not in line:
                 continue
             parts = line.split("|")
             if len(parts) >= 6:
@@ -267,11 +271,9 @@ def _read_gz_into_df(gz_path):
         return pl.DataFrame()
     df = pl.DataFrame(rows, schema=_COLUMNS, orient="row")
     df = df.with_columns(
-        pl.col("timestamp").str.strptime(
-            pl.Datetime, format="%m/%d/%y %H:%M:%S", strict=False
-        ).alias("ts")
+        _parse_timestamp_expr().alias("ts")
     )
-    return _align_to_canonical(df)
+    return align_to_canonical(df)
 
 
 def list_window_files(start: datetime, end: datetime) -> list[Path]:
@@ -313,29 +315,10 @@ def purge_decoded_txt(
     progress_every: int = 500,
 ) -> dict:
     """Reclaim disk by deleting decoded/*.txt once their parquet mirror exists.
-
-    Why: decoded text is 5-25x larger than the equivalent parquet snapshot
-    and is only useful as a *source* for parquet generation. Once
-    `_ensure_parquet` has written a valid `updates.<stamp>.parquet` (verified
-    by the matching `updates.<stamp>.meta.json` whose fingerprint matches the
-    txt's size + mtime), the txt is redundant and safe to delete.
-
-    Args:
-        only_with_parquet: only delete txt files whose parquet mirror is
-            present AND has a matching `.meta.json` fingerprint. Default True.
-            Set False to delete all decoded txt (still safe: gz originals are
-            kept under UPDATES_ROOT if you need to regenerate parquet).
-        min_age_seconds: skip txt whose mtime is newer than this many seconds
-            ago. Lets in-flight decode jobs finish before being deleted.
-        dry_run: report counts/bytes without actually unlinking. Default True
-            so the function is safe to call from arbitrary hooks. Pass
-            dry_run=False to actually free disk.
-        progress_every: log progress every N files (set 0 to silence).
-
+    
     Returns:
-        Dict with `candidates`, `would_delete` (count), `bytes_reclaimed`,
-        and `errors`. Useful for telemetry / GC reporting.
-    """
+    Dict with `candidates`, `would_delete` (count), `bytes_reclaimed`,
+    and `errors`. Useful for telemetry / GC reporting."""
     import time as _time
 
     if not DECODED_DIR.exists():
@@ -361,12 +344,12 @@ def purge_decoded_txt(
             parquet = parquet_path_for(txt)
             if not parquet.exists():
                 continue
-            meta = _read_meta(parquet)
+            meta = read_meta(parquet)
             if meta is None:
                 continue
             # Only delete when the parquet was generated from THIS txt
             # (the fingerprint check guards against mismatched regeneration).
-            expected_fp = _source_fingerprint(txt)
+            expected_fp = source_fingerprint(txt)
             if meta.get("fingerprint") != expected_fp:
                 continue
 
@@ -411,19 +394,10 @@ def purge_decoded_txt(
     }
 
 
-def _ensure_underlying_source(stamp_str):
-    """Make sure at least one of (decoded txt, raw gz) exists for `stamp`.
-
-    Search order:
-      1. DECODED_DIR/updates.<stamp>.txt  – bgpdump-decoded text
-      2. UPDATES_ROOT/updates.<stamp>.gz – raw MRT gz
-      3. Download from RIPE RIS (this is the unavoidable network path for
-         events that fall outside the cached window).
-
-    On success, returns whichever path was found / created. On failure,
-    returns None (and logs the reason).
-    """
-    _ensure_dirs()
+def ensure_underlying_source(stamp_str):
+    """Make sure at least one of (decoded txt, raw gz) exists for `stamp`."""
+    stamp = stamp_str  # NOTE: parameter is `stamp_str`; body below uses `stamp`.
+    ensure_dirs()
 
     txt_path = DECODED_DIR / f"updates.{stamp}.txt"
     gz_path = UPDATES_ROOT / f"updates.{stamp}.gz"
@@ -443,13 +417,13 @@ def _ensure_underlying_source(stamp_str):
     #    The bucket lives at YYYY.MM/updates.YYYYMMDD.HHMM.gz on ris.ripe.net.
     try:
         cur_dt = datetime.strptime(f"{stamp.replace('.', '')}", "%Y%m%d%H%M")
-    except Exception:
+    except (ValueError):
         return None
     ym = cur_dt.strftime("%Y.%m")
     url = f"{RIPE_RIS_URL}{ym}/updates.{stamp}.gz"
     try:
         download_data(url)  # writes to UPDATES_ROOT
-    except Exception as exc:
+    except (AttributeError) as exc:
         logger.debug(f"Download failed for {stamp}: {exc}")
         return None
 
@@ -469,20 +443,17 @@ def iter_window_chunks(
     on_missing: str = "skip",
     columns: Optional[list[str]] = None,
     auto_download: bool = True,
+    include_withdrawals: bool = False,
 ) -> Iterator[pl.DataFrame]:
     """Yield Polars DataFrames covering [start, end] (5-minute windows).
 
-    `raw=True` returns all rows (no Announce filter).
-    `on_missing`:
-        "skip"   – silently skip windows without local data
-        "raise"  – raise FileNotFoundError
-        "wait"   – poll up to 30s waiting for a downloader to drop a file
-
-    `auto_download=True` (default) transparently downloads missing buckets
-    from RIPE RIS on first hit so the caller never sees a network gap.
+    ``include_withdrawals`` keeps the ``W`` records alongside the ``A``
+    ones.  The default drops them, which is what the leak and hijack
+    detectors want; the outage detector asks for them because a
+    withdrawal is the physical signature of a route loss.
     """
     if columns is None:
-        columns = _COLUMNS
+        columns = _READ_COLUMNS
 
     aligned = start.replace(minute=(start.minute // 5) * 5, second=0, microsecond=0)
     cur = aligned
@@ -493,18 +464,21 @@ def iter_window_chunks(
         parquet = PARQUET_DIR / f"updates.{stamp}.parquet"
 
         fpath: Optional[Path] = None
-        if parquet.exists():
+        # A parquet file is only usable when its schema version matches the
+        # current one.  An older file holds announcements only, so reusing
+        # it would silently strip the withdrawals the outage detector needs.
+        if parquet.exists() and _parquet_version_matches(parquet):
             fpath = parquet
         elif txt_path.exists() and txt_path.stat().st_size > 0:
-            fpath = _ensure_parquet(txt_path)
+            fpath = ensure_parquet(txt_path)
         elif gz_path.exists() and gz_path.stat().st_size > 0:
-            fpath = _ensure_parquet(gz_path)
+            fpath = ensure_parquet(gz_path)
         else:
             # No parquet / no txt / no gz — try to fetch from RIS.
             if auto_download:
-                src = _ensure_underlying_source(stamp)
+                src = ensure_underlying_source(stamp)
                 if src is not None:
-                    fpath = _ensure_parquet(src)
+                    fpath = ensure_parquet(src)
             if fpath is None:
                 if on_missing == "raise":
                     raise FileNotFoundError(f"No BGP update file for window {stamp}")
@@ -513,10 +487,10 @@ def iter_window_chunks(
                     while time.time() < deadline:
                         time.sleep(0.5)
                         if txt_path.exists() and txt_path.stat().st_size > 0:
-                            fpath = _ensure_parquet(txt_path)
+                            fpath = ensure_parquet(txt_path)
                             break
                         if gz_path.exists() and gz_path.stat().st_size > 0:
-                            fpath = _ensure_parquet(gz_path)
+                            fpath = ensure_parquet(gz_path)
                             break
                 # "skip" or timed out: continue to next window.
 
@@ -526,7 +500,7 @@ def iter_window_chunks(
 
         try:
             df = pl.read_parquet(fpath, columns=columns)
-        except Exception as exc:
+        except (AttributeError) as exc:
             logger.warning(f"parquet read failed for {fpath}: {exc}")
             cur += timedelta(minutes=5)
             continue
@@ -536,7 +510,13 @@ def iter_window_chunks(
             continue
 
         if not raw and "announce" in df.columns:
-            df = df.filter(pl.col("announce") == "A")
+            if include_withdrawals:
+                # "STATE" lines are collector state changes, not BGP
+                # updates; they carry no prefix and mean nothing to any
+                # detector.
+                df = df.filter(pl.col("announce").is_in(["A", "W"]))
+            else:
+                df = df.filter(pl.col("announce") == "A")
 
         # Re-confirm window: only emit rows within the current 5-min bucket.
         if "ts" in df.columns:
@@ -547,7 +527,7 @@ def iter_window_chunks(
                 df = df.filter(
                     (pl.col("ts") >= ts_lo) & (pl.col("ts") < ts_hi)
                 )
-            except Exception:
+            except (ValueError):
                 pass
 
         # ── Backward-compat column aliases ──────────────────────────────────
@@ -559,7 +539,7 @@ def iter_window_chunks(
         if rename_map:
             try:
                 df = df.rename(rename_map)
-            except Exception:
+            except (ValueError):
                 pass
 
         if not df.is_empty():

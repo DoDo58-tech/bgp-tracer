@@ -6,7 +6,7 @@ Core logic extracted from original routing_agent.py.
 import os
 import sys
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from detectors.hijack.hijack_detector import detect_hijacks
@@ -20,6 +20,86 @@ from config import BASE_URL, API_KEY, MODEL
 def get_outage_detector():
     from detectors.outage.outage_detector import RouteOutageDetector
     return RouteOutageDetector()
+
+
+def _outage_baseline_start(start_dt, end_dt, periodicity):
+    """The start of the baseline the outage detector needs.
+
+    The outage detector compares the event window against a baseline that
+    starts before the event, so the shared scan has to read that far
+    back.  The detector's own baseline-period logic is the reference; a
+    periodic event reaches further back than a single one.
+    """
+    try:
+        detector = get_outage_detector()
+        periods = detector.get_baseline_periods(start_dt, end_dt, periodicity)
+        if periods:
+            return min(p["start"] for p in periods)
+    except (AttributeError, TypeError, ValueError) as exc:
+        logger.debug(f"[routing_impl] could not derive the baseline start: {exc!r}")
+    try:
+        return start_dt - timedelta(hours=get_outage_detector().baseline_hours)
+    except (AttributeError, TypeError):
+        return start_dt
+
+
+def _hijack_from_shared(shared, asn, start_dt, end_dt, skip_forge):
+    """Shape the shared scan's hijack output like the detector's own."""
+    result = (shared or {}).get("hijack")
+    if not result:
+        return {
+            "success": False,
+            "error": "hijack detection produced no result",
+            "origin_hijacked": [],
+            "forge_hijacked": [],
+            "origin_hijacking": [],
+            "forge_hijacking": [],
+            "mitm_alerts": [],
+            "as_rel_file": None,
+            "prefix2as_file": None,
+            "asorg_file": None,
+        }
+
+    entry = result.get(str(asn)) or {}
+    return {
+        "success": True,
+        "error": None,
+        "origin_hijacked": entry.get("origin_hijacked", []),
+        "forge_hijacked": entry.get("forge_hijack", []),
+        "origin_hijacking": entry.get("origin_hijacking", []),
+        "forge_hijacking": entry.get("forge_hijacking", []),
+        "mitm_alerts": [],
+        "as_rel_file": None,
+        "prefix2as_file": None,
+        "asorg_file": None,
+    }
+
+
+def _leak_from_shared(shared, asn, start_time, end_time):
+    """Shape the shared scan's leak output like the detector's own."""
+    result = (shared or {}).get("leak")
+    if result is None:
+        # The shared scan could not run the leak detector at all (no
+        # PathProb table, say).  Fall back to the standalone detector so
+        # the event still gets a leak answer.
+        try:
+            return analyze_leak_surface(asn, start_time, end_time, target_asns=[str(asn)])
+        except TypeError:
+            return analyze_leak_surface(asn, start_time, end_time)
+        except (AttributeError) as exc:
+            logger.error(f"Leak detector error: {exc}")
+            return {"success": False, "route_leaks": [], "leak_count": 0}
+
+    out = dict(result)
+    out.setdefault("success", True)
+    out.setdefault("asn", str(asn))
+    out.setdefault("analysis_period", f"{start_time} to {end_time}")
+    out.setdefault("data_available", True)
+    out.setdefault("no_data_reason", "")
+    out.setdefault("anomalies_detected", bool(result.get("total_detected", 0)))
+    out.setdefault("anomaly_count", result.get("total_detected", 0))
+    out.setdefault("data_source", "shared_scan")
+    return out
 
 
 class LLMEnhancedRoutingAgent:
@@ -63,20 +143,19 @@ class LLMEnhancedRoutingAgent:
                 "outage_score":                   routing_results.get("outage_score", 0),
             }
         }
-        insights = await self._generate_llm_insights(data)
+        insights = await self.generate_llm_insights(data)
         return {**routing_results, "llm_enhanced": True, "llm_insights": insights,
                 "analysis_timestamp": datetime.now().isoformat()}
 
-    async def _generate_llm_insights(self, data):
+    async def generate_llm_insights(self, data):
         victim = data["victim_events"]
         attacker = data["attacker_events"]
         s = data["summary"]
         # Truncate long lists for the prompt
-        def _cap(lst, n=5):
+        def cap(lst, n=5):
             return lst[:n] if len(lst) > n else lst
 
-        # Bug fix 2026-09-15: AnomalyDetail is a dataclass; json.dumps can't
-        def _safe_json(obj, **kwargs):
+        def safe_json(obj, **kwargs):
             from dataclasses import asdict, is_dataclass
             return json.dumps(obj, default=lambda o: asdict(o) if is_dataclass(o) else str(o), **kwargs)
 
@@ -96,17 +175,17 @@ IMPORTANT — Two distinct roles must always be distinguished:
 
 === VICTIM ALERTS (AS{data['asn']}'s prefixes were hijacked) ===
 Origin hijacked (top {min(5, s['victim_of_origin_hijack_count'])} examples):
-{_safe_json(_cap(victim['origin_hijacked']), indent=2, ensure_ascii=False)}
+{safe_json(cap(victim['origin_hijacked']), indent=2, ensure_ascii=False)}
 
 Forge hijacked / MITM (top {min(5, s['victim_of_forge_hijack_count'])} examples):
-{_safe_json(_cap(victim['forge_hijacked']), indent=2, ensure_ascii=False)}
+{safe_json(cap(victim['forge_hijacked']), indent=2, ensure_ascii=False)}
 
 === ATTACKER ALERTS (AS{data['asn']} hijacked others' prefixes) ===
 Origin hijacking (AS{data['asn']} announced prefixes it does not own):
-{_safe_json(_cap(attacker['origin_hijacking']), indent=2, ensure_ascii=False)}
+{safe_json(cap(attacker['origin_hijacking']), indent=2, ensure_ascii=False)}
 
 Forge hijacking / MITM (AS{data['asn']} performed path manipulation):
-{_safe_json(_cap(attacker['forge_hijacking']), indent=2, ensure_ascii=False)}
+{safe_json(cap(attacker['forge_hijacking']), indent=2, ensure_ascii=False)}
 
 Return JSON with these exact keys (use English only):
 - role_analysis: string describing AS{data['asn']}'s role (victim, attacker, both, or none)
@@ -133,7 +212,7 @@ Return JSON with these exact keys (use English only):
                 snippet = _extract_json_object(raw)
                 if snippet is not None:
                     return json.loads(snippet)
-        except Exception as e:
+        except (AttributeError) as e:
             logger.error(f"LLM routing analysis failed: {e}")
         return {"error": "LLM unavailable"}
 
@@ -142,25 +221,13 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
                                   periodicity=None, periodicity_confidence=0.0, enable_mitm=True,
                                   skip_leak=False, skip_forge=None, skip_outage=False,
                                   skip_hijack_streaming=False):
-    """Run the routing agent.
-
-    Args:
-        skip_forge: if True, force-skip forge detection regardless of enable_mitm.
-                    If None (default), use ``not enable_mitm`` for backward compatibility.
-        skip_outage: if True, skip the slow 24h-baseline outage detector. Default False
-                     (kept for backward compat with one-phase legacy mode).
-        skip_hijack_streaming: if True, skip the chunked streaming hijack detector.
-                    Caller is responsible for filling origin_hijacked / origin_hijacking
-                    in the result (e.g. the Phase-1 quick path uses a single-pass
-                    vectorized detector instead).
-    """
+    """Run the routing agent."""
     if skip_forge is None:
         skip_forge = not enable_mitm
 
     # NOTE (2026-09-14, reverting BUG-R134 fallback):
     try:
-        # Bug fix 2026-09-13 (BUG-R110): the previous implementation tried
-        def _parse_ts(value, label):
+        def parse_ts(value, label):
             if value is None:
                 return None
             if isinstance(value, datetime):
@@ -198,8 +265,8 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
                 )
                 return None
 
-        start_dt = _parse_ts(start_time, "start_time")
-        end_dt = _parse_ts(end_time, "end_time")
+        start_dt = parse_ts(start_time, "start_time")
+        end_dt = parse_ts(end_time, "end_time")
         if start_dt is None or end_dt is None:
             logger.warning(
                 f"[routing_impl] routing analysis aborted — "
@@ -222,11 +289,42 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
 
         logger.info(f"Routing analysis AS{asn}: {start_time}→{end_time} (MITM={enable_mitm}, skip_forge={skip_forge})")
 
+        # ── One read, three detectors ──────────────────────────────────
+        # The hijack detector, the leak detector and the outage detector
+        # used to open the update stream each on their own, so an event
+        # read the same window three times.  A shared scan reads it once
+        # and dispatches every chunk.
+        #
+        # The outage detector needs a baseline that may start a day
+        # earlier, so the scan reads the union of the windows and routes
+        # the baseline chunks to the outage detector alone.
+        requested = []
+        if not skip_hijack_streaming:
+            requested.append("hijack")
+        if not skip_leak:
+            requested.append("leak")
+        if not skip_outage:
+            requested.append("outage")
+
+        baseline_start = None
+        if "outage" in requested:
+            baseline_start = _outage_baseline_start(start_dt, end_dt, periodicity)
+
+        shared = {}
+        if requested:
+            from detectors.shared_scan import SharedUpdateScan
+
+            scan = SharedUpdateScan(
+                start=start_dt,
+                end=end_dt,
+                target_asns=[str(asn)],
+                detectors=requested,
+                baseline_start=baseline_start,
+            )
+            shared = scan.run() or {}
+
         if skip_hijack_streaming:
             # Same placeholder problem as the leak/outage branches: an empty
-            # hijack list plus success=True reads as "hijack detection ran and
-            # found nothing". Mark it as not-run so the report can say Skipped
-            # rather than asserting a clean routing result.
             hijack_results = {
                 "success": True,
                 "error": None,
@@ -245,8 +343,7 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
             }
             logger.info("Hijack streaming skipped (light mode single-pass)")
         else:
-            hijack_results = detect_hijacks(start_dt, end_dt, asn, validate_with_updates=False,
-                                           skip_forge_detection=skip_forge)
+            hijack_results = _hijack_from_shared(shared, asn, start_dt, end_dt, skip_forge)
             if not hijack_results.get("success"):
                 logger.warning(
                     f"Hijack detection failed for AS{asn}: {hijack_results.get('error', 'unknown')}. "
@@ -267,12 +364,6 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
 
         if skip_leak:
             # BUG (2026-10-05): this placeholder reported `success: True` with
-            # `leak_count: 0`, which is indistinguishable from "leak detection
-            # ran and found nothing". Consumers that only look at success +
-            # leak_count therefore reported a clean result for an analysis that
-            # never executed. `success` now means "produced a result";
-            # `skipped` marks the placeholder, and `leak_count` is None so a
-            # reader cannot mistake 0 for a measurement.
             leak_result = {
                 "success": True,
                 "route_leaks": [],
@@ -286,17 +377,7 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
             }
             logger.info("Leak detection skipped in light mode")
         else:
-            # ── Optimization 2026-09-17: pass target_asns so leak detector
-            try:
-                leak_result = analyze_leak_surface(
-                    asn,
-                    start_time,
-                    end_time,
-                    target_asns=[str(asn)],
-                )
-            except TypeError:
-                # Older signature without target_asns — fall back.
-                leak_result = analyze_leak_surface(asn, start_time, end_time)
+            leak_result = _leak_from_shared(shared, asn, start_time, end_time)
 
         if skip_outage:
             # Same placeholder problem as the leak branch above: a skipped
@@ -314,9 +395,13 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
         else:
             try:
                 outage_detector = get_outage_detector()
-                outage_result = outage_detector.analyze(asn, start_time, end_time,
-                                                       periodicity=periodicity, periodicity_confidence=periodicity_confidence)
-            except Exception as e:
+                outage_result = outage_detector.analyze(
+                    asn, start_time, end_time,
+                    periodicity=periodicity,
+                    periodicity_confidence=periodicity_confidence,
+                    timeseries=(shared.get("outage") or {}).get(str(asn)),
+                )
+            except (AttributeError) as e:
                 logger.error(f"Outage detector error: {e}")
                 outage_result = {"success": False, "is_outage_suspected": False, "outage_score": 0.0, "error": str(e)}
 
@@ -331,14 +416,6 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
         _forge_h = hijack_results.get("forge_hijacked", [])
 
         # `leak_count` is the length of the returned list, which the detector
-        # caps at max_leaks. Carry the true count and the truncation flag
-        # alongside it so the report can say ">=N (truncated)" rather than
-        # presenting the cap as a measurement.
-        #
-        # When leak detection was skipped the detector reports leak_count=None
-        # (not 0), so normalise to 0 here for arithmetic and carry
-        # `leak_analysis_skipped` so the report can say "Skipped" instead of
-        # "0 leaks detected".
         _leak_skipped = bool(leak_result.get("skipped")) if isinstance(leak_result, dict) else False
         _leak_count = leak_result.get("leak_count") if isinstance(leak_result, dict) else 0
         _leak_count = 0 if _leak_count is None else int(_leak_count)
@@ -359,6 +436,7 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
             "route_leaks": leak_result.get("route_leaks", []) if isinstance(leak_result, dict) else [],
             "leak_count": _leak_count,
             "leak_count_total": _leak_total,
+            "leak_origin_announcements": leak_result.get("leak_origin_announcements") if isinstance(leak_result, dict) else None,
             "leak_results_truncated": bool(leak_result.get("truncated", False)) if isinstance(leak_result, dict) else False,
             "leak_truncation_limit": leak_result.get("truncation_limit") if isinstance(leak_result, dict) else None,
             "leak_analysis_skipped": _leak_skipped,
@@ -378,6 +456,6 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
             combined = await llm_agent.analyze_routing_with_llm(combined, asn, start_time, end_time)
 
         return combined
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Routing agent error: {e}")
         return {"success": False, "error": str(e), "asn": asn}

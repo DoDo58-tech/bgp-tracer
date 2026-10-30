@@ -30,14 +30,14 @@ class ParentPrefixTrie:
             
             if version == 4:
                 self.ipv4_prefixes[prefix_str] = (network, origins)
-                self._insert_into_trie(self.ipv4_root, network, prefix_str, origins)
+                self.insert_into_trie(self.ipv4_root, network, prefix_str, origins)
             else:  # IPv6
                 self.ipv6_prefixes[prefix_str] = (network, origins)
-                self._insert_into_trie(self.ipv6_root, network, prefix_str, origins)
-        except Exception as e:
+                self.insert_into_trie(self.ipv6_root, network, prefix_str, origins)
+        except (AttributeError) as e:
             logger.warning(f"Failed to insert prefix {prefix_str}: {e}")
 
-    def _insert_into_trie(self, root, network, prefix_str, origins):
+    def insert_into_trie(self, root, network, prefix_str, origins):
         ip_int = int(network.network_address)
         prefixlen = network.prefixlen
 
@@ -124,7 +124,7 @@ class ParentPrefixTrie:
             
             return result
             
-        except Exception as e:
+        except (AttributeError) as e:
             logger.debug(f"Error in parent prefix lookup for {target_prefix}: {e}")
             return None, None
 
@@ -151,7 +151,7 @@ def build_optimized_prefix_lookup(prefix_to_as):
             network = ipaddress.ip_network(prefix_str, strict=False)
             trie.insert(prefix_str, origins)
             valid_count += 1
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"Invalid prefix format: {prefix_str} - {e}")
             invalid_count += 1
             continue
@@ -181,7 +181,7 @@ def find_parent_prefix_optimized(target_prefix, trie):
                 if parent_network.supernet_of(target_network):
                     return parent_prefix, origins
             return None, None
-        except Exception as e:
+        except (AttributeError) as e:
             logger.debug(f"Error in parent prefix lookup for {target_prefix}: {e}")
             return None, None
 
@@ -279,28 +279,13 @@ def check_origin_hijack_vectorized(row, prefix_to_as, target_as=None):
             'target_as': target_as,  # Store target AS for reference
         }
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.warning(f"Error in origin hijack check: {e}")
         return None
 
 
 def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_by_as=None):
-    """Vectorized origin hijack detection.
-
-    Bug fix (2026-09-13, BUG-R39): the previous implementation was a
-    duplicated try-block; the second try (line 432-580) was unreachable
-    dead code, and the first try relied on a crude ``parent24_prefix`` /
-    ``parent16_prefix`` heuristic that mis-classified most sub-prefix
-    hijacks (e.g. /29 nested under a /24 would always be checked against
-    the same /24, but a /28 nested under a /27 owned by a different AS
-    would slip through).
-
-    The new implementation builds a ``ParentPrefixTrie`` once per
-    invocation, marks every announcement with ``owned_by_target`` based
-    on trie lookup of the most-specific parent, and produces the same
-    alert-dict shape that downstream consumers (``hijack_detector``,
-    ``chief_agent``) expect.
-    """
+    """Vectorized origin hijack detection."""
     if not isinstance(announcements, pl.DataFrame) or announcements.is_empty():
         return []
     if not prefix_to_as:
@@ -312,7 +297,6 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
         len(announcements), target_as,
     )
 
-    # Bug fix 2026-09-14: cache the trie at module level so chunk × AS loops
     if not hasattr(detect_origin_hijacks, '_trie_cache'):
         detect_origin_hijacks._trie_cache = {}
     cache = detect_origin_hijacks._trie_cache
@@ -324,8 +308,7 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
         cache[p2a_id] = trie
     exact_owners = prefix_to_as  # alias for backward-compat in make_alert
 
-    # Bug fix 2026-09-13 (BUG-R39): legacy code path used only `prefix_to_as`
-    def _strip_as(x):
+    def strip_as(x):
         if x is None:
             return None
         s = str(x).strip()
@@ -333,12 +316,12 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
             s = s[2:]
         return s
 
-    target_as_canonical = _strip_as(target_as_str)
+    target_as_canonical = strip_as(target_as_str)
 
     if prefixes_by_as and target_as_canonical is not None:
         target_owned_prefixes = set()
         for k, pref_set in prefixes_by_as.items():
-            if _strip_as(k) == target_as_canonical:
+            if strip_as(k) == target_as_canonical:
                 if isinstance(pref_set, (list, set, tuple)):
                     target_owned_prefixes.update(pref_set)
                 elif pref_set:
@@ -349,7 +332,7 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
         target_owned_prefixes = set()
         for pfx, owners in prefix_to_as.items():
             owners_iter = owners if isinstance(owners, (list, set, tuple)) else [owners]
-            if any(_strip_as(o) == target_as_canonical for o in owners_iter):
+            if any(strip_as(o) == target_as_canonical for o in owners_iter):
                 target_owned_prefixes.add(pfx)
 
     # ── 2. Extract origin AS from as-path (last element, vectorized) ──────
@@ -358,23 +341,37 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
     ])
 
     # ── 3. Per-row owned_by_target + parent_prefix ─────────────────────────
+    # Three states have to be distinguished, not two:
+    #   owned   — the snapshot records the target as an origin of this prefix
+    #   foreign — the snapshot records some other origin (a real conflict)
+    #   unknown — the snapshot does not cover this prefix at all
+    # Collapsing `unknown` into `foreign` is what produced the spurious
+    # `origin_hijacking` alerts: a prefix the snapshot never covered was
+    # read as "the target is announcing someone else's prefix".
     owned_exact = {}
+    foreign_exact = {}
     for pfx in df.get_column("prefix").unique().to_list():
         if pfx in prefix_to_as:
             owners = prefix_to_as[pfx]
             owners_iter = owners if isinstance(owners, (list, set, tuple)) else [owners]
-            owned_exact[pfx] = any(
-                _strip_as(o) == target_as_canonical
+            is_owned = any(
+                strip_as(o) == target_as_canonical
                 for o in owners_iter if o is not None
             )
+            owned_exact[pfx] = is_owned
+            foreign_exact[pfx] = not is_owned
         else:
             owned_exact[pfx] = False
+            foreign_exact[pfx] = False
 
     # Attach exact-match result to df (vectorized replace_strict).
     df = df.with_columns([
         pl.col("prefix").replace_strict(
             owned_exact, default=False, return_dtype=pl.Boolean,
         ).alias("owned_exact"),
+        pl.col("prefix").replace_strict(
+            foreign_exact, default=False, return_dtype=pl.Boolean,
+        ).alias("foreign_exact"),
     ])
 
     # Step B — sub-prefix trie for non-exact matches.
@@ -417,7 +414,7 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
           .then(pl.col("prefix"))
           .otherwise(pl.col("_parent_via_trie"))
           .alias("parent_prefix"),
-    ]).drop("_parent_via_trie")
+    ])
 
     # ── 4. Classify hijack type ───────────────────────────────────────────
     if target_as_canonical is not None:
@@ -426,14 +423,72 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
               .then(pl.col("origin_as").str.slice(2))
               .otherwise(pl.col("origin_as"))
         )
+        # The AS path is split so that the target's position in it can be
+        # tested.  A customer of the target announces a more-specific
+        # prefix inside the target's allocation; in that announcement the
+        # target appears immediately before the origin AS.  Such an
+        # announcement is legitimate origination, not a hijack.
+        df = df.with_columns([
+            pl.col("as-path").str.replace("|", " ").str.split(by=" ").alias("_path_parts"),
+        ])
+        df = df.with_columns([
+            pl.col("_path_parts").list.eval(
+                pl.element().str.strip_chars().str.replace(r"^AS", "", literal=False)
+            ).alias("_path_parts"),
+        ])
+        df = df.with_columns([
+            pl.col("_path_parts").list.slice(0, pl.col("_path_parts").list.len() - 1).alias("_path_without_origin"),
+        ])
+        df = df.with_columns([
+            pl.col("_path_without_origin").list.last().alias("_predecessor"),
+        ])
+        target_in_path = pl.col("_path_parts").list.contains(pl.lit(target_as_canonical))
+        # The customer case: the AS immediately before the origin is the
+        # target itself.
+        customer_announcement = (
+            (pl.col("_predecessor") == pl.lit(target_as_canonical))
+            & (origin_as_canonical != pl.lit(target_as_canonical))
+        )
+        # The target appears in the path but not as the direct predecessor
+        # of the origin: the target is transit for this announcement.
+        target_is_transit = target_in_path & (~customer_announcement)
+
+        # A prefix the snapshot covers and attributes to another AS is the
+        # only basis for an `origin_hijacking` verdict.  A prefix the
+        # snapshot does not cover is unknown, not foreign: the target
+        # announcing it is not evidence that the target stole it.
+        # `foreign_exact` covers the exact prefix; a sub-prefix of a
+        # target-owned parent is covered too, because the parent snapshot
+        # entry names the target as the origin of that block.
+        covered_by_snapshot = (
+            pl.col("foreign_exact")
+            | (
+                (pl.col("owned_exact") == False) &
+                (pl.col("_parent_via_trie").is_not_null())
+            )
+        )
+        # `origin_hijacked` requires the target to be the legitimate origin
+        # of the announced prefix, or of the block that contains it, and
+        # the announcement must not be the target's own customer
+        # originating a more-specific prefix.
+        victim_covered = (
+            (pl.col("owned_exact") == True) &
+            (origin_as_canonical != pl.lit(target_as_canonical))
+        ) | (
+            (pl.col("owned_exact") == False) &
+            (pl.col("_parent_via_trie").is_not_null()) &
+            (~customer_announcement) &
+            (~target_is_transit)
+        )
         df = df.with_columns([
             pl.when(
-                (pl.col("owned_by_target") == True) &
+                victim_covered &
                 (origin_as_canonical != pl.lit(target_as_canonical))
             )
             .then(pl.lit("origin_hijacked"))
             .when(
                 (pl.col("owned_by_target") == False) &
+                (covered_by_snapshot == True) &
                 (origin_as_canonical == pl.lit(target_as_canonical))
             )
             .then(pl.lit("origin_hijacking"))
@@ -460,14 +515,8 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
         .to_dicts()
     )
 
-    def _lo_for(r):
-        """Resolve legitimate origins for an alert row.
-
-        Preference order:
-          1. exact prefix match in exact_owners (most accurate)
-          2. parent-prefix origins already computed by the trie
-          3. empty fallback
-        """
+    def lo_for(r):
+        """Resolve legitimate origins for an alert row."""
         if r["prefix"] in exact_owners:
             lo = exact_owners[r["prefix"]]
         elif r.get("parent_prefix") and r["parent_prefix"] in exact_owners:
@@ -479,7 +528,7 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
         return [str(lo)]
 
     def make_alert(r, htype):
-        lo = _lo_for(r)
+        lo = lo_for(r)
         if htype == "origin_hijacked":
             return {
                 "hijack_type": "origin_hijacked",
@@ -525,7 +574,7 @@ def detect_origin_hijacks(announcements, prefix_to_as, target_as=None, prefixes_
 
 
 def batch_check_connection_frequency(updates_df, as_relationships,
-                                   target_as, fake_conn_cache_manager, full_day_data=None,
+                                   target_as, full_day_data=None,
                                    use_es: bool = False):
     try:
         df = updates_df if isinstance(updates_df, pl.DataFrame) else pl.DataFrame(updates_df)
@@ -651,7 +700,6 @@ def batch_check_connection_frequency(updates_df, as_relationships,
         suspicious_rows = set()
 
         if unique_fake_keys and use_es:
-            # Bug fix: utils.es_conn_freq was never implemented in this repo,
             batch_results = None
             try:
                 from utils.es_conn_freq import batch_query_es_connection_frequency as _es_batch
@@ -673,8 +721,7 @@ def batch_check_connection_frequency(updates_df, as_relationships,
                     )
                     suspicious_rows.update(rows_with_pair.to_list())
         else:
-            # Bug fix 2026-09-13 (BUG-R57): previously the no-ES path
-            frequency_data = _batch_connection_frequency_polars(
+            frequency_data = batch_connection_frequency_polars(
                 unique_fake_keys,
                 full_day_data if full_day_data is not None else df,
             )
@@ -703,53 +750,25 @@ def batch_check_connection_frequency(updates_df, as_relationships,
                 '_fake_as1_list', '_fake_as2_list', '_fake_conn_list']
         return result.drop([c for c in drop if c in result.columns])
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Vectorized forge detection failed: {e} — using legacy fallback")
         import traceback; traceback.print_exc()
-        return _batch_check_connection_frequency_legacy(
+        return batch_check_connection_frequency_legacy(
             updates_df, as_relationships, target_as,
-            fake_conn_cache_manager, full_day_data,
+            full_day_data,
         )
 
 
-def _batch_connection_frequency_polars(conn_keys, full_day_data):
+def batch_connection_frequency_polars(conn_keys, full_day_data):
     """Compute ``analyze_connection_frequency`` results in one pass.
-
-    Bug fix 2026-09-13 (BUG-R57 + BUG-R82): the original implementation
-    called ``analyze_connection_frequency`` once per unique fake
-    connection key, each call being a full substring scan of the
-    ``as-path`` column. The first attempt at a batched path still
-    iterated over keys and ran ``pl.col('as-path').str.contains`` per
-    key, which is *equivalent* in cost to the original per-key path —
-    it just moved the cost into one function call. This version
-    actually batches by:
-
-      1. Splitting each ``as-path`` string into an AS-pair list via
-         ``str.split(" ")`` + adjacent-pair ``shift(-1)`` combo, in a
-         single ``with_columns`` expression (vectorised).
-      2. Computing a per-row boolean match for *all* keys in one
-         ``list.eval(element.list.contains(any=True))`` expression —
-         instead of running ``list.contains(k)`` per key separately.
-         Polars fuses this across the whole batch.
-      3. Capping the number of keys processed per call and falling
-         back to the legacy path for the overflow tail so a backbone
-         AS with 50k unique pairs doesn't OOM.
-
-    Args:
-        conn_keys: list of unique ``"as1|as2"`` strings to score.
-        full_day_data: Polars DataFrame of BGP updates with an
-            ``as-path`` column. May be ``None`` (returns ``None`` per
-            key to signal "no data"; caller can fall back to the
-            per-key path).
-
+    
     Returns:
-        dict ``{conn_key: {count, total_updates, frequency_ratio,
-        is_suspicious, …}}``. ``is_suspicious`` matches the legacy
-        rule of ``frequency_ratio <= adaptive_threshold`` via
-        ``calculate_adaptive_threshold``. When the input is missing or
-        empty, returns an empty dict so the caller can degrade
-        gracefully.
-    """
+    dict ``{conn_key: {count, total_updates, frequency_ratio,
+    is_suspicious, …}}``. ``is_suspicious`` matches the legacy
+    rule of ``frequency_ratio <= adaptive_threshold`` via
+    ``calculate_adaptive_threshold``. When the input is missing or
+    empty, returns an empty dict so the caller can degrade
+    gracefully."""
     if not conn_keys:
         return {}
     if full_day_data is None:
@@ -757,7 +776,7 @@ def _batch_connection_frequency_polars(conn_keys, full_day_data):
     if not isinstance(full_day_data, pl.DataFrame):
         try:
             full_day_data = pl.DataFrame(full_day_data)
-        except Exception:
+        except (ValueError):
             return {k: None for k in conn_keys}
     if full_day_data.is_empty() or 'as-path' not in full_day_data.columns:
         return {k: None for k in conn_keys}
@@ -809,7 +828,7 @@ def _batch_connection_frequency_polars(conn_keys, full_day_data):
         try:
             matched_mask = full_day_data.select(union_expr).to_series()
             df = full_day_data.filter(matched_mask)
-        except Exception:
+        except (ValueError):
             df = full_day_data
 
         # Per-key scan: for each key, count rows where ``as-path``
@@ -820,7 +839,7 @@ def _batch_connection_frequency_polars(conn_keys, full_day_data):
             for k in valid_keys:
                 try:
                     c = df.select(as_path_col.str.contains(k).sum()).item()
-                except Exception:
+                except (ValueError):
                     c = 0
                 counts_by_key[k] = int(c or 0)
 
@@ -828,11 +847,6 @@ def _batch_connection_frequency_polars(conn_keys, full_day_data):
             count = counts_by_key.get(k, 0)
             ratio = (count / total_updates) if total_updates else 0.0
             threshold = calculate_adaptive_threshold(full_day_data, k, '')
-            # BUG FIX 2026-10-15: same as analyze_connection_frequency — if
-            # the connection never appears, the connection is not suspicious
-            # (no forge event to flag). Previously ``ratio <= threshold`` was
-            # always True for count==0, marking every absent pair as
-            # suspicious and over-counting forge alerts in outage windows.
             if count == 0:
                 is_suspicious = False
             else:
@@ -850,7 +864,7 @@ def _batch_connection_frequency_polars(conn_keys, full_day_data):
                 'note': f'Analyzed {total_updates:,} updates (batch)',
                 'analysis_timestamp': '',
             }
-    except Exception as _e:
+    except (AttributeError) as _e:
         # Top-level failure: degrade to per-key None so caller falls
         # back to the legacy path.
         logger.debug(f"[batch-pol] fast path failed: {_e!r}")
@@ -861,14 +875,14 @@ def _batch_connection_frequency_polars(conn_keys, full_day_data):
     for k in overflow:
         try:
             result[k] = analyze_connection_frequency(k, '', full_day_data)
-        except Exception:
+        except (KeyError, IndexError):
             result[k] = None
 
     return result
 
 
-def _batch_check_connection_frequency_legacy(updates_df, as_relationships,
-                                   target_as, fake_conn_cache_manager, full_day_data=None):
+def batch_check_connection_frequency_legacy(updates_df, as_relationships,
+                                   target_as, full_day_data=None):
     try:
         df = updates_df if isinstance(updates_df, pl.DataFrame) else pl.DataFrame(updates_df)
         if df.is_empty():
@@ -883,7 +897,6 @@ def _batch_check_connection_frequency_legacy(updates_df, as_relationships,
             ])
 
         all_fake_pairs: Dict[str, Dict] = {}
-        has_cache = fake_conn_cache_manager is not None
 
         as_paths = df['as-path'].fill_null('').to_list()
         dates = df['date'].to_list()
@@ -952,7 +965,7 @@ def _batch_check_connection_frequency_legacy(updates_df, as_relationships,
             pl.Series('fake_connections', fake_conn_list)
         ])
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Legacy fallback also failed: {e}")
         import traceback; traceback.print_exc()
         if isinstance(updates_df, pl.DataFrame):
@@ -962,146 +975,6 @@ def _batch_check_connection_frequency_legacy(updates_df, as_relationships,
                 pl.lit('[]').alias('fake_connections'),
             ])
         return updates_df
-
-        # ========== PHASE 1: Collect all fake AS pairs from all updates (with deduplication) ==========
-        all_fake_pairs: Dict[str, Dict] = {}  # conn_key -> {as1, as2, timestamps: []}
-
-        # Determine if we have cache manager
-        has_cache = fake_conn_cache_manager is not None
-
-        if has_cache:
-            from detectors.hijack.hijack_cache_manager import get_asrel_hash, get_cached_as_pair, set_cached_as_pair
-            asrel_hash = get_asrel_hash(as_relationships)
-        else:
-            asrel_hash = None
-
-        # Get data as lists for processing
-        as_paths = df['as-path'].fill_null('').to_list()
-        dates = df['date'].to_list()
-        timestamps_col = df['timestamp'].to_list()
-
-        # First pass: identify all fake connections with their metadata
-        for idx, (as_path_str, date_str, ts) in enumerate(zip(as_paths, dates, timestamps_col)):
-            as_path_list = str(as_path_str).split()
-            for i in range(len(as_path_list) - 1):
-                as1, as2 = as_path_list[i], as_path_list[i + 1]
-                conn_key = f"{as1}|{as2}"
-
-                if has_cache:
-                    # Check AS pair cache (is this connection valid in AS relationships?)
-                    cached_pair = get_cached_as_pair(as1, as2, date_str, asrel_hash)
-                    if cached_pair is not None:
-                        is_fake = cached_pair['is_fake']
-                    else:
-                        is_fake = (as1, as2) not in as_pairs
-                        set_cached_as_pair(as1, as2, date_str, asrel_hash, is_fake, date_str)
-                else:
-                    # No cache manager - just check directly
-                    is_fake = (as1, as2) not in as_pairs
-
-                if is_fake:
-                    if conn_key not in all_fake_pairs:
-                        all_fake_pairs[conn_key] = {
-                            'as1': as1,
-                            'as2': as2,
-                            'update_indices': [],
-                            'dates': set(),
-                            'timestamps': []
-                        }
-                    all_fake_pairs[conn_key]['update_indices'].append(idx)
-                    all_fake_pairs[conn_key]['dates'].add(date_str)
-                    all_fake_pairs[conn_key]['timestamps'].append(ts)
-
-        logger.info(f"Found {len(all_fake_pairs)} unique fake AS pairs to analyze (deduplicated from updates)")
-
-        if not all_fake_pairs:
-            # No fake connections found - mark all as normal and return
-            df = df.with_columns([
-                pl.lit(False).alias('connection_frequency_suspicious'),
-                pl.lit(False).alias('has_fake_connect'),
-                pl.lit('[]').alias('fake_connections')
-            ])
-            logger.info("No fake AS pairs detected in any updates")
-            return df
-
-        # ========== PHASE 2: Batch query ES for each unique fake pair (with caching) ==========
-        frequency_results: Dict[str, Dict] = {}  # conn_key -> frequency_data
-
-        for conn_key, pair_data in all_fake_pairs.items():
-            # Use the most common date or latest timestamp for this pair
-            dates_list = list(pair_data['dates'])
-            date_str = dates_list[0] if dates_list else ''
-
-            if has_cache:
-                # Check if cached
-                if fake_conn_cache_manager.is_fake_conn_cached(conn_key, date_str):
-                    cached_result = fake_conn_cache_manager.get_cached_fake_conn_frequency(conn_key, date_str)
-                    frequency_results[conn_key] = cached_result
-                    continue
-
-            # Query ES for frequency
-            # Use the latest timestamp from this pair's updates
-            end_ts = pair_data['timestamps'][-1] if pair_data['timestamps'] else date_str
-            frequency_data = analyze_connection_frequency(
-                conn_key,
-                date_str,
-                df if full_day_data is None else full_day_data,
-                end_timestamp=end_ts,
-            )
-
-            if has_cache:
-                # Cache the result
-                fake_conn_cache_manager.set_cached_fake_conn_frequency(conn_key, date_str, frequency_data)
-
-            frequency_results[conn_key] = frequency_data
-
-        # ========== PHASE 3: Mark suspicious updates based on pre-computed results ==========
-        suspicious_indices = set()
-
-        for conn_key, pair_data in all_fake_pairs.items():
-            freq_data = frequency_results.get(conn_key, {})
-            is_suspicious = freq_data.get('is_suspicious', False)
-
-            if is_suspicious:
-                suspicious_indices.update(pair_data['update_indices'])
-
-        # Build fake connections info and update DataFrame
-        fake_conn_info_by_idx = {}
-        for conn_key, pair_data in all_fake_pairs.items():
-            for idx in pair_data['update_indices']:
-                if idx not in fake_conn_info_by_idx:
-                    fake_conn_info_by_idx[idx] = []
-                fake_conn_info_by_idx[idx].append({
-                    'as1': pair_data['as1'],
-                    'as2': pair_data['as2'],
-                    'path': as_paths[idx] if idx < len(as_paths) else '',
-                    'timestamp': timestamps_col[idx] if idx < len(timestamps_col) else ''
-                })
-
-        # Create result columns
-        has_fake_list = [False] * len(df)
-        fake_conn_list = ['[]'] * len(df)
-        is_suspicious_list = [False] * len(df)
-
-        for idx in fake_conn_info_by_idx:
-            if idx < len(has_fake_list):
-                has_fake_list[idx] = True
-                fake_conn_list[idx] = json.dumps(fake_conn_info_by_idx[idx])
-
-        for idx in suspicious_indices:
-            if idx < len(is_suspicious_list):
-                is_suspicious_list[idx] = True
-
-        df = df.with_columns([
-            pl.Series('connection_frequency_suspicious', is_suspicious_list),
-            pl.Series('has_fake_connect', has_fake_list),
-            pl.Series('fake_connections', fake_conn_list)
-        ])
-
-        if suspicious_indices:
-            logger.info(f"Marked {len(suspicious_indices)} updates as suspicious based on connection frequency")
-
-        return df
 
 
 def calculate_adaptive_threshold(updates_df, fake_connection, date_str):
@@ -1127,7 +1000,7 @@ def calculate_adaptive_threshold(updates_df, fake_connection, date_str):
         try:
             as1, as2 = fake_connection.split('|')
             target_as = as1 if as1.isdigit() else as2
-        except Exception:
+        except (ValueError):
             return DEFAULT_FORGE_THRESHOLD
 
         # Count AS activity using polars
@@ -1150,7 +1023,7 @@ def calculate_adaptive_threshold(updates_df, fake_connection, date_str):
 
         return threshold
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.warning(f"Error calculating adaptive threshold: {e}")
         return DEFAULT_FORGE_THRESHOLD
 
@@ -1255,12 +1128,6 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
         # Dynamic threshold based on AS activity level
         # Calculate threshold based on the AS's activity in the full day data
         threshold_used = calculate_adaptive_threshold(df, fake_connection, date_str)
-        # BUG FIX 2026-10-15: previous logic ``frequency_ratio <= threshold_used``
-        # marked every absent connection as suspicious because ``0 <= anything`` is
-        # always True. The detector's job is to flag *active* rare connections,
-        # not the absence of a connection. If ``connection_count == 0`` there is
-        # no forge event to investigate. Require at least one matching update
-        # before considering the connection suspicious.
         if connection_count == 0:
             is_suspicious = False
         else:
@@ -1283,7 +1150,7 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
 
         return result
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error analyzing connection frequency: {e}")
         return {
             'connection': fake_connection,
@@ -1295,7 +1162,7 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
 
 
 def detect_forge_hijacks(updates_df, as_relationships,
-                        target_as, fake_conn_cache_manager, full_day_data=None,
+                        target_as, full_day_data=None,
                         prefix_to_as=None, use_es: bool = False, *args, **kwargs):
     try:
         logger.info(f"Detecting forged path hijacks for AS{target_as}")
@@ -1310,7 +1177,7 @@ def detect_forge_hijacks(updates_df, as_relationships,
             return [], df
 
         analyzed_df = batch_check_connection_frequency(
-            df, as_relationships, target_as, fake_conn_cache_manager, full_day_data,
+            df, as_relationships, target_as, full_day_data,
             use_es=use_es
         )
 
@@ -1377,66 +1244,13 @@ def detect_forge_hijacks(updates_df, as_relationships,
                 }
                 alerts.append(alert)
 
-            except Exception as e:
+            except (AttributeError) as e:
                 logger.warning(f"Error generating alert: {e}")
                 continue
 
         logger.info(f"Detected {len(alerts)} potential forged path hijacks")
         return alerts, analyzed_df
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error detecting forged path hijacks: {e}")
         return [], updates_df
-
-
-def validate_hijack_detection(hijack_alerts, updates_df):
-    try:
-        validation = {
-            'total_alerts': len(hijack_alerts),
-            'alerts_by_type': {},
-            'temporal_distribution': {},
-            'validation_passed': True,
-            'issues': []
-        }
-
-        for alert in hijack_alerts:
-            alert_type = alert.get('type', 'unknown')
-            validation['alerts_by_type'][alert_type] = validation['alerts_by_type'].get(alert_type, 0) + 1
-
-        timestamps = [alert['timestamp'] for alert in hijack_alerts if 'timestamp' in alert]
-        if len(timestamps) > 1:
-            time_diffs = []
-            sorted_times = sorted(timestamps)
-            for i in range(1, len(sorted_times)):
-                try:
-                    dt1 = datetime.fromisoformat(sorted_times[i-1].replace('Z', '+00:00'))
-                    dt2 = datetime.fromisoformat(sorted_times[i].replace('Z', '+00:00'))
-                    time_diffs.append((dt2 - dt1).total_seconds())
-                except Exception:
-                    continue
-
-            if time_diffs and all(diff < 60 for diff in time_diffs):
-                validation['issues'].append("All alerts clustered within 1 minute - possible false positive")
-
-        valid_alerts = 0
-        for alert in hijack_alerts:
-            if 'timestamp' in alert and 'prefix' in alert:
-                matching_updates = updates_df[
-                    (updates_df['timestamp'] == alert['timestamp']) &
-                    (updates_df['prefix'] == alert['prefix'])
-                ]
-                if not matching_updates.is_empty():
-                    valid_alerts += 1
-
-        if valid_alerts != len(hijack_alerts):
-            validation['issues'].append(f"Only {valid_alerts}/{len(hijack_alerts)} alerts correspond to actual updates")
-            validation['validation_passed'] = False
-
-        return validation
-
-    except Exception as e:
-        logger.error(f"Error validating hijack detection: {e}")
-        return {
-            'validation_passed': False,
-            'error': str(e)
-        }

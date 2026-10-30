@@ -2,12 +2,12 @@ import numpy as np
 from datetime import datetime
 
 
-def _parse_ts(ts_str):
+def parse_ts(ts_str):
     if isinstance(ts_str, str):
         for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S+00:00", "%Y-%m-%d %H:%M:%S"):
             try:
                 return datetime.strptime(ts_str, fmt)
-            except Exception:
+            except (ValueError):
                 continue
     return None
 
@@ -63,31 +63,14 @@ def cluster_and_expand_anomaly_windows(anomalies, timestamps, current_values, hi
     return windows
 
 
-def expand_anomaly_boundaries(anomalies, timestamps, current_values, historical_means, expansion_hours=2):
-    wins = cluster_and_expand_anomaly_windows(anomalies, timestamps, current_values, historical_means,
-                                             expansion_hours=expansion_hours)
-    return (wins[0]["start"], wins[0]["end"]) if wins else (None, None)
-
-
 def calculate_traffic_statistics(current_values, historical_means):
-    """
-    Calculate comprehensive traffic statistics.
+    """Calculate comprehensive traffic statistics.
     
     Returns both:
     - percent_change: average comparison (existing behavior)
     - peak_trough_drop_pct: peak-to-trough drop relative to peak (new)
-    - trough_drop_from_peak: absolute drop from peak to trough
-    """
+    - trough_drop_from_peak: absolute drop from peak to trough"""
     # `current_values` / `historical_means` may be numpy arrays, so test size
-    # directly instead of truthiness.
-    #
-    # BUG-R151: peak/trough/drop are *intra-series* statistics -- they compare
-    # samples of the current window against each other and need no history at
-    # all. Returning the all-zero block when `historical_means` was empty threw
-    # that information away, so an AS with no usable historical windows (missing
-    # cache, or no API token to backfill it) always reported a 0.0% drop even
-    # when the series had collapsed by 80%+. Only the *comparison* fields
-    # (historical_avg, percent_change) genuinely require a baseline.
     if len(current_values) == 0:
         return {
             "current_avg": 0.0,
@@ -122,12 +105,6 @@ def calculate_traffic_statistics(current_values, historical_means):
     hist_avg = float(np.mean(historical_means))
 
     # BUG-R141 2026-09-29: a near-zero historical baseline made this
-    # division explode — AS22773 (Cox) rendered "+266727751609.52%" in the
-    # operator report, which is both nonsense and a credibility killer. A
-    # ratio against a baseline this small carries no information, so treat
-    # it as "no comparable baseline" rather than reporting a huge number.
-    # Relative changes beyond ±1000% are also treated as baseline noise
-    # (a legitimate AS-level traffic swing does not exceed 10x).
     MIN_MEANINGFUL_BASELINE = 1e-6
     if hist_avg > MIN_MEANINGFUL_BASELINE:
         raw_pct = (curr_avg - hist_avg) / hist_avg * 100.0

@@ -1,0 +1,50 @@
+event_id,cause,reason
+hijack_3257_gtt_2025_02_11,roa_misconfig,cause_outside_label_set(roa_misconfig)
+hijack_12389_rostelecom_2025_01_14,origin_hijack_victim,circular_label_from_rrc00_observation
+hijack_17557_pk_2024_07_31,origin_hijack_victim,circular_label_from_rrc00_observation
+hijack_18001_portonet_2025_02_09,origin_hijack_victim,circular_label_from_rrc00_observation
+hijack_23470_multiactor_2025_10_29,origin_hijack_victim,circular_label_from_rrc00_observation
+hijack_262186_ecuador_2023_06_06,origin_hijack_victim,circular_label_from_rrc00_observation
+hijack_48678_pccw_2025_01_23,origin_hijack_victim,circular_label_from_rrc00_observation
+leak_28910_iraq_2024_09_26,outage,circular_label_from_rrc00_observation
+leak_28910_saudi_2025_06_20,outage,circular_label_from_rrc00_observation
+leak_35168_saudi_2025_06_20,outage,circular_label_from_rrc00_observation
+leak_safhost_chinatecom_2019,route_leak,"routing_signal_not_visible(0 announcements violating the AS-relationship table over 0 prefixes; 0 newly originated foreign prefixes (1 in total, 1 already present before the event))"
+leak_as2914_apr_2025,route_leak,"routing_signal_not_visible(0 announcements violating the AS-relationship table over 0 prefixes; 0 newly originated foreign prefixes (13 in total, 13 already present before the event); 4040 path-inflated announcements over 13 prefixes)"
+hijack_dns_root_server_2025_06_20,origin_hijack_victim,routing_signal_not_visible(0 prefixes inside the victim's space announced by another AS; 0 owned prefixes with a changed origin)
+outage_airtel_malawi_2025_06_24,outage,routing_signal_not_visible(announcements 0 vs baseline 0 (no baseline rate) over 0 withdrawn prefixes)
+outage_bell_canada_2025_05_21,outage,routing_signal_not_visible(announcements 0 vs baseline 0 (no baseline rate) over 0 withdrawn prefixes)
+outage_haiti_digicel_2025_05_30,outage,routing_signal_not_visible(announcements 10276 over 24 slots vs baseline 306 over 24 slots (ratio 33.58) over 0 withdrawn prefixes)
+outage_reunion_2025_02_28,outage,routing_signal_not_visible(announcements 1916 over 48 slots vs baseline 554 over 48 slots (ratio 3.46); withdrawals ratio 0.00 over 0 withdrawn prefixes)
+outage_libya_protest_2025_05_16,outage,routing_signal_not_visible(announcements 24863 over 95 slots vs baseline 20077 over 95 slots (ratio 1.24); withdrawals ratio 1.54 over 0 withdrawn prefixes)
+outage_rogers_canada_2022,outage,routing_signal_not_visible(announcements 288143 vs baseline 0 (no baseline rate) over 0 withdrawn prefixes)
+outage_9121_20240212_x15,outage,routing_signal_not_visible(announcements 2886 over 18 slots vs baseline 406 over 18 slots (ratio 7.11) over 0 withdrawn prefixes)
+outage_cloudflare_dns_2025_07_14,outage,routing_signal_not_visible(announcements 36178 over 24 slots vs baseline 36839 over 24 slots (ratio 0.98); withdrawals ratio 0.04 over 0 withdrawn prefixes)
+outage_grameenphone_2024_07_17,outage,routing_signal_not_visible(announcements 4443 over 53 slots vs baseline 2711 over 53 slots (ratio 1.64); withdrawals ratio 0.08 over 0 withdrawn prefixes)
+outage_georgia_magticom_2025_01_27,outage,routing_signal_not_visible(announcements 48 over 24 slots vs baseline 16 over 24 slots (ratio 3.00) over 0 withdrawn prefixes)
+outage_starlink_2025,outage,routing_signal_not_visible(announcements 49499 vs baseline 0 (no baseline rate) over 0 withdrawn prefixes)
+outage_pakistan_ptcl_2025_01_02,outage,routing_signal_not_visible(announcements 53269 over 72 slots vs baseline 20384 over 72 slots (ratio 2.61); withdrawals ratio 0.07 over 0 withdrawn prefixes)
+outage_angola_2025_01_06,outage,routing_signal_not_visible(announcements 558 over 120 slots vs baseline 641 over 120 slots (ratio 0.87) over 0 withdrawn prefixes)
+outage_sri_lanka_2025_02_09,outage,routing_signal_not_visible(announcements 68203 over 114 slots vs baseline 62502 over 114 slots (ratio 1.09); withdrawals ratio 0.00 over 0 withdrawn prefixes)
+outage_syria_damascus_homs_2025,outage,routing_signal_not_visible(announcements 81821 over 102 slots vs baseline 32976 over 102 slots (ratio 2.48); withdrawals ratio 0.82 over 0 withdrawn prefixes)
+outage_16509_20250810_x18,outage,routing_signal_not_visible(announcements 84613 over 9 slots vs baseline 70962 over 9 slots (ratio 1.19); withdrawals ratio 0.80 over 0 withdrawn prefixes)
+leak_44244_iran_2025_06_22,route_leak,superseded_by_stronger_routing_evidence(outage_44244_20250622_x17)
+outage_honduras_2025_03_01,outage,traffic_impact_not_confirmed(z_min=-0.23 drop=100.0% trough=2025-03-01T14:00:00Z (control z=-0.36 drop=47.4%); the_control_network_showed_the_same_drop)
+outage_haiti_digicel_2025_05_28,outage,traffic_impact_not_confirmed(z_min=-0.30 drop=18.7% trough=2025-05-28T05:30:00Z (control z=-1.88 drop=6.4%); the_control_network_showed_the_same_drop)
+leak_as4808_mar_2025,route_leak,traffic_impact_not_confirmed(z_min=-0.64 drop=19.6% trough=2025-03-09T19:00:00Z (control z=-0.54 drop=3.0%); the_control_network_showed_the_same_drop)
+hijack_akamai_hurricane_2023_09_18,origin_hijack_victim,traffic_impact_not_confirmed(z_min=-1.31 drop=24.7% trough=2023-09-18T05:15:00Z (control z=-7.13 drop=13.8%); the_control_network_showed_the_same_drop)
+leak_327802_chad_2024_01_10,outage,traffic_impact_not_confirmed(z_min=-1.68 drop=97.8% trough=2024-01-10T15:15:00Z (control z=-0.84 drop=6.3%); the_control_network_showed_the_same_drop)
+outage_moov_africa_tchad_2024,outage,traffic_impact_not_confirmed(z_min=-1.68 drop=97.8% trough=2024-01-10T15:15:00Z (control z=-0.84 drop=6.3%); the_control_network_showed_the_same_drop)
+leak_cantv_aug_2024,route_leak,traffic_impact_not_confirmed(z_min=-4.54 drop=100.0% trough=2024-08-01T09:15:00Z (control z=-4.19 drop=13.4%); the_control_network_showed_the_same_drop)
+outage_cantv_venezuela_2024_08_01,outage,traffic_impact_not_confirmed(z_min=-4.54 drop=100.0% trough=2024-08-01T09:15:00Z (control z=-4.19 drop=13.4%); the_control_network_showed_the_same_drop)
+hijack_juniper_bgp_flap_2025_05_20,origin_hijack_victim,traffic_impact_not_confirmed(z_min=0.32 drop=-1.8% trough=2025-05-20T19:45:00Z (control z=0.74 drop=-5.2%))
+hijack_celer_bridge_2022,origin_hijack_victim,traffic_unavailable(no_usable_series)
+hijack_cloudflare_1.1.1.1_2024,origin_hijack_victim,traffic_unavailable(no_usable_series)
+hijack_rostelecom_amazon_2020,origin_hijack_victim,traffic_unavailable(no_usable_series)
+hijack_twnic_quad101_2019,origin_hijack_victim,traffic_unavailable(no_usable_series)
+leak_allegheny_verizon_2019,route_leak,traffic_unavailable(no_usable_series)
+leak_angola_cables_2023,route_leak,traffic_unavailable(no_usable_series)
+leak_mainone_cloudflare_2018,route_leak,traffic_unavailable(no_usable_series)
+origin_hijack_myetherwallet_2018,origin_hijack_victim,traffic_unavailable(no_usable_series)
+route_leak_cloudflare_internal_2022,route_leak,traffic_unavailable(no_usable_series)
+route_leak_telstra_2020,route_leak,traffic_unavailable(no_usable_series)

@@ -1,34 +1,29 @@
-"""
-
-==============
-
-, , . 
-
-: 
-- check_victim_traffic: AS
-- bgp_path_analysis: RIPE RIS / RouteViewsAS_PATH
-- traceroute_probing: traceroute
-- collect_traffic_data: Cloudflare
-- rpki_validation: RPKI
-"""
+"""=============="""
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
-import socket
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional, List
+from typing import Optional, List
 
 from utils.logger import logger
+import logging
+import socket
+from typing import Any
 
 try:
+    # Only TracerouteProbe / ProbeResult are required by this module. The
     from tools.probing_tools import (
-        TracerouteProbe, BGPLookingGlass, RIPERisAPI,
-        CloudflareRealtime, ProbingOrchestrator, ProbeResult,
+        TracerouteProbe, ProbeResult,
     )
+    try:
+        from tools.probing_tools import (  # noqa: F401  (optional backends)
+            BGPLookingGlass, RIPERisAPI, CloudflareRealtime,
+        )
+    except ImportError:
+        BGPLookingGlass = RIPERisAPI = CloudflareRealtime = None  # type: ignore[assignment]
     PROBING_TOOLS_AVAILABLE = True
     # Check if scapy-based traceroute is available (works without root)
     _PROBE_BACKEND = "scapy" if hasattr(TracerouteProbe, 'probe') else "system"
@@ -46,7 +41,6 @@ except ImportError:
 
 @dataclass
 class AutoProbeFinding:
-    """"""
     action: str                # e.g., "check_victim_traffic"
     target: str                # 
     success: bool              # 
@@ -58,23 +52,15 @@ class AutoProbeFinding:
 
 
 class AutoProbeExecutor:
-    """
- : agent, API/. 
+    """: agent, API/."""
 
- : 
- executor = AutoProbeExecutor(timeout=10)
- findings = await executor.execute_probes(probing_recommendations, target_as="12479")
- """
-
-    # Cloudflare Radar API（，token） AS 
+    # Cloudflare Radar API（，token） AS
     CF_RADAR_BASE = "https://api.cloudflare.com/client/v4/radar"
 
     def __init__(self, timeout=10.0, enable_external=True):
-        """
- Args:
- timeout: ()
- enable_external: (false skipped)
- """
+        """Args:
+        timeout: ()
+        enable_external: (false skipped)"""
         self.timeout = timeout
         self.enable_external = enable_external
 
@@ -84,18 +70,14 @@ class AutoProbeExecutor:
         target_as: str = "",
         analysis_window: dict = None,
     ) -> List[AutoProbeFinding]:
-        """
- 
-
- Args:
- probing_recommendations: _report_agent._generate_refutable_hypotheses 
- : {"action": str, "target": str, "reason": str, "method": str}
- target_as: AS
- analysis_window: {"start": iso, "end": iso} 
-
- Returns:
- list[AutoProbeFinding]
- """
+        """Args:
+        probing_recommendations: _report_agent._generate_refutable_hypotheses
+        : {"action": str, "target": str, "reason": str, "method": str}
+        target_as: AS
+        analysis_window: {"start": iso, "end": iso}
+        
+        Returns:
+        list[AutoProbeFinding]"""
         if not probing_recommendations:
             return []
 
@@ -117,11 +99,10 @@ class AutoProbeExecutor:
             target = (rec.get("target") or "").strip()
 
             task = asyncio.create_task(
-                self._dispatch_one(action, target, target_as, analysis_window)
+                self.dispatch_one(action, target, target_as, analysis_window)
             )
             tasks.append(task)
 
-        # Bug fix 2026-09-13 (BUG-R115): ``asyncio.gather(*tasks)``
         if self.timeout > 0:
             timeout_tasks = [
                 asyncio.wait_for(t, timeout=self.timeout + 5.0)
@@ -145,7 +126,7 @@ class AutoProbeExecutor:
                 findings.append(res)
         return findings
 
-    async def _dispatch_one(
+    async def dispatch_one(
         self,
         action: str,
         target: str,
@@ -158,23 +139,23 @@ class AutoProbeExecutor:
 
         try:
             if action == "check_victim_traffic":
-                finding = await self._probe_victim_traffic(target, target_as)
+                finding = await self.probe_victim_traffic(target, target_as)
             elif action == "bgp_path_analysis":
-                finding = await self._probe_bgp_path(target)
+                finding = await self.probe_bgp_path(target)
             elif action == "traceroute_probing":
-                finding = await self._probe_traceroute(target, target_as)
+                finding = await self.probe_traceroute(target, target_as)
             elif action == "collect_traffic_data":
-                finding = await self._probe_traffic_data(target, target_as, analysis_window)
+                finding = await self.probe_traffic_data(target, target_as, analysis_window)
             elif action == "prefix_specific_traffic":
-                finding = await self._probe_prefix_specific_traffic(target, target_as)
+                finding = await self.probe_prefix_specific_traffic(target, target_as)
             elif action == "rpki_validation":
-                finding = await self._probe_rpki(target)
+                finding = await self.probe_rpki(target)
             elif action == "as_topology":
-                finding = await self._probe_as_topology(target)
+                finding = await self.probe_as_topology(target)
             elif action == "irr_registry":
-                finding = await self._probe_irr_registry(target)
+                finding = await self.probe_irr_registry(target)
             elif action == "rdap_query":
-                finding = await self._probe_rdap(target)
+                finding = await self.probe_rdap(target)
             else:
                 finding = AutoProbeFinding(
                     action=action, target=target, success=False,
@@ -184,7 +165,7 @@ class AutoProbeExecutor:
 
             finding.execution_time_s = (datetime.now() - started).total_seconds()
             return finding
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f" {action} : {e}")
             return AutoProbeFinding(
                 action=action, target=target, success=False,
@@ -193,15 +174,10 @@ class AutoProbeExecutor:
                 execution_time_s=(datetime.now() - started).total_seconds(),
             )
 
-    # ----------  ----------
-    async def _probe_victim_traffic(
+    async def probe_victim_traffic(
         self, target: str, target_as: str
     ) -> AutoProbeFinding:
-        """
- victim ASes 
-
- target : "victim ASes: 20119, 34927, 207564, 34854, 3257"
- """
+        """victim ASes"""
         ases = extract_as_numbers(target)
         if not ases:
             return AutoProbeFinding(
@@ -213,9 +189,9 @@ class AutoProbeExecutor:
         results = []
         for asn in ases[:5]:  # 5AS
             try:
-                data = await self._query_cloudflare_radar_as(asn)
+                data = await self.query_cloudflare_radar_as(asn)
                 results.append({"asn": asn, **data})
-            except Exception as e:
+            except (AttributeError) as e:
                 results.append({"asn": asn, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -238,12 +214,8 @@ class AutoProbeExecutor:
             data={"as_results": results},
         )
 
-    async def _probe_bgp_path(self, target):
-        """
- RIPE RIS / RouteViews AS_PATH
-
- target : "prefixes: 90.174.144.0/20, 85.54.152.0/22, ..."
- """
+    async def probe_bgp_path(self, target):
+        """RIPE RIS / RouteViews AS_PATH"""
         prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
@@ -255,9 +227,9 @@ class AutoProbeExecutor:
         results = []
         for prefix in prefixes[:3]:
             try:
-                origin_data = await self._query_ripe_ris_origin(prefix)
+                origin_data = await self.query_ripe_ris_origin(prefix)
                 results.append({"prefix": prefix, **origin_data})
-            except Exception as e:
+            except (AttributeError) as e:
                 results.append({"prefix": prefix, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -279,14 +251,9 @@ class AutoProbeExecutor:
             data={"prefix_results": results},
         )
 
-    async def _probe_traceroute(self, target, target_as):
-        """
- traceroute ( scapy, root )
-
- target : "target AS12479"
- """
-        #  AS ， AS info  IP
-        target_ip = await self._resolve_target_for_as(target_as)
+    async def probe_traceroute(self, target, target_as):
+        """traceroute ( scapy, root )"""
+        target_ip = await self.resolve_target_for_as(target_as)
         if not target_ip:
             return AutoProbeFinding(
                 action="traceroute_probing", target=target, success=False,
@@ -335,7 +302,7 @@ class AutoProbeExecutor:
                     summary=f"traceroute  {target_ip} : {result.error}",
                     error=result.error or "probe_failed",
                 )
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning(f"traceroute : {e}")
             return AutoProbeFinding(
                 action="traceroute_probing", target=target, success=False,
@@ -343,7 +310,7 @@ class AutoProbeExecutor:
                 error=str(e),
             )
 
-    async def _probe_traffic_data(
+    async def probe_traffic_data(
         self, target: str, target_as: str, analysis_window: Optional[dict],
     ) -> AutoProbeFinding:
         """ AS (Cloudflare Radar )"""
@@ -356,21 +323,21 @@ class AutoProbeExecutor:
             )
 
         try:
-            data = await self._query_cloudflare_radar_as(asn)
+            data = await self.query_cloudflare_radar_as(asn)
             return AutoProbeFinding(
                 action="collect_traffic_data", target=target,
                 success=True,
                 summary=f"AS{asn} （top location: {data.get('top_location', 'unknown')}）",
                 data=data,
             )
-        except Exception as e:
+        except (ValueError) as e:
             return AutoProbeFinding(
                 action="collect_traffic_data", target=target, success=False,
                 summary=f": {e}",
                 error=str(e),
             )
 
-    async def _probe_prefix_specific_traffic(
+    async def probe_prefix_specific_traffic(
         self, target: str, target_as: str,
     ) -> AutoProbeFinding:
         """(Cloudflare Radar)"""
@@ -385,9 +352,9 @@ class AutoProbeExecutor:
         results = []
         for prefix in prefixes[:3]:
             try:
-                data = await self._query_cloudflare_radar_prefix(prefix)
+                data = await self.query_cloudflare_radar_prefix(prefix)
                 results.append({"prefix": prefix, **data})
-            except Exception as e:
+            except (AttributeError) as e:
                 results.append({"prefix": prefix, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -398,7 +365,7 @@ class AutoProbeExecutor:
             data={"prefix_results": results},
         )
 
-    async def _probe_rpki(self, target):
+    async def probe_rpki(self, target):
         """RPKI : rpki-validator.console.api ROA """
         prefixes = extract_prefixes(target)
         if not prefixes:
@@ -411,9 +378,9 @@ class AutoProbeExecutor:
         results = []
         for prefix in prefixes[:3]:
             try:
-                data = await self._query_rpki_validation(prefix)
+                data = await self.query_rpki_validation(prefix)
                 results.append({"prefix": prefix, **data})
-            except Exception as e:
+            except (AttributeError) as e:
                 results.append({"prefix": prefix, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -432,7 +399,7 @@ class AutoProbeExecutor:
             data={"prefix_results": results},
         )
 
-    async def _probe_as_topology(self, target):
+    async def probe_as_topology(self, target):
         """AS ( CAIDA AS-Relationship )"""
         asn = extract_first_as(target)
         if not asn:
@@ -443,27 +410,26 @@ class AutoProbeExecutor:
             )
 
         try:
-            data = await self._query_as_topology(asn)
+            data = await self.query_as_topology(asn)
             return AutoProbeFinding(
                 action="as_topology", target=target,
                 success=True,
                 summary=f"AS{asn}: {data.get('peer_count', 0)} peer, {data.get('provider_count', 0)} provider",
                 data=data,
             )
-        except Exception as e:
+        except (ValueError) as e:
             return AutoProbeFinding(
                 action="as_topology", target=target, success=False,
                 summary=f": {e}",
                 error=str(e),
             )
 
-    async def _probe_irr_registry(self, target):
+    async def probe_irr_registry(self, target):
         """Look up prefix → registered origin AS in IRR (RIPE/RADB/ALTDB).
-
- Returns the registered origin AS for each prefix. Useful to
- distinguish ROA misconfig (no IRR record) from hostile hijack
- (IRR record conflicts with the announced origin).
- """
+        
+        Returns the registered origin AS for each prefix. Useful to
+        distinguish ROA misconfig (no IRR record) from hostile hijack
+        (IRR record conflicts with the announced origin)."""
         prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
@@ -475,7 +441,7 @@ class AutoProbeExecutor:
         results: list = []
         try:
             from tools.irr_registry import lookup_prefix_origin_async
-        except Exception as exc:
+        except (ValueError) as exc:
             return AutoProbeFinding(
                 action="irr_registry", target=target, success=False,
                 summary=f"irr_registry module unavailable: {exc}",
@@ -486,7 +452,7 @@ class AutoProbeExecutor:
             try:
                 origin_info = await lookup_prefix_origin_async(prefix)
                 results.append({"prefix": prefix, **origin_info})
-            except Exception as e:
+            except (AttributeError) as e:
                 results.append({"prefix": prefix, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -510,14 +476,8 @@ class AutoProbeExecutor:
             data={"prefix_results": results},
         )
 
-    async def _probe_rdap(self, target):
-        """Query RDAP / whois for each prefix.
-
- Uses the public RDAP bootstrap (rdap.org) over HTTPS - works
- without shell binaries. Returns the registered organisation and
- abuse contact, which the reviewer can compare with the announced
- origin AS.
- """
+    async def probe_rdap(self, target):
+        """Query RDAP / whois for each prefix."""
         prefixes = extract_prefixes(target)
         if not prefixes:
             return AutoProbeFinding(
@@ -554,7 +514,7 @@ class AutoProbeExecutor:
                             results.append({"prefix": prefix, "status": "not_found"})
                         else:
                             results.append({"prefix": prefix, "status": f"http_{resp.status}"})
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
                 results.append({"prefix": prefix, "error": str(e)})
 
         success_count = sum(
@@ -577,14 +537,10 @@ class AutoProbeExecutor:
             data={"prefix_results": results},
         )
 
-    # ----------  API  ----------
+# API
 
-    async def _query_cloudflare_radar_as(self, asn):
-        """
- Cloudflare Radar (token) AS 
-
- : https://developers.cloudflare.com/api/operations/radar-entities-as-get
- """
+    async def query_cloudflare_radar_as(self, asn):
+        """Cloudflare Radar (token) AS"""
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
 
@@ -612,7 +568,7 @@ class AutoProbeExecutor:
             "data_source": "cloudflare_radar_public",
         }
 
-    async def _query_cloudflare_radar_prefix(self, prefix):
+    async def query_cloudflare_radar_prefix(self, prefix):
         """ Cloudflare Radar """
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
@@ -638,12 +594,8 @@ class AutoProbeExecutor:
             "data_source": "cloudflare_radar_public",
         }
 
-    async def _query_ripe_ris_origin(self, prefix):
-        """
- RIPE RIS API AS
-
- : https://stat.ripe.net/docs/data-api
- """
+    async def query_ripe_ris_origin(self, prefix):
+        """RIPE RIS API AS"""
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
 
@@ -671,7 +623,7 @@ class AutoProbeExecutor:
             "data_source": "ripe_stat",
         }
 
-    async def _query_rpki_validation(self, prefix):
+    async def query_rpki_validation(self, prefix):
         """ RPKI Validator HTTP API ROA """
         if not AIOHTTP_AVAILABLE:
             raise RuntimeError("aiohttp not installed")
@@ -699,28 +651,23 @@ class AutoProbeExecutor:
                                 "raw": data,
                                 "data_source": url.split("/")[2],
                             }
-            except Exception as e:
+            except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
                 last_err = e
                 continue
 
         raise RuntimeError(f"RPKI validation failed: {last_err}")
 
-    async def _query_as_topology(self, asn):
-        """
- AS-Relationship AS ()
-
- data/asrel/ .as-rel.txt 
- """
-        #  CAIDA AS-Relationship 
+    async def query_as_topology(self, asn):
+        """AS-Relationship AS ()"""
+        #  CAIDA AS-Relationship
         asrel_files = []
         try:
             import glob
             asrel_files = sorted(glob.glob("data/asrel/*.as-rel.txt"))
-        except Exception:
+        except (ValueError):
             pass
 
         if not asrel_files:
-            # ， unknown
             return {
                 "asn": asn,
                 "peer_count": 0,
@@ -729,7 +676,6 @@ class AutoProbeExecutor:
                 "data_source": "none",
             }
 
-        # 
         latest = asrel_files[-1]
         peer_count = 0
         provider_count = 0
@@ -760,7 +706,7 @@ class AutoProbeExecutor:
                             provider_count += 1
                         elif rel == "-1":
                             customer_count += 1
-        except Exception as e:
+        except (AttributeError) as e:
             logger.debug(f" AS-Relationship : {e}")
 
         return {
@@ -771,12 +717,8 @@ class AutoProbeExecutor:
             "data_source": f"caida_local:{os.path.basename(latest)}",
         }
 
-    async def _resolve_target_for_as(self, asn):
-        """
- AS IP( RIPE RIS API )
-
- IP()
- """
+    async def resolve_target_for_as(self, asn):
+        """AS IP( RIPE RIS API )"""
         asn_clean = asn.replace("AS", "").strip()
         try:
             if not AIOHTTP_AVAILABLE:
@@ -809,11 +751,10 @@ class AutoProbeExecutor:
             parts[-1] = "1"
             return ".".join(parts)
 
-        except Exception:
+        except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError):
             return None
 
 
-# ----------  ----------
 def extract_as_numbers(content) -> List[str]:
     """ "victim ASes: 20119, 34927, 207564" AS """
     import re
@@ -829,25 +770,7 @@ def extract_as_numbers(content) -> List[str]:
 
 
 def extract_prefixes(content) -> List[str]:
-    """ ``"prefixes: 90.174.144.0/20, ..."`` . 
-
- Bug fix 2026-09-13 (BUG-R123, two improvements):
- 1. ``\b\\d{1,3}(?:\\.\\d{1,3}){3}/\\d{1,2}\\b`` accepts out-of-range
- octets like ``999.999.999.999/8`` because each ``\\d{1,3}`` matches
- any three digits. We now validate ``0 <= octet <= 255`` so
- nonsense inputs are filtered out instead of being passed to the
- RPKI / traceroute probes (which then either silently fail or
- shell-inject-or-error-out).
- 2. The original regex was IPv4-only. IPv6 prefixes
- (``2001:db8::/32``) were silently dropped - meaning the probe
- executor reported only ``probe_results=[]`` for IPv6-only
- hijack events, even though valid targets were given. We now
- also match standard IPv6 prefix syntax.
-
- Note: this intentionally returns ``list`` in input order, not a
- ``set``; downstream code prefers deterministic ordering and
- dedupes via ``list(dict.fromkeys(...))`` where needed.
- """
+    """``"prefixes: 90.174.144.0/20, ..."`` ."""
     import re
     text = content
     if not text:
@@ -885,51 +808,6 @@ def extract_first_as(content):
     return nums[0] if nums else ""
 
 
-def format_findings_for_html(items: List[AutoProbeFinding]):
-    """Render the auto-probe findings list as an HTML table."""
-    if not items:
-        return "<p class='probe-empty'>No probe findings.</p>"
-
-    rows = []
-    for f in items:
-        status_icon = "✅" if f.success else "⚠️"
-        rows.append(f"""
- <tr class="probe-row {'probe-ok' if f.success else 'probe-fail'}">
- <td>{status_icon}</td>
- <td><code>{f.action}</code></td>
- <td>{f.target}</td>
- <td>{f.summary}</td>
- <td class="probe-time">{f.execution_time_s:.1f}s</td>
- </tr>
- """)
-
-    return f"""
- <table class="probe-table">
- <thead>
- <tr>
- <th></th>
- <th></th>
- <th></th>
- <th></th>
- <th></th>
- </tr>
- </thead>
- <tbody>
- {"".join(rows)}
- </tbody>
- </table>
- <style>
- .probe-table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 0.92em; }}
- .probe-table th, .probe-table td {{ border: 1px solid #ddd; padding: 6px 10px; text-align: left; }}
- .probe-table th {{ background: #f5f5f5; }}
- .probe-ok td {{ background: #f0fff4; }}
- .probe-fail td {{ background: #fff8f0; }}
- .probe-time {{ color: #888; font-family: monospace; }}
- .probe-empty {{ color: #888; font-style: italic; }}
- </style>
- """
-
-
 async def run_auto_probes(
     probing_recommendations: List[dict],
     target_as: str = "",
@@ -937,7 +815,6 @@ async def run_auto_probes(
     timeout: float = 10.0,
     enable_external: bool = True,
 ) -> List[AutoProbeFinding]:
-    """"""
     executor = AutoProbeExecutor(
         timeout=timeout,
         enable_external=enable_external,

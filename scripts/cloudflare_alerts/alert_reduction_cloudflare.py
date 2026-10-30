@@ -1,30 +1,7 @@
+"""Analyse BGP Tracer verdict results and produce the alert-reduction report."""
 #!/usr/bin/env python3
-"""Analyse BGP Tracer verdict results and produce the alert-reduction report.
-
-Reads per_alert_verdict.jsonl (from run_bgpt_on_alerts.py) and:
-
-  1. Groups alerts by source (annotation / leak / hijack).
-  2. Computes the alert-reduction ratio: raw alerts vs BGP Tracer verdicts.
-  3. Produces:
-
-       results/cloudflare_alerts/
-           ├── reduction_table.csv      — per-source breakdown
-           ├── alert_reduction_summary.json — JSON summary for the paper
-           └── REDAME.md              — human-readable manual-review guide
-
-The core metric is **alert-reduction ratio**: for every source, how many
-raw Cloudflare Radar alerts become BGP Tracer "real incident" verdicts?
-
-This applies the same per-source methodology to the live Cloudflare alert
-feed rather than to the curated evaluation dataset. Note that the paper
-quotes no pooled alert-reduction ratio from this feed: the raw counts are
-Cloudflare-side annotations rather than operator-facing alarms, and the
-replay's denominator includes harness failures. The paper reports the
-replay as a precision result over the alerts actually adjudicated.
-"""
 from __future__ import annotations
 
-import argparse
 import csv
 import json
 import sys
@@ -32,6 +9,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+import argparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -58,7 +36,7 @@ def load_records(jsonl_path: Path) -> List[Dict[str, Any]]:
             continue
         try:
             records.append(json.loads(line))
-        except Exception:
+        except (ValueError):
             continue
     return records
 
@@ -72,7 +50,6 @@ def classify_verdict(v: Optional[str]) -> str:
 
 
 def main() -> int:
-    import argparse
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--in-dir", default=str(DEFAULT_IN_DIR))
     ap.add_argument("--out-dir", default=None)
@@ -258,7 +235,7 @@ operator's priority queue for human review.**
                     start = (r.get("start_time") or "")[:19]
                     desc = (r.get("description") or "")[:100]
                     break
-        except Exception:
+        except (ValueError):
             pass
         readme += f"| `{alert_id}` | {d.get('source')} | AS{asn} | {start} | {rid} | {tid} |\n"
     # Always render descriptions (loaded separately)
@@ -266,7 +243,7 @@ operator's priority queue for human review.**
     try:
         raw = json.loads((out_dir / "raw" / "raw_alerts.json").read_text())
         raw_by_id = {r.get("alert_id"): r for r in raw if isinstance(r, dict)}
-    except Exception:
+    except (ValueError):
         raw_by_id = {}
     for d in sorted(dangerous_records, key=lambda x: x.get("start_time") or ""):
         alert_id = d.get("alert_id", "")

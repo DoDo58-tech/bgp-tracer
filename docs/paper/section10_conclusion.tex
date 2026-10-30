@@ -1,0 +1,63 @@
+% Section 10 -- Conclusion
+\section{Conclusion}
+\label{sec:conclusion}
+
+We set out to build a system that answers two questions about a BGP
+anomaly---did it affect traffic, and which way did the causation
+run---and to do so in a way an operator could audit afterwards. The first
+question has a categorical answer. The second has an answer only when the
+evidence identifies an order, and our contribution is a directional test
+that says so explicitly: calibrated size, measured power, and a named
+reason every time it declines to commit.
+
+\textbf{What the system does.} BGP Tracer collects RIPE RIS updates and
+Cloudflare Radar traffic into a shared five-minute
+grid~\cite{ripe-ris,cloudflare-radar}, runs four detectors that emit
+typed evidence with provenance, and arbitrates them into a five-class
+correlation verdict under six precedence rules (\S\ref{sec:method},
+\S\ref{sec:impl}). On the curated evaluation set the Phase-1
+arbitration reports 86.7\,\% Top-1. The directional layer is reported
+through the quantities that can be re-run end to end---its size, its power
+against planted mechanisms, and its coverage on the caches in the tree
+(\S\ref{sec:eval-direction})---and it commits on none of the cached
+windows that yield two usable series, because every one of them stops at
+the first veto and names the missing edge. Abstention therefore buys an
+auditable record of what the evidence lacked, which is the property the
+design targets.
+
+\textbf{What the coordination layer does.} A shared Evidence Blackboard
+with write-once semantics carries typed records---with their sources,
+confidences, and the identifiers they were derived from---between
+specialised agents, and the layer is decomposed so that a component
+failure degrades the artefact without altering the verdict: across four
+injected failures the verdict was unchanged and the real measurements
+survived (\S\ref{sec:agent}). Against a monolithic single-prompt arm on
+identical evidence over a 39-event ground-truth corpus, the layer buys
+both accuracy---$0.56$ against $0.10$---and auditability: it answers
+$5.6$ of six operator questions from typed records where the monolithic arm
+answers $1.7$ (\S\ref{sec:agent-explain}). Against a pure threshold rule
+the accuracy gain is absent ($0.49$), so the layer's measurable
+contribution lies in arbitration over conflicting detectors and in the
+artefact it produces, not in the number of its stages
+(Appendix~\ref{app:agent-ablation}). One agent closes a genuine
+model-driven decision--action--observation loop; the rest are fixed
+pipeline stages, and we classify them by control flow rather than by
+assertion.
+
+\textbf{What the case study shows.} The Orange Spain window contains a
+detector firing without its baseline, a traffic verdict computed against a
+baseline that does not exist, and a synthesized record standing in for an
+observation (\S\ref{sec:case}). Each would have survived a review that
+read only verdicts. Together with the input-shape defect it exposes
+(\S\ref{sec:eval-shape}), they argue for three-state recording and for
+treating abstention as a first-class output.
+
+\textbf{Future work.} Traffic-side evidence is the binding constraint: a
+second vantage point, or an operator's own traffic split, would test
+whether the $R\to T$ gap is a property of the data or of our
+single-series measurement. Leak attribution needs cross-domain
+confirmation, because the aggregate traffic series does not move when
+paths shift between peers. And the abstention record is itself a dataset:
+every refusal carries the veto that failed and the edge that was
+missing---a supervision signal for a channel that could learn when it is
+about to be wrong.

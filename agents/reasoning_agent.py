@@ -1,18 +1,14 @@
 import os
 import sys
 import json
-from datetime import datetime, timedelta
-from typing import Optional
+from datetime import datetime, timezone
 
 sys.path.append((os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REASONING
-from llm.prompt import build_multi_agent_coordination_prompt, get_reasoning_laws
-from agents.routing_agent import run_routing_agent, run_routing_agent_async
+from llm.prompt import build_multi_agent_coordination_prompt
+from agents.routing_agent import run_routing_agent
 from agents.traffic_agent import run_traffic_agent
-from agents.payload_builder import (
-    build_payload, cap_payload, to_json_for_prompt,
-    PayloadBudget, estimate_tokens,
-)
+from agents.payload_builder import build_payload, cap_payload, to_json_for_prompt, PayloadBudget, estimate_tokens
 from agents.coordination_utils import (
     clean_timestamps,
     count_consecutive_anomalies_in_longest_period,
@@ -20,6 +16,7 @@ from agents.coordination_utils import (
     identify_consecutive_anomaly_periods,
     lookup_org_info, query_as_relationships, query_as_prefixes
 )
+from agents.correlation_analyzer import parse_timestamp
 from agents.llm_reasoning import (
     LLMIncidentClassifier,
     LLMSeverityAssessor,
@@ -29,9 +26,27 @@ from utils.logger import logger
 from utils.helpers import extract_json_object as _extract_json_object
 from config import BASE_URL, API_KEY, MODEL
 from detectors.outage.outage_detector import RouteOutageDetector
+from datetime import timedelta
+from typing import Optional
+from llm.prompt import get_reasoning_laws
+from agents.routing_agent import run_routing_agent_async
 
 # Lazy initialization for OUTAGE_DETECTOR to avoid import issues
 _OUTAGE_DETECTOR = None
+
+
+def naive_utc(ts):
+    """Return *ts* as a naive UTC datetime.
+
+    The routing layer writes naive timestamps and the traffic layer writes
+    UTC-aware ones, so the two cannot be subtracted until they are put in
+    the same frame.  The project converts to UTC and drops the offset
+    everywhere else, and this does the same.
+    """
+    if ts.tzinfo is not None:
+        return ts.astimezone(timezone.utc).replace(tzinfo=None)
+    return ts
+
 
 def get_outage_detector():
     global _OUTAGE_DETECTOR
@@ -91,18 +106,15 @@ class ReasoningAgent:
         self._round_summaries: list[dict] = []
 
         # Evidence gap detection for proactive data collection.
-        # 
         self._evidence_gaps: list[dict] = []
         self._gap_resolutions: dict[str, str] = {}
 
     def perform_multi_round_analysis(self, max_rounds = 3, workflow_claims = None):
-        """
- Args:
- max_rounds: Maximum reasoning rounds
- workflow_claims: Pre-generated claims from workflow_engine's HypothesisAgent.
- If provided, skip local hypothesis generation to avoid
- duplicate work.
- """
+        """Args:
+        max_rounds: Maximum reasoning rounds
+        workflow_claims: Pre-generated claims from workflow_engine's HypothesisAgent.
+        If provided, skip local hypothesis generation to avoid
+        duplicate work."""
         try:
             self.reasoning_trace.append(f"Starting multi-round analysis for ASN {self.asn}")
             self.reasoning_trace.append(f"Time range: {self.start_time} to {self.end_time}")
@@ -112,7 +124,7 @@ class ReasoningAgent:
             if not initial_data.get("success", False):
                 return {
                     "success": False,
-                    "error": "Data collection failed",
+                    "error": f"Data collection failed: {initial_data.get('error') or 'no reason recorded'}",
                     "reasoning_trace": self.reasoning_trace
                 }
             
@@ -148,7 +160,7 @@ class ReasoningAgent:
             
             return final_result
             
-        except Exception as e:
+        except (AttributeError) as e:
             return {
                 "success": False, 
                 "error": str(e),
@@ -171,6 +183,13 @@ class ReasoningAgent:
                 )
             
             traffic_anomaly_detected = traffic_result.get("success") and traffic_result.get("anomalies_detected", False)
+
+            periodicity = None
+            periodicity_confidence = 0.0
+            if self.pre_computed_traffic and isinstance(self.pre_computed_traffic, dict):
+                periodicity_info = self.pre_computed_traffic.get("periodicity_analysis", {})
+                periodicity = periodicity_info.get("detected_periodicity")
+                periodicity_confidence = periodicity_info.get("periodicity_confidence", 0.0)
             
             extended_analysis_start = self.start_time
             extended_analysis_end = self.end_time
@@ -236,15 +255,9 @@ class ReasoningAgent:
                     }
                 
                 self.reasoning_trace.append(f"- Using consecutive anomaly period for routing analysis: {routing_start} to {routing_end}")
-                
-                periodicity = None
-                periodicity_confidence = 0.0
-                if self.pre_computed_traffic and isinstance(self.pre_computed_traffic, dict):
-                    periodicity_info = self.pre_computed_traffic.get("periodicity_analysis", {})
-                    periodicity = periodicity_info.get("detected_periodicity")
-                    periodicity_confidence = periodicity_info.get("periodicity_confidence", 0.0)
-                    if periodicity:
-                        self.reasoning_trace.append(f"- Using periodicity from traffic analysis: {periodicity} (confidence: {periodicity_confidence:.2f})")
+
+                if periodicity:
+                    self.reasoning_trace.append(f"- Using periodicity from traffic analysis: {periodicity} (confidence: {periodicity_confidence:.2f})")
 
                 if self.pre_computed_routing is not None:
                     self.reasoning_trace.append("- Using pre-computed routing result from chief_agent (avoiding duplicate routing analysis)")
@@ -262,14 +275,39 @@ class ReasoningAgent:
                         periodicity_confidence=periodicity_confidence
                     )
             else:
-                self.reasoning_trace.append("- Traffic anomalies were not confirmed. Skipping routing analysis by design.")
-                routing_result = {
-                    "success": False,
-                    "asn": self.asn,
-                    "analysis_period": f"{self.start_time} to {self.end_time}",
-                    "skipped": True,
-                    "skip_reason": "Traffic API did not confirm anomalies, routing analysis skipped per workflow."
-                }
+                # Traffic was quiet.  That is not a reason to stop looking at
+                # the routing plane: a route leak and a routing-layer outage
+                # both present with *no* traffic signal, because a leak does
+                # not withdraw the victim's routes and the traffic API may
+                # simply have no coverage for the AS.  Discarding the routing
+                # analysis here left the agent blind on exactly the incidents
+                # it exists to attribute.
+                #
+                # So: reuse the pre-computed routing result when the caller
+                # already has one, and otherwise run the routing analysis
+                # over the full requested window (the traffic-derived
+                # narrowing window does not exist in this branch).
+                if self.pre_computed_routing is not None:
+                    self.reasoning_trace.append(
+                        "- Traffic anomalies not confirmed; reusing pre-computed "
+                        "routing result for the full window instead of skipping "
+                        "routing analysis."
+                    )
+                    routing_result = self.pre_computed_routing
+                else:
+                    self.reasoning_trace.append(
+                        "- Traffic anomalies not confirmed; running routing "
+                        "analysis over the full window so routing-only "
+                        "incidents remain observable."
+                    )
+                    routing_result = run_routing_agent(
+                        asn=self.asn,
+                        start_time=self.start_time.strftime('%Y-%m-%d %H:%M'),
+                        end_time=self.end_time.strftime('%Y-%m-%d %H:%M'),
+                        target_asns=[self.asn],
+                        periodicity=periodicity,
+                        periodicity_confidence=periodicity_confidence,
+                    )
             
             data_quality = self.assess_data_quality(routing_result, traffic_result)
 
@@ -301,23 +339,13 @@ class ReasoningAgent:
                 "extended_analysis_end": extended_analysis_end.strftime('%Y-%m-%d %H:%M')
             }
             
-        except Exception as e:
+        except (AttributeError) as e:
             self.reasoning_trace.append(f"- Data collection failed: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def classify_multi_role(self, initial_data):
-        """
- Run the MultiRoleClassifier to understand the AS's full role picture
- BEFORE the LLM reasons about it.
-
- This resolves the core classification challenge: AS9121 (Turk Telekom) was
- annotated as 'leaker' but also shows origin_hijacking + origin_hijacked events.
- The classifier identifies ALL applicable roles and detects cross-reference
- patterns (self-hijack, victim→attacker temporal sequence, etc.).
-
- Results are injected into the reasoning context so the LLM has a complete
- picture of the AS's role before making decisions.
- """
+        """Run the MultiRoleClassifier to understand the AS's full role picture
+        BEFORE the LLM reasons about it."""
         from agents.multi_role_classifier import MultiRoleClassifier
 
         routing_data = initial_data.get("routing_data", {})
@@ -399,19 +427,13 @@ class ReasoningAgent:
 
             return summary
 
-        except Exception as e:
+        except (AttributeError) as e:
             self.reasoning_trace.append(f"- Multi-role classification failed: {e}")
             return None
 
     def run_auxiliary_enrichment(self, initial_data):
-        """
- Run the InvestigationSupervisor to enrich routing + traffic evidence
- with auxiliary tools (threat intel, news, IRR, history, etc.).
-
- This is the key "human-like" enhancement: after collecting routing
- and traffic data, we automatically enrich it with external context
- BEFORE the LLM reasons about it.
- """
+        """Run the InvestigationSupervisor to enrich routing + traffic evidence
+        with auxiliary tools (threat intel, news, IRR, history, etc.)."""
         routing_data = initial_data.get("routing_data", {})
         traffic_data = initial_data.get("traffic_data", {})
 
@@ -477,7 +499,7 @@ class ReasoningAgent:
 
             return result
 
-        except Exception as e:
+        except (AttributeError) as e:
             self.reasoning_trace.append(f"- Auxiliary enrichment failed: {e}")
             return None
 
@@ -487,16 +509,10 @@ class ReasoningAgent:
         traffic_data: dict,
         enrichment_result: dict = None,
     ) -> list[dict]:
-        """
- Bug Fix 3.1: ( enhanced_reasoning_agent.py). 
-
- EnhancedReasoningAgent.identify_evidence_gaps , ReasoningAgent. 
- , , . 
- """
+        """Bug Fix 3.1: ( enhanced_reasoning_agent.py)."""
         gaps = []
         gap_counter = 0
 
-        # 1：
         if not traffic_data.get("anomalies_detected") and traffic_data.get("success"):
             gap_counter += 1
             gaps.append({
@@ -508,7 +524,6 @@ class ReasoningAgent:
                 "resolution": None,
             })
 
-        # 2：
         total_hijacks = (
             len(routing_data.get("origin_hijacked", []) or []) +
             len(routing_data.get("forge_hijacked", []) or []) +
@@ -526,7 +541,6 @@ class ReasoningAgent:
                 "resolution": None,
             })
 
-        # 3：
         routing_has_anomaly = total_hijacks > 0 or len(routing_data.get("route_leaks", []) or []) > 0
         traffic_has_anomaly = traffic_data.get("anomalies_detected", False)
         if routing_has_anomaly and not traffic_has_anomaly:
@@ -550,7 +564,6 @@ class ReasoningAgent:
                 "resolution": None,
             })
 
-        # 4：AS 
         has_as_info = (
             traffic_data.get("as_info") or
             routing_data.get("as_info") or
@@ -621,7 +634,13 @@ class ReasoningAgent:
             # In later rounds, perform deeper analysis using LLM if gaps exist
             if round_num > 1 and knowledge_gaps:
                 self.perform_deeper_analysis(round_num, knowledge_gaps)
-            
+
+            # Cross-validate the two layers against each other in time before
+            # the laws are applied, so that the consistency score in later
+            # rounds can be refined by the measured overlap rather than by
+            # the layers' independent claims.
+            self.cross_validate_temporal_overlap()
+
             # Apply reasoning laws to current evidence
             law_application = self.apply_reasoning_laws()
             self.reasoning_trace.append(f"Reasoning law application: {law_application['classification']}")
@@ -660,7 +679,7 @@ class ReasoningAgent:
                 "confidence_scores": self.confidence_scores.copy()
             }
             
-        except Exception as e:
+        except (AttributeError) as e:
             self.reasoning_trace.append(f"Round {round_num} failed: {str(e)}")
             return {"round_num": round_num, "error": str(e)}
     
@@ -725,7 +744,7 @@ class ReasoningAgent:
                 "asorg_file": routing_data.get("asorg_file")
             }
             
-        except Exception as e:
+        except (AttributeError) as e:
             self.reasoning_trace.append(f"Final integration failed: {str(e)}")
             return {
                 "success": False,
@@ -946,7 +965,7 @@ class ReasoningAgent:
         """Safe byte estimate for any object (used in P5 summary-only prompts)."""
         try:
             return len(json.dumps(obj, ensure_ascii=False, default=str))
-        except Exception:
+        except (ValueError):
             return len(str(obj))
 
     @staticmethod
@@ -955,16 +974,9 @@ class ReasoningAgent:
         return 15 * 1024
 
     def perform_deeper_analysis(self, round_num, knowledge_gaps):
-        """
- P5: In round > 1, use accumulated per-round summaries instead of
- re-sending full routing/traffic dumps. This reduces token consumption
- by 40-60% in typical 3-round runs.
-
- Round 1 → sends full routing + traffic (cold start; LLM needs all data)
- Round 2 → sends full routing + traffic + previous round 1 summary
- Round 3+ → sends ONLY previous round summaries + new knowledge gaps
- (full data already available to the LLM from rounds 1-2)
- """
+        """P5: In round > 1, use accumulated per-round summaries instead of
+        re-sending full routing/traffic dumps. This reduces token consumption
+        by 40-60% in typical 3-round runs."""
         self.reasoning_trace.append(
             f"[Round {round_num}] Performing LLM deeper analysis for {len(knowledge_gaps)} gap(s)"
         )
@@ -1078,7 +1090,7 @@ Respond concisely in JSON:
                     f"resolvability={item.get('resolvability', 'N/A')}"
                 )
             return analysis_result
-        except Exception as e:
+        except (AttributeError) as e:
             self.reasoning_trace.append(f"  LLM deeper analysis failed: {e}")
             return {}
 
@@ -1103,84 +1115,16 @@ Respond concisely in JSON:
             "used_for": used_for,
         }
 
-    def cross_validate_temporal_overlap(self, overlap_window_seconds=3600):
-        """Compute routing↔traffic temporal overlap and stash it in
- ``evidence_pool["temporal_correlation"]``.
-
- This is a lightweight, deterministic backstop used by callers that
- want quick overlap stats without spinning up the LLM deeper-analysis
- pipeline. Returns the overlap dict (or ``None`` when there isn't
- enough data on either side).
- """
-        routing_data = self.evidence_pool.get("routing_data", {})
-        traffic_data = self.evidence_pool.get("traffic_data", {})
-
-        routing_events: list = []
-        for key in ("origin_hijacked", "forge_hijacked",
-                    "origin_hijacking", "forge_hijacking"):
-            routing_events.extend(routing_data.get(key, []) or [])
-
-        traffic_anomalies = traffic_data.get("anomalies", []) or []
-        if not routing_events or not traffic_anomalies:
-            return None
-
-        # Accept both with-Z and without-Z ISO formats.  We don't import
-        routing_times: set = set()
-        for ev in routing_events:
-            ts = ev.get("timestamp") or ev.get("first_seen")
-            if not ts:
-                continue
-            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
-                        "%Y-%m-%dT%H:%M:%SZ"):
-                try:
-                    routing_times.add(datetime.strptime(str(ts), fmt))
-                    break
-                except ValueError:
-                    continue
-
-        anomaly_times: set = set()
-        for a in traffic_anomalies:
-            ts = a.get("timestamp")
-            if not ts:
-                continue
-            for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S",
-                        "%Y-%m-%d %H:%M:%S"):
-                try:
-                    anomaly_times.add(datetime.strptime(str(ts), fmt))
-                    break
-                except ValueError:
-                    continue
-
-        overlap_count = 0
-        for rt in routing_times:
-            for at in anomaly_times:
-                if abs((rt - at).total_seconds()) < overlap_window_seconds:
-                    overlap_count += 1
-                    break
-
-        result = {
-            "overlap_count": overlap_count,
-            "routing_events": len(routing_times),
-            "traffic_anomalies": len(anomaly_times),
-            "window_seconds": overlap_window_seconds,
-        }
-        self.evidence_pool["temporal_correlation"] = result
-        self.reasoning_trace.append(
-            f"Temporal correlation: {overlap_count} routing events align "
-            f"with traffic anomalies (window={overlap_window_seconds}s)"
-        )
-        return result
 
     def apply_reasoning_laws(self):
         """Apply BGP reasoning laws to current evidence - with LLM enhancement"""
         routing_data = self.evidence_pool.get("routing_data", {})
         traffic_data = self.evidence_pool.get("traffic_data", {})
         
-        # 
         duration_minutes = (self.end_time - self.start_time).total_seconds() / 60
         time_range = f"{self.start_time} to {self.end_time}"
         
-        # LLM 
+        # LLM
         if self.use_llm_reasoning and self.incident_classifier:
             classification_result = self.incident_classifier.classify(
                 routing_data=routing_data,
@@ -1198,7 +1142,7 @@ Respond concisely in JSON:
             classification = self.classify_incident_type(routing_data)
             classification_confidence = 0.7
         
-        # LLM 
+        # LLM
         if self.use_llm_reasoning and self.traffic_correlator:
             correlation_result = self.traffic_correlator.assess_correlation(
                 routing_data=routing_data,
@@ -1214,7 +1158,7 @@ Respond concisely in JSON:
             has_correlation = "Correlated" in traffic_correlation
             temporal_alignment = 0.5
         
-        # LLM 
+        # LLM
         if self.use_llm_reasoning and self.severity_assessor:
             severity_result = self.severity_assessor.assess(
                 routing_data=routing_data,
@@ -1364,7 +1308,6 @@ Respond concisely in JSON:
     
     def get_classification_confidence(self, law_application):
         """Get confidence level for classification - uses LLM assessment if available"""
-        #  LLM ，
         llm_classification = self.evidence_pool.get("llm_classification")
         if llm_classification and llm_classification.get("source") == "llm":
             return llm_classification.get("confidence", 0.5)
@@ -1468,11 +1411,7 @@ Respond concisely in JSON:
         return not self.should_conclude_analysis()
     
     def build_coordination_prompt(self):
-        """Build prompt for final coordination.
-
- Evidence pool sections are slimmed via PayloadBuilder so the final
- coordination LLM call stays within PayloadBudget.REASONING bytes.
- """
+        """Build prompt for final coordination."""
         prompt_template = build_multi_agent_coordination_prompt()
 
         # Slim routing and traffic via PayloadBuilder before embedding in prompt
@@ -1484,8 +1423,8 @@ Respond concisely in JSON:
         traffic_slim, t_meta = build_payload(
             "traffic", traffic_raw, max_bytes=PayloadBudget.REASONING,
         )
-        routing_summary = self._summarize_routing_results_slimmed(routing_slim)
-        traffic_summary = self._summarize_traffic_results_slimmed(traffic_slim)
+        routing_summary = self.summarize_routing_results_slimmed(routing_slim)
+        traffic_summary = self.summarize_traffic_results_slimmed(traffic_slim)
         
         # Include multi-role classification if available
         multi_role_section = ""
@@ -1525,7 +1464,7 @@ Respond concisely in JSON:
             confidence_scores=json.dumps(self.confidence_scores, indent=2)
         ) + multi_role_section + enrichment_narrative
     
-    def _summarize_routing_results_slimmed(self, routing_slim):
+    def summarize_routing_results_slimmed(self, routing_slim):
         """Summarize routing agent results from slimmed payload for P5 prompt."""
         if not routing_slim or routing_slim.get("success") is False:
             return "Routing analysis: no data or failed."
@@ -1543,7 +1482,7 @@ Respond concisely in JSON:
                 summary_parts.append(f"First {key} event: {sample}")
         return " | ".join(summary_parts)
 
-    def _summarize_traffic_results_slimmed(self, traffic_slim):
+    def summarize_traffic_results_slimmed(self, traffic_slim):
         """Summarize traffic agent results from slimmed payload for P5 prompt."""
         if not traffic_slim or traffic_slim.get("success") is False:
             return "Traffic analysis: no data or failed."
@@ -1742,6 +1681,58 @@ Respond concisely in JSON:
             )
         }
 
+    def cross_validate_temporal_overlap(self, overlap_window_seconds=3600):
+        """Compute routing↔traffic temporal overlap and stash it in
+        ``evidence_pool["temporal_correlation"]``."""
+        routing_data = self.evidence_pool.get("routing_data", {})
+        traffic_data = self.evidence_pool.get("traffic_data", {})
+
+        routing_events: list = []
+        for key in ("origin_hijacked", "forge_hijacked",
+                    "origin_hijacking", "forge_hijacking"):
+            routing_events.extend(routing_data.get(key, []) or [])
+
+        traffic_anomalies = traffic_data.get("anomalies", []) or []
+        if not routing_events or not traffic_anomalies:
+            return None
+
+        # The detectors write timestamps in several formats, so the
+        # project's shared parser is used rather than a local list: the
+        # routing layer writes "%m/%d/%y %H:%M:%S" and the traffic layer
+        # writes ISO, and a local format list silently dropped whichever
+        # form it did not cover.
+        routing_times: set = set()
+        for ev in routing_events:
+            ts = parse_timestamp(ev.get("timestamp") or ev.get("first_seen"))
+            if ts is not None:
+                routing_times.add(naive_utc(ts))
+
+        anomaly_times: set = set()
+        for a in traffic_anomalies:
+            ts = parse_timestamp(a.get("timestamp"))
+            if ts is not None:
+                anomaly_times.add(naive_utc(ts))
+
+        overlap_count = 0
+        for rt in routing_times:
+            for at in anomaly_times:
+                if abs((rt - at).total_seconds()) < overlap_window_seconds:
+                    overlap_count += 1
+                    break
+
+        result = {
+            "overlap_count": overlap_count,
+            "routing_events": len(routing_times),
+            "traffic_anomalies": len(anomaly_times),
+            "window_seconds": overlap_window_seconds,
+        }
+        self.evidence_pool["temporal_correlation"] = result
+        self.reasoning_trace.append(
+            f"Temporal correlation: {overlap_count} routing events align "
+            f"with traffic anomalies (window={overlap_window_seconds}s)"
+        )
+        return result
+
 
 def run_reasoning_agent(asn = None, start_time = None, end_time = None,
                        user_input = None, max_rounds = 3, pre_computed_routing = None, pre_computed_traffic = None,
@@ -1767,13 +1758,13 @@ def run_reasoning_agent(asn = None, start_time = None, end_time = None,
                 try:
                     from agents.traffic_agent import normalize_time
                     start_time = normalize_time(str(start_time))
-                except Exception:
+                except (ValueError):
                     pass
             if end_time:
                 try:
                     from agents.traffic_agent import normalize_time
                     end_time = normalize_time(str(end_time))
-                except Exception:
+                except (ValueError):
                     pass
         
         # Validate required parameters
@@ -1784,7 +1775,7 @@ def run_reasoning_agent(asn = None, start_time = None, end_time = None,
             }
         
         # Parse time strings - handle both human-readable AND ISO 8601 formats.
-        def _parse_ts(value, label):
+        def parse_ts(value, label):
             if value is None:
                 return None
             if isinstance(value, datetime):
@@ -1824,8 +1815,8 @@ def run_reasoning_agent(asn = None, start_time = None, end_time = None,
                 )
                 return None
 
-        start_dt = _parse_ts(start_time, "start_time")
-        end_dt = _parse_ts(end_time, "end_time")
+        start_dt = parse_ts(start_time, "start_time")
+        end_dt = parse_ts(end_time, "end_time")
         if start_dt is None or end_dt is None:
             return {
                 "success": False,
@@ -1848,7 +1839,7 @@ def run_reasoning_agent(asn = None, start_time = None, end_time = None,
         # Pass pre-generated hypotheses to avoid duplicate hypothesis generation
         return agent.perform_multi_round_analysis(max_rounds, workflow_claims=workflow_claims)
         
-    except Exception as e:
+    except (ValueError) as e:
         return {"success": False, "error": str(e)}
 
 
@@ -1859,7 +1850,7 @@ def run_reasoning_agent_batch(
     max_rounds = 3
 ):
     from agents.traffic_agent import run_traffic_agent_batch
-    from detectors.hijack.hijack_detector import detect_hijacks_batch, detect_hijacks
+    from detectors.hijack.hijack_detector import detect_hijacks_batch
     
     try:
         logger.info(f"Starting BATCH reasoning analysis for {len(as_list)} AS")
@@ -1986,7 +1977,6 @@ def run_reasoning_agent_batch(
                     for asn in as_group:
                         try:
                             asn_str = str(asn)
-                            # FIXED: Access results through 'results_by_as' key
                             batch_results_by_as = batch_hijack_results.get("results_by_as", {})
                             hijack_data = batch_results_by_as.get(asn_str, {})
                             
@@ -2025,19 +2015,11 @@ def run_reasoning_agent_batch(
                                 "leak_detection_success": leak_result.get("success", False),
                                 "leak_detection_error": leak_result.get("error"),
                                 # Skipped detectors report None (not 0.0) so they
-                                # cannot be mistaken for a measurement. Keep the
-                                # score None here too and let the report render
-                                # "Skipped"; `or 0.0` would silently reintroduce
-                                # the false-clean-reading this replaced.
                                 "leak_detection_skipped": bool(leak_result.get("skipped")),
 
                                 "outage_analysis": outage_result,
                                 "outage_suspected": outage_result.get("is_outage_suspected"),
                                 # A skipped outage detector yields
-                                # outage_score=None. float(None) raises
-                                # TypeError, which would abort the whole
-                                # evidence assembly, so guard it explicitly and
-                                # preserve the None so "Skipped" survives.
                                 "outage_score": (
                                     float(outage_result["outage_score"])
                                     if outage_result.get("success")
@@ -2049,7 +2031,7 @@ def run_reasoning_agent_batch(
                                 "total_prefix_hijacks": len(hijack_data.get("origin_hijacked", [])) + len(hijack_data.get("forge_hijacked", [])),
                                 "total_prefix_hijacking": len(hijack_data.get("origin_hijacking", [])) + len(hijack_data.get("forge_hijacking", [])),
                             }
-                        except Exception as exc:
+                        except (AttributeError) as exc:
                             logger.error(f"Routing analysis failed for AS{asn}: {exc}")
                             result = {
                                 "success": False,
@@ -2075,7 +2057,7 @@ def run_reasoning_agent_batch(
                             end_time=window_end_str,
                             target_asns=[str(asn)]
                         )
-                    except Exception as exc:
+                    except (AttributeError) as exc:
                         logger.error(f"Routing analysis failed for AS{asn}: {exc}")
                         result = {
                             "success": False,
@@ -2182,7 +2164,7 @@ def run_reasoning_agent_batch(
                     asn, reasoning_result = future.result()
                     reasoning_results[asn] = reasoning_result
                     logger.info(f"✅ Completed reasoning analysis for AS{asn}")
-                except Exception as e:
+                except (KeyError, IndexError, AttributeError) as e:
                     asn = futures[future]
                     logger.error(f"❌ Failed reasoning analysis for AS{asn}: {e}")
                     reasoning_results[asn] = {
@@ -2211,7 +2193,7 @@ def run_reasoning_agent_batch(
             "analysis_timestamp": datetime.now().isoformat()
         }
         
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Batch reasoning analysis failed: {str(e)}", exc_info=True)
         return {
             "success": False,

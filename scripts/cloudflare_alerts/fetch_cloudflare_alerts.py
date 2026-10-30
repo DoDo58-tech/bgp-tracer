@@ -1,37 +1,5 @@
+"""Fetch Cloudflare Radar alert feed: annotations + leaks + hijacks."""
 #!/usr/bin/env python3
-"""Fetch Cloudflare Radar alert feed: annotations + leaks + hijacks.
-
-The user's brief: "the point of this exercise is to take an operational
-alert-platform feed and filter it through BGP Tracer — keep only the alerts
-that genuinely correspond to dangerous routing-induced traffic changes".
-
-There are THREE Cloudflare Radar alert streams that are relevant:
-
-  1. ``/radar/annotations``           — curated outage / event feed (operator-annotated)
-  2. ``/radar/bgp/leaks/events``      — route-leak events detected by Cloudflare's BGP monitor
-  3. ``/radar/bgp/hijacks/events``    — BGP hijack events detected by Cloudflare's BGP monitor
-
-This script fetches each stream in the requested window, normalises them to a
-common alert-record shape (``alert_id``, ``source``, ``asn``, ``start_time``,
-``end_time``, ``severity``, ...), and writes:
-
-    - raw_alerts.json           — list of normalised alert records
-    - raw_alerts.csv            — same data as a flat CSV (for quick eyeballing)
-    - raw_<source>.json         — per-stream raw response for traceability
-
-Filtering rules (matching the user's policy — "only alerts where the routing
-layer could plausibly see a trace"):
-
-  * annotations: include ``OUTAGE`` / ``GENERAL`` / ``EVENT``, drop ``PIPELINE``
-                  (Cloudflare-side data pipeline noise — unrelated to BGP)
-  * leaks:       require at least one prefix + a finished event OR high impact
-                  (``prefix_count >= 5`` or ``peer_count >= 30``)
-  * hijacks:     require confidence score >= 4 (filters out false positives
-                  from monitoring noise)
-
-Each stream is independently resumable: re-running the script picks up
-where the previous run stopped, deduplicating on the alert id.
-"""
 from __future__ import annotations
 
 import argparse
@@ -43,7 +11,8 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Tuple
 
 try:
     import requests
@@ -69,11 +38,11 @@ DEFAULT_OUT_DIR = PROJECT_ROOT / "results" / "cloudflare_alerts" / "raw"
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
-def _now_iso() -> str:
+def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _request_with_retry(
+def request_with_retry(
     session: requests.Session,
     method: str,
     url: str,
@@ -168,7 +137,7 @@ def fetch_annotations(
         base_params["offset"] = (page - 1) * MAX_PER_PAGE
         print(f"  [annotations] offset={(page - 1) * MAX_PER_PAGE} "
               f"limit={MAX_PER_PAGE}", file=sys.stderr)
-        resp = _request_with_retry(session, "GET", ANNOTATIONS_URL,
+        resp = request_with_retry(session, "GET", ANNOTATIONS_URL,
                                    headers=headers, params=dict(base_params))
         result = resp.get("result") or {}
         batch = result.get("annotations") or []
@@ -231,7 +200,7 @@ def fetch_leaks(
         base_params["limit"] = MAX_PER_PAGE
         base_params["page"] = page
         print(f"  [leaks] page={page}", file=sys.stderr)
-        resp = _request_with_retry(session, "GET", LEAKS_URL,
+        resp = request_with_retry(session, "GET", LEAKS_URL,
                                    headers=headers, params=dict(base_params))
         result = resp.get("result") or {}
         events = result.get("events") or []
@@ -264,7 +233,7 @@ def fetch_leaks(
                 )
                 print(f"  [leaks] persisted {len(raw_records)} records "
                       f"to {persist_path.name}", file=sys.stderr)
-            except Exception as _e:
+            except (AttributeError) as _e:
                 print(f"  [leaks] persist failed: {_e}", file=sys.stderr)
         page += 1
     return pages_fetched
@@ -299,7 +268,7 @@ def fetch_hijacks(
         base_params["limit"] = MAX_PER_PAGE
         base_params["page"] = page
         print(f"  [hijacks] page={page}", file=sys.stderr)
-        resp = _request_with_retry(session, "GET", HIJACKS_URL,
+        resp = request_with_retry(session, "GET", HIJACKS_URL,
                                    headers=headers, params=dict(base_params))
         result = resp.get("result") or {}
         events = result.get("events") or []
@@ -332,7 +301,7 @@ def fetch_hijacks(
                 )
                 print(f"  [hijacks] persisted {len(raw_records)} records "
                       f"to {persist_path.name}", file=sys.stderr)
-            except Exception as _e:
+            except (AttributeError) as _e:
                 print(f"  [hijacks] persist failed: {_e}",
                       file=sys.stderr)
         page += 1
@@ -341,12 +310,7 @@ def fetch_hijacks(
 
 # ── Normalisation ───────────────────────────────────────────────────────
 def normalise_annotation(a: dict) -> Optional[Dict[str, Any]]:
-    """OUTAGE/GENERAL/EVENT → common alert record.
-
-    OUTAGE  → victim ASN(s) in ``asns`` field; primary AS = first
-    GENERAL  → no ASN (these are Cloudflare-global); skip in BGP Tracer
-                pipeline but keep for drill-down.
-    """
+    """OUTAGE/GENERAL/EVENT → common alert record."""
     asns = a.get("asns") or []
     event_type = a.get("eventType")
     # if annotation has no ASN, still keep for stats but mark skip=True
@@ -366,14 +330,14 @@ def normalise_annotation(a: dict) -> Optional[Dict[str, Any]]:
         "end_time": end,
         "description": a.get("description") or "",
         "linked_url": a.get("linkedUrl"),
-        "severity": _severity_annotation(a),
+        "severity": severity_annotation(a),
         "skip_bgpt": skip_bgpt,
         "raw_outage_cause": (a.get("outage") or {}).get("outageCause"),
         "raw_outage_type": (a.get("outage") or {}).get("outageType"),
     }
 
 
-def _severity_annotation(a: dict) -> float:
+def severity_annotation(a: dict) -> float:
     """Heuristic severity 0-1 for annotations.  OUTAGE > GENERAL."""
     et = a.get("eventType")
     if et == "OUTAGE":
@@ -413,12 +377,12 @@ def normalise_leak(ev: dict) -> Dict[str, Any]:
             f"{ev.get('prefix_count')} prefixes, "
             f"{ev.get('peer_count')} peers"
         ),
-        "severity": _severity_leak(ev),
+        "severity": severity_leak(ev),
         "skip_bgpt": False,
     }
 
 
-def _severity_leak(ev: dict) -> float:
+def severity_leak(ev: dict) -> float:
     """Heuristic 0-1 based on leak_count/prefix_count/peer_count."""
     leak_count = ev.get("leak_count") or 0
     prefix_count = ev.get("prefix_count") or 0
@@ -456,12 +420,12 @@ def normalise_hijack(ev: dict) -> Dict[str, Any]:
             f"Hijack by AS{hijacker} of {','.join(str(v) for v in victims)} "
             f"prefixes {','.join(ev.get('prefixes') or [])[:80]}"
         ),
-        "severity": _severity_hijack(ev),
+        "severity": severity_hijack(ev),
         "skip_bgpt": False,
     }
 
 
-def _severity_hijack(ev: dict) -> float:
+def severity_hijack(ev: dict) -> float:
     cs = ev.get("confidence_score") or 0
     # Cloudflare confidence_score typically 1..12; higher = more confident.
     # normalise by /12
@@ -531,7 +495,7 @@ def main() -> int:
     include_types = [t.strip() for t in args.include_annotations.split(",") if t.strip()]
     exclude_types = {t.strip() for t in args.exclude_annotations.split(",") if t.strip()}
 
-    fetched_at = _now_iso()
+    fetched_at = now_iso()
     print(f"Fetching Cloudflare Radar alerts")
     print(f"  window:   {args.date_start} → {args.date_end or 'now'}")
     print(f"  include:  {include_types}")

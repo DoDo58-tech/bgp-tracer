@@ -1,45 +1,19 @@
-"""
-Tool A1: AS Business Profile + Passive DNS.
-==========================================
-
-Answers the key question: "Does this AS have real business operations?"
-
-Building the profile:
-  1. WHOIS / RDAP → AS description, abuse contact, registration date
-  2. BGPView → announced prefixes + announced IPs
-  3. Passive DNS (CIRCL) → all domain names historically associated with AS's IP ranges
-     (reveals real websites, services, subdomains → shows actual business)
-  4. PeeringDB → AS type (Content, Enterprise, ISP, NSP)
-  5. RIPEstat → AS-SET, IRR records (routing policy)
-
-Business indicators:
-  - Many distinct domain names in passive DNS → active web business
-  - Domains matching AS name → legitimate registered entity
-  - Government/financial/health domains → high-value targets
-  - Single IP range + no domains → likely transit/IXP/peering AS
-
-Privacy note:
-  - Passive DNS only shows domains, not individual user IPs
-  - No personal data is collected
-
-Free APIs used:
-  - CIRCL Passive DNS: https://www.circl.lu/services/passive-dns (no auth)
-  - BGPView.io: https://api.bgpview.io (no auth)
-  - RIPEstat: https://stat.ripe.net (no auth for basic)
-  - RDAP: https://rdap.org (no auth)
-"""
+"""Tool A1: AS Business Profile + Passive DNS.
+=========================================="""
 
 from __future__ import annotations
 
 import asyncio
-import re
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 
 import httpx
 from tools.tool_registry import ToolParameter, register_tool
 from utils.logger import logger
-from config import RIPESTAT_TOKEN, CIRCL_PDNS_URL, BGPVIEW_BASE
+from config import CIRCL_PDNS_URL, BGPVIEW_BASE
+import re
+from datetime import datetime
+from typing import Any, Optional
+from config import RIPESTAT_TOKEN
 
 # ── Business profile categories ──────────────────────────────────────────────
 
@@ -55,7 +29,7 @@ CATEGORY_PATTERNS = {
 }
 
 
-def _categorize(domains: List[str]) -> Dict[str, List[str]]:
+def categorize(domains: List[str]) -> Dict[str, List[str]]:
     categories = {k: [] for k in CATEGORY_PATTERNS}
     categorized = set()
     for d in domains:
@@ -70,8 +44,8 @@ def _categorize(domains: List[str]) -> Dict[str, List[str]]:
     return {k: v for k, v in categories.items() if v}
 
 
-def _is_high_value(domain_name):
-    d = domain.lower()
+def is_high_value(domain_name):
+    d = domain_name.lower()  # NOTE: parameter is `domain_name`; body used `domain`.
     high_value = ["bank", "gov", "pay", "wallet", "mail", "auth", "login",
                   "admin", "vpn", "api", "cdn", "dns", "smtp", "mx"]
     return any(k in d for k in high_value)
@@ -79,29 +53,24 @@ def _is_high_value(domain_name):
 
 # ── Main tool ────────────────────────────────────────────────────────────────
 
-async def _as_business_profile(tool_input, session):
-    """
-    Build a comprehensive business profile for an AS.
-
-    Required params:
-        asn (str): AS number
-
+async def as_business_profile(tool_input, session):
+    """Build a comprehensive business profile for an AS.
+    
     Returns:
-        - asn_info: basic WHOIS / RDAP data
-        - prefixes: announced prefixes with IP ranges
-        - domains: passive DNS results (reverse lookup)
-        - categories: domain categories (financial, gov, cdn, etc.)
-        - business_indicators: structured flags
-        - business_type: inferred type (Enterprise, CDN, ISP, etc.)
-        - assessment: narrative about the AS's business
-    """
+    - asn_info: basic WHOIS / RDAP data
+    - prefixes: announced prefixes with IP ranges
+    - domains: passive DNS results (reverse lookup)
+    - categories: domain categories (financial, gov, cdn, etc.)
+    - business_indicators: structured flags
+    - business_type: inferred type (Enterprise, CDN, ISP, etc.)
+    - assessment: narrative about the AS's business"""
     asn = str(tool_input["asn"])
     logger.info(f"[biz_profile] Building business profile for AS{asn}")
 
     # Fetch everything concurrently
-    whois_task   = _fetch_rdap_whois(asn)
-    bgp_task     = _fetch_bgpview_prefixes(asn)
-    pdns_task    = _fetch_passive_dns(asn)
+    whois_task   = fetch_rdap_whois(asn)
+    bgp_task     = fetch_bgpview_prefixes(asn)
+    pdns_task    = fetch_passive_dns(asn)
 
     whois_data, bgp_data, pdns_domains = await asyncio.gather(
         whois_task, bgp_task, pdns_task, return_exceptions=True
@@ -123,18 +92,18 @@ async def _as_business_profile(tool_input, session):
 
     # Domain analysis
     unique_domains = sorted(set(pdns_domains))
-    high_value_domains = [d for d in unique_domains if _is_high_value(d)]
-    categories = _categorize(unique_domains)
+    high_value_domains = [d for d in unique_domains if is_high_value(d)]
+    categories = categorize(unique_domains)
     category_summary = {k: len(v) for k, v in categories.items()}
 
     # Business type inference
-    business_type, type_reason = _infer_business_type(
+    business_type, type_reason = infer_business_type(
         asn, as_name, as_desc, len(prefixes),
         len(unique_domains), categories
     )
 
     # Passive DNS quality assessment
-    pdns_quality = _assess_pdns_quality(unique_domains, prefixes)
+    pdns_quality = assess_pdns_quality(unique_domains, prefixes)
 
     # Key indicators
     indicators = {
@@ -149,7 +118,7 @@ async def _as_business_profile(tool_input, session):
         "passive_dns_reveals_services": len(unique_domains) >= 10,
     }
 
-    assessment = _build_assessment(
+    assessment = build_assessment(
         asn, as_name, business_type, type_reason,
         len(unique_domains), pdns_quality,
         indicators, categories
@@ -189,8 +158,9 @@ async def _as_business_profile(tool_input, session):
 
 # ── API helpers ─────────────────────────────────────────────────────────────
 
-async def _fetch_rdap_whois(asn_id):
+async def fetch_rdap_whois(asn_id):
     """Fetch AS WHOIS via RDAP (no auth, global)."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             resp = await client.get(f"https://rdap.org/autnum/{asn}")
@@ -235,13 +205,14 @@ async def _fetch_rdap_whois(asn_id):
                 "abuse_contacts": list(set(abuse)),
                 "registration_date": reg_date,
             }
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
         logger.warning(f"[biz_profile] RDAP failed for AS{asn}: {e}")
         return {}
 
 
-async def _fetch_bgpview_prefixes(asn_id):
+async def fetch_bgpview_prefixes(asn_id):
     """Fetch announced prefixes via BGPView.io."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(f"{BGPVIEW_BASE}/lookup/as{asn}")
@@ -263,25 +234,24 @@ async def _fetch_bgpview_prefixes(asn_id):
                 "owner_name": info.get("owner", {}).get("name", ""),
                 "prefixes": prefixes,
             }
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
         logger.warning(f"[biz_profile] BGPView failed for AS{asn}: {e}")
         return {}
 
 
-async def _fetch_passive_dns(asn_id) -> List[str]:
-    """
-    Fetch passive DNS from CIRCL for all IP ranges of the AS.
+async def fetch_passive_dns(asn_id) -> List[str]:
+    """Fetch passive DNS from CIRCL for all IP ranges of the AS.
     CIRCL API: GET https://www.circl.lu/pdns/query/<IP_OR_DOMAIN>
-    Returns all domain names that resolved to IPs in the queried range.
-    """
+    Returns all domain names that resolved to IPs in the queried range."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     domains = []
 
     # First get prefixes so we can query IP ranges
-    bgp_data = await _fetch_bgpview_prefixes(asn)
+    bgp_data = await fetch_bgpview_prefixes(asn)
     prefixes = bgp_data.get("prefixes", [])[:20]  # limit to avoid rate limits
 
     async def query_prefix(prefix_str) -> List[str]:
-        url = f"{CIRCL_PDNS_URL}/{prefix}"
+        url = f"{CIRCL_PDNS_URL}/{prefix_str}"
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
                 resp = await client.get(url)
@@ -289,7 +259,7 @@ async def _fetch_passive_dns(asn_id) -> List[str]:
                 data = resp.json()
                 if isinstance(data, list):
                     return [str(r.get("rrname", "")) for r in data if r.get("rrname")]
-        except Exception:
+        except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError):
             pass
         return []
 
@@ -308,7 +278,7 @@ async def _fetch_passive_dns(asn_id) -> List[str]:
             data = resp.json()
             if isinstance(data, list):
                 domains.extend(str(r.get("rrname", "")) for r in data if r.get("rrname"))
-    except Exception:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError):
         pass
 
     return list(set(domains))
@@ -316,7 +286,7 @@ async def _fetch_passive_dns(asn_id) -> List[str]:
 
 # ── Business type inference ──────────────────────────────────────────────────
 
-def _infer_business_type(asn: str, name: str, desc: str,
+def infer_business_type(asn: str, name: str, desc: str,
                           prefix_count: int, domain_count: int,
                           categories: dict) -> tuple[str, str]:
     """Infer the AS business type from available data."""
@@ -368,7 +338,7 @@ def _infer_business_type(asn: str, name: str, desc: str,
     return "unknown", "Business type could not be determined from available data."
 
 
-def _assess_pdns_quality(domains: List[str], prefixes: List[dict]):
+def assess_pdns_quality(domains: List[str], prefixes: List[dict]):
     """Assess the quality and coverage of passive DNS data."""
     if not domains:
         return {
@@ -412,7 +382,7 @@ def _assess_pdns_quality(domains: List[str], prefixes: List[dict]):
     }
 
 
-def _build_assessment(asn: str, as_name: str, business_type: str,
+def build_assessment(asn: str, as_name: str, business_type: str,
                       type_reason: str, domain_count: int,
                       pdns_quality: dict, indicators: dict,
                       categories: dict) -> str:
@@ -457,5 +427,5 @@ register_tool(
     parameters=[
         ToolParameter("asn", "AS number", "string"),
     ],
-    handler=_as_business_profile,
+    handler=as_business_profile,
 )

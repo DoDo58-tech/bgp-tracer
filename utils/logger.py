@@ -9,7 +9,7 @@ from config import LOG_LEVEL, LOG_FILE
 _HANDLER_PATHS: set[str] = set()
 
 
-def _build_handlers():
+def build_handlers():
     os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
@@ -36,22 +36,17 @@ def _build_handlers():
 logger = logging.getLogger('bgp_tracer')
 logger.setLevel(LOG_LEVEL)
 if not logger.handlers:
-    fh, ch = _build_handlers()
+    fh, ch = build_handlers()
     logger.addHandler(fh)
     logger.addHandler(ch)
 
 
 def setup_logger(name):
-    """Create (or fetch) a child logger that shares the parent's handlers.
-
-    Repeated calls with the same ``name`` return a logger with at most
-    one set of handlers attached — preventing the FD leak that occurred
-    when callers re-invoked ``setup_logger`` per request.
-    """
+    """Create (or fetch) a child logger that shares the parent's handlers."""
     new_logger = logging.getLogger(name)
     new_logger.setLevel(LOG_LEVEL)
     if not new_logger.handlers:
-        fh, ch = _build_handlers()
+        fh, ch = build_handlers()
         new_logger.addHandler(fh)
         new_logger.addHandler(ch)
     return new_logger

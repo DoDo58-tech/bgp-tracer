@@ -1,3 +1,4 @@
+% Section 3 -- System Overview
 \section{System Overview}
 \label{sec:overview}
 
@@ -5,73 +6,72 @@ BGP Tracer is a two-phase analysis system that turns noisy routing and
 traffic alerts into evidence-backed incident verdicts. Its design
 priorities are interpretability, reproducibility, and graceful
 degradation. Rather than treating detection as a single classification
-problem, the system separates telemetry acquisition, anomaly
-detection, correlation triage, causal attribution, and operator
-reporting. The components exchange structured evidence through a
-shared cache, so that every decision can be traced to the observations
-and detector outputs that produced it. Ground-truth labels are excluded
-from the analysis path.
+problem, the system separates telemetry acquisition, anomaly detection,
+correlation triage, causal attribution, and operator reporting. The
+components exchange structured evidence through a shared cache, so that
+every decision can be traced to the observations and detector outputs
+that produced it. Ground-truth labels are excluded from the analysis
+path.
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\linewidth]{figs/fig1_workflow.pdf}
-\caption{Overview of BGP Tracer. Routing and traffic telemetry are
-processed by specialized detectors and aligned by Phase~1 to produce a
-correlation verdict. A shared evidence cache preserves detector
-outputs, timing information, statistics, and missing-data conditions.
-Phase~2 uses this evidence to assess causal direction, incident type,
-and impact scope, abstaining when the evidence is insufficient.
-Resulting incidents are presented through an impact-ranked review
-queue.}
+\includegraphics[width=0.62\linewidth]{figs/fig_workflow.pdf}
+\caption{Overview of BGP Tracer. Control-plane and data-plane telemetry
+are read by four parallel detectors and placed on a shared five-minute
+grid; Phase~1 arbitrates the resulting evidence into a five-class verdict
+and writes it to a shared evidence cache. Phase~2 reads that cache to
+estimate causal direction by ordering two onset intervals, commits only
+when four vetoes pass, and records the veto that failed when it
+abstains. An agent coordination layer supplies the audit trail and falls
+back to deterministic rendering when a component fails, without changing
+the verdict. The resulting incidents are presented through an impact-ranked
+review queue. The tags S1--S4 mark the four design decisions described
+in \S\ref{sec:intro}.}
 \label{fig:system-overview}
 \end{figure*}
 
-Figure~\ref{fig:system-overview} illustrates the overall workflow. An
-analysis starts with a candidate event specified by an AS, a set of
-prefixes, and a time window. The system combines control-plane
-telemetry from routing monitors and data-plane telemetry from traffic
-aggregates. The routing detectors identify hijack, route-leak, and
-outage-related signals, while the traffic detector compares the
-observed series with a periodic baseline or a non-periodic fallback
-when the historical data do not support a stable period. The detectors
-emit structured evidence rather than final verdicts, which allows the
-same observations to be reused by later stages.
+An analysis starts with a candidate event specified by an AS, a set of
+prefixes, and a time window. The routing detectors identify hijack,
+route-leak, and outage-related signals, while the traffic detector
+compares the observed series with a periodic baseline or a non-periodic
+fallback when the historical data do not support a stable period. The
+detectors emit structured evidence rather than final verdicts, which
+allows the same observations to be reused by later stages.
 
-\emph{Phase~1} performs deterministic correlation triage. It aligns
-the routing and traffic observations on a common time grid, preserves
-their timing offsets, and evaluates whether the two signals are both
-present and temporally related. The resulting verdict is one of five
-core classes: \texttt{real\_incident}, \texttt{silent\_alert},
+\emph{Phase~1} performs deterministic correlation triage. It aligns the
+routing and traffic observations on a common time grid, preserves their
+timing offsets, and evaluates whether the two signals are both present
+and temporally related. The resulting verdict is one of five core
+classes: \texttt{real\_incident}, \texttt{silent\_alert},
 \texttt{traffic\_only}, \texttt{correlation\_uncertain}, or
 \texttt{no\_clear\_anomaly}. Phase~1 does not infer a causal direction;
 it determines whether an event warrants deeper analysis. Missing
-telemetry is reported explicitly and is not interpreted as an absence
-of anomalies.
+telemetry is reported explicitly and is not interpreted as an absence of
+anomalies.
 
 A shared evidence cache connects the two phases. It stores detector
 outputs, aligned timestamps, statistical summaries, missing-data
-conditions, and decision provenance. Caching separates the
-time-sensitive triage path from deeper attribution and reporting, and
-allows an operator to audit how a particular verdict was reached. It
-also preserves the distinction between a complete verdict and a
-partial verdict produced when a detector or data source is
-unavailable.
+conditions, and decision provenance, which separates the time-sensitive
+triage path from deeper attribution and reporting and lets an operator
+audit how a verdict was reached. It also preserves the distinction
+between a complete verdict and a partial verdict produced when a
+detector or data source is unavailable.
 
 \emph{Phase~2} performs deeper evidence attribution on the cached
-observations. It uses a breakpoint-anchored pre/post comparison as a
-PNS-inspired intervention proxy, supported by bootstrap confidence
-intervals and permutation tests. Additional routing-path, cascade
-scope, Granger, and transfer-entropy evidence is synthesized to assess
-the causal direction, incident type, and impact scope. The phase
-records whether a directional estimate satisfies the causal-support
-criteria and abstains when the evidence is insufficient or
-conflicting. It does not overwrite the Phase~1 correlation verdict;
-the two outputs describe different levels of evidence.
+observations. It segments each series on the shared grid, reports each
+onset as an interval of placements the data cannot distinguish, and
+orders the two edges only when those intervals are disjoint. A direction
+is committed only if four vetoes pass---precedence, persistence,
+exclusivity against placebo onsets, and provenance plus mirror checks
+(\S\ref{sec:method-vetoes})---and a refusal returns the veto that failed
+with the statistic behind it. It does not overwrite the Phase-1
+correlation verdict; the two outputs describe different levels of
+evidence.
 
-The final output contains the correlation verdict, directional
-evidence, cause and impact estimates, and the associated evidence
-chain. The review queue is ordered by evidence-based impact rather than
-raw alert frequency, so that incidents affecting substantial traffic or
-multiple downstream networks are surfaced first. Low-impact, uncertain,
-and insufficiently supported events remain available with explicit
-status labels instead of being silently discarded.
+The final output contains the correlation verdict, directional evidence,
+cause and impact estimates, and the associated evidence chain. The review
+queue is ordered by evidence-based impact rather than raw alert
+frequency, so that incidents affecting substantial traffic or multiple
+downstream networks are surfaced first. Low-impact, uncertain, and
+insufficiently supported events remain available with explicit status
+labels instead of being silently discarded.

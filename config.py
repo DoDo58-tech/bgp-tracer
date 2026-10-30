@@ -25,13 +25,21 @@ DOWNLOAD_TIMEOUT = 300
 GZ_MIN_SIZE = 50000
 
 CLOUDFLARE_HTTP_TIMESERIES_AS_URL = "https://api.cloudflare.com/client/v4/radar/http/timeseries"
+#: The DNS resolver timeseries.  This is a *different* data source from
+#: the HTTP one: it measures queries to the 1.1.1.1 resolver rather than
+#: requests to Cloudflare-served websites, and it is the only Radar
+#: series that shows an impact on the 1.1.1.1 service itself.
+CLOUDFLARE_DNS_TIMESERIES_URL = "https://api.cloudflare.com/client/v4/radar/dns/timeseries"
 CLOUDFLARE_API_TOKEN = (
     os.environ.get("CLOUDFLARE_API_TOKEN")
     or os.environ.get("CLOUDFLARE_API_KEY")
     or ""
 ).strip()
 CLOUDFLARE_DEFAULT_AGG_INTERVAL = "15m"
-CLOUDFLARE_TIMEOUT = 10
+#: The read timeout.  A shared-span fetch covers five weeks of 15-minute
+#: samples, and Radar takes a while to build that; a 10-second timeout
+#: cut the request off before it finished.
+CLOUDFLARE_TIMEOUT = int(os.environ.get("CLOUDFLARE_TIMEOUT", "60"))
 CLOUDFLARE_RADAR_LOCATION = os.environ.get("CLOUDFLARE_RADAR_LOCATION", "").strip()
 CLOUDFLARE_RADAR_NORMALIZATION = os.environ.get("CLOUDFLARE_RADAR_NORMALIZATION", "MIN0_MAX").strip()
 
@@ -76,13 +84,6 @@ REACT_LLM_TEMPERATURE = float(os.environ.get("REACT_LLM_TEMPERATURE", "0.1"))
 
 # ── Report LLM call ────────────────────────────────────────────────────────
 REPORT_LLM_TIMEOUT_S = float(os.environ.get("REPORT_LLM_TIMEOUT_S", "1500.0"))
-# Bug fix 2026-10-07 (r17-batch-llm-retry): bumped outer retry budget from
-# 3 to 4 attempts — the inner ``_generate_report_html`` already has its
-# own per-stream retry loop (max_retries=5 after the r17 fix); this is
-# the cross-stream retry. With 4 outer * 5 inner = up to 20 calls before
-# falling back to deterministic HTML. The total per-event budget still
-# stays under the batch run timeout because most calls succeed on
-# attempt 1.
 REPORT_LLM_RETRIES = int(os.environ.get("REPORT_LLM_RETRIES", "4"))
 REPORT_LLM_RETRY_BACKOFF_S = float(os.environ.get("REPORT_LLM_RETRY_BACKOFF_S", "20.0"))
 REPORT_MAX_TOKENS = int(os.environ.get("REPORT_MAX_TOKENS", "4000"))
@@ -90,22 +91,18 @@ REPORT_REQUIRE_LLM = os.environ.get("REPORT_REQUIRE_LLM", "0").strip().lower() i
 REPORT_USE_DETERMINISTIC = os.environ.get("REPORT_USE_DETERMINISTIC", "1").strip().lower() in ("1", "true", "yes")
 REPORT_PAYLOAD_MAX_CHARS = int(os.environ.get("REPORT_PAYLOAD_MAX_CHARS", "30000"))
 
-# ── HCAF causal attribution weights ────────────────────────────────────────
-HCAF_WEIGHTS_MSBD = float(os.environ.get("BGP_TRACER_HCAF_W_MSBD", "0.40"))
-HCAF_WEIGHTS_CTPR = float(os.environ.get("BGP_TRACER_HCAF_W_CTPR", "0.30"))
-HCAF_WEIGHTS_CIC = float(os.environ.get("BGP_TRACER_HCAF_W_CIC", "0.30"))
-HCAF_WEIGHTS_GRANGER = float(os.environ.get("BGP_TRACER_HCAF_W_GRANGER", "0.15"))
-HCAF_MAJORITY_THRESHOLD = int(os.environ.get("BGP_TRACER_HCAF_MAJORITY", "2"))
+# ── HCAF causal attribution thresholds ────────────────────────────────────
+# NOTE (2026-10-28): the per-channel HCAF_WEIGHTS_* / HCAF_MAJORITY_THRESHOLD
+# weighted-vote scheme was retired with the Granger decision channel. The
+# synthesis is now CSS-anchored Bayesian (see agents/css_engine.py).
 
 # Abstention floor for causal *direction*.
-#
 # BUG (2026-10-05): when the three innovation methods all abstain (no
-# significant breakpoint, no Granger significance, no cascade) the pipeline
-# still emitted a concrete direction with confidence ~0.06. On the v13 ground
+# significant breakpoint, no cascade evidence, and CSS declining to commit)
+# the pipeline still emitted a concrete direction with confidence ~0.06. On the v13 ground
 # truth every such event had `routing_withdrawal_count == 0` and no routing
 # evidence at all, so the direction was pure noise — but it was reported as a
 # confident verdict. Ground-truth review precision sat at 0.552.
-#
 # An "unknown" verdict is already accepted as non-error by the evaluation
 # harness, so abstaining on genuinely evidence-free input is strictly more
 # honest and strictly scores better. Raise the floor to force a direction only

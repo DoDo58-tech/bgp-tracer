@@ -1,0 +1,75 @@
+% Section 5 -- Implementation
+\section{Implementation}
+\label{sec:impl}
+
+BGP Tracer is a Python multi-agent application in which the agents
+exchange typed records through a shared in-process blackboard rather
+than through free text. A workflow engine schedules the two phases under
+a wall-clock budget, and every stochastic component---bootstrap and
+permutation test---runs from a fixed seed. The implementation is
+organised around two properties the evaluation depends on: the analysis
+must be replayable, and the two phases must receive the input shape they
+were designed for.
+
+\paragraph{Shared evidence cache.}
+The cache is a JSON artefact per event, written atomically (a sibling
+temporary file is renamed into place) and addressed by the AS of interest
+and the event window, with a canonical event identifier in the file name
+when one is supplied, so two events sharing a window get distinct records.
+Every detector output, arbitration decision and degraded-mode behaviour
+is carried in that artefact, so a re-run over the same inputs reproduces
+the same measurement. Replay is therefore a lookup rather than a
+re-execution: a verdict can be reconstructed from the cache alone, which
+is what lets the evaluation run with the language model disabled and makes
+every number in \S\ref{sec:eval} traceable to a committed artefact.
+
+The cache also records what did \emph{not} happen. A suspended detector
+stores its reason, a window without data-plane coverage stores the
+coverage gap, and an abstention stores the veto that failed and the
+reason string it returned (\S\ref{sec:method-gate}). Keeping these records
+is what separates three states that a naive pipeline conflates: ``observed
+and negative'', ``not observed'' and ``observed but not significant''. The
+distinction is not bookkeeping. A detector that never ran and a detector
+that ran and stayed silent imply different conclusions about an incident,
+and a report that cannot tell them apart will describe a coverage gap as
+evidence of health.
+
+\label{sec:impl-contract}
+One interface contract keeps both phases fed with the shape of input they
+were designed for. The directional estimator accepts either a
+pre-bucketed series or a raw event log, and the two are not
+interchangeable: a raw log must be bucketed on the shared grid
+(Definition~\ref{def:grid}), and a pre-bucketed series must not be
+re-bucketed. The engine distinguishes them by two structural
+signals---whether entries carry an event schema, and whether the
+inter-bucket spacing is constant---and both paths share a single
+bucketing step, so an irregular log is bucketed rather than mistaken for
+a uniform series and collapsed into a near-constant input.
+
+\subsection{Determinism and the language model}
+\label{sec:impl-determinism}
+
+Parallelism runs along two axes---the AS of interest and the victim AS
+whose traffic is fetched in parallel---and the detector stack streams
+its input in time-ordered chunks whose results are folded back in chunk
+order, so a repeated run produces the same accumulator contents. The
+skip rule that keeps the pipeline cheap is a *tiered* gate rather than
+a confidence score: the joint-evidence stage emits a tier and a score,
+and the reasoning stage runs only when the tier clears a configured
+floor, with the reason for the decision recorded either way. A global
+wall-clock cap bounds the run and forces report generation when it is
+exceeded, so a noisy early stage cannot consume the time reserved for
+the reasoning stages. The gate is a selective-prediction rule in the
+sense of Geifman and El-Yaniv~\cite{geifman-2017-selective}: it may
+decline to spend on a window, and the evaluation of \S\ref{sec:eval}
+therefore reports what the system answered separately from what it was
+asked.
+
+Phase~1 is evaluated with the language model disabled, so every
+accuracy number in \S\ref{sec:eval} is reproducible from the artefact
+without an API call. Phase~2 uses the model only to render narrative
+reports, and a factual audit on nine held-out events
+(Table~\ref{tab:llm-audit}) confirms that the narrative is a
+transcription of cached verdicts. The audit is also the reason for the
+constraint: the model's numeric recall is poor, so a model that decided
+would be a source of error rather than a convenience.

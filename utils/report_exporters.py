@@ -1,9 +1,4 @@
-"""
-Report export functions for BGP security analysis.
-
-This module handles saving and exporting BGP security analysis reports
-in various formats including HTML, JSON, and PDF.
-"""
+"""Report export functions for BGP security analysis."""
 
 import base64
 import json
@@ -15,18 +10,10 @@ from .logger import logger
 
 
 def save_html_report(asn, time_range, html_content, output_dir=None):
-    """
-    Save HTML report to file.
-
-    Args:
-        asn: AS number
-        time_range: Analysis time range
-        html_content: Complete HTML report content
-        output_dir: Output directory (optional)
-
+    """Save HTML report to file.
+    
     Returns:
-        Path to saved HTML file
-    """
+    Path to saved HTML file"""
     try:
         if output_dir is None:
             output_dir = Path(__file__).resolve().parent.parent / "results" / "html"
@@ -39,7 +26,6 @@ def save_html_report(asn, time_range, html_content, output_dir=None):
         filename = f"llm_report_AS{asn_clean}_{timestamp}.html"
         file_path = output_dir / filename
 
-        # Bug fix 2026-09-13 (BUG-R116): the previous code wrote the
         import os as _os
         tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
         try:
@@ -68,17 +54,10 @@ def save_html_report(asn, time_range, html_content, output_dir=None):
 
 
 def save_json_report(analysis_data: Dict[str, Any], asn, output_dir=None):
-    """
-    Save analysis data as JSON report.
-
-    Args:
-        analysis_data: Complete analysis results
-        asn: AS number
-        output_dir: Output directory (optional)
-
+    """Save analysis data as JSON report.
+    
     Returns:
-        Path to saved JSON file
-    """
+    Path to saved JSON file"""
     try:
         output_dir = Path(__file__).resolve().parent.parent / "results" / "json"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -88,9 +67,8 @@ def save_json_report(analysis_data: Dict[str, Any], asn, output_dir=None):
         filename = f"bgp_analysis_AS{asn_clean}_{timestamp}.json"
         file_path = output_dir / filename
 
-        json_data = _make_json_serializable(analysis_data)
+        json_data = make_json_serializable(analysis_data)
 
-        # Bug fix 2026-09-13 (BUG-R116, second case): same atomic-write
         import os as _os
         tmp_path = file_path.with_suffix(file_path.suffix + ".tmp")
         try:
@@ -141,39 +119,10 @@ def generate_comprehensive_report(
     threat_intel_result: Dict[str, Any]=None,
     hcaf_attribution: Dict[str, Any]=None,
 ):
-    """
-    Generate BGP security HTML report — 100%% LLM-driven, no hardcoded content.
-
-    Delegates HTML generation to agents.report_agent.generate_report_html().
-    Only handles: data unwrapping, time range resolution, traffic plot base64,
-    JSON persistence, and the unified return shape.
-
-    Args:
-        llm: LLM instance (kept for API compatibility, not used directly)
-        routing_analysis: Routing analysis results
-        traffic_analysis: Traffic analysis results
-        law_analysis: Reasoning law analysis results
-        reasoning_analysis: Complete reasoning analysis
-        start_time: Analysis start time
-        output_dir: Output directory
-        org_name: Organization name
-        asn: AS number
-        user_input_time_range: Explicit time range string
-        traffic_plot_path: Path to traffic plot image
-        victim_traffic_results: Victim AS traffic analysis
-        victim_asns: List of victim AS numbers
-        prefix_traffic_results: Per-prefix traffic analysis
-        correlation_score_result: Cross-validation correlation scores
-        as_path_delta_result: AS path delta analysis
-        as_relationships_result: AS relationship inference results
-        probe_reachability_result: Reachability probe results
-        roa_validation_result: ROA validation results
-        threat_intel_result: Threat intelligence results
-        hcaf_attribution: HCAF （：MSCBD/CTPR/CIC）
-
+    """Generate BGP security HTML report — 100%% LLM-driven, no hardcoded content.
+    
     Returns:
-        Dict with success, html_report_path, json_report_path, target_as, etc.
-    """
+    Dict with success, html_report_path, json_report_path, target_as, etc."""
     try:
         # ── Resolve routing_analysis to the target AS in batch mode ──────────────
         target_as = asn or (
@@ -226,7 +175,7 @@ def generate_comprehensive_report(
                     with open(plot_p, "rb") as _f:
                         traffic_plot_base64 = base64.b64encode(_f.read()).decode("utf-8")
                     logger.info(f"[Report] Embedded traffic plot: {traffic_plot_path}")
-            except Exception as _e:
+            except (AttributeError) as _e:
                 logger.warning(f"[Report] Failed to embed traffic plot: {_e}")
 
         # ── Call 100%% LLM-driven report generator ───────────────────────────────
@@ -279,18 +228,10 @@ def generate_comprehensive_report(
 
 def generate_batch_html_report(batch_result: Dict[str, Any], start_time,
                               end_time, output_dir=None):
-    """
-    Generate HTML report for batch AS analysis.
-
-    Args:
-        batch_result: Batch analysis results
-        start_time: Analysis start time
-        end_time: Analysis end time
-        output_dir: Output directory
-
+    """Generate HTML report for batch AS analysis.
+    
     Returns:
-        Path to generated HTML report
-    """
+    Path to generated HTML report"""
     try:
         from .report_templates import BATCH_ANALYSIS_HTML_TEMPLATE, AS_SECTION_TEMPLATE
 
@@ -310,7 +251,7 @@ def generate_batch_html_report(batch_result: Dict[str, Any], start_time,
 
         high_severity_as = sum(
             1 for result in results_by_as.values()
-            if _assess_as_severity(result) == "high"
+            if assess_as_severity(result) == "high"
         )
 
         routing_status = "critical" if total_routing_anomalies > 10 else "warning" if total_routing_anomalies > 0 else "normal"
@@ -319,10 +260,10 @@ def generate_batch_html_report(batch_result: Dict[str, Any], start_time,
 
         per_as_sections = []
         for asn, result in results_by_as.items():
-            section_html = _generate_as_section_html(asn, result, AS_SECTION_TEMPLATE)
+            section_html = generate_as_section_html(asn, result, AS_SECTION_TEMPLATE)
             per_as_sections.append(section_html)
 
-        recommendations = _generate_batch_recommendations(
+        recommendations = generate_batch_recommendations(
             total_routing_anomalies, total_traffic_anomalies, high_severity_as
         )
 
@@ -369,17 +310,17 @@ def generate_batch_html_report(batch_result: Dict[str, Any], start_time,
         logger.info(f"Batch HTML report saved to: {file_path}")
         return str(file_path)
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error generating batch HTML report: {e}")
         return ""
 
 
-def _make_json_serializable(data):
+def make_json_serializable(data):
     """Convert data to JSON-serializable format recursively."""
     if isinstance(data, dict):
-        return {key: _make_json_serializable(value) for key, value in data.items()}
+        return {key: make_json_serializable(value) for key, value in data.items()}
     elif isinstance(data, list):
-        return [_make_json_serializable(item) for item in data]
+        return [make_json_serializable(item) for item in data]
     elif isinstance(data, (int, float, str, bool)) or data is None:
         return data
     elif hasattr(data, 'isoformat'):
@@ -389,11 +330,11 @@ def _make_json_serializable(data):
     else:
         try:
             return str(data)
-        except Exception:
+        except (ValueError):
             return repr(data)
 
 
-def _assess_as_severity(result: Dict[str, Any]):
+def assess_as_severity(result: Dict[str, Any]):
     """Assess severity level for an individual AS."""
     try:
         routing_anomalies = len(result.get("routing_anomalies", []))
@@ -405,12 +346,13 @@ def _assess_as_severity(result: Dict[str, Any]):
             return "medium"
         else:
             return "low"
-    except Exception:
+    except (ValueError):
         return "unknown"
 
 
-def _generate_as_section_html(asn_id, result: Dict[str, Any], template):
+def generate_as_section_html(asn_id, result: Dict[str, Any], template):
     """Generate HTML section for individual AS in batch report."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     try:
         routing_anomalies = len(result.get("routing_anomalies", []))
         traffic_anomalies = len(result.get("traffic_anomalies", []))
@@ -442,12 +384,12 @@ def _generate_as_section_html(asn_id, result: Dict[str, Any], template):
 
         return html
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error generating AS section HTML: {e}")
         return f"<div>Error generating section for AS{asn_id}: {str(e)}</div>"
 
 
-def _generate_batch_recommendations(routing_anomalies, traffic_anomalies, high_severity_as) -> List[str]:
+def generate_batch_recommendations(routing_anomalies, traffic_anomalies, high_severity_as) -> List[str]:
     """Generate recommendations for batch analysis."""
     recommendations = []
 

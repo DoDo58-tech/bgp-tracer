@@ -1,36 +1,5 @@
+"""Summarise the Cloudflare Radar alert replay from ``per_alert_verdict.jsonl``."""
 #!/usr/bin/env python3
-"""Summarise the Cloudflare Radar alert replay from ``per_alert_verdict.jsonl``.
-
-Why this script exists
-----------------------
-Earlier versions of this summary hard-coded the size of the replay
-(150 enqueued, 130 written, 84 processed, 5 actionable) while the
-per-alert verdict log it was supposed to summarise had since grown to
-192 submitted records.  A summary that disagrees with its own source
-file is worse than no summary, so every count below is now derived from
-the JSONL at run time.
-
-The three confounders that any alert-reduction claim must disclose:
-
-  1. Coverage.  Only records with ``status == "ok"`` were actually
-     adjudicated.  Timeouts and subprocess errors are *harness
-     failures*, not suppressed alerts, so a raw-submitted denominator
-     silently counts them as correct suppressions.
-
-  2. Source confound.  Alerts drawn from curated post-mortems
-     (``source == "annotation"``) are known-real incidents by
-     construction; the hijack/leak alerts are the ones where the
-     incident question is genuinely open.  Pooled and per-source rates
-     are both reported.
-
-  3. Precision, not reduction, is the reportable quantity: we report
-     "of the alerts actually adjudicated, how many were real
-     incidents", with a Wilson interval, and give the reduction ratio
-     only alongside the denominator it uses.
-
-Outputs:
-  results/cloudflare_alerts/replay_summary.json
-"""
 from __future__ import annotations
 
 import json
@@ -67,7 +36,6 @@ def main() -> None:
     actionable = [r for r in rows if r.get("bgpt_actionable")]
     real_incidents = [r for r in rows if r.get("quick_verdict") == "real_incident"]
 
-    # --- Per-source breakdown (this is where the confound shows) ---
     per_source = {}
     for src in sorted(by_source):
         src_rows = [r for r in rows if r.get("source") == src]
@@ -87,10 +55,10 @@ def main() -> None:
             "actionable_asns": sorted({str(r.get("asn")) for r in src_act}),
         }
 
-    # --- Timing ---
+# Timing
     elapsed = sorted(r["elapsed_s"] for r in rows if r.get("elapsed_s"))
 
-    def _pct(values, q):
+    def pct(values, q):
         if not values:
             return None
         idx = min(len(values) - 1, max(0, int(round(q * (len(values) - 1)))))
@@ -131,7 +99,7 @@ def main() -> None:
         "elapsed_s": {
             "min": elapsed[0] if elapsed else None,
             "median": round(statistics.median(elapsed), 2) if elapsed else None,
-            "p95": _pct(elapsed, 0.95),
+            "p95": pct(elapsed, 0.95),
             "max": elapsed[-1] if elapsed else None,
             "n": len(elapsed),
         },

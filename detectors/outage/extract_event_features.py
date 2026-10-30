@@ -1,15 +1,12 @@
 import os
 import logging
 import re
-import csv
 import json
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from collections import defaultdict
-from typing import Dict, List, Optional, Set, Tuple
 import polars as pl
-from ipaddress import ip_network
 
 # Data directory: bgp_tracer/data/ instead of detectors/outage/data/
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
@@ -25,6 +22,9 @@ RIPE_RIS_URL = "http://data.ris.ripe.net/rrc00/"
 import sys as _sys
 _sys.path.append(str(Path(__file__).parent.parent.parent))
 from config import LOG_FILE
+import csv
+from typing import Dict, List, Optional, Set, Tuple
+from ipaddress import ip_network
 
 # Avoid duplicate logging setup
 _root = logging.getLogger()
@@ -103,7 +103,7 @@ def parse_datetime(dt_string):
         raise ValueError(f"cannot parse datetime: {dt_string}, error: {e}")
 
 
-def _download_and_decode(url, gz_path, txt_path):
+def download_and_decode(url, gz_path, txt_path):
     """Download a gz file and decode it to txt using bgpdump. Returns True on success."""
     try:
         import subprocess
@@ -141,28 +141,20 @@ def _download_and_decode(url, gz_path, txt_path):
                 try:
                     proc.kill()
                     proc.wait(timeout=5)
-                except Exception:
+                except (ValueError):
                     pass
             raise
         if retcode != 0:
             return False
         return written > 0
-    except Exception as e:
+    except (AttributeError) as e:
         logger.debug(f"Download/decode failed for {url}: {e}")
         return False
 
 
 def find_update_files(time_start, time_end, auto_download=True):
-    """
- Find local decoded BGP update files for the time range.
- If auto_download=True, missing files are downloaded from RIPE RIS and decoded.
-
- Concurrency: uses a ThreadPoolExecutor to parallelise the per-bucket
- download+decode step. The previous implementation iterated sequentially
- which made 24h baseline windows stall for 5-15 minutes on RIPE RIS latency.
- RIPE RIS allows ~8 concurrent connections; we cap at 8 workers. Workers
- can be tuned via the BGP_OUTAGE_DOWNLOAD_WORKERS env var.
- """
+    """Find local decoded BGP update files for the time range.
+    If auto_download=True, missing files are downloaded from RIPE RIS and decoded."""
     import os as _os
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -192,23 +184,23 @@ def find_update_files(time_start, time_end, auto_download=True):
     workers = int(_os.environ.get("BGP_OUTAGE_DOWNLOAD_WORKERS", "8"))
     workers = max(1, min(workers, 16))
 
-    def _task(item):
+    def task(item):
         rounded_time, txt_path = item
         ym = rounded_time.strftime("%Y.%m")
         time_str = rounded_time.strftime("%Y%m%d.%H%M")
         url = f"{RIPE_RIS_URL}{ym}/updates.{time_str}.gz"
         gz_path = UPDATES_DIR / f"updates.{time_str}.gz"
-        ok = _download_and_decode(url, gz_path, txt_path)
+        ok = download_and_decode(url, gz_path, txt_path)
         return (item, ok)
 
     downloaded = 0
     completed_files = []
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="outage-dl") as ex:
-        futures = [ex.submit(_task, m) for m in missing]
+        futures = [ex.submit(task, m) for m in missing]
         for fut in as_completed(futures):
             try:
                 (rounded_time, txt_path), ok = fut.result()
-            except Exception as exc:
+            except (AttributeError) as exc:
                 logger.debug(f"download worker crashed: {exc}")
                 continue
             if ok:
@@ -273,10 +265,10 @@ def parse_bgp_line(line):
 def extract_as_from_path(as_path):
     if not as_path or as_path is None or (isinstance(as_path, str) and as_path.strip() == ''):
         return set()
-    
+
     as_set = set()
     as_path_clean = re.sub(r'\{[^}]+\}', '', as_path)
-    
+
     for part in as_path_clean.split():
         part = part.strip()
         if not part:
@@ -286,147 +278,37 @@ def extract_as_from_path(as_path):
             as_set.add(as_num)
         except ValueError:
             continue
-    
+
     return as_set
 
 
-def extract_features_for_as(update_files, target_as_set):
-    features = {
-        'announcement_count': 0,
-        'withdrawal_count': 0,
-        'announced_prefixes': set(),
-        'withdrawn_prefixes': set(),
-        'unique_prefixes': set(),
-        'peer_as_count': defaultdict(int),
-        'prefix_announce_count': defaultdict(int),
-        'prefix_withdraw_count': defaultdict(int),
-        'avg_path_length': [],
-        'origin_as_changes': defaultdict(set),
-        'flapping_prefixes': set(),
-        'total_messages': 0,
-    }
-    
-    prefix_history = defaultdict(list)  # per-prefix state changes
-    
-    for filepath in update_files:
-        try:
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                for line in f:
-                    bgp_msg = parse_bgp_line(line)
-                    if not bgp_msg:
-                        continue
-                    
-                    # Check relevance to target AS set
-                    is_relevant = False
-                    
-                    # 1) peer AS is in target set
-                    if bgp_msg['peer_as'] in target_as_set:
-                        is_relevant = True
-                    
-                    # 2) AS path contains any target AS
-                    if bgp_msg['as_path']:
-                        path_as_set = extract_as_from_path(bgp_msg['as_path'])
-                        if path_as_set & target_as_set:
-                            is_relevant = True
-                        
-                        # record AS path length sample
-                        if is_relevant:
-                            features['avg_path_length'].append(len(path_as_set))
-                    
-                    if not is_relevant:
-                        continue
-                    
-                    prefix = bgp_msg['prefix']
-                    if not prefix:
-                        continue
-                    
-                    features['total_messages'] += 1
-                    
-                    # count peer AS
-                    if bgp_msg['peer_as']:
-                        features['peer_as_count'][bgp_msg['peer_as']] += 1
-                    
-                    # record prefix history
-                    prefix_history[prefix].append({
-                        'timestamp': bgp_msg['timestamp'],
-                        'type': bgp_msg['type'],
-                    })
-                    
-                    if bgp_msg['type'] == 'A':  # announcement
-                        features['announcement_count'] += 1
-                        features['announced_prefixes'].add(prefix)
-                        features['unique_prefixes'].add(prefix)
-                        features['prefix_announce_count'][prefix] += 1
-                        
-                        # origin AS = last AS in path
-                        if bgp_msg['as_path']:
-                            path_as_list = list(extract_as_from_path(bgp_msg['as_path']))
-                            if path_as_list:
-                                origin_as = path_as_list[-1]
-                                features['origin_as_changes'][prefix].add(origin_as)
-                    
-                    elif bgp_msg['type'] == 'W':  # withdrawal
-                        features['withdrawal_count'] += 1
-                        features['withdrawn_prefixes'].add(prefix)
-                        features['unique_prefixes'].add(prefix)
-                        features['prefix_withdraw_count'][prefix] += 1
-                        
-        except Exception as e:
-            print(f"Warning: failed to process file {filepath}: {e}")
+def extract_as_list(as_path):
+    """Return the AS path as an *ordered* list of hops.
+
+    ``extract_as_from_path`` returns a set, which is fine for a
+    membership test but destroys two things the outage features need: the
+    path length (a path may repeat a hop) and the origin (the last hop).
+    This keeps the order.
+    """
+    if not as_path or as_path is None or (isinstance(as_path, str) and as_path.strip() == ''):
+        return []
+
+    as_path_clean = re.sub(r'\{[^}]+\}', '', as_path)
+    hops = []
+    for part in as_path_clean.split():
+        part = part.strip()
+        if not part:
             continue
-    
-    # Mark route flapping when both A and W exist for the same prefix
-    for prefix, history in prefix_history.items():
-        has_announce = any(h['type'] == 'A' for h in history)
-        has_withdraw = any(h['type'] == 'W' for h in history)
-        if has_announce and has_withdraw:
-            features['flapping_prefixes'].add(prefix)
-    
-    # Build serializable result
-    result = {
-        'announcement_count': features['announcement_count'],
-        'withdrawal_count': features['withdrawal_count'],
-        'announced_prefix_count': len(features['announced_prefixes']),
-        'withdrawn_prefix_count': len(features['withdrawn_prefixes']),
-        'unique_prefix_count': len(features['unique_prefixes']),
-        'unique_peer_as_count': len(features['peer_as_count']),
-        'flapping_prefix_count': len(features['flapping_prefixes']),
-        'total_messages': features['total_messages'],
-        'avg_path_length': sum(features['avg_path_length']) / len(features['avg_path_length']) if features['avg_path_length'] else 0,
-        'max_path_length': max(features['avg_path_length']) if features['avg_path_length'] else 0,
-        'min_path_length': min(features['avg_path_length']) if features['avg_path_length'] else 0,
-        'prefix_announce_count_stats': {
-            'max': max(features['prefix_announce_count'].values()) if features['prefix_announce_count'] else 0,
-            'avg': sum(features['prefix_announce_count'].values()) / len(features['prefix_announce_count']) if features['prefix_announce_count'] else 0,
-        },
-        'prefix_withdraw_count_stats': {
-            'max': max(features['prefix_withdraw_count'].values()) if features['prefix_withdraw_count'] else 0,
-            'avg': sum(features['prefix_withdraw_count'].values()) / len(features['prefix_withdraw_count']) if features['prefix_withdraw_count'] else 0,
-        },
-        'origin_as_diversity': {prefix: len(as_set) for prefix, as_set in features['origin_as_changes'].items()},
-        'top_peer_as': dict(sorted(features['peer_as_count'].items(), key=lambda x: x[1], reverse=True)[:10]),
-    }
-    
-    return result
+        try:
+            hops.append(int(part))
+        except ValueError:
+            continue
+    return hops
 
 
 def bucket_start(ts):
     minute = (ts.minute // BUCKET_MINUTES) * BUCKET_MINUTES
     return ts.replace(minute=minute, second=0, microsecond=0)
-
-
-def merge_bucket_feature(dst, src):
-    dst['announcement_count'] = dst.get('announcement_count', 0) + src.get('announcement_count', 0)
-    dst['withdrawal_count'] = dst.get('withdrawal_count', 0) + src.get('withdrawal_count', 0)
-    dst['total_messages'] = dst.get('total_messages', 0) + src.get('total_messages', 0)
-    dst['announced_prefixes'] = dst.get('announced_prefixes', set()) | src.get('announced_prefixes', set())
-    dst['withdrawn_prefixes'] = dst.get('withdrawn_prefixes', set()) | src.get('withdrawn_prefixes', set())
-    dst['unique_prefixes'] = dst.get('unique_prefixes', set()) | src.get('unique_prefixes', set())
-    dst['flapping_prefixes'] = dst.get('flapping_prefixes', set()) | src.get('flapping_prefixes', set())
-    # path length samples
-    if 'avg_path_length_samples' not in dst:
-        dst['avg_path_length_samples'] = []
-    dst['avg_path_length_samples'].extend(src.get('avg_path_length_samples', []))
 
 
 def finalize_bucket_feature(b):
@@ -443,19 +325,25 @@ def finalize_bucket_feature(b):
     edit_dists = b.get('edit_distances', [])
     intervals = b.get('arrival_intervals', [])
     path_lengths = b.get('path_lengths', [])
-    
+    # A bucket can hold withdrawals without any announcement, so the
+    # denominator must be guarded explicitly: `dict.get(k, 1)` only helps
+    # when the key is absent, and this key is always present.
+    announcement_count = b.get('announcement_count', 0)
+    rate_denominator = announcement_count if announcement_count else 1
+
     return {
-        'announcement_count': b.get('announcement_count', 0),
+        'announcement_count': announcement_count,
         'withdrawal_count': b.get('withdrawal_count', 0),
+        'total_messages': b.get('total_messages', 0),
         'flapping_prefix_count': len(b.get('flapping_prefixes', set())),
-        
+
         # Route hijacking/leakage core features
-        'ori_change_rate': b.get('num_ori_change', 0) / b.get('announcement_count', 1),
+        'ori_change_rate': b.get('num_ori_change', 0) / rate_denominator,
         'num_ori_change': b.get('num_ori_change', 0),
-        'path_change_rate': (b.get('num_longer', 0) + b.get('num_shorter', 0)) / b.get('announcement_count', 1),
-        
+        'path_change_rate': (b.get('num_longer', 0) + b.get('num_shorter', 0)) / rate_denominator,
+
         # BGP storm/abnormal behavior features
-        'dup_A_rate': b.get('num_dup_A', 0) / b.get('announcement_count', 1),
+        'dup_A_rate': b.get('num_dup_A', 0) / rate_denominator,
         'avg_arrival_interval': (sum(intervals) / len(intervals)) if intervals else 0,
         
         # Path diversity features
@@ -469,65 +357,69 @@ def finalize_bucket_feature(b):
         'avg_path_length': sum(path_lengths) / len(path_lengths) if path_lengths else 0,
         'max_path_length': max(path_lengths) if path_lengths else 0,
         'min_path_length': min(path_lengths) if path_lengths else 0,
-        
+
+        # Prefix-level features.  The multi-file merge reads these three
+        # keys, so they have to be emitted here; without them the merge
+        # raised KeyError and the prefix-disappearance feature was
+        # permanently 0.
+        'announced_prefix_count': len(b.get('announced_prefixes', set())),
+        'withdrawn_prefix_count': len(b.get('withdrawn_prefixes', set())),
+        'unique_prefix_count': len(b.get('unique_prefixes', set())),
+
         'origin_change_count': b.get('num_ori_change', 0),
     }
 
 
-def aggregate_timeseries_to_totals(timeseries):
-    if not timeseries:
-        return {}
-    
-    total_announcement = 0
-    total_withdrawal = 0
-    total_messages = 0
-    announced_prefixes = 0
-    withdrawn_prefixes = 0
-    unique_prefixes = 0
-    flapping_prefixes = 0
-    path_lengths = []
-    peer_as_sets = []
-    
-    for bucket in timeseries.values():
-        total_announcement += bucket.get('announcement_count', 0)
-        total_withdrawal += bucket.get('withdrawal_count', 0)
-        total_messages += bucket.get('total_messages', 0)
-        announced_prefixes += bucket.get('announced_prefix_count', 0)
-        withdrawn_prefixes += bucket.get('withdrawn_prefix_count', 0)
-        unique_prefixes += bucket.get('unique_prefix_count', 0)
-        flapping_prefixes += bucket.get('flapping_prefix_count', 0)
-        if bucket.get('avg_path_length', 0) > 0:
-            path_lengths.append(bucket['avg_path_length'])
-        if 'peer_as_set' in bucket:
-            peer_as_sets.append(bucket['peer_as_set'])
-    
-    # Calculate total unique peer AS count
-    total_peer_as = set()
-    for ps in peer_as_sets:
-        total_peer_as.update(ps)
-    
-    return {
-        'announcement_count': total_announcement,
-        'withdrawal_count': total_withdrawal,
-        'total_messages': total_messages,
-        'announced_prefix_count': announced_prefixes,
-        'withdrawn_prefix_count': withdrawn_prefixes,
-        'unique_prefix_count': unique_prefixes,
-        'flapping_prefix_count': flapping_prefixes,
-        'avg_path_length': sum(path_lengths) / len(path_lengths) if path_lengths else 0,
-        'max_path_length': max(path_lengths) if path_lengths else 0,
-        'min_path_length': min(path_lengths) if path_lengths else 0,
-        'unique_peer_as_count': len(total_peer_as),
-    }
+def _collect_owned_prefixes(file_path, target_as_set):
+    """Prefixes the target AS originates in this file.
+
+    A withdrawal carries no AS path, so attributing it to the victim
+    requires knowing that the victim originated the prefix.  The MRT feed
+    interleaves announcements and withdrawals from different peers, so
+    the ownership has to be established for the whole file *before* the
+    withdrawals are judged -- deciding it in stream order would miss
+    every withdrawal that the feed happened to record before the
+    matching announcement.
+    """
+    owned = set()
+    with open(file_path, 'r', encoding='utf-8', errors='ignore', buffering=1024*1024) as f:
+        for line in f:
+            bgp_msg = parse_bgp_line(line)
+            if not bgp_msg or not bgp_msg.get('as_path'):
+                continue
+            as_list = extract_as_list(bgp_msg['as_path'])
+            if as_list and as_list[-1] in target_as_set:
+                owned.add(bgp_msg['prefix'])
+    return owned
 
 
-def process_single_file_timeseries(file_path, target_as_list):
+def process_single_file_timeseries(file_path, target_as_list, prefix_to_target=None):
     target_as_set = set(target_as_list)
     buckets = {}
     # keep per-prefix state within this file for flapping
     prefix_history = defaultdict(list)
     # Track per-prefix routing state for new features
     prefix_routes = defaultdict(lambda: {'last_as_path': None, 'last_origin': None, 'announce_count': 0, 'withdraw_count': 0, 'had_withdraw': False})
+    # A withdrawal record in the MRT feed carries no AS_PATH: it is
+    # "peer X stopped announcing prefix P".  The only way to know that P
+    # belongs to the target AS is to have seen P announced *by* the target
+    # AS.  Without this map the relevance test below can only match a
+    # withdrawal when the target AS is the collector's local AS, which hid
+    # essentially every withdrawal of the victim's own routes -- the
+    # defining physical signature of an outage.
+    #
+    # The map is carried *across* files: a route the victim announced
+    # hours ago and withdraws now is still the victim's route.  Scoping
+    # it to one file made every withdrawal that was not preceded by an
+    # announcement in the same 5-minute bucket invisible, which is why
+    # the withdrawal count was near zero on most windows.
+    if prefix_to_target is None:
+        prefix_to_target = {}
+    # Ownership for this file is resolved up front so that a withdrawal
+    # is judged against the whole file rather than against the stream
+    # position it happens to sit at.
+    file_owned = _collect_owned_prefixes(file_path, target_as_set)
+    prefix_to_target.update({p: target_as_list[0] for p in file_owned})
     line_count = 0
     relevant_count = 0
     start_t = time.time()
@@ -543,9 +435,21 @@ def process_single_file_timeseries(file_path, target_as_list):
                 if bgp_msg.get('peer_as') in target_as_set:
                     relevant = True
                 if bgp_msg.get('as_path'):
-                    as_set = extract_as_from_path(bgp_msg['as_path'])
-                    if as_set & target_as_set:
+                    as_list = extract_as_list(bgp_msg['as_path'])
+                    if set(as_list) & target_as_set:
                         relevant = True
+                    # The origin AS is the *last* hop of the path.  It has
+                    # to be read from the ordered path, not from the set
+                    # of hops (whose iteration order is arbitrary).
+                    if as_list:
+                        origin_hop = as_list[-1]
+                        if origin_hop in target_as_set:
+                            prefix_to_target[bgp_msg['prefix']] = origin_hop
+                elif bgp_msg.get('type') == 'W' and bgp_msg['prefix'] in prefix_to_target:
+                    # A withdrawal of a prefix the target AS was seen to
+                    # originate.  It carries no path, so this is the only
+                    # way to attribute it.
+                    relevant = True
                 if not relevant:
                     continue
                 relevant_count += 1
@@ -595,16 +499,24 @@ def process_single_file_timeseries(file_path, target_as_list):
                     b['prefix_announce_counts'][prefix] += 1
                     
                     if bgp_msg.get('as_path'):
-                        as_list = list(extract_as_from_path(bgp_msg['as_path']))
+                        # The path as an ordered list of hops.  The
+                        # *set* of hops is only usable for a membership
+                        # test: it loses the path length (an AS path may
+                        # repeat a hop) and it loses the origin, because
+                        # a set has no order.  Both matter here -- the
+                        # path length feeds the outage score and the
+                        # origin decides whether the announcement is the
+                        # target's own route.
+                        as_list = extract_as_list(bgp_msg['as_path'])
                         path_len = len(as_list)
                         b['avg_path_length_samples'].append(path_len)
                         b['path_lengths'].append(path_len)
-                        
+
                         b['unique_as_set'].update(as_list)
-                        
+
                         if bgp_msg.get('peer_as'):
                             b['peer_as_set'].add(bgp_msg['peer_as'])
-                        
+
                         origin_as = as_list[-1] if as_list else None
                         
                         route_state = prefix_routes[prefix]
@@ -648,7 +560,7 @@ def process_single_file_timeseries(file_path, target_as_list):
                     route_state['had_withdraw'] = True
                     route_state['withdraw_count'] += 1
                     route_state['last_as_path'] = None
-    except Exception as e:
+    except (ValueError) as e:
         print(f"Warning: failed to process file {file_path}: {e}")
 
     for bucket_dt, b in buckets.items():
@@ -664,104 +576,56 @@ def process_single_file_timeseries(file_path, target_as_list):
 
 
 def extract_timeseries_for_as(update_files, target_as_set):
+    """Build the per-bucket feature series for one target AS.
+
+    The files are processed in chronological order and share one
+    ``prefix_to_target`` map, because attributing a withdrawal to the
+    victim depends on having seen the victim's announcement of that
+    prefix *earlier*.  A parallel implementation would make that
+    attribution depend on the order the workers happened to finish in.
+
+    This text path is the fallback for when the parquet cache is
+    unavailable; the parquet path (``outage_features_parquet``) is the
+    one that runs by default.
+    """
     if not update_files:
         return {}
     results = {}
-    files = [str(p) for p in update_files]
+    files = sorted(str(p) for p in update_files)
     target_as_list = list(target_as_set)
+    prefix_to_target: Dict[str, int] = {}
 
-    if USE_PROCESSES:
-        from concurrent.futures import ProcessPoolExecutor, as_completed
-        total = len(files)
-        completed = 0
-        actual_workers = min(MAX_WORKERS, max(1, total // 2))
-        logger.info(f"Starting ProcessPool: files={total} workers={actual_workers} (max={MAX_WORKERS}) bucket={BUCKET_MINUTES}min")
-        with ProcessPoolExecutor(max_workers=actual_workers) as ex:
-            futures = [ex.submit(process_single_file_timeseries, fp, target_as_list) for fp in files]
-            for fut in as_completed(futures):
-                try:
-                    part = fut.result()
-                except Exception as worker_exc:
-                    # A worker process crashed (e.g. Broken pipe / EOFError /
-                    logger.debug(f"Outage worker failed (file skipped): {worker_exc}")
-                    completed += 1
-                    continue
-                for ts, feat in part.items():
-                    if ts not in results:
-                        results[ts] = feat
-                    else:
-                        dst = results[ts]
-                        dst['announcement_count'] += feat['announcement_count']
-                        dst['withdrawal_count'] += feat['withdrawal_count']
-                        dst['total_messages'] += feat['total_messages']
-                        dst['announced_prefix_count'] += feat['announced_prefix_count']
-                        dst['withdrawn_prefix_count'] += feat['withdrawn_prefix_count']
-                        dst['unique_prefix_count'] += feat['unique_prefix_count']
-                        dst['flapping_prefix_count'] += feat['flapping_prefix_count']
-                        n1 = results[ts].get('_weight', results[ts]['total_messages']) if '_weight' in results[ts] else results[ts]['total_messages']
-                        n2 = feat['total_messages']
-                        if 'avg_path_length' in dst:
-                            dst['avg_path_length'] = (
-                                (dst['avg_path_length'] * n1 + feat['avg_path_length'] * n2) / (n1 + n2 if (n1 + n2) > 0 else 1)
-                            )
-                        else:
-                            dst['avg_path_length'] = feat['avg_path_length']
-                        dst['max_path_length'] = max(dst.get('max_path_length', 0), feat.get('max_path_length', 0))
-                        min_existing = dst.get('min_path_length', 0)
-                        dst['min_path_length'] = min(min_existing if min_existing > 0 else feat.get('min_path_length', 0), feat.get('min_path_length', 0))
-                        dst['_weight'] = n1 + n2
-                completed += 1
-                if completed % max(1, total // 20) == 0 or completed == total:
-                    logger.info(f"Processed files: {completed}/{total} ({completed*100//total}%)")
-    else:
-        logger.info(f"Starting sequential processing: files={len(files)} bucket={BUCKET_MINUTES}min")
-        for fp in files:
-            part = process_single_file_timeseries(fp, target_as_list)
-            for ts, feat in part.items():
-                if ts not in results:
-                    results[ts] = feat
+    for fp in files:
+        part = process_single_file_timeseries(fp, target_as_list, prefix_to_target)
+        for ts, feat in part.items():
+            if ts not in results:
+                results[ts] = feat
+            else:
+                dst = results[ts]
+                dst['announcement_count'] += feat['announcement_count']
+                dst['withdrawal_count'] += feat['withdrawal_count']
+                dst['total_messages'] += feat['total_messages']
+                dst['announced_prefix_count'] += feat['announced_prefix_count']
+                dst['withdrawn_prefix_count'] += feat['withdrawn_prefix_count']
+                dst['unique_prefix_count'] += feat['unique_prefix_count']
+                dst['flapping_prefix_count'] += feat['flapping_prefix_count']
+                n1 = results[ts].get('_weight', results[ts]['total_messages'])
+                n2 = feat['total_messages']
+                if 'avg_path_length' in dst:
+                    dst['avg_path_length'] = (
+                        (dst['avg_path_length'] * n1 + feat['avg_path_length'] * n2) / (n1 + n2 if (n1 + n2) > 0 else 1)
+                    )
                 else:
-                    dst = results[ts]
-                    dst['announcement_count'] += feat['announcement_count']
-                    dst['withdrawal_count'] += feat['withdrawal_count']
-                    dst['total_messages'] += feat['total_messages']
-                    dst['announced_prefix_count'] += feat['announced_prefix_count']
-                    dst['withdrawn_prefix_count'] += feat['withdrawn_prefix_count']
-                    dst['unique_prefix_count'] += feat['unique_prefix_count']
-                    dst['flapping_prefix_count'] += feat['flapping_prefix_count']
-                    n1 = results[ts].get('_weight', results[ts]['total_messages']) if '_weight' in results[ts] else results[ts]['total_messages']
-                    n2 = feat['total_messages']
-                    if 'avg_path_length' in dst:
-                        dst['avg_path_length'] = (
-                            (dst['avg_path_length'] * n1 + feat['avg_path_length'] * n2) / (n1 + n2 if (n1 + n2) > 0 else 1)
-                        )
-                    else:
-                        dst['avg_path_length'] = feat['avg_path_length']
-                    dst['max_path_length'] = max(dst.get('max_path_length', 0), feat.get('max_path_length', 0))
-                    min_existing = dst.get('min_path_length', 0)
-                    dst['min_path_length'] = min(min_existing if min_existing > 0 else feat.get('min_path_length', 0), feat.get('min_path_length', 0))
-                    dst['_weight'] = n1 + n2
+                    dst['avg_path_length'] = feat['avg_path_length']
+                dst['max_path_length'] = max(dst.get('max_path_length', 0), feat.get('max_path_length', 0))
+                min_existing = dst.get('min_path_length', 0)
+                dst['min_path_length'] = min(min_existing if min_existing > 0 else feat.get('min_path_length', 0), feat.get('min_path_length', 0))
+                dst['_weight'] = n1 + n2
 
     for v in results.values():
         if '_weight' in v:
             del v['_weight']
     return results
-
-
-def calculate_baseline(features):
-    if not features or features.get('total_messages', 0) == 0:
-        return {}
-    
-    return {
-        'avg_announcement_count': features.get('announcement_count', 0),
-        'avg_withdrawal_count': features.get('withdrawal_count', 0),
-        'avg_announced_prefix_count': features.get('announced_prefix_count', 0),
-        'avg_withdrawn_prefix_count': features.get('withdrawn_prefix_count', 0),
-        'avg_unique_prefix_count': features.get('unique_prefix_count', 0),
-        'avg_flapping_prefix_count': features.get('flapping_prefix_count', 0),
-        'avg_total_messages': features.get('total_messages', 0),
-        'avg_path_length': features.get('avg_path_length', 0),
-    }
 
 
 def detect_anomalies(event_features, baseline_features):
@@ -815,7 +679,7 @@ def detect_anomalies(event_features, baseline_features):
                     'severity': severity,
                 })
     
-    # Check specific anomaly patterns   
+    # Check specific anomaly patterns
     # 1. Withdrawal count anomaly high
     if 'withdrawal_count' in event_features and 'withdrawal_count' in baseline_stats:
         withdraw_increase = event_features['withdrawal_count'] / baseline_stats['withdrawal_count']['mean'] if baseline_stats['withdrawal_count']['mean'] > 0 else 0
@@ -923,17 +787,11 @@ def detect_anomalies_timeseries(event_ts, baseline_ts):
 
 
 def detect_anomalies_timeseries_periodic(event_ts, baseline_ts_dict):
-    """
- Detect anomalies using multiple baseline periods.
- Uses mean and std computed across all baseline periods for each time slot.
-
- Args:
- event_ts: dict of timestamp -> features for event window
- baseline_ts_dict: dict of period_index -> (timestamp -> features)
-
- Returns:
- list of anomaly dicts with timestamp, feature, z_score, etc.
- """
+    """Detect anomalies using multiple baseline periods.
+    Uses mean and std computed across all baseline periods for each time slot.
+    
+    Returns:
+    list of anomaly dicts with timestamp, feature, z_score, etc."""
     if not event_ts or not baseline_ts_dict:
         return []
 
@@ -1084,7 +942,7 @@ def process_event(row):
                 if len(parts) >= 2:
                     time_str = parts[1]  # YYYYMMDD.HHMM
                     return datetime.strptime(time_str, '%Y%m%d.%H%M')
-            except Exception:
+            except (ValueError):
                 pass
             return datetime.min
         
@@ -1113,11 +971,11 @@ def process_event(row):
             elif baseline_window_start <= ts < baseline_window_end:
                 baseline_ts[ts_str] = features
         
-        event_features = _aggregate_timeseries_to_totals(event_ts) if event_ts else {}
+        event_features = aggregate_timeseries_to_totals(event_ts) if event_ts else {}
         
         baseline_samples = []
         if baseline_ts:
-            baseline_features_full = _aggregate_timeseries_to_totals(baseline_ts)
+            baseline_features_full = aggregate_timeseries_to_totals(baseline_ts)
             baseline_samples.append(baseline_features_full)
         
         print(f"  Detecting anomalies...")
@@ -1137,7 +995,7 @@ def process_event(row):
                 try:
                     ts_dt = datetime.fromisoformat(ts_str)
                     row = {'timestamp': ts_dt.strftime('%Y-%m-%d %H:%M:%S')}
-                except Exception:
+                except (ValueError):
                     row = {'timestamp': ts_str}
                 row.update(features)
                 csv_data.append(row)
@@ -1191,7 +1049,7 @@ def process_event(row):
         
         return result
         
-    except Exception as e:
+    except (AttributeError) as e:
         print(f"  Error: failed to process event {event_name}: {e}")
         import traceback
         traceback.print_exc()
@@ -1262,3 +1120,48 @@ def main():
 if __name__ == "__main__":
     main()
 
+def aggregate_timeseries_to_totals(timeseries):
+    if not timeseries:
+        return {}
+    
+    total_announcement = 0
+    total_withdrawal = 0
+    total_messages = 0
+    announced_prefixes = 0
+    withdrawn_prefixes = 0
+    unique_prefixes = 0
+    flapping_prefixes = 0
+    path_lengths = []
+    peer_as_sets = []
+    
+    for bucket in timeseries.values():
+        total_announcement += bucket.get('announcement_count', 0)
+        total_withdrawal += bucket.get('withdrawal_count', 0)
+        total_messages += bucket.get('total_messages', 0)
+        announced_prefixes += bucket.get('announced_prefix_count', 0)
+        withdrawn_prefixes += bucket.get('withdrawn_prefix_count', 0)
+        unique_prefixes += bucket.get('unique_prefix_count', 0)
+        flapping_prefixes += bucket.get('flapping_prefix_count', 0)
+        if bucket.get('avg_path_length', 0) > 0:
+            path_lengths.append(bucket['avg_path_length'])
+        if 'peer_as_set' in bucket:
+            peer_as_sets.append(bucket['peer_as_set'])
+    
+    # Calculate total unique peer AS count
+    total_peer_as = set()
+    for ps in peer_as_sets:
+        total_peer_as.update(ps)
+    
+    return {
+        'announcement_count': total_announcement,
+        'withdrawal_count': total_withdrawal,
+        'total_messages': total_messages,
+        'announced_prefix_count': announced_prefixes,
+        'withdrawn_prefix_count': withdrawn_prefixes,
+        'unique_prefix_count': unique_prefixes,
+        'flapping_prefix_count': flapping_prefixes,
+        'avg_path_length': sum(path_lengths) / len(path_lengths) if path_lengths else 0,
+        'max_path_length': max(path_lengths) if path_lengths else 0,
+        'min_path_length': min(path_lengths) if path_lengths else 0,
+        'unique_peer_as_count': len(total_peer_as),
+    }

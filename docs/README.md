@@ -38,7 +38,6 @@
 | `chief_agent.py` | CLI entry + 4-mode orchestration + `--mode auto` two-phase |
 | `workflow_engine.py` | Agent orchestration, Blackboard, multi-agent debate |
 | `agents/report_agent.py` | LLM-driven HTML report (the big one) |
-| `agents/quick_report.py` | Phase-1 deterministic quick report |
 | `agents/llm_reasoning.py` | ReAct reasoning with token accounting |
 | `agents/react_agent.py` | Think-Action-Observe loop |
 | `agents/reasoning_agent.py` | LLM reasoning summary |

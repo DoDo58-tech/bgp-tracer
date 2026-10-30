@@ -1,74 +1,46 @@
-"""
-Tool A2: AS Topology Position — Tier / Provider-Customer-Peer analysis.
-=====================================================================
-
-Determines an AS's position in the Internet topology:
-  - Tier-1:    no upstream providers (peers with everyone)
-  - Transit:   has both upstream + downstream customers
-  - Stub:      only upstream providers, no downstream customers
-  - Content:   has massive customer cone (CDN/Cloud provider)
-
-Also fetches:
-  - Direct neighbors (providers, customers, peers) from RIPEstat
-  - AS name / description from WHOIS
-  - PeeringDB info (if ASN is registered)
-
-This directly answers: "is this AS likely a major transit provider or a stub?"
-  → Stub AS announcing a Tier-1's prefix = high-confidence hijack
-
-RIPEstat API: https://stat.ripe.net/docs/02.api-basics
-  - No auth needed for basic queries (rate: 10 req/s)
-  - More data with RIPE Access Token (free)
-"""
+"""Tool A2: AS Topology Position — Tier / Provider-Customer-Peer analysis.
+====================================================================="""
 
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
-from typing import Any, Dict, List, Optional
+from typing import List
 
 import httpx
 from tools.tool_registry import ToolParameter, register_tool
 from utils.logger import logger
-from config import RIPE_DB_WHOIS_USERNAME, RIPESTAT_TOKEN
+from config import RIPESTAT_TOKEN
+import base64
+import json
+from typing import Any, Dict, Optional
+from config import RIPE_DB_WHOIS_USERNAME
 
 RIPESTAT_BASE = "https://rest.db.ripe.net"   # RIPE Whois DB REST API (authenticated)
 RIPESTAT_API = "https://stat.ripe.net"       # RIPEstat (free, no auth)
 PEERINGDB_URL = "https://www.peeringdb.com/api/jsonp/org"
 
 
-def _ripe_auth_headers():
+def ripe_auth_headers():
     """Headers for RIPE Whois DB REST API."""
     return {"Accept": "application/json"}
 
 
-def _ripe_url(path_str):
-    """
-    Build RIPE Whois DB URL.
-
-    Correct path: /ripe/aut-num/AS{asn}
-    The 'My Resources' key (keyId) is for RIPE Atlas, NOT for the Whois DB REST API.
-    The Whois DB REST API is publicly accessible without authentication.
-    """
+def ripe_url(path_str):
+    """Build RIPE Whois DB URL."""
+    path = path_str  # NOTE: parameter is `path_str`; body uses `path`.
     return f"https://rest.db.ripe.net/ripe{path}"
 
 
-async def _as_topology(tool_input, session):
-    """
-    Determine AS topology position and neighbor relationships.
-
-    Required params:
-        asn (str): AS number
-    """
+async def as_topology(tool_input, session):
+    """Determine AS topology position and neighbor relationships."""
     asn = str(tool_input["asn"])
     logger.info(f"[topology] Analyzing AS{asn}")
 
     # Run all API calls concurrently
     results = await asyncio.gather(
-        _fetch_ripe_atlas_whois(asn),
-        _fetch_ripe_atlas_neighbours(asn),
-        _fetch_peeringdb(asn),
+        fetch_ripe_atlas_whois(asn),
+        fetch_ripe_atlas_neighbours(asn),
+        fetch_peeringdb(asn),
         return_exceptions=True,
     )
 
@@ -182,18 +154,14 @@ async def _as_topology(tool_input, session):
 
 # ── RIPEstat API helpers ──────────────────────────────────────────────────────
 
-async def _fetch_ripe_atlas_whois(asn_id):
-    """
-    Fetch AS WHOIS data from RIPE Whois Database REST API.
-
-    Primary:   https://rest.db.ripe.net/ripe/aut-num/AS{asn}  (RIPE-region ASes)
-    Fallbacks: APNIC Whois (apnic), RADB (radb), BGPView (free)
-    """
+async def fetch_ripe_atlas_whois(asn_id):
+    """Fetch AS WHOIS data from RIPE Whois Database REST API."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     # Method 1: RIPE Whois DB REST API
-    url = _ripe_url(f"/aut-num/AS{asn}")
+    url = ripe_url(f"/aut-num/AS{asn}")
     try:
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            resp = await client.get(url, headers=_ripe_auth_headers())
+            resp = await client.get(url, headers=ripe_auth_headers())
             resp.raise_for_status()
             data = resp.json()
 
@@ -231,7 +199,7 @@ async def _fetch_ripe_atlas_whois(asn_id):
             logger.info(f"[topology] AS{asn} not in RIPE DB — trying APNIC/RADB/BGPView")
         else:
             logger.warning(f"[topology] RIPE Whois DB HTTP error: {e}")
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
         logger.warning(f"[topology] RIPE Whois DB failed: {e}")
 
     # Method 2: APNIC Whois via RDAP (for APNIC-region ASes like AS135826)
@@ -251,15 +219,16 @@ async def _fetch_ripe_atlas_whois(asn_id):
                 }
                 logger.info(f"[topology] APNIC fetched AS{asn}: name={result['as_name']}")
                 return result
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
         logger.warning(f"[topology] APNIC RDAP failed for AS{asn}: {e}")
 
     # Method 3: BGPView (last resort)
-    return await _fetch_bgpview_whois(asn)
+    return await fetch_bgpview_whois(asn)
 
 
-async def _fetch_bgpview_whois(asn_id):
+async def fetch_bgpview_whois(asn_id):
     """Fallback: BGPView WHOIS lookup."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     url = f"https://api.bgpview.io/asn/{asn}/info"
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
@@ -274,18 +243,14 @@ async def _fetch_bgpview_whois(asn_id):
                         "description": info.get("description") or info.get("owner", {}).get("description", ""),
                     }
                 }
-    except Exception:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError):
         pass
     return {}
 
 
-async def _fetch_ripe_atlas_neighbours(asn_id):
-    """
-    Fetch AS neighbours (providers/customers/peers) and announced prefixes.
-
-    Primary:   RIPEstat /ris/paths  (if RIPESTAT_TOKEN set)
-    Fallback:  BGPView prefix lookup + asns.live relationship data
-    """
+async def fetch_ripe_atlas_neighbours(asn_id):
+    """Fetch AS neighbours (providers/customers/peers) and announced prefixes."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     # Method 1: RIPEstat /ris/paths (needs RIPESTAT_TOKEN for full data)
     if RIPESTAT_TOKEN:
         try:
@@ -298,27 +263,28 @@ async def _fetch_ripe_atlas_neighbours(asn_id):
                 if resp.status_code == 200:
                     data = resp.json()
                     paths = data.get("data", {}).get("paths", [])
-                    return _infer_relationships(asn, paths)
-        except Exception as e:
+                    return infer_relationships(asn, paths)
+        except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
             logger.warning(f"[topology] RIPEstat paths failed: {e}")
 
     # Method 2: BGPView prefix lookup + asns.live
-    neighbours = await _fetch_bgpview_neighbours(asn)
+    neighbours = await fetch_bgpview_neighbours(asn)
     if neighbours.get("data"):
         return neighbours
 
     return {"data": {"providers": [], "customers": [], "peers": [], "_announced_prefixes": []}}
 
 
-async def _fetch_bgpview_neighbours(asn_id):
+async def fetch_bgpview_neighbours(asn_id):
     """Fallback: BGPView neighbour lookup."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     url = f"https://api.bgpview.io/asn/{asn}/contacts"
     neighbours = {"providers": [], "customers": [], "peers": []}
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             resp = await client.get(url)
             resp.raise_for_status()
-    except Exception:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError):
         pass
 
     # BGPView doesn't directly expose relationships, use as-rel.io as alternative
@@ -329,19 +295,17 @@ async def _fetch_bgpview_neighbours(asn_id):
             resp.raise_for_status()
             data = resp.json()
             neighbours = data.get("neighbours", {})
-    except Exception:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError):
         pass
 
     return {"data": neighbours}
 
 
-def _infer_relationships(asn, paths: List[list]):
-    """
-    Infer AS relationships from collected BGP paths.
+def infer_relationships(asn, paths: List[list]):
+    """Infer AS relationships from collected BGP paths.
     Simple heuristic (Valley-Free principle):
-      - In a path A-B-C: B is a provider of A, C is a customer of B
-      - In a path A-B: if B is larger AS, A is likely customer
-    """
+    - In a path A-B-C: B is a provider of A, C is a customer of B
+    - In a path A-B: if B is larger AS, A is likely customer"""
     providers = set()
     customers = set()
     peers = set()
@@ -374,8 +338,9 @@ def _infer_relationships(asn, paths: List[list]):
     }
 
 
-async def _fetch_peeringdb(asn_id):
+async def fetch_peeringdb(asn_id):
     """Fetch PeeringDB info for an ASN (no auth needed)."""
+    asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     # PeeringDB has a free JSON API
     url = f"https://www.peeringdb.com/api/net?asn={asn}"
     try:
@@ -394,17 +359,9 @@ async def _fetch_peeringdb(asn_id):
                     "type": r.get("network_type"),
                     "irr_as_set": r.get("irr_as_set"),
                 }
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, AttributeError) as e:
         logger.warning(f"[topology] PeeringDB failed for AS{asn}: {e}")
     return {}
-
-
-def _get_nested(d, *keys, default=None):
-    for k in keys:
-        if not isinstance(d, dict):
-            return default
-        d = d.get(k, default)
-    return d if d is not None else default
 
 
 # ── Tool registration ────────────────────────────────────────────────────────
@@ -419,5 +376,5 @@ register_tool(
     parameters=[
         ToolParameter("asn", "AS number", "string"),
     ],
-    handler=_as_topology,
+    handler=as_topology,
 )

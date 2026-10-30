@@ -1,15 +1,4 @@
-"""HTML safety net for the LLM-rendered HTML report.
-
-Extracted from agents/report_agent.py.  Three concerns:
-
-  1. ``_repair_missing_lt`` restores the leading ``<`` of known HTML
-     tags that the LLM dropped (a known Qwen / GLM bug).
-  2. ``validate_html_balance`` returns ``(ok, problems)`` for a
-     candidate HTML body — used to decide whether to apply the
-     deterministic-fallback path.
-  3. ``_auto_close_unbalanced_html`` appends ``</tag>`` for unclosed
-     elements at document end, without modifying existing content.
-"""
+"""HTML safety net for the LLM-rendered HTML report."""
 from __future__ import annotations
 
 import re
@@ -34,12 +23,8 @@ _REPAIR_COMMENT_OPEN = re.compile(r"(?<!<)(!--(?:[^-]|-(?!-))*?-->)")
 _COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 
 
-def _repair_missing_lt(markup):
-    """Restore ``<`` characters the LLM dropped before known HTML tags.
-
-    Also restores ``<!-- ... -->`` HTML comment markers whose leading
-    ``<`` was dropped (Qwen/GLM bug observed in production).
-    """
+def repair_missing_lt(markup):
+    """Restore ``<`` characters the LLM dropped before known HTML tags."""
     if not markup:
         return markup
 
@@ -57,13 +42,13 @@ def _repair_missing_lt(markup):
         comment_map.append((placeholder, m.group(0)))
         comment_masked = comment_masked.replace(m.group(0), placeholder, 1)
 
-    def _open_sub(match):
+    def open_sub(match):
         start = match.start()
         if start > 0 and comment_masked[start - 1].isalnum():
             return match.group(0)
         return "<" + match.group(1)
 
-    repaired = _REPAIR_OPEN_TAG.sub(_open_sub, comment_masked)
+    repaired = _REPAIR_OPEN_TAG.sub(open_sub, comment_masked)
     repaired = _REPAIR_CLOSE_TAG.sub(
         lambda m: "</" + m.group(0).lstrip("/"),
         repaired,
@@ -77,15 +62,7 @@ def _repair_missing_lt(markup):
 
 
 def validate_html_balance(markup: str) -> "tuple[bool, list[str]]":
-    """Return ``(ok, problems)`` for a candidate HTML body.
-
-    ``ok`` is True when the document has no unclosed tags and no
-    mismatched closing tags.  ``problems`` is a human-readable list of
-    issues for the log.  We use a hand-written scanner rather than
-    :class:`html.parser.HTMLParser` because the stdlib parser silently
-    auto-closes unclosed ancestors on ``</body>``, which hides the very
-    class of bug we want to detect.
-    """
+    """Return ``(ok, problems)`` for a candidate HTML body."""
     if not markup:
         return False, ["empty html"]
     problems = []
@@ -174,13 +151,8 @@ def validate_html_balance(markup: str) -> "tuple[bool, list[str]]":
     return (len(problems) == 0), problems
 
 
-def _auto_close_unbalanced_html(markup):
-    """Insert closing tags for any unclosed elements at document end.
-
-    The LLM often leaves ``<li>`` / ``<ul>`` / ``<ol>`` / headings open
-    when it runs out of tokens. Browsers tolerate this; the balance
-    validator does not, so close them before re-scanning.
-    """
+def auto_close_unbalanced_html(markup):
+    """Insert closing tags for any unclosed elements at document end."""
     if not markup:
         return markup
     void_tags = {

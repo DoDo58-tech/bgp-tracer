@@ -107,7 +107,7 @@ def pytest_runtest_teardown(item):
 
 # ── Network guard: refuse to actually open a TCP socket during fast tests ──
 @pytest.fixture(autouse=True)
-def _guard_network_in_fast_tests(request, monkeypatch):
+def guard_network_in_fast_tests(request, monkeypatch):
     """When a test is marked ``fast``, block accidental outbound connections.
 
     Why: a fast-marked test should never call out to a real API. If it

@@ -1,8 +1,4 @@
-"""Build per-event CSV from hcaf_vs_baselines_30.jsonl (30-event v17 set).
-
-Same logic as build_per_event_csv.py but pointed at the 30-event
-ground-truth result. This is the canonical CSV the paper should use.
-"""
+"""Build the canonical per-event CSV from hcaf_vs_baselines_30.jsonl."""
 from __future__ import annotations
 import csv
 import json
@@ -79,11 +75,11 @@ def main():
     print(f"Wrote {len(rows)} rows → {OUT_CSV.relative_to(ROOT)}")
     print()
     n = len(rows)
-    def _is_real(r):
+    def is_real(r):
         src = (r.get("cache_source") or "").lower()
         return "synthetic" not in src and not src.startswith("no data")
 
-    real = [r for r in rows if _is_real(r)]
+    real = [r for r in rows if is_real(r)]
     nodata = [r for r in rows if (r.get("cache_source") or "").lower().startswith("no data")]
     print(f"Real-cache events: {len(real)}/{n}"
           + (f"  (no-data rows excluded from every denominator: {len(nodata)})" if nodata else ""))

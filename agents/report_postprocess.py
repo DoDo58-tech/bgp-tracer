@@ -1,18 +1,9 @@
-"""Post-processing helpers for the LLM-rendered HTML report.
-
-Extracted from agents/report_agent.py to keep that module under the
-few-thousand-lines mark.  Functions here handle three concerns that
-all happen AFTER the LLM returns its raw HTML:
-
-  1. Strip ``(no data)`` placeholder rows and cells.
-  2. Substitute ``[field.path]`` citation markers with the resolved
-     value from the structured payload.
-  3. Format scalar values for display.
-"""
+"""Post-processing helpers for the LLM-rendered HTML report."""
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Optional
+from typing import Any
 
 
 _NO_DATA_PATTERNS = [
@@ -29,7 +20,7 @@ _CJK_CHAR = re.compile(r"[\u4e00-\u9fff]")
 _EMPTY_TD = re.compile(r"<td[^>]*>\s*(?:&nbsp;|\s)*\s*</td>", re.IGNORECASE)
 
 
-def _cell_has_nodata(cell):
+def cell_has_nodata(cell):
     """True if every visible token in the cell is one of the (no data) variants."""
     text = re.sub(r"<[^>]+>", "", cell).strip()
     if not text:
@@ -39,13 +30,10 @@ def _cell_has_nodata(cell):
     return not text
 
 
-def _strip_table_nodata_rows(table):
+def strip_table_nodata_rows(table):
     """Drop <tr> rows where every cell is a (no data)/(N/A) placeholder,
     AND drop rows whose *first data* cell (typically Value column) is a
-    no-data placeholder even if other columns have real values.
-
-    `table` is the *inner* HTML between <table ...> and </table>.
-    """
+    no-data placeholder even if other columns have real values."""
     out_chunks = []
     pos = 0
     for tr_match in re.finditer(r"<tr\b[^>]*>(.*?)</tr>", table, flags=re.DOTALL | re.IGNORECASE):
@@ -59,13 +47,13 @@ def _strip_table_nodata_rows(table):
         if not cells:
             out_chunks.append(tr_match.group(0))
             continue
-        if all(_cell_has_nodata(f"<td>{c}</td>") for c in cells):
+        if all(cell_has_nodata(f"<td>{c}</td>") for c in cells):
             continue
-        if len(cells) >= 2 and _cell_has_nodata(f"<td>{cells[1]}</td>"):
+        if len(cells) >= 2 and cell_has_nodata(f"<td>{cells[1]}</td>"):
             continue
         cell_idx = 0
 
-        def _sub_one(m, cells=cells):
+        def sub_one(m, cells=cells):
             nonlocal cell_idx
             if cell_idx >= len(cells):
                 return m.group(0)
@@ -75,13 +63,13 @@ def _strip_table_nodata_rows(table):
             cell_idx += 1
             return f"<td{m.group(1)}>{cleaned}</td>"
 
-        new_tr = re.sub(r"<td\b([^>]*)>(.*?)</td>", _sub_one, tr_match.group(0), flags=re.DOTALL | re.IGNORECASE)
+        new_tr = re.sub(r"<td\b([^>]*)>(.*?)</td>", sub_one, tr_match.group(0), flags=re.DOTALL | re.IGNORECASE)
         out_chunks.append(new_tr)
     out_chunks.append(table[pos:])
     return "".join(out_chunks)
 
 
-def _substitute_field_references(
+def substitute_field_references(
     html: str,
     traffic: dict,
     routing: dict,
@@ -111,7 +99,7 @@ def _substitute_field_references(
             if ek not in payload_root and ev is not None:
                 payload_root[ek] = ev
 
-    def _tokenise(filepath):
+    def tokenise(filepath):
         tokens: list = []
         buf = ""
         i = 0
@@ -138,7 +126,7 @@ def _substitute_field_references(
             tokens.append(buf)
         return tokens
 
-    def _walk(cur, tokens):
+    def walk(cur, tokens):
         for tok in tokens:
             if isinstance(cur, dict):
                 if tok not in cur:
@@ -152,7 +140,7 @@ def _substitute_field_references(
                 return None
         return cur
 
-    def _summarise_collection(value, max_items=3, max_len=60):
+    def summarise_collection(value, max_items=3, max_len=60):
         if isinstance(value, list):
             n = len(value)
             if n == 0:
@@ -177,16 +165,16 @@ def _substitute_field_references(
             return f"{{{preview}}} ({n} keys)"
         return str(value)
 
-    def _resolve_path(filepath):
-        tokens = _tokenise(filepath)
+    def resolve_path(filepath):
+        tokens = tokenise(filepath)
         if not tokens:
             return None
 
-        cur = _walk(payload_root, tokens)
+        cur = walk(payload_root, tokens)
         if cur is not None:
             if isinstance(cur, (dict, list)):
-                return _summarise_collection(cur)
-            return _format_scalar(cur)
+                return summarise_collection(cur)
+            return format_scalar(cur)
 
         correlation_section = reasoning_section.get("correlation_analysis") if isinstance(reasoning_section, dict) else None
         if not isinstance(correlation_section, dict):
@@ -228,11 +216,11 @@ def _substitute_field_references(
             "timeline": timeline_alias,
         }
         if tokens[0] in aliases:
-            cur = _walk(aliases[tokens[0]], tokens[1:])
+            cur = walk(aliases[tokens[0]], tokens[1:])
             if cur is not None:
                 if isinstance(cur, (dict, list)):
-                    return _summarise_collection(cur)
-                return _format_scalar(cur)
+                    return summarise_collection(cur)
+                return format_scalar(cur)
 
         for section in (traffic_section, routing_section, reasoning_section, taw_section):
             candidates = [section]
@@ -241,33 +229,27 @@ def _substitute_field_references(
                 if isinstance(inner, dict):
                     candidates.append(inner)
             for sec in candidates:
-                cur = _walk(sec, tokens)
+                cur = walk(sec, tokens)
                 if cur is not None and not isinstance(cur, (dict, list)):
-                    return _format_scalar(cur)
+                    return format_scalar(cur)
                 if cur is not None and isinstance(cur, (dict, list)):
-                    return _summarise_collection(cur)
+                    return summarise_collection(cur)
         return None
 
     bracket_re = re.compile(r"\[([A-Za-z_][\w.\[\]0-9]{1,200})\]")
 
-    def _repl(m):
+    def repl(m):
         path = m.group(1)
-        val = _resolve_path(path)
+        val = resolve_path(path)
         if val is None:
             return "(no data)"
         return val
 
-    return bracket_re.sub(_repl, html)
+    return bracket_re.sub(repl, html)
 
 
-def _format_scalar(value):
-    """Format a scalar for display in the report HTML.
-
-    Floats that are exactly integer-valued render as ``"100.0"`` (not
-    ``"100"``) so round-trip equality with the structured payload holds
-    for reviewer-facing diffs. Non-integer floats use ``%g`` so we don't
-    show spurious trailing zeros. Strings and ints pass through.
-    """
+def format_scalar(value):
+    """Format a scalar for display in the report HTML."""
     if isinstance(value, float):
         if value.is_integer():
             return f"{value:.1f}"

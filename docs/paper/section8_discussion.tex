@@ -1,0 +1,98 @@
+% Section 8 -- Discussion
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{The direction result is a coverage result}
+
+A leak is where a directional claim is most tempting and least
+supportable. A leak presents as a path longer than the valley-free
+expectation, a control-plane property, and its traffic consequence is a
+redistribution among paths that often leaves the aggregate unchanged. The
+evidence that identifies a leak---AS-relationship distance, the affected
+prefix---is therefore control-plane evidence, and the cross-domain test
+that would confirm it is a data-plane test that the traffic arm cannot
+supply when the aggregate does not move. This is the regime V3 exists to
+police: if the two series do not share the affected prefix, a timing
+coincidence between them is not a causal claim, and
+\texttt{provenance\_disjoint} is the honest verdict. The practical
+consequence is a division of labour: Phase~1 classifies leaks, because it
+reads path structure directly, and Phase~2 is an instrument for the
+minority of events where a data-plane effect is measurable.
+
+\subsection{The division of labour with language models}
+
+The audit in \S\ref{sec:eval-audit} is the empirical basis for a design
+rule we would otherwise assert on principle. A language model that
+recovers 83\,\% of ASNs and 100\,\% of verdicts but 0\,\% of traffic
+percentages is a competent \emph{renderer} of a decision and an
+incompetent \emph{maker} of one. The architecture enforces the division
+structurally---the model receives the verdict and the evidence table, and
+its output is not read back into the decision---rather than by prompting,
+because a soft constraint in the decision path is a reliability risk that
+a model upgrade can convert into a regression. The cost is that a
+narrative is only as informative as the evidence table, and on the
+windows that stop at the first veto that table is mostly empty; a report
+that names the veto that failed is less satisfying than a confident
+paragraph, and it is the report the evidence supports.
+
+\subsection{Threats to validity and what would change our mind}
+
+\textbf{Construct.} The ground-truth labels are curated from published
+accounts, and curation favours incidents that were reported. This
+inflates the share of high-severity, clearly-caused events, which is
+consistent with the gap between the curated set (89.7\,\%) and the
+held-out set (66.7\,\%).
+
+\textbf{Internal.} The label-leak audit removed \texttt{event\_type}
+from three detectors and changed their outputs; every number in this
+paper is computed after that audit. A second consideration is path
+heterogeneity: the replay path that produces the Phase-2 numbers reads a
+cache's full event streams where they exist and falls back to the merged
+timeline where they do not, so some evaluated windows carry richer
+evidence than the live path would supply at the same instant. That
+discrepancy favours coverage: a fuller stream gives the estimator more
+non-empty buckets to test than the live path supplies, which is the
+opposite direction from the abstention result, and \S\ref{sec:eval-shape}
+quantifies it on a window where both shapes are available.
+
+\textbf{External.} Thirty curated events and thirty-nine agent-corpus
+events are small evaluations, and the selective accuracy of the
+directional layer rests on very few
+commitments. We report counts rather than a rate so that a reader can
+apply their own prior over how much two events should move the estimate.
+The leak class is a third limitation: the corpus cannot separate leaks
+from outages on physical grounds, so the leak row of
+Table~\ref{tab:agent-gt} is a statement about the collection rather than
+about the method. The agent-level comparison is also under-powered: at
+$n=39$ the $22$ against $19$ gap between the agent pipeline and the rules
+arm is suggestive rather than significant on its own, and we do not claim
+it is; the per-class movement it produces is the defensible claim.
+
+Three results would overturn the abstention-heavy design. A channel that
+carried $R\to T$ signal on substantially more of the windows would
+justify a lower floor, because the constraint would then be the evidence
+rather than the arithmetic. An evaluation on events with better traffic
+coverage---the held-out set's five uncovered ASes are the cautionary
+example---would test whether the $R\to T$ gap is a sampling artefact or a
+property of the data. And a leak evaluation with cross-domain
+confirmation, from a third vantage point or an operator's own traffic
+split, would test whether the leak blind spot is intrinsic to aggregate
+traffic or specific to our single-series measurement. None of these is a
+small experiment, which is why we report the state we can defend rather
+than the state we would prefer.
+
+\subsection{Ethical considerations}
+\label{sec:ethics}
+
+This study uses public data only: BGP updates from RIPE RIS, traffic
+aggregates from Cloudflare Radar, and incident reports that network
+operators published themselves. It involves no human subjects, no
+end-user records, and no private operator telemetry; the traffic series
+are aggregates over prefix sets, and the case study reproduces only what
+the public report and the recorded artefact already contain
+(\S\ref{sec:case}). The ethical risk we weighed is therefore not privacy
+exposure but misattribution: a system that names the wrong AS can
+misdirect an operator's response. That risk is why every abstention
+carries a machine-readable reason rather than a low-confidence cause
+(\S\ref{sec:method-gate}), and why \S\ref{sec:eval-errors} reports each
+error individually rather than as an accuracy figure alone.

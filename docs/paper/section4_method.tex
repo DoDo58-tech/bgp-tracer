@@ -1,0 +1,299 @@
+% Section 4 -- Method
+\section{Method}
+\label{sec:method}
+
+This section specifies what the system computes, in the order the pipeline
+computes it: the shared time grid (\S\ref{sec:method-grid}), the Phase-1
+detectors and their disambiguation rules (\S\ref{sec:method-phase1}), the
+segmentation and onset objects Phase~2 orders (\S\ref{sec:method-est}), the
+four conditions that make its answer admissible (\S\ref{sec:method-vetoes}),
+and the vocabulary in which the procedure refuses
+(\S\ref{sec:method-gate}). The separation that matters is between a
+quantity and an authority: an effect size is informative inside the test
+and still the wrong thing to order two edges by, so the direction is
+decided by precedence and never by magnitude.
+
+\subsection{The shared time grid}
+\label{sec:method-grid}
+
+Let $\mathcal{R}=\{(t_i,s_i^R)\}$ be the control-plane event log and
+$\mathcal{T}=\{(u_j,s_j^T)\}$ the data-plane event log for one candidate
+window $W$, each entry a detected anomaly with a timestamp and a severity
+in $[0,1]$.
+
+\begin{definition}[Shared grid]
+\label{def:grid}
+Let $t_0$ be the earliest timestamp in $W$ and let $\Delta=5$\,min.
+Bucket $k$ covers $[t_0+k\Delta,\,t_0+(k+1)\Delta)$ and both series
+are evaluated on the same index set $k=0,\dots,K-1$:
+\[
+x^R_k=\frac{1}{|E^R_k|}\sum_{(t,s)\in E^R_k} s,\qquad
+x^T_k=\frac{1}{|E^T_k|}\sum_{(u,s)\in E^T_k} s,
+\]
+with $x_k=\varepsilon$ ($\varepsilon=10^{-9}$) when a bucket is empty
+and $E^\bullet_k$ the events falling in bucket $k$.
+\end{definition}
+
+The two series are bucketed \emph{jointly}: $t_0$, $\Delta$ and $K$ come
+from the union of the two logs, so index $k$ always denotes the same
+wall-clock interval in both. Bucketing each log independently anchors the
+grids at different epochs and makes index-wise comparison meaningless. An
+empty bucket is a floor rather than a zero variance: a window in which
+nothing was recorded is ``no observation'', and a dispersion estimate that
+divides by it produces infinities that propagate into every downstream
+statistic.
+
+\subsection{Phase 1: detectors and arbitration}
+\label{sec:method-phase1}
+
+Phase~1 runs four detectors over the window. Each returns a structured
+argument---fired or not, a confidence, the observations that produced it,
+and a reason string when it stays silent---rather than a verdict. The
+\emph{origin-hijack} detector compares the observed origin AS of each
+announcement against the expected origin---a validated RPKI ROA where a
+covering object exists~\cite{rpki-validator}, an inferred baseline
+otherwise---and flags announcements whose origin contradicts it. The
+\emph{route-leak} detector scores each announcement's AS path with a
+path-probability model over a CAIDA AS-relationship snapshot~\cite{caida-asrel}:
+the per-hop customer--provider and peer--peer likelihoods are composed
+along the path, and a path whose composed likelihood falls below a fixed
+threshold is reported as a leak candidate. A valley-free violation is one
+way to drive that composed likelihood down, but the detector applies no
+discrete valley-free test---it reports the composed probability, so the
+threshold is a continuum rather than a yes/no structural predicate. It
+reports a capped list, so
+its count is a floor rather than an estimate, and the cap is recorded
+alongside it. The \emph{outage} detector measures the withdrawal rate per
+prefix against its own baseline and flags sustained withdrawal regimes. The
+\emph{traffic} detector compares the observed five-minute series with a
+baseline chosen by the data: a periodic daily/weekly profile when repeated
+observations support one~\cite{cleveland-stl}, otherwise a robust
+non-periodic estimate (median level plus MAD-based dispersion). It never
+excludes an AS for being irregular; it changes the baseline instead (design
+decision S2 in \S\ref{sec:intro}).
+
+The detector outputs are combined by six disambiguation rules in a fixed
+design-time order: leak-induced hijack, multi-actor leak, self-leak during
+outage, pure-leak with a total traffic drop, ROA-versus-outage, and
+leak-during-outage. The order is not tuned on the evaluation set
+(Appendix~\ref{app:arbitration}). The arbitration maps the rule outcome
+plus the detector states onto one of five verdict classes:
+\texttt{real\_incident} (both signals anomalous and temporally related),
+\texttt{silent\_alert} (routing anomaly, no traffic impact),
+\texttt{traffic\_only} (traffic anomaly, no routing cause),
+\texttt{correlation\_uncertain} (both present, alignment unestablished), and
+\texttt{no\_clear\_anomaly} (neither). Two properties are deliberate: a
+detector that did not run is recorded as \emph{suspended with a reason},
+never as a negative observation; and the verdict records which rules fired,
+so the mapping can be replayed from the cache.
+
+\subsection{Phase 2: ordering the two edges}
+\label{sec:method-est}
+
+Phase~2 asks a narrower question than Phase~1: \emph{if} the two signals
+are related, which edge moved first, and did the second move because of
+it? No causal graph is available (\S\ref{sec:background}), so we do not
+estimate the effect of routing on traffic. We test the conditions under
+which a directional claim is admissible at all, and refuse when any of
+them fails.
+
+\begin{definition}[Segmentation, onset interval, effect]
+\label{def:segmentation}
+For a series $x$ of length $K$ and minimum segment length
+$m=\max(2,\lceil 0.1K\rceil)$, the \emph{segmentation} $\hat\sigma(x)$ is
+the piecewise-constant model with $0$, $1$ or $2$ changes whose BIC score
+$K\log(\mathrm{SSE}/K)+k\log K$ is smallest over all admissible split
+positions, with $k=2,4,6$ for $0,1,2$ changes. The \emph{onset interval}
+of $\hat\sigma(x)$ is the set of split positions whose SSE is within one
+BIC unit of the optimum: an extra free parameter costs $\log K$ in SSE, so
+every onset within that budget is equally admissible. The \emph{effect} of
+an onset $\tau$ with horizon $h$ on a response series $y$ is the
+interrupted-time-series contrast
+\[
+e(\tau,y)=\frac{1}{h}\sum_{j=0}^{h-1}\bigl(y_{\tau+j}-\hat y_{\tau+j}\bigr),
+\]
+where $\hat y$ extrapolates the pre-onset trend (a least-squares line, or
+the pre-onset mean if that trend is degenerate) across the horizon.
+\end{definition}
+
+Two edges whose onset intervals overlap cannot be ordered, however their
+point estimates fall; that is the whole content of the precedence veto.
+The effect is not the only quantity measured. For $B$ placebo onsets drawn
+from the same series before the cause, each evaluated with the same horizon
+and the same estimator, the $p$-value is
+$p=\bigl(1+\#\{|e_b|\ge|e|\}\bigr)/(B+1)$, with the add-one correction
+because an empirical $p$ of exactly zero is not an attainable probability
+at any finite $B$~\cite{phipson-2010-permutation}. This is a test of
+\emph{exclusivity}: the response must move at the cause's onset more than
+it moves at onsets that carry no routing anomaly. Because precedence has
+already fixed the direction, it is a single test, so $\alpha=0.05$ is the
+family-wise level rather than a per-comparison level. The number of
+placebos is reported with every verdict: the smallest attainable $p$ is
+$1/(B+1)$, so a window that supplies six placebos can reject at
+$\alpha=0.05$ only barely, and one that supplies none cannot reject at
+all.
+
+\subsection{The four vetoes}
+\label{sec:method-vetoes}
+\label{sec:method-channels}
+
+A claim is admitted only when four conditions hold
+(Table~\ref{tab:vetoes}). They are tests, not scores: each has a null it
+can fail, a failure mode, and a reason string that names the quantity that
+failed. The conjunction is logical, so no weight, prior or floor binds
+them, and a refusal points at the condition that produced it.
+
+\begin{table}[t]
+\centering
+\caption{The four vetoes. A direction is committed only if every veto
+passes; otherwise the first failure is returned as the reason, together
+with the statistic that produced it. V3 suspends rather than fails when
+the entity sets are unknown, so missing metadata cannot become a
+refutation.}
+\label{tab:vetoes}
+\label{tab:channels}
+\footnotesize
+\begin{tabular}{@{}p{0.10\linewidth}p{0.20\linewidth}p{0.38\linewidth}p{0.24\linewidth}@{}}
+\hline
+\textbf{Veto} & \textbf{Null} & \textbf{Refuted when} & \textbf{Reason} \\
+\hline
+V1a precedence & the two edges are simultaneous & the onset intervals
+  (Def.~\ref{def:segmentation}) are disjoint and one precedes the other &
+  \texttt{inadmissible\_precedence} \\
+V1b persistence & the edge is a fluctuation & the selected model has no
+  change, or $|t|<2$ at the selected onset &
+  \texttt{no\_routing\_edge}, \texttt{no\_traffic\_edge} \\
+V2 exclusivity & the response moves this much on its own & placebo
+  $p\ge\alpha$ & \texttt{not\_exclusive} \\
+V3 provenance & the observation cannot see the affected entity & the
+  affected and the observed entity sets are disjoint &
+  \texttt{provenance\_disjoint} \\
+V4 mirror & the response is a level shift, not a propagation & the cause
+  reverts and the response does not, or the reverse, beyond $K/12$
+  buckets & \texttt{mirror\_contradicted} \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Precedence (V1a).} The direction is read from the onset
+intervals, never from the size of the effect. The
+alternative---commit to the direction with the larger contrast---is the
+natural heuristic and it is wrong for the case that matters most: when a
+third event drives both series, the later edge often carries the larger
+effect, so magnitude names the response as the cause. Requiring disjoint
+intervals is what keeps a simultaneous pair from being ordered at all.
+
+\paragraph{Persistence (V1b).} The onset must come from a model that beat
+$m=0$ under the BIC criterion, and the Welch $t$ at the selected split
+must reach $2$. The $t$ is a floor against selection artefacts: model
+selection can prefer a split inside a series that has no edge, and the
+statistic is evaluated at the selected split rather than searched again.
+
+\paragraph{Exclusivity (V2).} The placebo comparison above. It is the only
+place where a level enters, and it is the one test that can reject a true
+effect when the response is volatile at the right frequency on its
+own---which is why \S\ref{sec:eval-protocol} measures its size under no
+effect instead of assuming it.
+
+\paragraph{Provenance (V3).} A response can only be observed in a series
+that covers the affected entities: if the routing edge concerns one prefix
+set and the traffic aggregate is built over a disjoint set, a change in the
+latter is not a response to the former. The check is a set intersection,
+and it \emph{suspends} when either side is unknown. Unknown scope is
+missing metadata, not a failed test, and the verdict records the
+suspension so that it counts as neither a commit nor a refutation.
+
+\paragraph{Mirror (V4).} An anomaly that reverts must take its consequence
+with it. If the routing edge is a pulse---withdrawal and
+re-announcement---while the traffic series shifts level permanently, the
+two are not a propagation pair whatever their timing. The rule lets the
+response trail the cause by at most $K/12$ buckets and fails the pair when
+the gap is larger; absent reversion on both sides is recorded as
+\emph{unobservable} rather than as a pass.
+
+A fifth guard applies to $T\to R$ claims only. That direction asserts
+that an operator reacted to observed load, so the routing change must be a
+mechanism an operator can produce in response---a withdrawal, an
+announcement or a path change. An origin change is a fault or a hijack and
+is never a reaction, and an unannotated mechanism yields
+\texttt{mechanism\_unknown}. The asymmetry is deliberate: an $R\to T$ claim
+needs no such guard, because traffic does not choose to re-route.
+
+\paragraph{What is deliberately absent.} There is no posterior over
+hypotheses and no channel weighting. A posterior would need a prior over
+causes and per-channel likelihoods, and two count series identify neither;
+the resulting number would encode a preference over failure modes and
+present it as a probability. Four tests whose size and power can be
+measured separately (\S\ref{sec:eval-direction}) are preferable to one
+number whose calibration cannot be checked.
+
+\subsection{Refusal semantics}
+\label{sec:method-gate}
+
+A refusal is a verdict. Every path returns a reason from a closed
+vocabulary, and the artefact records the quantities that produced it: the
+two onset intervals, their lag, the placebo $p$ and its count, the horizon,
+the size of the shared scope, and the two reversion offsets. The vocabulary
+exists so that a new code path cannot ship without a name an operator can
+read, and so that abstention rates decompose by cause instead of collapsing
+into one number that mixes them.
+
+Two distinctions are load-bearing. First, \emph{structural} refusals
+(\texttt{series\_too\_short}, \texttt{pre\_period\_too\_short},
+\texttt{post\_window\_too\_short}) say that the window cannot support the
+test, while \emph{substantive} refusals
+(\texttt{not\_exclusive}, \texttt{provenance\_disjoint},
+\texttt{mirror\_contradicted}, \texttt{inadmissible\_precedence}) say that
+the test ran and the claim failed. Only the second group is evidence
+against a causal link, and \S\ref{sec:eval-direction} reports them apart for
+that reason. Second, suspension is not failure: an unknown scope or an
+unobservable reversion is recorded as such, so missing metadata can be
+neither laundered into a refutation nor counted as a pass.
+
+The ground-truth cause label is \emph{not} an input. Deriving a prior from
+\texttt{event\_type} would be label leakage---the expected direction is a
+function of that label---and \S\ref{sec:eval-protocol} describes the audit
+that checks no detector reads it. A withdrawal observed inside the window
+is a measured control-plane fact and enters only as the mechanism
+annotation the $T\to R$ guard requires.
+
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.94\linewidth}{\small
+\textbf{Procedure} Admissible edge attribution (AEA).
+\\[3pt]
+\textbf{input} routing log $\mathcal{R}$, traffic log $\mathcal{T}$,
+window $W$ \\
+\textbf{output} order $\in\{R\to T,\,T\to R,\,\bot\}$ with a reason
+\\[3pt]
+1.\ \ $(x^R,x^T)\leftarrow$ bucket both logs jointly on the shared
+grid (Def.~\ref{def:grid}) \\
+2.\ \ \textbf{for each} series \textbf{do} select the segmentation
+      (Def.~\ref{def:segmentation}); \textbf{if} no change \textbf{return}
+      $(\bot,\ \texttt{no\_routing\_edge})$ or
+      $(\bot,\ \texttt{no\_traffic\_edge})$ \\
+3.\ \ $[\tau_{\mathrm{lo}},\tau_{\mathrm{hi}}]\leftarrow$ onset interval
+      under the selected segmentation \\
+4.\ \ \textbf{if} the intervals overlap \textbf{then return}
+      $(\bot,\ \texttt{inadmissible\_precedence})$ \\
+5.\ \ $c,o\leftarrow$ earlier, later edge;\quad $e\leftarrow$ effect at
+      $\tau_c$ with the matched horizon \\
+6.\ \ $p\leftarrow$ placebo permutation at $\tau_c$;\quad
+      \textbf{if} $p\ge\alpha$ \textbf{then return}
+      $(\bot,\ \texttt{not\_exclusive})$ \\
+7.\ \ \textbf{if} both scopes known and disjoint \textbf{then return}
+      $(\bot,\ \texttt{provenance\_disjoint})$ \\
+8.\ \ \textbf{if} both edges revert and
+      $|\mathrm{rec}_c-\mathrm{rec}_o|>K/12$ \textbf{then return}
+      $(\bot,\ \texttt{mirror\_contradicted})$ \\
+9.\ \ \textbf{if} $c$ is traffic and the mechanism is not a withdrawal,
+      an announcement or a path change \textbf{then return}
+      $(\bot,\ \texttt{reactive\_incompatible})$ \\
+10.\ \ \textbf{return} $\bigl(\mathrm{order}(c,o),\ \tau_c,\ p\bigr)$
+}}
+\caption{The attribution procedure. Steps 4 and 6--9 are the places
+where the algorithm refuses; each returns a machine-readable reason
+together with the statistic that produced it. No step returns a
+low-confidence guess.}
+\label{alg:attribution}
+\end{figure}

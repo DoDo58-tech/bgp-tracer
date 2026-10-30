@@ -1,54 +1,31 @@
-"""
-Tool A4: Long-Term Baseline — 90-day traffic trend analysis.
-==========================================================
-
-Problem with short-window baselines:
-  A 20% traffic dip might be "normal seasonal drop" or a genuine anomaly.
-
-Solution:
-  1. Fetch 90 days of historical daily traffic data from Cloudflare Radar API.
-  2. Compute 7-day, 30-day, and 90-day rolling means and stds.
-  3. Flag days that deviate significantly from the seasonal pattern.
-  4. This lets the LLM say:
-       "The dip is NOT anomalous — it matches the seasonal pattern for this day of week"
-     or
-       "This is a genuine anomaly — 3x the normal deviation for this season."
-
-Cloudflare Radar free API (no auth, 120 req/min):
-    https://api.cloudflare.com/client/v4/radar/entities/as/summaries
-"""
+"""Tool A4: Long-Term Baseline — 90-day traffic trend analysis.
+=========================================================="""
 
 from __future__ import annotations
 
-import asyncio
-import json
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import List
 
 import httpx
 from tools.tool_registry import ToolParameter, register_tool
 from utils.logger import logger
 from config import CLOUDFLARE_API_TOKEN, CLOUDFLARE_RADAR_NORMALIZATION
+import asyncio
+import json
+from typing import Any, Dict, Optional
 
 RADAR_AS_URL = "https://api.cloudflare.com/client/v4/radar/entities/as/summaries"
 
 
-async def _long_term_baseline(tool_input, session):
-    """
-    Analyze 90-day traffic baseline and flag anomalous days.
-
-    Required params:
-        asn (str): AS number
-        start_time (str): current analysis window start
-        end_time (str): current analysis window end
-
+async def long_term_baseline(tool_input, session):
+    """Analyze 90-day traffic baseline and flag anomalous days.
+    
     Returns:
-        - daily_traffic: list of {date, mean_traffic, std_traffic} for 90 days
-        - trend: "increasing" | "stable" | "decreasing"
-        - anomaly_days: dates in the current window that deviate significantly
-        - seasonal_pattern: day-of-week pattern (useful for removing false positives)
-        - baseline_comparison: how the current period compares to the 90-day baseline
-    """
+    - daily_traffic: list of {date, mean_traffic, std_traffic} for 90 days
+    - trend: "increasing" | "stable" | "decreasing"
+    - anomaly_days: dates in the current window that deviate significantly
+    - seasonal_pattern: day-of-week pattern (useful for removing false positives)
+    - baseline_comparison: how the current period compares to the 90-day baseline"""
     asn = str(tool_input["asn"])
     start = tool_input.get("start_time", "")
     end = tool_input.get("end_time", "")
@@ -57,7 +34,7 @@ async def _long_term_baseline(tool_input, session):
     try:
         start_dt = datetime.strptime(start[:10], "%Y-%m-%d") if start else datetime.now() - timedelta(days=7)
         end_dt = datetime.strptime(end[:10], "%Y-%m-%d") if end else datetime.now()
-    except Exception:
+    except (AttributeError):
         start_dt = datetime.now() - timedelta(days=7)
         end_dt = datetime.now()
 
@@ -65,7 +42,7 @@ async def _long_term_baseline(tool_input, session):
 
     # Fetch 90 days of data
     days_to_fetch = 90
-    daily_data = await _fetch_daily_traffic(asn, days=days_to_fetch)
+    daily_data = await fetch_daily_traffic(asn, days=days_to_fetch)
 
     if not daily_data:
         return {
@@ -97,7 +74,7 @@ async def _long_term_baseline(tool_input, session):
         trend_narrative = f"Traffic is stable: 7-day avg ({recent_7:.3f}) ≈ 30-day avg ({older_30:.3f})"
 
     # Day-of-week seasonal pattern
-    dow_pattern = _compute_dow_pattern(daily_data)
+    dow_pattern = compute_dow_pattern(daily_data)
 
     # Flag anomalous days in the current window
     anomaly_days = []
@@ -177,7 +154,7 @@ async def _long_term_baseline(tool_input, session):
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-async def _fetch_daily_traffic(asn, days=90) -> List[dict]:
+async def fetch_daily_traffic(asn, days=90) -> List[dict]:
     """
     Fetch daily traffic summary for an AS from Cloudflare Radar API.
     Returns list of {date, value} sorted oldest-first.
@@ -210,12 +187,12 @@ async def _fetch_daily_traffic(asn, days=90) -> List[dict]:
                 for d, v in zip(dates, values)
                 if v is not None
             ]
-    except Exception as e:
+    except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
         logger.warning(f"[baseline] Cloudflare Radar API failed: {e}")
         return []
 
 
-def _compute_dow_pattern(daily_data: List[dict]):
+def compute_dow_pattern(daily_data: List[dict]):
     """
     Compute average traffic by day of week (0=Monday ... 6=Sunday).
     Used to understand weekly seasonality.
@@ -229,7 +206,7 @@ def _compute_dow_pattern(daily_data: List[dict]):
             dt = datetime.strptime(d["date"], "%Y-%m-%d")
             dow = dt.weekday()
             dow_totals[dow].append(d["value"])
-        except Exception:
+        except (ValueError):
             continue
 
     pattern = {}
@@ -268,5 +245,5 @@ register_tool(
         ToolParameter("start_time", "Current analysis window start (ISO)", "string"),
         ToolParameter("end_time", "Current analysis window end (ISO)", "string"),
     ],
-    handler=_long_term_baseline,
+    handler=long_term_baseline,
 )

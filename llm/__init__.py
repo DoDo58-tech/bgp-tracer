@@ -1,9 +1,4 @@
-"""
-LLM (Large Language Model) utilities for BGP Tracer.
-
-This package provides LLM integration for intelligent network analysis,
-including DeepSeek reasoning models and OpenAI-compatible APIs.
-"""
+"""LLM (Large Language Model) utilities for BGP Tracer."""
 
 __version__ = "1.0.0"
 

@@ -1,4 +1,4 @@
-\documentclass[acmsmall,review,anonymous]{acmart}
+\documentclass[sigconf,anonymous]{acmart}
 
 \usepackage{graphicx}
 \usepackage{subfig}
@@ -9,6 +9,7 @@
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta,shapes.geometric,fit,calc}
 \usepackage{booktabs}
+\usepackage{caption}
 \usepackage[compact]{titlesec}
 \titlespacing{\section}{0pt}{1.0\baselineskip}{0.4\baselineskip}
 \titlespacing{\subsection}{0pt}{0.7\baselineskip}{0.3\baselineskip}
@@ -18,7 +19,20 @@
 \newtheorem{observation}{Observation}
 \newtheorem{property}{Property}
 \setcopyright{none}
+% Long \texttt{} tokens (verdict names, file names) can exceed the column
+% width in a two-column layout. Allow TeX to break inside them rather than
+% overprinting the margin.
+\sloppy
 \settopmatter{printacmref=false, printccs=true, printfolios=true}
+
+% Layout tightening for the CoNEXT page budget.
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{8pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{0pt}
+\captionsetup{font=small,skip=3pt}
+
+
 
 % ---------- acronyms ----------
 \newcommand{\pdm}{PDM}
@@ -71,7 +85,36 @@
 
 
 \begin{abstract}
-Internet operators increasingly rely on BGP monitoring platforms to detect routing anomalies, yet these platforms produce thousands of daily alerts while fewer than 1\% are ultimately confirmed by operators as actionable. Existing alert triage relies on static thresholds and heuristic rules, which cannot tell a routing anomaly that affects the business from one that does not. We present BGP Tracer, a two-phase alert-triage and attribution system that joins RIPE RIS BGP telemetry with Cloudflare Radar traffic aggregates on a common time grid. Phase 1 performs joint control-plane/data-plane correlation and returns a five-class verdict (\texttt{real\_incident} / \texttt{silent\_alert} / \texttt{traffic\_only} / \texttt{correlation\_uncertain} / \texttt{no\_clear\_anomaly}) together with the evidence behind it; each verdict is cache-replayable and the language model is confined to narrative rendering. Phase 2 is an optional deep dive that estimates a causal direction from a pre/post partition and abstains explicitly when the estimate is not statistically supported. On 29 curated ground-truth events, Phase 1 attains 89.7\% Top-1 cause classification. On a replay of 192 Cloudflare Radar alerts, 130 completed (62 harness failures) and BGP Tracer flagged 14 genuine incidents (10.8\% of completed replays, Wilson 95\% CI 6.5--17.3\%), a 9.3:1 reduction over the completed set at a median end-to-end latency of 225.6\,s. We also report a negative result: on the 25 real-cache events with a verified direction, the Phase-2 synthesis commits on 2 and is wrong on both, while single-channel baselines commit far more often. The evidence therefore supports joint routing--traffic arbitration with explicit uncertainty, not PNS-anchored direction attribution at current telemetry density.
+Internet operators rely on BGP monitoring platforms to detect routing
+anomalies, yet these platforms produce thousands of daily alerts while
+few are confirmed as actionable. Triage by static thresholds and
+heuristic rules cannot separate a traffic disturbance caused by a
+routing change from one that merely coincides with it. We present BGP
+Tracer, a two-phase attribution system over RIPE RIS routing telemetry
+and Cloudflare Radar traffic aggregates. Phase~1 runs detectors on a
+shared five-minute grid and returns a categorical verdict that filters
+benign events. Phase~2 applies an admissible edge attribution (AEA)
+test: each series is segmented, the onset of a change is reported as an
+\emph{interval} rather than a point, and a direction is committed only
+if four vetoes pass---disjoint onset intervals in the right order,
+persisting effect, exclusivity against placebo onsets, and provenance
+and mirror checks. Every refusal returns the veto that failed and the
+statistic behind it. Two consequences are measured. First, ordering by
+onset \emph{intervals} instead of point estimates removes the dominant
+failure mode: on a simultaneous common shock, false directional
+commitments fall from $9.7\%$ to $0.7\%$ of $600$ windows,
+while planted mechanisms are recovered with $100\%$ precision in all
+twelve lag--magnitude cells ($2{,}291$ commitments, none wrong).
+Second, the test is conservative at independence ($3.0\%$ rejections at
+$\alpha=0.05$) and anti-conservative under serial dependence
+($12.3\%$ at lag-one correlation $0.8$), which we report rather than
+round to nominal. On the public corpus now in the tree the primary
+result is a coverage result: $200$ of $227$ cached windows cannot produce
+both series, and all $27$ that can stop at the first veto---unchanged
+when the exclusivity level is raised to $0.99$, which locates the
+abstention in the data rather than in the threshold. Each stop returns
+its reason, so the refusals form an auditable record of what was missing
+from the evidence rather than a silent decline.
 
 
 
@@ -83,12 +126,14 @@ Internet operators increasingly rely on BGP monitoring platforms to detect routi
 \input{section1_intro}
 \input{section2_background}
 \input{section3_overview}
-\input{section4_implementation}
-\input{section5_evaluation}
-\input{section6_casestudy}
-\input{section7_discussion}
-\input{section8_related}
-\input{section9_conclusion}
+\input{section4_method}
+\input{section5b_agents}
+\input{section5_implementation}
+\input{section6_evaluation}
+\input{section7_casestudy}
+\input{section8_discussion}
+\input{section9_related}
+\input{section10_conclusion}
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{refs}

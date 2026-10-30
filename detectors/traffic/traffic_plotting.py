@@ -1,17 +1,18 @@
 import matplotlib.pyplot as plt
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
 import numpy as np
 import os
 
 import sys
-import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from detectors.traffic import timeparse
 from utils.logger import logger
+from typing import Any, Dict, List, Tuple
 
 
-def _parse_iso_safe(ts_str):
+def parse_iso_safe(ts_str):
     """Parse ISO-8601 / space-separated timestamps, always stripping microseconds and Z."""
+    ts = ts_str  # NOTE: parameter is `ts_str`; body uses `ts`.
     ts = ts.replace("Z", "+00:00").replace("z", "+00:00").rstrip("Z").rstrip("z").rstrip("+00:00").rstrip("+00").rstrip("-").strip()
     ts = ts.split(".")[0]
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
@@ -22,36 +23,26 @@ def _parse_iso_safe(ts_str):
     return None
 
 
-def _percentile_bounds_for_baseline(historical_values_list, current_len, lower_pct=2.5, upper_pct=97.5):
-    """
- ( mean ± 3σ). 
- , . 
- 
- Args:
- historical_values_list: , 
- current_len: 
- lower_pct: ( 2.5%)
- upper_pct: ( 97.5%)
- 
- Returns:
- (lower_bounds, upper_bounds, median): 
- """
+def percentile_bounds_for_baseline(historical_values_list, current_len, lower_pct=2.5, upper_pct=97.5):
+    """( mean ± 3σ).
+    , .
+    
+    Returns:
+    (lower_bounds, upper_bounds, median):"""
     import numpy as np
     
     if not historical_values_list:
         return np.array([]), np.array([]), np.array([])
     
-    #  numpy 
+    #  numpy
     hist_arr = np.array(historical_values_list, dtype=float)  # shape: (n_periods, n_timepoints)
     
     if hist_arr.size == 0:
         return np.array([]), np.array([]), np.array([])
     
-    # 
     min_len = min(hist_arr.shape[1], current_len)
     hist_arr = hist_arr[:, :min_len]
     
-    # 
     lower_bounds = np.nanpercentile(hist_arr, lower_pct, axis=0)
     upper_bounds = np.nanpercentile(hist_arr, upper_pct, axis=0)
     median = np.nanmedian(hist_arr, axis=0)
@@ -59,7 +50,7 @@ def _percentile_bounds_for_baseline(historical_values_list, current_len, lower_p
     return lower_bounds, upper_bounds, median
 
 
-def _effective_std_for_baseline(mean_arr, std_arr):
+def effective_std_for_baseline(mean_arr, std_arr):
     """ detect_anomalies_statistical : std , ±3σ . """
     mean_arr = np.asarray(mean_arr, dtype=float)
     std_arr = np.asarray(std_arr, dtype=float)
@@ -93,37 +84,24 @@ def plot_traffic_comparison_beautiful(
         timestamps = timestamps[:n_points]
         current_values = current_values[:n_points]
 
-        def _parse_ts_for_plot(ts_str):
-            dt = _parse_iso_safe(ts)
+        def parse_ts_for_plot(ts_str):
+            dt = parse_iso_safe(ts)
             if dt is None:
                 return ts
             return dt
 
         time_labels = []
         for ts in timestamps:
-            dt = _parse_ts_for_plot(ts)
+            dt = parse_ts_for_plot(ts)
             time_labels.append(dt.strftime("%H:%M") if isinstance(dt, datetime) else str(dt))
 
         # Parse dates, handling optional seconds in format
-        _date_formats = ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M']
-        start_time_dt = None
-        for fmt in _date_formats:
-            try:
-                start_time_dt = datetime.strptime(start_date, fmt)
-                break
-            except ValueError:
-                pass
-        if start_time_dt is None:
-            start_time_dt = datetime.strptime(start_date.split('.')[0], '%Y-%m-%d %H:%M:%S')
-        end_time_dt = None
-        for fmt in _date_formats:
-            try:
-                end_time_dt = datetime.strptime(end_date, fmt)
-                break
-            except ValueError:
-                pass
-        if end_time_dt is None:
-            end_time_dt = datetime.strptime(end_date.split('.')[0], '%Y-%m-%d %H:%M:%S')
+        # Reuse the shared parser rather than a narrower local copy:
+        # the cache files carry ISO 8601 timestamps (``T`` separator),
+        # which a local two-format list rejected, and the plot -- and
+        # with it the whole traffic stage -- failed.
+        start_time_dt = timeparse.parse_iso(start_date)
+        end_time_dt = timeparse.parse_iso(end_date)
 
         highlight_start_dt = start_time_dt
         highlight_end_dt = end_time_dt
@@ -135,7 +113,7 @@ def plot_traffic_comparison_beautiful(
 
         # Plot historical periods as reference
         period_colors = ['#F4A6A6', '#A6C4F4', '#A6E4A6', '#C0C0C0']  # light pink, light blue, light green, light gray
-        def _period_label(period_key, i):
+        def period_label(period_key, i):
             if "weekly" in period_key.lower():
                 return f"{i} week ago" if i == 1 else f"{i} weeks ago"
             return f"{i} day ago" if i == 1 else f"{i} days ago"
@@ -153,7 +131,7 @@ def plot_traffic_comparison_beautiful(
                         period_key = "weekly_ago"
                 else:
                     period_key = "weekly_ago" if "weekly_ago" in h else "daily_ago"
-                label = _period_label(period_key, period_ago)
+                label = period_label(period_key, period_ago)
                 vals = np.array(h["values"], dtype=float)
                 min_len = min(len(x), len(vals))
                 color = period_colors[idx % len(period_colors)]
@@ -167,14 +145,11 @@ def plot_traffic_comparison_beautiful(
             std_arr = std_arr[:min_len]
             x_plot = x[:min_len]
 
-            #  mean ± 3σ（）
             if (historical_values_list and len(historical_values_list) >= 2) or \
                (historical_data and len(historical_data) >= 2):
-                # 
                 if historical_values_list and len(historical_values_list) >= 2:
                     hist_vals_for_percentile = historical_values_list
                 else:
-                    # ： historical_data 
                     hist_vals_for_percentile = []
                     for h in historical_data:
                         vals = np.array(h.get("values", []), dtype=float)
@@ -182,7 +157,7 @@ def plot_traffic_comparison_beautiful(
                             hist_vals_for_percentile.append(vals[:min_len])
                 
                 if len(hist_vals_for_percentile) >= 2:
-                    lower_bounds, upper_bounds, median = _percentile_bounds_for_baseline(
+                    lower_bounds, upper_bounds, median = percentile_bounds_for_baseline(
                         hist_vals_for_percentile, min_len, lower_pct=5, upper_pct=95
                     )
                     
@@ -194,21 +169,19 @@ def plot_traffic_comparison_beautiful(
                                 color='#FF8C42', linestyle='--', linewidth=2.5, alpha=0.9)
                     else:
                         #  mean ± 3σ
-                        eff_std = _effective_std_for_baseline(mean_arr, std_arr)
+                        eff_std = effective_std_for_baseline(mean_arr, std_arr)
                         upper_3sigma = mean_arr + 3 * eff_std
                         lower_3sigma = mean_arr - 3 * eff_std
                         ax.fill_between(x_plot, lower_3sigma, upper_3sigma, color='#D0D0D0', alpha=0.25, label='Baseline ±3σ (fallback)')
                         ax.plot(x_plot, mean_arr, label='Historical Mean', color='#FF8C42', linestyle='--', linewidth=2.5, alpha=0.9)
                 else:
-                    # ， mean ± 3σ
-                    eff_std = _effective_std_for_baseline(mean_arr, std_arr)
+                    eff_std = effective_std_for_baseline(mean_arr, std_arr)
                     upper_3sigma = mean_arr + 3 * eff_std
                     lower_3sigma = mean_arr - 3 * eff_std
                     ax.fill_between(x_plot, lower_3sigma, upper_3sigma, color='#D0D0D0', alpha=0.25, label='Baseline ±3σ (fallback)')
                     ax.plot(x_plot, mean_arr, label='Historical Mean', color='#FF8C42', linestyle='--', linewidth=2.5, alpha=0.9)
             else:
-                # ， mean ± 3σ
-                eff_std = _effective_std_for_baseline(mean_arr, std_arr)
+                eff_std = effective_std_for_baseline(mean_arr, std_arr)
                 upper_3sigma = mean_arr + 3 * eff_std
                 lower_3sigma = mean_arr - 3 * eff_std
                 ax.fill_between(x_plot, lower_3sigma, upper_3sigma, color='#D0D0D0', alpha=0.25, label='Baseline ±3σ (fallback)')
@@ -246,14 +219,14 @@ def plot_traffic_comparison_beautiful(
         start_idx = 0
         end_idx = len(time_labels) - 1
 
-        def _parse_ts(ts):
-            dt = _parse_iso_safe(ts)
+        def parse_ts(ts):
+            dt = parse_iso_safe(ts)
             if dt is None:
                 return None
             return dt
 
         for i, ts in enumerate(timestamps):
-            dt = _parse_ts(ts)
+            dt = parse_ts(ts)
             if dt is None:
                 continue
             if dt >= highlight_start_dt:
@@ -261,12 +234,10 @@ def plot_traffic_comparison_beautiful(
                 break
 
         for i, ts in enumerate(timestamps):
-            dt = _parse_ts(ts)
+            dt = parse_ts(ts)
             if dt is None:
                 continue
             if dt > highlight_end_dt:
-                end_idx = max(i - 1, start_idx)
-                break
                 end_idx = max(i - 1, start_idx)
                 break
 
@@ -327,58 +298,6 @@ def plot_traffic_comparison_beautiful(
         plt.close()
         return output_path
 
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error generating traffic comparison chart: {e}")
-        return ""
-
-
-def plot_period_detection(time_series, timestamps,
-                         period_info, output_dir = None):
-    try:
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(15, 12))
-
-        ax1.plot(time_series, 'b-', alpha=0.7)
-        ax1.set_title('Original Traffic Time Series')
-        ax1.set_xlabel('Time Points')
-        ax1.set_ylabel('Traffic Value')
-        ax1.grid(True, alpha=0.3)
-
-        from statsmodels.tsa.stattools import acf
-        autocorr = acf(time_series, nlags=min(len(time_series)-1, 100))
-        ax2.plot(autocorr, 'g-', marker='o', markersize=3)
-        ax2.set_title('Autocorrelation Function')
-        ax2.set_xlabel('Lag')
-        ax2.set_ylabel('Autocorrelation')
-        ax2.grid(True, alpha=0.3)
-        ax2.axhline(y=0, color='r', linestyle='--', alpha=0.5)
-
-        from scipy import signal
-        freqs, psd = signal.periodogram(time_series)
-        ax3.semilogy(freqs, psd, 'm-')
-        ax3.set_title('Power Spectral Density')
-        ax3.set_xlabel('Frequency')
-        ax3.set_ylabel('Power')
-        ax3.grid(True, alpha=0.3)
-
-        period_text = f"Detected Period: {period_info.get('period_hours', 'N/A')} hours\n"
-        period_text += f"Method: {period_info.get('method', 'N/A')}\n"
-        period_text += ".2f"
-        fig.suptitle(f'Period Detection Analysis\n{period_text}', fontsize=14)
-
-        plt.tight_layout()
-
-        if output_dir is None:
-            output_dir = os.path.join(os.path.dirname(__file__), "..", "data", "traffic_plots")
-
-        os.makedirs(output_dir, exist_ok=True)
-        output_path = os.path.join(output_dir, 'period_detection_analysis.png')
-
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        logger.info(f"Period detection plot saved to: {output_path}")
-
-        plt.close()
-        return output_path
-
-    except Exception as e:
-        logger.error(f"Error generating period detection plot: {e}")
         return ""

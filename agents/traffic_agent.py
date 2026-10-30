@@ -1,28 +1,22 @@
 # Re-export utilities for backward compatibility
 from time import perf_counter
 from agents.impl.traffic_impl import (
-    run_traffic_agent_async,
-    run_traffic_agent,
-    run_traffic_agent_batch,
-    parse_traffic_outage_input,
     lookup_as_by_country,
-    parse_multiple_as_input,
     parse_country_region_input,
+    parse_multiple_as_input,
+    parse_traffic_outage_input,
+    run_traffic_agent,
+    run_traffic_agent_async,
+    run_traffic_agent_batch,
 )
 from agents.core import Agent, AgentState, TaskResult
+from agents.coordination_utils import normalize_time
 
 
-def _to_canonical_severity(items):
+def to_canonical_severity(items):
     """Return the worst severity label across all anomalies.
-
-    Handles three severity representations seen in the detector output:
-      - String: "high", "medium", "low"  (canonical labels)
-      - Numeric 0-3: 3=high, 2=medium, 1=low  (cluster severity)
-      - Numeric 0-1: z-score normalised, >0.7 → high  (correlation severity)
-      - Unknown / None → skipped
-
-    Returns "none" when anomalies is empty.
-    """
+    
+    Returns "none" when anomalies is empty."""
     anomalies = items
     if not anomalies:
         return "none"
@@ -53,18 +47,8 @@ def _to_canonical_severity(items):
     return best_label
 
 
-def _extract_confidence(result, *, default_high, default_low):
-    """Pull the detector's calibrated confidence out of a raw result.
-
-    Detectors write confidence in several shapes (bare float, dict with
-    `calibrated_confidence` / `raw_confidence`, nested under
-    `confidence.calibrated_confidence`). When the detector provided a
-    real number we trust it; otherwise we fall back to a coarse
-    anomaly/no-anomaly heuristic with the supplied defaults.
-
-    The result is clamped to [0, 1] so a bad value cannot poison downstream
-    weighted combinations in the HCAF causal engine.
-    """
+def extract_confidence(result, *, default_high, default_low):
+    """Pull the detector's calibrated confidence out of a raw result."""
     if not isinstance(result, dict):
         return default_low
 
@@ -134,7 +118,7 @@ class TrafficAgent(Agent):
                 "end_time": str(end_time),
                 # Prefer the detector's calibrated confidence when available;
                 # fall back to a simple heuristic so earlier contracts still work.
-                "confidence": _extract_confidence(
+                "confidence": extract_confidence(
                     result,
                     default_high=0.8,
                     default_low=0.5,
@@ -159,7 +143,7 @@ class TrafficAgent(Agent):
                 "trough_value": result.get("trough_value", 0.0),
                 "multi_scale_analysis": result.get("multi_scale_analysis"),
                 # Highest severity across all anomalies — the prompt explicitly
-                "max_severity": _to_canonical_severity(
+                "max_severity": to_canonical_severity(
                     result.get("anomalies") or [],
                 ),
             })
@@ -177,7 +161,7 @@ class TrafficAgent(Agent):
                     "anomalies_detected": result.get("anomalies_detected", False),
                     "plot_path": result.get("plot_path"),
                 },
-                confidence=_extract_confidence(
+                confidence=extract_confidence(
                     result,
                     default_high=0.8,
                     default_low=0.55,
@@ -193,6 +177,6 @@ class TrafficAgent(Agent):
             await self.bb.write("meta", "traffic_done", True)
             self.state = AgentState.DONE
             return TaskResult(success=True, data=result, agent=self.name)
-        except Exception as e:
+        except (AttributeError) as e:
             self.state = AgentState.ERROR
             return TaskResult(success=False, error=str(e), agent=self.name)

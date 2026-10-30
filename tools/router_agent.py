@@ -1,69 +1,32 @@
-"""
-RouterAgent — ReAct-driven conversation and tool router.
-=======================================================
-
-The RouterAgent uses the ReAct (Reasoning + Acting) pattern to:
-1. Think through the problem step by step
-2. Take actions (call tools) based on reasoning
-3. Observe results and incorporate them into next thoughts
-4. Continue until a comprehensive analysis is complete
-
-ReAct Loop:
-    Thought: <reasoning about what to do next>
-    Action: <tool_name>
-    Action Input: <parameters>
-    Observation: <result from tool>
-    ... (repeat until done)
-    Thought: I have enough information to answer.
-    Answer: <final response>
-
-Architecture:
-    ChatInterface → RouterAgent.step(user_message, session)
-                         ↓
-                    ReAct Loop:
-                      ↓
-                    LLM thinks: "I need to gather traffic data first..."
-                    ↓
-                    Thought → Action → Observation
-                    ↓
-                    Continue until complete
-                    ↓
-                    Final Answer
-"""
+"""RouterAgent — ReAct-driven conversation and tool router.
+======================================================="""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import re
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict
 
-from agents.traffic_agent import parse_multiple_as_input
 from agents.coordination_utils import normalize_time
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REASONING
 from tools.session_manager import SessionManager
 from tools.tool_registry import REGISTRY
 from utils.logger import logger
 from config import MODEL, API_KEY, BASE_URL
+from datetime import datetime
+from typing import List, Optional, Tuple
+from agents.traffic_agent import parse_multiple_as_input
+from tools.session_manager import SessionManager as Session
 
 # ── Re-export so external code only imports from tools ─────────────────────────
-from tools.session_manager import SessionManager as Session
 
 # Max analysis rounds before forcing a report
 MAX_ANALYSIS_ROUNDS = 15
 
 
 class RouterAgent:
-    """
-    ReAct-driven conversation router.
-
-    Usage:
-        router = RouterAgent()
-        session = SessionManager()
-        response = await router.step("analyze AS135826 from 2025-06-21 to 2025-06-22")
-        print(response)
-    """
+    """ReAct-driven conversation router."""
 
     def __init__(self, model=None, temperature=None):
         self.model = model or MODEL
@@ -87,58 +50,40 @@ class RouterAgent:
         user_message: str,
         session: SessionManager,
     ) -> str:
-        """
-        Process one user message using ReAct loop.
-
-        ReAct Loop:
-          1. LLM thinks about what to do
-          2. LLM decides action (tool call or final answer)
-          3. Execute action, get observation
-          4. Repeat until done
-        """
+        """Process one user message using ReAct loop."""
         self._round = 0
         self._react_trace = []
         session.add_user_turn(user_message)
 
         # Parse AS + time from user input
-        parsed = self._parse_user_input(user_message)
+        parsed = self.parse_user_input(user_message)
         if parsed["asn"]:
             session.set_asn(parsed["asn"])
         if parsed["start"] and parsed["end"]:
             session.set_time_window(parsed["start"], parsed["end"])
 
         # Run ReAct loop
-        return await self._react_loop(session, user_message)
+        return await self.react_loop(session, user_message)
 
     # ── ReAct Loop ───────────────────────────────────────────────────────────
 
-    async def _react_loop(
+    async def react_loop(
         self,
         session: SessionManager,
         user_message: str,
     ) -> str:
-        """
-        The core ReAct loop: Think → Action → Observe → repeat.
-
-        Each iteration:
-          - Build context with all previous thoughts/actions/observations
-          - Ask LLM to think about next step
-          - Parse Thought + Action from response
-          - Execute action if it's a tool call
-          - Add observation to trace
-          - Continue until LLM provides final Answer
-        """
-        context = self._build_context(session, user_message)
+        """The core ReAct loop: Think → Action → Observe → repeat."""
+        context = self.build_context(session, user_message)
 
         for round_num in range(MAX_ANALYSIS_ROUNDS):
             self._round = round_num + 1
             logger.info(f"[ReAct] Round {self._round}/{MAX_ANALYSIS_ROUNDS}")
 
             # Ask LLM for next step
-            response = await self._react_think(context, session)
+            response = await self.react_think(context, session)
 
             # Parse response: either Action or Answer
-            parsed = self._parse_react_response(response)
+            parsed = self.parse_react_response(response)
 
             if parsed["type"] == "answer":
                 # LLM has completed the analysis
@@ -161,7 +106,7 @@ class RouterAgent:
                 })
 
                 # Execute the tool
-                inp = self._inject_defaults(action_input, session)
+                inp = self.inject_defaults(action_input, session)
                 logger.info(f"[ReAct] Executing: {action_name}({inp})")
 
                 result = await REGISTRY.call(action_name, inp, session)
@@ -182,13 +127,13 @@ class RouterAgent:
                     return f"Analysis interrupted — {action_name} failed: {result.error}"
 
                 # Update context for next round
-                context = self._build_context(session, user_message)
+                context = self.build_context(session, user_message)
 
         # Max rounds hit - try to generate report
         logger.warning(f"[ReAct] Max rounds ({MAX_ANALYSIS_ROUNDS}) hit")
-        return await self._generate_final_report(session)
+        return await self.generate_final_report(session)
 
-    async def _react_think(
+    async def react_think(
         self,
         context: str,
         session: SessionManager,
@@ -252,11 +197,11 @@ Now, what is your next step?"""
         try:
             resp = await asyncio.to_thread(self.llm.complete, prompt)
             return resp.text if hasattr(resp, "text") else str(resp)
-        except Exception as e:
+        except (AttributeError) as e:
             logger.error(f"[ReAct] LLM think failed: {e}")
             return "Thought: I encountered an error. Let me try to generate a report with what we have.\nAction: Answer\nAction Input: {}"
 
-    def _parse_react_response(self, response) -> Dict[str, Any]:
+    def parse_react_response(self, response) -> Dict[str, Any]:
         """Parse LLM's ReAct response into thought, action, and input."""
 
         # Extract Thought
@@ -275,7 +220,6 @@ Now, what is your next step?"""
             input_str = response[input_match.end() - 1:].strip()
             # Handle empty or incomplete JSON
             if input_str and input_str != "{}":
-                # Bug fix 2026-09-13 (BUG-R107): the previous code did
                 from utils.helpers import extract_json_object
                 parsed = extract_json_object(input_str)
                 if isinstance(parsed, dict):
@@ -312,7 +256,7 @@ Now, what is your next step?"""
             "input": action_input,
         }
 
-    def _build_context(self, session, user_message):
+    def build_context(self, session, user_message):
         """Build the context string for ReAct prompt."""
 
         tools = REGISTRY.list_tools()
@@ -377,7 +321,7 @@ Now, what is your next step?"""
 
     # ── Final report ───────────────────────────────────────────────────────────
 
-    async def _generate_final_report(self, session):
+    async def generate_final_report(self, session):
         """Call generate_report and return the result path."""
         inp = {
             "asn": session.asn or "",
@@ -406,7 +350,7 @@ Now, what is your next step?"""
 
     # ── Utilities ──────────────────────────────────────────────────────────────
 
-    def _parse_user_input(self, text):
+    def parse_user_input(self, text):
         """
         Extract AS number(s) and time window from natural language.
         """
@@ -453,7 +397,7 @@ Now, what is your next step?"""
             "end": end,
         }
 
-    def _inject_defaults(self, inp, session):
+    def inject_defaults(self, inp, session):
         """Fill in session context if not already present."""
         inp = dict(inp)
         if not inp.get("asn") and session.asn:

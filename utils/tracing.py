@@ -1,29 +1,4 @@
-"""Structured tracing + metrics for bgp_tracer.
-
-Why this module exists
-======================
-
-Production debugging of multi-stage pipelines is hard when:
-  - per-stage latency is buried in free-form log strings,
-  - token/cost attribution is opaque (which LLM call spent what?),
-  - failure root-causes are guesswork.
-
-This module wraps every stage in a context manager that records
-``start``, ``end``, ``elapsed_s``, ``tokens_in``, ``tokens_out``, and
-emits a single line per stage. A ``MetricsRegistry`` collects every
-event in-memory and exposes a ``to_dict()`` for serialisation next to
-the report JSON.
-
-Usage::
-
-    from utils.tracing import stage, metrics
-
-    with stage("workflow.run", event_asn=event.asn) as ctx:
-        result = run_workflow(...)
-        ctx.tokens_in += sum(call.tokens for call in llm_calls)
-
-    metrics.save(Path("results/json/event_metrics.json"))
-"""
+"""Structured tracing + metrics for bgp_tracer."""
 
 from __future__ import annotations
 
@@ -144,11 +119,7 @@ metrics = MetricsRegistry()
 # ── Public context manager ────────────────────────────────────────────────
 @contextmanager
 def stage(name: str, **attrs: Any) -> Iterator["_StageHandle"]:
-    """Wrap a block as a tracked stage.
-
-    ``ctx.tokens_in`` and ``ctx.tokens_out`` may be mutated by the caller
-    as additional LLM calls happen inside the stage.
-    """
+    """Wrap a block as a tracked stage."""
     started = time.monotonic()
     handle = _StageHandle(name=name, start_ts=started, attrs=dict(attrs))
     try:
@@ -198,7 +169,7 @@ class _StageHandle:
         self.tokens_in += int(in_tok)
         self.tokens_out += int(out_tok)
 
-    def _to_event(self):
+    def to_event(self):
         return StageEvent(
             name=self.name,
             start_ts=self.start_ts,
@@ -212,14 +183,6 @@ class _StageHandle:
 
 
 # ── Auto-save on metrics registry flush ───────────────────────────────────
-def maybe_autosave(directory, slug):
-    """Write a metrics snapshot if the env var points at a directory."""
-    if not directory:
-        return None
-    directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"{slug}_metrics.json"
-    metrics.save(path)
-    return path
 
 
 # ── Env hook for tests: paranoid mode records every stage to a temp file ─

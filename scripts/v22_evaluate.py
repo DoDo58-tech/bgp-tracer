@@ -1,25 +1,13 @@
+"""V22 Multi-Dimensional Evaluation Framework."""
 #!/usr/bin/env python3
-"""
-V22 Multi-Dimensional Evaluation Framework.
-
-Implements the 8-tier metric dashboard described in
-``docs/V22_EVAL_DESIGN.md``. Replaces the v20 evaluation's
-opaque "strict-precision" and "macro-F1" with named,
-diagnostic metrics.
-
-Usage:
-  python scripts/v22_evaluate.py --gt v22
-  python scripts/v22_evaluate.py --gt all
-"""
 from __future__ import annotations
 import argparse
 import csv
 import json
 import math
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
-from typing import Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -28,9 +16,13 @@ import importlib
 import agents.report_agent as ra
 importlib.reload(ra)
 compute_top_cause = ra.compute_top_cause
-_normalize_routing = ra._normalize_routing
-_normalize_traffic = ra._normalize_traffic
-_normalize_correlation = ra._normalize_correlation
+_normalize_routing = ra.normalize_routing
+_normalize_traffic = ra.normalize_traffic
+_normalize_correlation = ra.normalize_correlation
+
+from agents.cache_resolution import resolve_cache  # noqa: E402
+from collections import defaultdict
+from typing import Optional
 
 EVAL_DIR = ROOT / "results" / "eval_v22"
 EVAL_DIR.mkdir(parents=True, exist_ok=True)
@@ -38,26 +30,22 @@ QUICK_DIR = ROOT / "results" / "quick"
 FIGS_DIR = EVAL_DIR / "figures"
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
 GT_FILES = {
-    "v17": ROOT / "data_check/ground_truth_collection/final_balanced_dataset_v17.csv",
-    "v18": ROOT / "data_check/ground_truth_collection/final_balanced_v18_30.csv",
-    "v19": ROOT / "data_check/ground_truth_collection/final_balanced_v19_40.csv",
-    "v20": ROOT / "data_check/ground_truth_collection/final_balanced_v20.csv",
-    "v21": ROOT / "data_check/ground_truth_collection/final_balanced_v21.csv",
-    "v22": ROOT / "data_check/ground_truth_collection/final_balanced_v22.csv",
+    # The canonical corpus.  Every evaluation must use this one: it is
+    # the only version whose every event is backed by an independent
+    # public report *and* a verified routing anomaly *and* a measured
+    # traffic impact (see scripts/build_canonical_dataset.py).
+    "final": ROOT / "data_check/ground_truth_collection/final_ground_truth.csv",
+    # Historical versions, kept for archaeology only.  They live in the
+    # archive, so they cannot be mistaken for the current corpus.
+    "v17": ROOT / "data_check/ground_truth_collection/_archive/final_balanced_dataset_v17.csv",
+    "v18": ROOT / "data_check/ground_truth_collection/_archive/final_balanced_v18_30.csv",
+    "v19": ROOT / "data_check/ground_truth_collection/_archive/final_balanced_v19_40.csv",
+    "v20": ROOT / "data_check/ground_truth_collection/_archive/final_balanced_v20.csv",
+    "v21": ROOT / "data_check/ground_truth_collection/_archive/final_balanced_v21.csv",
+    "v22": ROOT / "data_check/ground_truth_collection/_archive/final_balanced_v22.csv",
 }
 
 # Negative controls are events that should NOT trigger any
-# detector — a normal day for the AS, no traffic anomaly, no
-# routing event. We don't have any such events in our GT (every
-# GT event has both a traffic and a routing signal). To test
-# the negative-control path, we synthesize a small set of
-# negative controls from the v22 GT by selecting events that
-# have a *weak* traffic signal (count < 5) — the system should
-# still get them right because the routing signal is strong,
-# so this is not a true negative control.
-#
-# Conclusion: NEG_CONTROLS is empty for v22. We retain the
-# infrastructure for future use.
 NEG_CONTROLS: set = set()
 
 # Canonical cause classes
@@ -71,7 +59,7 @@ def load_gt(gt_name):
     return p, list(csv.DictReader(open(p)))
 
 
-def _resolve_target_as(row):
+def resolve_target_as(row):
     """Resolve the cache's target AS (victim for hijack, leaker for leak)."""
     etype = (row.get("event_type") or "").strip().lower()
     label = (row.get("ground_truth_cause_label") or row.get("cause") or "").strip().lower()
@@ -85,47 +73,27 @@ def _resolve_target_as(row):
     return ""
 
 
-def _find_quick(event_id, asn, date):
-    """Find the quick cache with the most routing signal for the date."""
-    import re
-    candidates = list(QUICK_DIR.glob(f"quick_{asn}_*.json"))
-    if not candidates:
+def find_quick_match(event_id, asn, date, start=None, end=None):
+    """Resolve the quick cache for an event *without* looking at its contents.
+
+    Only a strict match counts.  The resolver's ``same_date`` fallback can
+    return a cache measured over a different window on the same day, and
+    scoring an event against another event's measurement is worse than
+    abstaining on it.
+    """
+    if start is None and date:
+        start = date
+    match = resolve_cache(
+        asn, start, end, QUICK_DIR, event_id=event_id, allow_same_date=True)
+    if match is None or not match.strict:
         return None
-    # Filter by date
-    matching = []
-    for c in candidates:
-        m = re.match(r"quick_\d+_(\d{4}-\d{2}-\d{2})", c.name)
-        if m and m.group(1) == date:
-            matching.append(c)
-    if not matching:
-        return None
-    # Pick the one with the strongest signal
-    def _score(p):
-        try:
-            c = json.load(open(p))
-        except Exception:
-            return 0
-        r = c.get("routing") or {}
-        # Count unique signal types
-        sigs = 0
-        if r.get("origin_hijacked") or r.get("forge_hijacked"):
-            sigs += 1
-        if r.get("origin_hijacking") or r.get("forge_hijacking"):
-            sigs += 1
-        if r.get("route_leaks"):
-            sigs += 1
-        if r.get("outage_suspected") or (r.get("outage_score") or 0) >= 0.2:
-            sigs += 1
-        return (
-            sigs * 10000
-            + len(r.get("origin_hijacked") or [])
-            + len(r.get("origin_hijacking") or [])
-            + len(r.get("forge_hijacked") or [])
-            + len(r.get("forge_hijacking") or [])
-            + len(r.get("route_leaks") or [])
-        )
-    matching.sort(key=_score, reverse=True)
-    return matching[0]
+    return match
+
+
+def find_quick(event_id, asn, date, start=None, end=None):
+    """Path-only wrapper around :func:`_find_quick_match`."""
+    match = find_quick_match(event_id, asn, date, start, end)
+    return match.path if match else None
 
 
 def evaluate_event(row, has_cache):
@@ -133,7 +101,7 @@ def evaluate_event(row, has_cache):
     eid = row["event_id"]
     gt_cause = row.get("ground_truth_cause_label") or row.get("cause", "")
     gt_subtype = row.get("ground_truth_root_cause_subtype") or row.get("subtype", "")
-    asn = _resolve_target_as(row)
+    asn = resolve_target_as(row)
     date = row["date"]
     is_nc = eid in NEG_CONTROLS
 
@@ -159,7 +127,9 @@ def evaluate_event(row, has_cache):
         })
         return out
 
-    cache_file = _find_quick(eid, asn, date)
+    cache_file = find_quick(eid, asn, date,
+                             row.get("start_time_utc") or row.get("start_utc"),
+                             row.get("end_time_utc") or row.get("end_utc"))
     if cache_file is None:
         out.update({
             "predicted_cause": "no_cache_found",
@@ -176,9 +146,9 @@ def evaluate_event(row, has_cache):
     correlation_raw = cache.get("correlation") or {}
     hcaf_dir = routing_raw.get("hcaf_direction", "") if isinstance(routing_raw, dict) else ""
 
-    routing_norm = ra._normalize_routing(routing_raw) if routing_raw else {}
-    traffic_norm = ra._normalize_traffic(traffic_raw) if traffic_raw else {}
-    correlation_norm = ra._normalize_correlation(correlation_raw, hcaf_attribution={"direction": hcaf_dir} if hcaf_dir else None) if correlation_raw else {"temporal_proximity": "none", "confidence": 0.0}
+    routing_norm = ra.normalize_routing(routing_raw) if routing_raw else {}
+    traffic_norm = ra.normalize_traffic(traffic_raw) if traffic_raw else {}
+    correlation_norm = ra.normalize_correlation(correlation_raw, hcaf_attribution={"direction": hcaf_dir} if hcaf_dir else None) if correlation_raw else {"temporal_proximity": "none", "confidence": 0.0}
 
     try:
         verdict = ra.compute_top_cause(
@@ -195,7 +165,7 @@ def evaluate_event(row, has_cache):
             top3 = [(c[0], c[2]) for c in top3_raw]
         else:
             top3 = []
-    except Exception as e:
+    except (KeyError, IndexError) as e:
         pred_cause = "error"
         pred_conf = 0.0
         top3 = []
@@ -213,13 +183,17 @@ def evaluate_event(row, has_cache):
             rank_of_gt = i + 1
             break
 
-    # Detector counts
-    hijack_count = sum(len(routing_norm.get(k, []) or []) for k in ("origin_hijacked", "forge_hijacked"))
-    hijacking_count = sum(len(routing_norm.get(k, []) or []) for k in ("origin_hijacking", "forge_hijacking"))
+    # Detector counts — incident counts, not announcement-record counts.
+    # The hijack detector emits one record per announcement, so a hijacked
+    # prefix re-announced N times contributes N records for one incident.
+    hijack_count = int(routing_norm.get("hijack_count") or 0) + int(
+        routing_norm.get("forge_hijack_count") or 0)
+    hijacking_count = int(routing_norm.get("hijacking_count") or 0) + int(
+        routing_norm.get("forge_hijacking_count") or 0)
     leak_count_raw = int(routing_norm.get("leak_count") or 0)
     # Compute well-evidenced leak count
     leak_list = routing_norm.get("route_leaks") or []
-    leak_well = _count_well_evidenced(leak_list)
+    leak_well = count_well_evidenced(leak_list)
     outage_suspected = bool(routing_norm.get("outage_suspected"))
     outage_score = float(routing_norm.get("outage_score") or 0.0)
     traffic_anomaly_count = int(traffic_norm.get("anomaly_count") or 0)
@@ -245,7 +219,7 @@ def evaluate_event(row, has_cache):
     return out
 
 
-def _count_well_evidenced(leak_list):
+def count_well_evidenced(leak_list):
     """Count leak events with real evidence (prefix + AS-path)."""
     if not leak_list:
         return 0
@@ -271,9 +245,7 @@ def _count_well_evidenced(leak_list):
     return 0
 
 
-# ============================================================================
 # Tier 1: Cause Attribution
-# ============================================================================
 def tier1_cause(results):
     """Returns dict of cause-attribution metrics."""
     evaluable = [r for r in results if r["cause_correct"] is not None]
@@ -332,9 +304,7 @@ def tier1_cause(results):
     }
 
 
-# ============================================================================
 # Tier 2: Detection Coverage
-# ============================================================================
 def tier2_detection(results):
     """Returns dict of detector coverage metrics."""
     evaluable = [r for r in results if r["has_cache"]]
@@ -390,9 +360,7 @@ def tier2_detection(results):
     }
 
 
-# ============================================================================
 # Tier 3: Hypothesis Ranking Quality
-# ============================================================================
 def tier3_ranking(results):
     """Returns dict of ranking quality metrics."""
     evaluable = [r for r in results if r["rank_of_gt"] is not None]
@@ -415,9 +383,7 @@ def tier3_ranking(results):
     return {"n": n, "ndcg_at_3": ndcg, "mrr": mrr}
 
 
-# ============================================================================
 # Tier 4: Severity / Confidence Calibration
-# ============================================================================
 def tier4_calibration(results):
     """Returns dict of calibration metrics."""
     evaluable = [r for r in results if r["cause_correct"] is not None]
@@ -454,9 +420,7 @@ def tier4_calibration(results):
     }
 
 
-# ============================================================================
 # Tier 5: Robustness
-# ============================================================================
 def tier5_robustness(results):
     """Returns dict of robustness metrics across hard cases."""
     no_traffic = [r for r in results if r["has_cache"] and (not r["traffic_success"] or r["traffic_anomaly_count"] == 0)]
@@ -481,9 +445,7 @@ def tier5_robustness(results):
     }
 
 
-# ============================================================================
 # Tier 6: Operational Cost
-# ============================================================================
 def tier6_cost(results):
     """Returns dict of operational cost metrics."""
     evaluable = [r for r in results if r["has_cache"]]
@@ -504,9 +466,7 @@ def tier6_cost(results):
     }
 
 
-# ============================================================================
 # Composite Score
-# ============================================================================
 def composite(t1, t2, t3, t4, t5):
     """Weighted combination of key metrics. Weights documented in eval design."""
     brier_norm = max(0.0, 1.0 - t4.get("brier", 0.0))  # 0 brier → 1, 1 brier → 0
@@ -520,9 +480,7 @@ def composite(t1, t2, t3, t4, t5):
     )
 
 
-# ============================================================================
 # Markdown Audit Report
-# ============================================================================
 def render_audit_md(gt_name, t1, t2, t3, t4, t5, t6, comp):
     md = []
     md.append(f"# V22 Evaluation — {gt_name}\n")
@@ -572,35 +530,35 @@ def render_audit_md(gt_name, t1, t2, t3, t4, t5, t6, comp):
     return "\n".join(md)
 
 
-# ============================================================================
 # Main
-# ============================================================================
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--gt", default="v22", choices=list(GT_FILES.keys()) + ["all"])
+    ap.add_argument("--gt", default="final", choices=list(GT_FILES.keys()) + ["all"])
     args = ap.parse_args()
     if args.gt == "all":
-        for gt_name in ["v19", "v20", "v21", "v22"]:
+        for gt_name in ["final", "v19", "v20", "v21", "v22"]:
             print()
             print("#" * 70)
             print(f"### Evaluating {gt_name} ###")
             print("#" * 70)
             args.gt = gt_name
-            _run_eval(args)
+            run_eval(args)
         return
-    _run_eval(args)
+    run_eval(args)
 
 
-def _run_eval(args):
+def run_eval(args):
     gt_path, events = load_gt(args.gt)
     print(f"GT: {gt_path} ({len(events)} events)")
 
     results = []
     for e in events:
         eid = e["event_id"]
-        asn = _resolve_target_as(e)
+        asn = resolve_target_as(e)
         date = e["date"]
-        cache = _find_quick(eid, asn, date)
+        cache = find_quick(eid, asn, date,
+                            e.get("start_time_utc") or e.get("start_utc"),
+                            e.get("end_time_utc") or e.get("end_utc"))
         r = evaluate_event(e, has_cache=cache is not None)
         results.append(r)
 

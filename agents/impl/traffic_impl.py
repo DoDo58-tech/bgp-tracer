@@ -7,15 +7,17 @@ import os
 import re
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from detectors.traffic import timeparse
 from detectors.traffic.traffic_detector import CloudflareRadarAPI
 from utils.logger import logger
 from utils.helpers import extract_json_object as _extract_json_object
 from llm.llm_factory import setup_llm_settings, DEFAULT_TEMP_REASONING
 from config import BASE_URL, API_KEY, MODEL
+from datetime import timedelta
 
 
 class LLMEnhancedTrafficAgent:
@@ -55,7 +57,7 @@ class LLMEnhancedTrafficAgent:
             "routing_context": routing_analysis or {},
         }
 
-        llm_insights = await self._generate_llm_insights(analysis_data)
+        llm_insights = await self.generate_llm_insights(analysis_data)
         return {
             **traffic_result,
             "llm_enhanced": True,
@@ -65,12 +67,7 @@ class LLMEnhancedTrafficAgent:
 
     async def analyze_traffic_no_llm(self, asn, start_time, end_time,
                                      original_start_time=None, original_end_time=None):
-        """Phase-1 light version: skip LLM insights, just return CloudflareRadar facts.
-
- Same anomaly detection + plot as analyze_traffic_with_llm, but without
- the ~10s LLM round-trip. Used by the two-phase diagnosis quick phase
- to keep wall time under 60 s.
- """
+        """Phase-1 light version: skip LLM insights, just return CloudflareRadar facts."""
         traffic_result = self.cloudflare_api.detect_anomalies(
             asn=asn, start_time=start_time, end_time=end_time, plot_result=True,
             event_start_time=original_start_time, event_end_time=original_end_time,
@@ -84,7 +81,7 @@ class LLMEnhancedTrafficAgent:
             "analysis_timestamp": datetime.now().isoformat(),
         }
 
-    async def _generate_llm_insights(self, analysis_data):
+    async def generate_llm_insights(self, analysis_data):
         routing_context = (
             json.dumps(analysis_data.get("routing_context", {}), indent=2, ensure_ascii=False)
             if analysis_data.get("routing_context") else "No routing analysis data"
@@ -148,7 +145,7 @@ Use English only.
                 snippet = _extract_json_object(raw)
                 if snippet is not None:
                     return json.loads(snippet)
-        except Exception as e:
+        except (AttributeError) as e:
             logger.error(f"LLM analysis failed: {e}")
         return {"error": "LLM analysis unavailable"}
 
@@ -170,7 +167,7 @@ def lookup_as_by_country(country_name, asorg_file=None):
                 results.append({"asn": asn, "as_name": asn_to_name.get(asn, "Unknown"),
                                 "org_name": info.get("name", "Unknown"), "country": info.get("country", "Unknown")})
         return results
-    except Exception as e:
+    except (AttributeError) as e:
         logger.error(f"Error looking up AS by country: {e}")
         return []
 
@@ -223,8 +220,7 @@ def parse_country_region_input(user_input):
     return None, None, None, asn
 
 
-async def _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis=None, use_llm=True):
-    # Bug fix 2026-09-13 (BUG-R111): the previous implementation only
+async def analyze_single_as_traffic(asn, start_time, end_time, routing_analysis=None, use_llm=True):
     if not start_time or not end_time:
         from datetime import datetime as _dt, timedelta as _td
         _now = _dt.utcnow()
@@ -241,7 +237,7 @@ async def _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis
                 f"defaulting to now: {end_time}"
             )
 
-    def _parse_ts(value, label):
+    def parse_ts(value, label):
         if value is None:
             return None
         if isinstance(value, datetime):
@@ -275,8 +271,8 @@ async def _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis
             return None
 
     try:
-        start_dt = _parse_ts(start_time, "start_time")
-        end_dt = _parse_ts(end_time, "end_time")
+        start_dt = parse_ts(start_time, "start_time")
+        end_dt = parse_ts(end_time, "end_time")
         if start_dt is None or end_dt is None:
             return {
                 "success": False,
@@ -289,7 +285,7 @@ async def _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis
             start_dt = start_dt.astimezone(timezone.utc).replace(tzinfo=None)
         if end_dt.tzinfo is not None:
             end_dt = end_dt.astimezone(timezone.utc).replace(tzinfo=None)
-    except Exception as e:
+    except (ValueError) as e:
         return {"success": False, "error": f"Invalid time: {e}"}
 
     llm_agent = LLMEnhancedTrafficAgent()
@@ -317,7 +313,7 @@ async def _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis
                 t = datetime.strptime(a["timestamp"], "%Y-%m-%dT%H:%M:%SZ")
                 if start_d <= t <= end_d:
                     within.append(a)
-            except Exception:
+            except (ValueError):
                 pass
         result["outage_period_anomalies"] = within
         result["outage_period_anomaly_count"] = len(within)
@@ -339,44 +335,31 @@ async def run_traffic_agent_batch(
     end_time,
     max_concurrent: int = 4,
 ):
-    """
- P2-Fix1: reasoning_agent.run_reasoning_agent_batch import 
- , ImportError. 
- : AS analyze_traffic, AS . 
-
- Args:
- as_list: AS 
- start_time: 
- end_time: 
- max_concurrent: 
-
- Returns:
- {
- "success": bool,
- "batch_mode": True,
- "as_count": int,
- "results_by_as": {asn: traffic_result},
- "anomaly_as_list": [asn, ...],
- "error": str (optional)
- }
- """
+    """P2-Fix1: reasoning_agent.run_reasoning_agent_batch import
+    , ImportError.
+    : AS analyze_traffic, AS .
+    
+    Returns:
+    {
+    "success": bool,
+    "batch_mode": True,
+    "as_count": int,
+    "results_by_as": {asn: traffic_result},
+    "anomaly_as_list": [asn, ...],
+    "error": str (optional)
+    }"""
     import asyncio
     from datetime import datetime
 
     try:
-        #  datetime 
-        try:
-            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            start_dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M")
-        try:
-            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            end_dt = datetime.strptime(end_time, "%Y-%m-%d %H:%M")
+        # The shared parser accepts every format the callers and the
+        # cache files use, including ISO 8601 with a ``T`` separator.
+        start_dt = timeparse.parse_iso(start_time)
+        end_dt = timeparse.parse_iso(end_time)
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def _one(asn):
+        async def one(asn):
             async with semaphore:
                 try:
                     r = await run_traffic_agent_async(
@@ -385,10 +368,10 @@ async def run_traffic_agent_batch(
                         end_time=end_dt.strftime("%Y-%m-%d %H:%M"),
                     )
                     return asn, r
-                except Exception as exc:
+                except (ValueError) as exc:
                     return asn, {"success": False, "error": str(exc), "asn": str(asn)}
 
-        tasks = [_one(a) for a in as_list]
+        tasks = [one(a) for a in as_list]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         results_by_as: dict = {}
@@ -411,7 +394,7 @@ async def run_traffic_agent_batch(
             "anomaly_as_list": anomaly_as_list,
             "errors": errors if errors else None,
         }
-    except Exception as e:
+    except (ValueError) as e:
         return {
             "success": False,
             "error": str(e),
@@ -436,7 +419,7 @@ async def run_traffic_agent_async(user_input=None, asn=None, start_time=None,
                     return {"success": False, "error": f"Too many AS ({len(matches)}). Max 5."}
                 results = []
                 for info in matches:
-                    r = await _analyze_single_as_traffic(info["asn"], parsed_start, parsed_end, routing_analysis, use_llm=use_llm)
+                    r = await analyze_single_as_traffic(info["asn"], parsed_start, parsed_end, routing_analysis, use_llm=use_llm)
                     if r.get("success"):
                         r["as_info"] = info; results.append(r)
                 return {"success": True, "country_region": country, "analysis_type": "multi_as_country_analysis",
@@ -453,8 +436,8 @@ async def run_traffic_agent_async(user_input=None, asn=None, start_time=None,
 
         if not all([asn, start_time, end_time]):
             return {"success": False, "error": "Missing required parameters"}
-        return await _analyze_single_as_traffic(asn, start_time, end_time, routing_analysis, use_llm=use_llm)
-    except Exception as e:
+        return await analyze_single_as_traffic(asn, start_time, end_time, routing_analysis, use_llm=use_llm)
+    except (AttributeError) as e:
         logger.error(f"Traffic agent error: {e}")
         return {"success": False, "error": str(e)}
 

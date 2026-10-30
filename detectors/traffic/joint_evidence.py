@@ -1,18 +1,8 @@
-"""
-Three-card joint evidence analysis
+"""Three-card joint evidence analysis
 =================================
 
-Combines routing + traffic signals through three independent "cards":
-  1. Temporal alignment — ΔT between first routing event and first traffic anomaly
-  2. Blast radius         — affected prefix count + magnitude of traffic deviation
-  3. Falsification tree   — alternative explanations (CDN reroute, scheduled maintenance, DDoS)
-
 Returns a tier C1/C2/C3 (C3 = strongest joint evidence) plus an average score
-and a list of evidence cards for the report renderer.
-
-This is a deliberately simple, explainable scorer — no ML, no opaque weighting.
-Each card produces a 0–1 score, and the tier is derived from the average.
-"""
+and a list of evidence cards for the report renderer."""
 
 from __future__ import annotations
 
@@ -25,7 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional
 _TIER_THRESHOLDS = (0.66, 0.40)
 
 
-def _parse_ts(value):
+def parse_ts(value):
     """Parse a timestamp value (str, datetime, or None) into datetime."""
     if value is None:
         return None
@@ -41,33 +31,29 @@ def _parse_ts(value):
     return None
 
 
-def _card_temporal_alignment(
+def card_temporal_alignment(
     routing_events: List[Dict],
     traffic_anomalies: List[Dict],
     traffic_anomaly_window: Optional[Dict] = None,
 ) -> Dict[str, Any]:
-    """Card 1: How closely do routing events and traffic anomalies overlap in time?
-
-    Score 1.0 when both have explicit timestamps and they are within 30 minutes
-    of each other. Falls off linearly to 0.5 at 4h, 0.0 at 24h+.
-    """
+    """Card 1: How closely do routing events and traffic anomalies overlap in time?"""
     routing_ts = []
     for ev in routing_events or []:
-        ts = _parse_ts(ev.get("timestamp") or ev.get("first_seen"))
+        ts = parse_ts(ev.get("timestamp") or ev.get("first_seen"))
         if ts:
             routing_ts.append(ts)
 
     traffic_ts = []
     for an in traffic_anomalies or []:
         if isinstance(an, dict):
-            ts = _parse_ts(an.get("timestamp") or an.get("time"))
+            ts = parse_ts(an.get("timestamp") or an.get("time"))
             if ts:
                 traffic_ts.append(ts)
 
     # Fall back to soft window from the traffic detector
     if not traffic_ts and isinstance(traffic_anomaly_window, dict):
-        start = _parse_ts(traffic_anomaly_window.get("start") or traffic_anomaly_window.get("detected_start"))
-        end = _parse_ts(traffic_anomaly_window.get("end") or traffic_anomaly_window.get("detected_end"))
+        start = parse_ts(traffic_anomaly_window.get("start") or traffic_anomaly_window.get("detected_start"))
+        end = parse_ts(traffic_anomaly_window.get("end") or traffic_anomaly_window.get("detected_end"))
         if start:
             traffic_ts = [start]
         if end:
@@ -107,19 +93,13 @@ def _card_temporal_alignment(
     }
 
 
-def _card_blast_radius(
+def card_blast_radius(
     routing_events: List[Dict],
     traffic_anomalies: List[Dict],
     prefix_traffic: Optional[Dict] = None,
     victim_traffic: Optional[Dict] = None,
 ) -> Dict[str, Any]:
-    """Card 2: How wide is the impact (affected prefixes × traffic deviation)?
-
-    Combines:
-      - count of distinct affected prefixes from routing events
-      - max |percent_change| or |drop_ratio| from traffic anomalies
-      - (optional) per-prefix traffic drop magnitude
-    """
+    """Card 2: How wide is the impact (affected prefixes × traffic deviation)?"""
     prefixes = set()
     severities = []
     for ev in routing_events or []:
@@ -188,16 +168,12 @@ def _card_blast_radius(
     }
 
 
-def _card_falsification(
+def card_falsification(
     routing_events: List[Dict],
     traffic_anomalies: List[Dict],
     confounders: Optional[Dict] = None,
 ) -> Dict[str, Any]:
-    """Card 3: Are there credible alternative explanations?
-
-    Looks for evidence the change could be CDN reroute, scheduled maintenance,
-    DDoS, etc. Each alternative explanation weakens the joint evidence score.
-    """
+    """Card 3: Are there credible alternative explanations?"""
     confounders = confounders or {}
 
     # Heuristics for known confounders
@@ -237,8 +213,9 @@ def _card_falsification(
     }
 
 
-def _tier_from_score(score):
+def tier_from_score(score):
     """Map an average 0–1 score to a tier label."""
+    avg_score = score  # NOTE: parameter is `score`; body uses `avg_score`.
     if avg_score >= _TIER_THRESHOLDS[0]:
         return "C3"
     if avg_score >= _TIER_THRESHOLDS[1]:
@@ -259,23 +236,22 @@ def analyse_joint_evidence(
     traffic_available: bool = True,
 ) -> Dict[str, Any]:
     """Run the three-card joint evidence analysis.
-
+    
     Returns:
-        Dict with tier, average_score, evidence_cards (list of 3 card dicts),
-        rationale (list of human-readable strings), and availability flags.
-    """
+    Dict with tier, average_score, evidence_cards (list of 3 card dicts),
+    rationale (list of human-readable strings), and availability flags."""
     routing_events = list(routing_events or [])
     traffic_anomalies = list(traffic_anomalies or [])
 
     cards = [
-        _card_temporal_alignment(routing_events, traffic_anomalies, traffic_anomaly_window),
-        _card_blast_radius(routing_events, traffic_anomalies, prefix_traffic, victim_traffic),
-        _card_falsification(routing_events, traffic_anomalies, confounders),
+        card_temporal_alignment(routing_events, traffic_anomalies, traffic_anomaly_window),
+        card_blast_radius(routing_events, traffic_anomalies, prefix_traffic, victim_traffic),
+        card_falsification(routing_events, traffic_anomalies, confounders),
     ]
 
     available_scores = [c["score"] for c in cards if c["available"]]
     average_score = sum(available_scores) / len(available_scores) if available_scores else 0.0
-    tier = _tier_from_score(average_score)
+    tier = tier_from_score(average_score)
 
     rationale = [
         f"Card '{c['name']}': {c.get('reason', 'no reason')}"

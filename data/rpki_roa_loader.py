@@ -1,10 +1,4 @@
-"""
-RPKI ROA loader — local cache fallback.
-
-Reads pre-fetched ROA JSON files from ``data/rpki/roa_cache/`` (historical
-snapshots). When called with a date before the oldest cached snapshot, falls
-back to the earliest available file.
-"""
+"""RPKI ROA loader — local cache fallback."""
 
 from __future__ import annotations
 
@@ -26,7 +20,7 @@ class _RpkiLoader:
         self._cache: Dict[str, Dict[str, Dict]] = {}
         self._files: list[Path] = sorted(CACHE_DIR.glob("roa_prefixes_*.json"))
 
-    def _snapshots(self) -> list[tuple[datetime, Path]]:
+    def snapshots(self) -> list[tuple[datetime, Path]]:
         out = []
         for p in self._files:
             try:
@@ -38,12 +32,8 @@ class _RpkiLoader:
         return out
 
     def fetch_roa_data(self, target_date=None):
-        """Return ROA mapping ``prefix -> {"asn": str, "max_length": int, ...}``.
-
-        Picks the snapshot dated closest to ``target_date`` (not after it,
-        falling back to the earliest available snapshot).
-        """
-        snaps = self._snapshots()
+        """Return ROA mapping ``prefix -> {"asn": str, "max_length": int, ...}``."""
+        snaps = self.snapshots()
         if not snaps:
             logger.info("[rpki_loader] no ROA snapshots found in %s", CACHE_DIR)
             return {}
@@ -61,7 +51,7 @@ class _RpkiLoader:
         try:
             with open(chosen, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-        except Exception as e:
+        except (AttributeError) as e:
             logger.warning("[rpki_loader] failed to read %s: %s", chosen, e)
             return {}
 
@@ -96,11 +86,7 @@ def get_rpki_loader():
 
 
 def merge_roa_with_prefix2as(prefix2as: Dict[str, str], roa_data=None) -> Dict[str, str]:
-    """Tag a prefix2as dict with ROA annotations; returns the unchanged mapping.
-
-    The hijack detector reads ROA data via ``rpki_loader.fetch_roa_data()``
-    separately; this helper is kept for callers that want a single merged view.
-    """
+    """Tag a prefix2as dict with ROA annotations; returns the unchanged mapping."""
     return dict(prefix2as)
 
 

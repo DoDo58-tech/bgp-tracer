@@ -1,28 +1,16 @@
-"""
-Correlation Analyzer Module
-==========================
-
-: traffic_raw routing_result 
- ΔT() . 
-
- report_agent.before_rewrite.py , 
- report_agent.py correlation_analysis . 
-
-:
- from agents.correlation_analyzer import analyze_temporal_correlation
- result = analyze_temporal_correlation(traffic_raw, routing_result, target_as="16509")
-"""
+"""Correlation Analyzer Module
+=========================="""
 
 from __future__ import annotations
 
-import json
 import re
-from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Literal, Optional
+import json
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any
 
-# ---------------------------------------------------------------------------
 class TemporalEvent:
     """A timestamped anomaly event from either traffic or routing detection."""
 
@@ -43,7 +31,6 @@ class TemporalEvent:
         self.asn = asn  # relevant AS for routing events
 
 
-# ---------------------------------------------------------------------------
 def parse_timestamp(ts):
     """Parse a timestamp string to datetime, trying multiple formats."""
     if ts is None:
@@ -101,7 +88,6 @@ def parse_timestamp(ts):
     return None
 
 
-# ---------------------------------------------------------------------------
 def to_dict_helper(value):
     """Coerce AnomalyDetail / dataclass / dict-like to a plain dict."""
     if isinstance(value, dict):
@@ -111,18 +97,9 @@ def to_dict_helper(value):
     return {}
 
 
-def _resolve_fallback_timestamp(routing_result, analysis_window):
+def resolve_fallback_timestamp(routing_result, analysis_window):
     """Pick a single deterministic fallback timestamp for events whose own
- timestamp field is missing/unparseable.
-
- Priority:
- 1. ``analysis_window`` midpoint - most accurate since callers know it.
- 2. ``routing_result["analysis_period"]`` (string "start to end").
- 3. ``datetime(1970, 1, 1)`` - extreme but always valid.
-
- Returning ``None`` means "no information" and the caller should drop the
- event with a loud warning (we can't synthesise a meaningful timestamp).
- """
+    timestamp field is missing/unparseable."""
     if analysis_window:
         start = analysis_window.get("start") or analysis_window.get("detected_start")
         end = analysis_window.get("end") or analysis_window.get("detected_end")
@@ -142,21 +119,18 @@ def _resolve_fallback_timestamp(routing_result, analysis_window):
             s, e = parse_timestamp(start.strip()), parse_timestamp(end.strip())
             if s and e:
                 return s + (e - s) / 2
-        except Exception:
+        except (ValueError):
             pass
     # Last resort — keep events "real" so the routing_event_count matches
     return datetime(1970, 1, 1)
 
 
-def _resolve_event_timestamp(event_dict, fallback_ts, fallback_used_box):
+def resolve_event_timestamp(event_dict, fallback_ts, fallback_used_box):
     """Parse timestamp from an event dict, falling back to ``fallback_ts``.
-
- Returns ``(timestamp, None)`` on success. On fallback the first event
- triggers a single warning and ``fallback_used_box`` is mutated to True
- so subsequent events stay quiet (avoids log floods on 401-event payloads).
-
- ``fallback_used_box`` is a single-element list used as a mutable flag.
- """
+    
+    Returns ``(timestamp, None)`` on success. On fallback the first event
+    triggers a single warning and ``fallback_used_box`` is mutated to True
+    so subsequent events stay quiet (avoids log floods on 401-event payloads)."""
     raw = event_dict.get("timestamp") or event_dict.get("first_seen") or event_dict.get("time")
     ts = parse_timestamp(raw)
     if ts is not None:
@@ -174,22 +148,11 @@ def _resolve_event_timestamp(event_dict, fallback_ts, fallback_used_box):
     return fallback_ts, None
 
 
-# ---------------------------------------------------------------------------
 def extract_traffic_events(
     traffic_raw=None,
     traffic_anomaly_window=None,
 ) -> list[TemporalEvent]:
-    """Pull TemporalEvent objects from traffic_raw, falling back to window synthesis.
-
- Accepts several input shapes so callers don't have to know which one to pass:
-
- 1. ``{"result": {...}}`` - workflow-style blackboard entry (unwrapped to ``result``).
- 2. ``{"anomalies": [...], "anomaly_count": N, ...}`` - raw result dict.
- 3. ``{"<asn_str>": {...same as case 2...}}`` - react-mode multi-AS wrapper
- where the tool returned ``{"results": {"12479": raw_result}}`` and the
- caller already unwrapped one level, leaving a dict keyed by ASN.
- We pick the first AS-typed key.
- """
+    """Pull TemporalEvent objects from traffic_raw, falling back to window synthesis."""
     events: list[TemporalEvent] = []
     traffic_raw = traffic_raw or {}
 
@@ -317,26 +280,8 @@ def extract_traffic_events(
     return deduped
 
 
-# ---------------------------------------------------------------------------
 def extract_routing_events(routing_result=None, target_as="", analysis_window=None) -> list[TemporalEvent]:
-    """Pull TemporalEvent objects from routing_result across flat/nested/annotation_package formats.
-
- Behavior change (Bug #R1, 2026-09-13): events whose ``timestamp``,
- ``first_seen``, or ``time`` field is missing or unparseable are no
- longer silently dropped - that was the root cause of verdict
- divergence between runs (e.g. AS12479 showed 401 events in one report
- and 0 in another). Instead we fall back to:
-
- 1. The mid-point of ``analysis_window`` (if provided).
- 2. The analysis_period field inside ``routing_result``.
- 3. ``datetime.min`` (1970-01-01) as last resort.
-
- A WARNING is logged the first time a fallback fires so operators can
- see the data quality issue.
-
- Also handles (Bug #R6, 2026-09-13): a react-mode ``{asn_str: raw_result}``
- wrapper - same shape as the new ``extract_traffic_events`` fix.
- """
+    """Pull TemporalEvent objects from routing_result across flat/nested/annotation_package formats."""
     events = []
     routing_result = routing_result or {}
     seen = set()
@@ -378,7 +323,7 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
 
     # Pick a fallback timestamp once per call so all unparseable events in
     # the same run share the same fallback (deterministic).
-    fallback_ts = _resolve_fallback_timestamp(routing_result, analysis_window)
+    fallback_ts = resolve_fallback_timestamp(routing_result, analysis_window)
     fallback_used_box = [False]  # mutable flag so helper can flip it
     if fallback_ts is None:
         # No analysis window info at all — every event is lost. Log loudly.
@@ -413,10 +358,10 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
             if key not in rr or not rr.get(key):
                 rr[key] = leak_section.get(key)
 
-    # ---- origin_hijacked (victim) ----
+# origin_hijacked (victim)
     for h in (rr.get("origin_hijacked") or []):
         h = to_dict_helper(h)
-        ts, _ = _resolve_event_timestamp(h, fallback_ts, fallback_used_box)
+        ts, _ = resolve_event_timestamp(h, fallback_ts, fallback_used_box)
         if ts is None:
             continue
         hijacker_as = h.get("hijacker_as") or h.get("origin_as") or h.get("asn")
@@ -433,10 +378,10 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
             asn=victim_as,
         ))
 
-    # ---- origin_hijacking (attacker) ----
+# origin_hijacking (attacker)
     for h in (rr.get("origin_hijacking") or []):
         h = to_dict_helper(h)
-        ts, _ = _resolve_event_timestamp(h, fallback_ts, fallback_used_box)
+        ts, _ = resolve_event_timestamp(h, fallback_ts, fallback_used_box)
         if ts is None:
             continue
         claimed_as = h.get("claimed_as") or h.get("hijacker_as") or h.get("origin_as") or h.get("asn")
@@ -452,10 +397,10 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
             asn=h.get("hijacker_as") or h.get("asn"),
         ))
 
-    # ---- forge_hijacked (victim) ----
+# forge_hijacked (victim)
     for h in (rr.get("forge_hijacked") or []):
         h = to_dict_helper(h)
-        ts, _ = _resolve_event_timestamp(h, fallback_ts, fallback_used_box)
+        ts, _ = resolve_event_timestamp(h, fallback_ts, fallback_used_box)
         if ts is None:
             continue
         hijacker_as = h.get("hijacker_as") or h.get("origin_as") or h.get("asn")
@@ -470,22 +415,14 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
             asn=h.get("victim_as") or h.get("target_as") or h.get("asn"),
         ))
 
-    # ---- route_leaks ----
-    # BUG-R143 2026-09-29: filter out null-noise records.
-    # Detector batches emit ``leaked_by=null/prefix=null`` rows when the
-    # filter pass yields no real signal (e.g. when only BGPStream events
-    # match the time window but no RRC00 evidence exists). Without the
-    # filter, ``leak_n`` inflates to ~3000+ on those events, drowning out
-    # the real signal and feeding ``compute_top_cause`` a bogus leak count.
-    # A record is "real" iff at least one of ``prefix`` or ``leaked_by``
-    # is populated.
+# route_leaks
     for lk in (rr.get("route_leaks") or []):
         lk = to_dict_helper(lk)
         prefix = lk.get("prefix")
         leaked_by = lk.get("leaked_by")
         if prefix is None and leaked_by is None:
             continue
-        ts, _ = _resolve_event_timestamp(lk, fallback_ts, fallback_used_box)
+        ts, _ = resolve_event_timestamp(lk, fallback_ts, fallback_used_box)
         if ts is None:
             continue
         add_event(TemporalEvent(
@@ -493,7 +430,6 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
             details={"prefix": prefix, "leaked_by": leaked_by},
         ))
 
-    # ---- annotation_package nested format fallback ----
     for key, ev_type, role, hijacker_field, claimed_field, victim_field in (
         ("origin_hijacked", "origin_hijacked", "victim", "hijacker_as", None, "victim_as"),
         ("origin_hijacking", "origin_hijacking", "attacker", "hijacker_as", "claimed_as", None),
@@ -503,7 +439,7 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
         for h in (hijack_section.get(key) or []):
             if not isinstance(h, dict):
                 continue
-            ts, _ = _resolve_event_timestamp(h, fallback_ts, fallback_used_box)
+            ts, _ = resolve_event_timestamp(h, fallback_ts, fallback_used_box)
             if ts is None:
                 continue
             details = {"prefix": h.get("prefix"), "role": role}
@@ -527,7 +463,7 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
         leaked_by = lk.get("leaked_by")
         if prefix is None and leaked_by is None:
             continue
-        ts, _ = _resolve_event_timestamp(lk, fallback_ts, fallback_used_box)
+        ts, _ = resolve_event_timestamp(lk, fallback_ts, fallback_used_box)
         if ts is None:
             continue
         add_event(TemporalEvent(
@@ -540,7 +476,7 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
     for oe in (outage_section.get("outages") or []):
         if not isinstance(oe, dict):
             continue
-        ts, _ = _resolve_event_timestamp(oe, fallback_ts, fallback_used_box)
+        ts, _ = resolve_event_timestamp(oe, fallback_ts, fallback_used_box)
         if ts is None:
             continue
         add_event(TemporalEvent(
@@ -548,13 +484,12 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
             details={"prefix": oe.get("prefix"), "asn": oe.get("asn") or oe.get("affected_as")},
         ))
 
-    # ---- alerts dict format (saved per-batch JSON) ----
     alerts = routing_result.get("alerts", {})
     if isinstance(alerts, dict):
         for h in (alerts.get("origin_hijacks") or []):
             if not isinstance(h, dict):
                 continue
-            ts, _ = _resolve_event_timestamp(h, fallback_ts, fallback_used_box)
+            ts, _ = resolve_event_timestamp(h, fallback_ts, fallback_used_box)
             if ts is None:
                 continue
             hijack_type = h.get("hijack_type") or h.get("type") or ""
@@ -591,7 +526,7 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
             leaked_by = lk.get("leaked_by")
             if prefix is None and leaked_by is None:
                 continue
-            ts, _ = _resolve_event_timestamp(lk, fallback_ts, fallback_used_box)
+            ts, _ = resolve_event_timestamp(lk, fallback_ts, fallback_used_box)
             if ts is None:
                 continue
             add_event(TemporalEvent(
@@ -602,7 +537,6 @@ def extract_routing_events(routing_result=None, target_as="", analysis_window=No
     return sorted(events, key=lambda e: e.timestamp)
 
 
-# ---------------------------------------------------------------------------
 def compute_delta_t(
     traffic_events,
     routing_events,
@@ -651,12 +585,11 @@ def compute_delta_t(
                 "direction": "drop",
                 "synthesized_from_cluster_window": True,
             })
-        except Exception:
+        except (ValueError):
             pass
     return results
 
 
-# ---------------------------------------------------------------------------
 def assign_correlation_level(
     traffic_events,
     routing_events,
@@ -758,7 +691,6 @@ def assign_correlation_level(
     }
 
 
-# ---------------------------------------------------------------------------
 def build_merged_timeline(traffic_events, routing_events) -> list[dict]:
     """Build a sorted merged timeline."""
     all_events = []
@@ -774,7 +706,6 @@ def build_merged_timeline(traffic_events, routing_events) -> list[dict]:
     return all_events
 
 
-# ---------------------------------------------------------------------------
 def cross_validate_correlation(correlation, correlation_score_result):
     """Summarize signals with quantitative association score."""
     score_total = None
@@ -806,7 +737,6 @@ def cross_validate_correlation(correlation, correlation_score_result):
     }
 
 
-# ---------------------------------------------------------------------------
 def generate_refutable_hypotheses(
     correlation: dict,
     routing_events,
@@ -996,7 +926,6 @@ def build_victim_verification(victim_traffic_results, victim_asns):
     return verification
 
 
-# ---------------------------------------------------------------------------
 def analyze_temporal_correlation(
     traffic_raw: dict,
     routing_result: dict,
@@ -1036,16 +965,6 @@ def analyze_temporal_correlation(
         "cross_validation": cross_validation,
         "delta_ts": delta_ts,
         # Keep the 50-event cap on the correlation.timeline (Phase 2
-        # only needs top-50 for cross-validation). The full event
-        # stream is preserved in `routing_events` / `traffic_events`
-        # below, which is what CSS's bucketize-then-evaluate path
-        # consumes. Removing the cap causes CSS to see a fully-saturated
-        # routing series on persistent attacks (e.g.\ Orange Espa\~na)
-        # where every bucket has severity 1.0, producing a degenerate
-        # shift_magnitude = 0σ and CSS abstains incorrectly. The cap
-        # introduces a controlled event-density gradient that lets the
-        # PNS difference-in-means estimator see a non-trivial pre/post
-        # shift on real incidents.
         "timeline": timeline[:50],
         "hypotheses": hypotheses,
         "routing_events": [
@@ -1059,9 +978,6 @@ def analyze_temporal_correlation(
             for e in traffic_events
         ],
         # Full routing event stream for CSS's bucketize-then-evaluate
-        # path. CSS needs every event to compute the per-bucket PNS
-        # estimator; the 20-event cap above is only for LLM narrative
-        # and report rendering, not for the analytical core.
         "routing_events_full": [
             {"timestamp": e.timestamp.isoformat(), "type": e.event_type,
              "source": "routing", "severity": e.severity, **e.details}

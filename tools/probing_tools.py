@@ -1,17 +1,5 @@
-"""
-probing_tools.py - Network probing utilities for BGP tracer
-============================================================
-
-Implements active probing using scapy (no root required for basic ICMP/UDP probing).
-Falls back to system `traceroute` binary if available and scapy is not usable.
-
-Probe types:
-- TracerouteProbe: Traceroute with ICMP/UDP/TCP, TTL-limited
-- BGPLookingGlass: Query public BGP Looking Glass servers
-- RIPERisAPI: Query RIPE RIS API for BGP data
-- CloudflareRealtime: Query Cloudflare Radar public API
-- ProbingOrchestrator: Coordinate multiple probe types
-"""
+"""probing_tools.py - Network probing utilities for BGP tracer
+============================================================"""
 
 from __future__ import annotations
 
@@ -22,11 +10,11 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Any
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
 _HAVE_SCAPY = False
 try:
     import scapy.all as sp
@@ -50,12 +38,7 @@ class ProbeResult:
 
 
 class TracerouteProbe:
-    """
-    Traceroute probe using scapy (no root required).
-
-    Uses ICMP echo (default) or UDP probes to trace the path to a target.
-    Works without root privileges by using standard sockets.
-    """
+    """Traceroute probe using scapy (no root required)."""
 
     DEFAULT_MAX_HOPS = 30
     DEFAULT_TIMEOUT = 3.0  # seconds per hop
@@ -76,15 +59,10 @@ class TracerouteProbe:
         self.port = port
 
     async def probe(self, target):
-        """
-        Execute traceroute to target host.
-
-        Args:
-            target: IP address or hostname to trace
-
+        """Execute traceroute to target host.
+        
         Returns:
-            ProbeResult with hops and metadata
-        """
+        ProbeResult with hops and metadata"""
         started = datetime.now()
         result = ProbeResult(success=False, target=target, probe_type="traceroute")
 
@@ -98,11 +76,11 @@ class TracerouteProbe:
         result.data["resolved_ip"] = target_ip
 
         if _HAVE_SCAPY:
-            return await self._scapy_traceroute(target_ip, started)
+            return await self.scapy_traceroute(target_ip, started)
         else:
-            return await self._system_traceroute(target_ip, started)
+            return await self.system_traceroute(target_ip, started)
 
-    async def _scapy_traceroute(self, target_ip, started):
+    async def scapy_traceroute(self, target_ip, started):
         """Scapy-based traceroute. Tries TCP SYN first (best through firewalls), then ICMP."""
         result = ProbeResult(success=False, target=target_ip, probe_type="scapy_traceroute")
         hops: List[Dict[str, Any]] = []
@@ -161,7 +139,7 @@ class TracerouteProbe:
                                     lambda ip=hop_ip: socket.gethostbyaddr(ip)
                                 )
                                 hop_entry["name"] = name
-                            except Exception:
+                            except (ValueError):
                                 pass
 
                             method_success = True
@@ -186,7 +164,7 @@ class TracerouteProbe:
                                 hops.append(hop_entry)
                                 break
 
-                    except Exception as e:
+                    except (KeyError, IndexError, AttributeError) as e:
                         hop_entry["attempts"].append({"method": method, "success": False, "error": str(e)})
                         continue
 
@@ -210,20 +188,18 @@ class TracerouteProbe:
         result.hops = hops
         reachable_hops = [h for h in hops if h.get("ip") and h.get("ip") != "*"]
         result.success = result.success or (len(reachable_hops) > 0)
-        result.raw_output = self._format_hops_text(hops)
+        result.raw_output = self.format_hops_text(hops)
 
         # If all hops are *, try curl-based reachability check as last resort
         if not result.success and reachable_hops == []:
-            result = await self._curl_reachability_check(target_ip, started)
+            result = await self.curl_reachability_check(target_ip, started)
 
         return result
 
-    async def _curl_reachability_check(self, target_ip, started):
-        """
-        Fallback: use curl to check if target is reachable via HTTP/HTTPS.
+    async def curl_reachability_check(self, target_ip, started):
+        """Fallback: use curl to check if target is reachable via HTTP/HTTPS.
         Also tests general internet connectivity via 1.1.1.1 first.
-        Does not provide hop-by-hop path, but confirms reachability.
-        """
+        Does not provide hop-by-hop path, but confirms reachability."""
         result = ProbeResult(success=False, target=target_ip, probe_type="curl_reachability")
         loop = asyncio.get_event_loop()
 
@@ -243,7 +219,7 @@ class TracerouteProbe:
                 if code and code.isdigit() and 200 <= int(code) < 600:
                     internet_reachable = True
                     break
-            except Exception:
+            except (ValueError):
                 continue
 
         if not internet_reachable:
@@ -285,7 +261,7 @@ class TracerouteProbe:
                         "rtt_ms": None, "note": "reachability confirmed via curl"
                     }]
                     return result
-            except Exception:
+            except (ValueError):
                 continue
 
         # Target IP not reachable on common ports, but internet works
@@ -304,7 +280,7 @@ class TracerouteProbe:
         result.hops = [{"ttl": 1, "ip": target_ip, "note": "not reachable (internet OK)"}]
         return result
 
-    async def _system_traceroute(self, target_ip, started):
+    async def system_traceroute(self, target_ip, started):
         """Fallback to system traceroute binary."""
         result = ProbeResult(success=False, target=target_ip, probe_type="system_traceroute")
 
@@ -334,17 +310,17 @@ class TracerouteProbe:
             )
             result.raw_output = proc.stdout
             result.success = proc.returncode == 0
-            result.hops = _parse_system_traceroute(proc.stdout)
+            result.hops = parse_system_traceroute(proc.stdout)
             result.data["binary"] = traceroute_bin
             result.data["method"] = self.method
         except subprocess.TimeoutExpired:
             result.error = "timeout"
-        except Exception as e:
+        except (AttributeError) as e:
             result.error = str(e)
 
         return result
 
-    def _format_hops_text(self, hops: List[Dict]):
+    def format_hops_text(self, hops: List[Dict]):
         """Format hops as text similar to system traceroute."""
         lines = []
         for h in hops:
@@ -361,9 +337,10 @@ class TracerouteProbe:
         return "\n".join(lines)
 
 
-def _parse_system_traceroute(output_text) -> List[Dict[str, Any]]:
+def parse_system_traceroute(output_text) -> List[Dict[str, Any]]:
     """Parse system traceroute output into structured hop data."""
     import re
+    output = output_text  # NOTE: parameter is `output_text`; body uses `output`.
     hops = []
     for line in output.split("\n"):
         # Match lines like: " 1  192.168.1.1 (192.168.1.1)  1.234 ms  1.123 ms  0.987 ms"
@@ -375,356 +352,3 @@ def _parse_system_traceroute(output_text) -> List[Dict[str, Any]]:
             else:
                 hops.append({"ttl": ttl, "name": m.group(2), "ip": m.group(3)})
     return hops
-
-
-# ---------------------------------------------------------------------------
-class BGPLookingGlass:
-    """
-    Query public BGP Looking Glass servers.
-
-    These servers allow BGP route lookups without authentication.
-    """
-
-    # Public looking glass servers
-    SERVERS = [
-        {"name": "RIPE RIS", "url": "https://stat.ripe.net/data/looking-glass/data.json"},
-        {"name": "BGPView", "url": "https://api.bgpview.io/lookup/prefix/{prefix}"},
-    ]
-
-    def __init__(self, timeout=10.0):
-        self.timeout = timeout
-
-    async def query(self, target, query_type="prefix"):
-        """
-        Query looking glass for a prefix or AS.
-
-        Args:
-            target: prefix (e.g. "8.8.8.0/24") or AS number (e.g. "AS15169")
-            query_type: "prefix" or "as"
-        """
-        result = ProbeResult(success=False, target=target, probe_type="looking_glass")
-        aiohttp_ok = False
-        try:
-            import aiohttp
-            aiohttp_ok = True
-        except ImportError:
-            result.error = "aiohttp not installed"
-            return result
-
-        if not aiohttp_ok:
-            result.error = "aiohttp not available"
-            return result
-
-        import aiohttp
-        timeout = aiohttp.ClientTimeout(total=self.timeout)
-
-        try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                # Try RIPE RIS first
-                url = "https://stat.ripe.net/data/prefix-overview/data.json"
-                params = {"resource": target}
-                async with session.get(url, params=params) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        result.data = data.get("data", {})
-                        result.success = True
-                        result.raw_output = str(data)[:2000]
-                    else:
-                        result.error = f"HTTP {resp.status}"
-
-                # If prefix query succeeded, also try BGPView for additional data
-                if result.success and "/" in target:
-                    bgpview_url = f"https://api.bgpview.io/prefix/{target.replace('/', '_')}/announcements"
-                    try:
-                        async with session.get(bgpview_url) as resp2:
-                            if resp2.status == 200:
-                                extra = await resp2.json()
-                                result.data["bgpview_announcements"] = extra.get("data", {})
-                    except Exception:
-                        pass  # non-critical
-        except Exception as e:
-            result.error = str(e)
-
-        return result
-
-
-# ---------------------------------------------------------------------------
-class RIPERisAPI:
-    """
-    Query RIPE RIS (Routing Information Service) API.
-
-    Provides live BGP data from route collectors around the world.
-    """
-
-    RIS_BASE = "https://stat.ripe.net/data"
-
-    def __init__(self, timeout=10.0):
-        self.timeout = timeout
-        self._aiohttp = None
-
-    def _get_session(self):
-        if self._aiohttp is None:
-            try:
-                import aiohttp
-                self._aiohttp = aiohttp
-            except ImportError:
-                return None
-        return self._aiohttp
-
-    async def query(self, target, query_type="prefix-overview"):
-        """
-        Query RIPE RIS data.
-
-        Args:
-            target: prefix or AS number
-            query_type: "prefix-overview", "bgp-updates", "ris-path-breadth"
-        """
-        result = ProbeResult(success=False, target=target, probe_type="ripe_ris")
-
-        Session = self._get_session()
-        if not Session:
-            result.error = "aiohttp not installed"
-            return result
-
-        endpoints = {
-            "prefix-overview": "prefix-overview/data.json",
-            "ris-path-breadth": "ris-path-breadth/data.json",
-            "announced-prefixes": "announced-prefixes/data.json",
-        }
-
-        endpoint = endpoints.get(query_type, "prefix-overview/data.json")
-        url = f"{self.RIS_BASE}/{endpoint}"
-
-        try:
-            timeout = Session.ClientTimeout(total=self.timeout)
-            async with Session.ClientSession(timeout=timeout) as session:
-                params = {"resource": target}
-                async with session.get(url, params=params) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        result.data = data.get("data", {})
-                        result.success = True
-                        result.raw_output = str(data)[:2000]
-                    else:
-                        result.error = f"HTTP {resp.status}"
-        except Exception as e:
-            result.error = str(e)
-
-        return result
-
-
-# ---------------------------------------------------------------------------
-class CloudflareRealtime:
-    """
-    Query Cloudflare Radar public API for Internet traffic data.
-
-    No API key required for basic endpoints.
-    """
-
-    RADAR_BASE = "https://api.cloudflare.com/client/v4/radar"
-
-    def __init__(self, timeout=10.0):
-        self.timeout = timeout
-
-    async def query(self, target, query_type="as_summary"):
-        """
-        Query Cloudflare Radar for AS-level traffic data.
-
-        Args:
-            target: AS number (e.g. "AS12479")
-            query_type: "as_summary", "as_traffic", "as_prefixes"
-        """
-        result = ProbeResult(success=False, target=target, probe_type="cloudflare_radar")
-        aiohttp_ok = False
-        try:
-            import aiohttp
-            aiohttp_ok = True
-        except ImportError:
-            result.error = "aiohttp not installed"
-            return result
-
-        asn = target.upper().replace("AS", "").strip()
-
-        try:
-            import aiohttp
-            timeout = aiohttp.ClientTimeout(total=self.timeout)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                if query_type == "as_summary":
-                    url = f"{self.RADAR_BASE}/entities/asns/{asn}"
-                    params = {"format": "json"}
-                    async with session.get(url, params=params) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            entity = (data.get("result") or {}).get("entity") or {}
-                            result.data = {
-                                "asn": asn,
-                                "org_name": entity.get("orgName", "unknown"),
-                                "country": entity.get("country", "unknown"),
-                                "country_name": entity.get("countryName", "unknown"),
-                            }
-                            result.success = True
-                            result.raw_output = str(data)[:2000]
-                        else:
-                            result.error = f"HTTP {resp.status}"
-        except Exception as e:
-            result.error = str(e)
-
-        return result
-
-
-# ---------------------------------------------------------------------------
-class ProbingOrchestrator:
-    """
-    Coordinate multiple probe types for a comprehensive network analysis.
-
-    Runs traceroute, BGP looking glass, and RIS queries in parallel,
-    then aggregates results.
-    """
-
-    def __init__(
-        self,
-        timeout: float = 15.0,
-        enable_traceroute: bool = True,
-        enable_bgp_lookup: bool = True,
-        enable_ris: bool = True,
-        enable_cf_radar: bool = True,
-    ):
-        self.timeout = timeout
-        self.enable_traceroute = enable_traceroute
-        self.enable_bgp_lookup = enable_bgp_lookup
-        self.enable_ris = enable_ris
-        self.enable_cf_radar = enable_cf_radar
-        self.traceroute = TracerouteProbe(timeout=timeout / 2, max_hops=20)
-        self.lg = BGPLookingGlass(timeout=timeout)
-        self.ris = RIPERisAPI(timeout=timeout)
-        self.cf = CloudflareRealtime(timeout=timeout)
-
-    async def orchestrate(
-        self,
-        target: str,           # IP or hostname to probe
-        target_asn: str = "",   # AS number (e.g. "12479")
-        prefixes: List[str] = None,  # announced prefixes
-    ) -> ProbeResult:
-        """
-        Run all enabled probes and aggregate results.
-
-        Args:
-            target: IP or hostname
-            target_asn: AS number
-            prefixes: optional list of announced prefixes
-
-        Returns:
-            ProbeResult with aggregated data from all probe types
-        """
-        prefixes = prefixes or []
-        tasks = []
-        probe_results: List[ProbeResult] = []
-
-        if self.enable_traceroute:
-            tasks.append(self._wrap("traceroute", self.traceroute.probe(target)))
-
-        if self.enable_bgp_lookup and prefixes:
-            for prefix in prefixes[:3]:
-                tasks.append(self._wrap(f"lg:{prefix}", self.lg.query(prefix, "prefix")))
-
-        if self.enable_ris and prefixes:
-            for prefix in prefixes[:3]:
-                tasks.append(self._wrap(f"ris:{prefix}", self.ris.query(prefix, "prefix-overview")))
-
-        if self.enable_cf_radar and target_asn:
-            tasks.append(self._wrap(f"cf:{target_asn}", self.cf.query(f"AS{target_asn}", "as_summary")))
-
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for label, res in results:
-                if isinstance(res, Exception):
-                    probe_results.append(ProbeResult(
-                        success=False,
-                        error=str(res),
-                        probe_type=label,
-                        target=target,
-                    ))
-                else:
-                    probe_results.append(res)
-
-        # Aggregate
-        aggregated = ProbeResult(
-            success=any(r.success for r in probe_results),
-            target=target,
-            probe_type="orchestrated",
-            data={
-                "sub_probes": [
-                    {"type": r.probe_type, "success": r.success, "hop_count": len(r.hops)}
-                    for r in probe_results
-                ],
-                "target_asn": target_asn,
-                "prefixes_queried": prefixes[:3],
-            },
-            raw_output="\n---\n".join(r.raw_output for r in probe_results if r.raw_output),
-        )
-
-        for r in probe_results:
-            if r.hops:
-                aggregated.hops = r.hops
-                break
-            if r.data:
-                aggregated.data[r.probe_type] = r.data
-
-        return aggregated
-
-    async def _wrap(self, label, coro):
-        """Helper to tag results with their label."""
-        res = await coro
-        return label, res
-
-
-# ---------------------------------------------------------------------------
-async def run_traceroute(
-    target: str,
-    method: str = "icmp",
-    max_hops: int = 30,
-    timeout: float = 3.0,
-) -> ProbeResult:
-    """Run a traceroute probe to target. Convenience function."""
-    probe = TracerouteProbe(method=method, max_hops=max_hops, timeout=timeout)
-    return await probe.probe(target)
-
-
-# ---------------------------------------------------------------------------
-def format_probe_result_html(result):
-    """Format a ProbeResult as HTML for reports."""
-    if not result.success and not result.hops:
-        return f"<div class='probe-result probe-fail'><b>Probe failed:</b> {result.error or 'unknown error'}</div>"
-
-    html = [f"<div class='probe-result probe-{'ok' if result.success else 'partial'}'>"]
-    html.append(f"<b>Probe Type:</b> {result.probe_type} | <b>Target:</b> {result.target}")
-
-    if result.hops:
-        html.append("<table class='probe-hops'>")
-        html.append("<thead><tr><th>TTL</th><th>Hop IP</th><th>Hostname</th><th>RTT</th></tr></thead>")
-        html.append("<tbody>")
-        for h in result.hops:
-            ip = h.get("ip", "*") or "*"
-            name = h.get("name") or ""
-            rtt = h.get("rtt_ms")
-            rtt_str = f"{rtt:.1f} ms" if rtt else ""
-            html.append(f"<tr><td>{h.get('ttl', '?')}</td><td>{ip}</td><td>{name}</td><td>{rtt_str}</td></tr>")
-        html.append("</tbody></table>")
-
-    html.append(f"<pre class='probe-raw'>{result.raw_output[:1000]}</pre>")
-    html.append("</div>")
-
-    html.append("""
-    <style>
-    .probe-result { border: 1px solid #ddd; border-radius: 4px; padding: 12px; margin: 8px 0; }
-    .probe-ok { border-color: #4caf50; background: #f0fff4; }
-    .probe-partial { border-color: #ff9800; background: #fff8f0; }
-    .probe-fail { border-color: #f44336; background: #fff0f0; }
-    .probe-hops { border-collapse: collapse; width: 100%; font-size: 0.9em; }
-    .probe-hops th, .probe-hops td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; }
-    .probe-hops th { background: #f5f5f5; }
-    .probe-raw { font-size: 0.8em; color: #555; background: #fafafa; padding: 8px; overflow-x: auto; }
-    </style>
-    """)
-
-    return "\n".join(html)
