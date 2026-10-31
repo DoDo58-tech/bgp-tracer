@@ -187,7 +187,12 @@ def traffic_points(cache: Dict[str, Any]) -> List[Dict[str, Any]]:
     corr = cache.get("correlation") or {}
     tb = cache.get("traffic") or {}
     raw = None
-    for source in (corr.get("traffic_events_full"), tb.get("anomalies"),
+    # The anomaly list is preferred: it is the record that carries the
+    # measured value *and* the historical mean it was compared against.
+    # The serialised event stream carries a placeholder baseline, so a
+    # consumer that reads it first reconstructs a deviation of hundreds
+    # of standard deviations with the sign inverted.
+    for source in (tb.get("anomalies"), corr.get("traffic_events_full"),
                    corr.get("traffic_events")):
         if isinstance(source, list) and source:
             raw = source

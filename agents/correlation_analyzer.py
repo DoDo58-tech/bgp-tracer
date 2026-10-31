@@ -31,6 +31,18 @@ class TemporalEvent:
         self.asn = asn  # relevant AS for routing events
 
 
+def _as_number(value: Any) -> Optional[float]:
+    """Return ``value`` as a float, or ``None`` when it is not a number.
+
+    ``bool`` is excluded on purpose: ``True`` is not a measurement of one.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
 def parse_timestamp(ts):
     """Parse a timestamp string to datetime, trying multiple formats."""
     if ts is None:
@@ -191,16 +203,78 @@ def extract_traffic_events(
         z_score = abs(float(a.get("z_score") or 0))
         severity = min(1.0, z_score / 5.0)
 
+        # The historical mean the detector compared this value against.
+        #
+        # The anomaly record carries it under ``historical_mean``; some
+        # detector methods spell it ``baseline_mean`` or ``baseline``.
+        # The placeholder ``0.001`` that used to stand in for a missing
+        # mean is not a measurement: a consumer that divides the value by
+        # it sees a deviation of hundreds of standard deviations, and the
+        # *sign* of the comparison is inverted for every outage.  A
+        # genuinely absent baseline is written as ``None`` so that the
+        # consumer can tell "no baseline" from "a baseline of 0.001".
+        raw_mean = (a.get("historical_mean")
+                    if a.get("historical_mean") is not None
+                    else a.get("baseline_mean"))
+        if raw_mean is None:
+            raw_mean = a.get("mean")
+        if raw_mean is None:
+            raw_mean = a.get("baseline")
+
+        raw_value = a.get("current_value")
+        if raw_value is None:
+            raw_value = a.get("value")
+
+        # The direction of the departure, and its size.
+        #
+        # The detector does not always annotate the direction -- most of
+        # its methods record the magnitude of the departure and leave the
+        # sign to be recovered from the value and the baseline it was
+        # compared against.  The direction is therefore *derived* here
+        # whenever the pair is available, and the recorded annotation is
+        # only trusted when it is actually a direction.
+        raw_mean_num = _as_number(raw_mean)
+        raw_value_num = _as_number(raw_value)
+        derived_pct: Optional[float] = None
+        derived_direction: Optional[str] = None
+        if raw_value_num is not None and raw_mean_num is not None \
+                and raw_mean_num != 0:
+            derived_pct = (raw_value_num - raw_mean_num) / abs(raw_mean_num)
+            derived_direction = "below_lower" if derived_pct < 0 else "above_upper"
+
+        recorded_direction = str(a.get("direction") or "").strip().lower()
+        if recorded_direction in ("below_lower", "above_upper"):
+            direction = recorded_direction
+            if derived_direction is not None and derived_direction != direction:
+                # The annotation and the measurement disagree.  The
+                # measurement wins: the annotation is a label, the value
+                # and the baseline are the observation.
+                direction = derived_direction
+        elif derived_direction is not None:
+            direction = derived_direction
+        else:
+            direction = "unknown"
+
+        recorded_pct = a.get("pct_change")
+        recorded_pct_num = _as_number(recorded_pct)
+        if derived_pct is not None:
+            pct_change = derived_pct
+        elif recorded_pct_num is not None:
+            pct_change = recorded_pct_num
+        else:
+            pct_change = 0.0
+
         events.append(TemporalEvent(
             timestamp=ts,
             source="traffic",
             event_type=f"traffic_{direction}",
             severity=severity,
             details={
-                "value": a.get("current_value") or a.get("value", 0),
-                "mean": a.get("mean") or 0.001,
+                "value": raw_value if raw_value is not None else 0,
+                "mean": raw_mean,
+                "historical_mean": raw_mean,
                 "z_score": z_score,
-                "pct_change": abs(float(a.get("pct_change") or 0)),
+                "pct_change": pct_change,
                 "direction": direction,
             },
         ))

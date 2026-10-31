@@ -33,7 +33,9 @@ if str(ROOT) not in sys.path:
 
 from agents.cache_resolution import resolve_cache  # noqa: E402
 from agents.control_plane_archive import (  # noqa: E402
+    BASELINE_DAYS,
     CONTROL_GRID_SECONDS,
+    ControlPlaneEvidence,
     build_control_plane_evidence,
 )
 from agents.paddle_attribution import (  # noqa: E402
@@ -61,22 +63,34 @@ def cache_key(asn: str, lo: datetime, hi: datetime) -> Path:
 
 def load_or_scan(asn: str, lo: datetime, hi: datetime,
                  *, refresh: bool = False) -> Dict[str, Any]:
-    """The control-plane evidence for one window, cached on disk."""
+    """The control-plane evidence for one window, cached on disk.
+
+    The cached payload keeps the **raw** per-slot counts, so the
+    counterfactual can be recomputed from them whenever the definition
+    of "the preceding days" is corrected -- without reading the archive
+    again.  The archive scan is the expensive step; the counterfactual's
+    definition is the part that gets fixed.
+    """
     path = cache_key(asn, lo, hi)
     if path.is_file() and not refresh:
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            pass
+            payload = None
+        if payload is not None:
+            evidence = ControlPlaneEvidence.from_payload(
+                payload, window_start=lo, baseline_days=BASELINE_DAYS)
+            refreshed = evidence.to_payload()
+            if refreshed.get("baseline") != payload.get("baseline"):
+                # The counterfactual was recomputed from the raw counts
+                # under the current definition; keep the cache in step.
+                try:
+                    path.write_text(json.dumps(refreshed), encoding="utf-8")
+                except OSError:
+                    pass
+            return refreshed
     evidence = build_control_plane_evidence(asn, lo, hi)
-    payload = {
-        "slots": [s.isoformat() for s in evidence.slots],
-        "channels": evidence.channels,
-        "baseline": evidence.baseline,
-        "rows_scanned": evidence.rows_scanned,
-        "files_scanned": evidence.files_scanned,
-        "error": evidence.error,
-    }
+    payload = evidence.to_payload()
     EVIDENCE_CACHE.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload), encoding="utf-8")
     return payload
@@ -110,7 +124,12 @@ def traffic_points(cache: Dict[str, Any]) -> List[Dict[str, Any]]:
     corr = cache.get("correlation") or {}
     tb = cache.get("traffic") or {}
     raw = None
-    for source in (corr.get("traffic_events_full"), tb.get("anomalies"),
+    # The anomaly list is preferred: it is the record that carries the
+    # measured value *and* the historical mean it was compared against.
+    # The serialised event stream carries a placeholder baseline, so a
+    # consumer that reads it first reconstructs a deviation of hundreds
+    # of standard deviations with the sign inverted.
+    for source in (tb.get("anomalies"), corr.get("traffic_events_full"),
                    corr.get("traffic_events")):
         if isinstance(source, list) and source:
             raw = source

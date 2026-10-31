@@ -24,46 +24,53 @@ from detectors.traffic.multi_scale_baseline import CausalCorrelationScorer
 from detectors.evidence_chain_builder import EvidenceChainBuilder
 
 
-def aea_runtime_parse(value):
+def paddle_parse(value):
+    """Parse a timestamp into the naive-UTC form the estimator works on."""
     if value is None:
         return None
     if isinstance(value, datetime):
         return value
     try:
-        from agents.aea_runtime import parse_timestamp
+        from agents.temporal import parse_timestamp
         return parse_timestamp(value)
     except (AttributeError, TypeError, ValueError):
         return None
 
 
-def aea_explanation(verdict):
+def paddle_explanation(verdict):
+    """A one-line account of what the estimator decided and why."""
     if verdict.committed:
         return (
-            "AEA committed %s: onset intervals disjoint with lag %s buckets, "
-            "exclusivity p=%.4f over %d placebos."
-            % (verdict.direction, verdict.lag, verdict.p_value, verdict.n_placebos)
+            "PADDLE committed %s: the %s control-plane channel was at "
+            "%.3fx its same-clock baseline when the traffic trough fell, "
+            "%s seconds before it, and exceeded the placebo null by %.2fx."
+            % (verdict.direction, verdict.channel or "strongest",
+               verdict.tau_control or 0.0,
+               verdict.lag_seconds if verdict.lag_seconds is not None else 0.0,
+               verdict.exclusivity_ratio or 0.0)
         )
     vetoes = ", ".join(
         "%s=%s" % (k, v) for k, v in (verdict.vetoes or {}).items())
-    return "AEA abstained (%s; vetoes: %s)." % (verdict.reason, vetoes)
+    return "PADDLE abstained (%s; vetoes: %s)." % (verdict.reason, vetoes)
 
 
-def aea_limitations(verdict):
+def paddle_limitations(verdict):
+    """What the verdict does *not* establish."""
     if verdict.committed:
-        return "Direction only; magnitude and mechanism are out of scope."
+        return ("Direction only; the magnitude of the traffic impact and "
+                "the mechanism behind the routing change are out of scope.")
     return (
         "The window does not support a directional claim: "
         "%s. Only the committed direction is reported." % verdict.reason)
 
 
 def build_routing_state(prefix2as_file, prefixes, max_prefixes=200):
-    """Build the ASN -> prefixes map the cascade estimator needs.
-    
+    """Build the ASN -> prefixes map the routing-state consumer needs.
+
     Returns:
     dict mapping ASN string -> list of prefixes it originates. Only
     the ASes that actually originate one of ``prefixes`` are
-    included, so the map stays small and is directly usable by
-    :func:`agents.causal_attribution.cic_has_pfx`."""
+    included, so the map stays small."""
     if not prefix2as_file or not Path(prefix2as_file).exists():
         return {}
     if isinstance(prefixes, str):
@@ -1490,13 +1497,19 @@ class WorkflowEngine:
         return routing_timeline, traffic_timeline, routing_context, traffic_context, topology_context
 
     def compute_hcaf_attribution(self, context):
-        """Attribute the direction of a routing/traffic pair with the AEA estimator.
+        """Attribute the direction of a routing/traffic pair with PADDLE.
 
-        The admissible edge attribution test is the authority for the
-        direction: it commits only when four vetoes pass and otherwise
-        returns the veto that failed.  The multi-channel synthesis is
-        retained as supporting evidence and is reported alongside the
-        veto record, but it does not decide the direction.
+        PADDLE -- Paired Displacement, Difference-in-differences, with
+        Ledger Evidence -- is the only causal estimator in this
+        codebase.  It anchors on the **data plane's trough** (the moment
+        the traffic stopped, which is sharp and well located) and asks
+        the control plane, at that moment, how far from its same-clock
+        ordinary-day behaviour it was.  The direction is committed only
+        when all four vetoes pass: precedence, exclusivity against the
+        placebo null, scope, and congruence.
+
+        The estimator abstains rather than guessing, and it reports which
+        veto stopped it.
         """
         routing_result = context.routing_result
         traffic_result = context.traffic_result
@@ -1507,9 +1520,9 @@ class WorkflowEngine:
             return None
 
         try:
-            from agents.aea_runtime import run_aea
+            from agents.paddle_runtime import run_paddle
         except ImportError as e:
-            logger.warning(f"[HCAF] aea_runtime_import_failed: {e}")
+            logger.warning(f"[HCAF] paddle_runtime_import_failed: {e}")
             context.hcaf_attribution_status = "failed"
             return None
 
@@ -1538,45 +1551,56 @@ class WorkflowEngine:
             )
 
         target_as_val = int(context.asn) if str(context.asn).isdigit() else None
-        window_start = aea_runtime_parse(context.start_time)
-        window_end = aea_runtime_parse(context.end_time)
+        window_start = paddle_parse(context.start_time)
+        window_end = paddle_parse(context.end_time)
 
+        # The control plane is measured on the detector's own routing
+        # features -- the target's *own* announcements, the channel that
+        # falls silent during an outage.  The traffic side is the signed
+        # deviation of every observation from the detector's own
+        # historical baseline, which is what makes the trough the moment
+        # the traffic stopped.
+        routing_analysis = (routing_result.get("outage_analysis")
+                            or routing_result.get("outage") or {})
         try:
-            verdict, routing_series, traffic_series = run_aea(
-                routing_timeline,
-                traffic_timeline,
+            verdict, control_series, traffic_observations = run_paddle(
+                routing_analysis=routing_analysis,
+                traffic_timeline=traffic_timeline,
+                routing_timeline=routing_timeline,
                 routing_context=routing_context,
-                traffic_context=traffic_context,
+                traffic_block=traffic_result,
                 window_start=window_start,
                 window_end=window_end,
             )
         except (AttributeError, TypeError, ValueError) as e:
-            logger.warning(f"[HCAF] aea_call_failed: {e}")
+            logger.warning(f"[HCAF] paddle_call_failed: {e}")
             context.hcaf_attribution_status = "failed"
             return None
 
         direction_val = verdict.direction if verdict.committed else "unknown"
         logger.info(
-            f"[AEA] direction={direction_val} reason={verdict.reason} "
-            f"vetoes={verdict.vetoes} p={verdict.p_value:.4f} "
-            f"placebos={verdict.n_placebos} lag={verdict.lag}"
+            f"[PADDLE] direction={direction_val} reason={verdict.reason} "
+            f"vetoes={verdict.vetoes} channel={verdict.channel} "
+            f"lag={verdict.lag_seconds} ratio={verdict.exclusivity_ratio}"
         )
 
+        tau_traffic = (verdict.tau_response.isoformat()
+                       if verdict.tau_response else None)
         return {
             "direction": direction_val,
             "committed": verdict.committed,
             "reason": verdict.reason,
             "vetoes": dict(verdict.vetoes),
-            "tau_routing": verdict.tau_routing,
-            "tau_traffic": verdict.tau_traffic,
-            "lag": verdict.lag,
+            "tau_routing": verdict.tau_control,
+            "tau_traffic": tau_traffic,
+            "lag": verdict.lag_seconds,
             "effect": verdict.effect,
-            "p_value": verdict.p_value,
-            "n_placebos": verdict.n_placebos,
-            "horizon": verdict.horizon,
+            "p_value": None,
+            "n_placebos": None,
+            "horizon": None,
             "mechanism": verdict.mechanism,
             "tests": verdict.tests,
-            "n_buckets": min(len(routing_series), len(traffic_series)),
+            "n_buckets": control_series.n_buckets,
             "strength": "strong" if verdict.committed else "none",
             "strength_score": 1.0 if verdict.committed else 0.0,
             "confidence": 1.0 if verdict.committed else 0.0,
@@ -1584,21 +1608,25 @@ class WorkflowEngine:
             "convergence": 1.0 if verdict.committed else 0.0,
             "routing_causes_traffic": direction_val == "routing_to_traffic",
             "traffic_causes_routing": direction_val == "traffic_to_routing",
-            "explanation": aea_explanation(verdict),
-            "limitations": aea_limitations(verdict),
+            "explanation": paddle_explanation(verdict),
+            "limitations": paddle_limitations(verdict),
             "novel_findings": [],
             "confounders": [],
             "evidence_support": {
-                "method": "aea_veto_test",
+                "method": "paddle_veto_test",
                 "vetoes": dict(verdict.vetoes),
                 "reason": verdict.reason,
-                "p_value": verdict.p_value,
-                "n_placebos": verdict.n_placebos,
-                "lag": verdict.lag,
-                "tau_routing": verdict.tau_routing,
-                "tau_traffic": verdict.tau_traffic,
-                "horizon": verdict.horizon,
+                "p_value": None,
+                "n_placebos": None,
+                "lag": verdict.lag_seconds,
+                "tau_routing": verdict.tau_control,
+                "tau_traffic": tau_traffic,
+                "horizon": None,
                 "mechanism": verdict.mechanism,
+                "channel": verdict.channel,
+                "effect": verdict.effect,
+                "exclusivity_ratio": verdict.exclusivity_ratio,
+                "baseline_displacement": verdict.baseline_displacement,
                 "tests": verdict.tests,
             },
             "target_as": target_as_val,

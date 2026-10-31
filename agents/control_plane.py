@@ -281,6 +281,17 @@ def same_clock_baseline(
     and each key holds the average over the previous days.  This is the
     counterfactual a causal claim needs: what this channel does at this
     hour on an ordinary day.
+
+    The age of a candidate bucket is measured in **elapsed seconds**,
+    not in calendar days.  The two differ exactly when the window
+    crosses midnight: a window that runs from 21:30 to 06:00 has its
+    03:00 slots *after* the window's start date, and a calendar-day
+    subtraction counts them as being in the future -- or, worse, counts
+    the 21:30 slots of the previous day as being two days old and drops
+    them.  A window that spans midnight therefore lost half its
+    counterfactual.  The elapsed-seconds test is the one that says what
+    it means: *this bucket is between one and ``days`` days before the
+    window opened*.
     """
     slot_keys: List[str] = []
     moment = window_start.replace(second=0, microsecond=0)
@@ -290,9 +301,10 @@ def same_clock_baseline(
         moment += step
 
     by_slot: Dict[str, List[float]] = {k: [] for k in slot_keys}
+    horizon = days * 86400.0
     for stamp, entry in buckets.items():
-        delta = (window_start.date() - stamp.date()).days
-        if delta <= 0 or delta > days:
+        age = (window_start - stamp).total_seconds()
+        if age <= 0 or age > horizon:
             continue
         key = stamp.strftime("%H:%M")
         if key in by_slot:

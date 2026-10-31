@@ -255,22 +255,49 @@ def _as_float(value: Any) -> Optional[float]:
     return None
 
 
+#: The baseline placeholder the serialised event stream used to carry.
+#:
+#: ``correlation_analyzer`` wrote ``0.001`` for "the detector did not put
+#: a baseline on this anomaly".  A consumer that treats it as a
+#: measurement sees a deviation of hundreds of standard deviations, and
+#: the sign of the comparison is inverted for every outage -- the
+#: placeholder is a sentinel, not an observation, and is refused here.
+_PLACEHOLDER_MEAN = 0.001
+
+
+def _is_placeholder_mean(value: float) -> bool:
+    """Whether ``value`` is the sentinel baseline rather than a measurement."""
+    return abs(value - _PLACEHOLDER_MEAN) < 1e-12
+
+
 def traffic_deviation(point: Dict[str, Any]) -> Optional[float]:
     """The signed deviation of one traffic observation from its baseline.
 
-    The detector stores ``current_value`` alongside the ``historical_mean``
-    it was compared against, so the **sign** of the deviation is
-    recoverable even when the stored ``z_score`` has lost it.
+    The deviation is reconstructed from the measured value and the
+    historical mean it was compared against, so the **sign** is the
+    sign of the physical departure: negative means the measured
+    quantity fell, which for a traffic series is the impact of an
+    incident.
 
-    That loss is not hypothetical.  The traffic detector records the
-    magnitude of the departure and the direction separately, and in the
-    cached artefacts the ``z_score`` field carries the magnitude alone:
-    an outage that took the network's traffic down by 99.6% appears
-    with a *positive* ``z_score``.  A causal estimator that reads the
-    sign off that field would read every outage as a surge.  The
-    deviation is therefore reconstructed from the value and the
-    historical mean, and the stored z-score is used only for the
-    magnitude when the value is absent.
+    Two representation defects make this reconstruction necessary, and
+    both are properties of the detector's *output*, not of the
+    estimator.
+
+    **The stored ``z_score`` carries the magnitude alone.**  An outage
+    that took a network's traffic down by 99.6% appears with a
+    *positive* ``z_score``, because the detector records the size of the
+    departure and the direction separately.  Reading the sign off that
+    field would read every outage as a surge.
+
+    **The ``mean`` field of the serialised event stream used to be a
+    placeholder.**  ``correlation_analyzer`` wrote ``0.001`` whenever
+    the detector had not put a baseline on the anomaly, so a consumer
+    that compared the value against it saw deviations of hundreds of
+    standard deviations, with the sign inverted for every outage.  The
+    placeholder is therefore *not* accepted as a baseline here: a mean
+    of ``0.001`` is refused unless the observation also carries a real
+    baseline, and the field is only trusted when it is present in the
+    anomaly record itself.
 
     A negative deviation means the measured quantity fell.  For a
     traffic series the quantity is a request or throughput count, so a
@@ -287,9 +314,22 @@ def traffic_deviation(point: Dict[str, Any]) -> Optional[float]:
     if value is None:
         value = _as_float(raw.get("value"))
 
+    # The baseline, read from the fields that actually carry a
+    # measurement.  The placeholder is recognised and refused, because a
+    # baseline of 0.001 is a stand-in for "unknown", not an observation.
     mean = _as_float(point.get("historical_mean"))
     if mean is None:
         mean = _as_float(raw.get("historical_mean"))
+    if mean is None:
+        mean = _as_float(point.get("baseline_mean"))
+    if mean is None:
+        mean = _as_float(raw.get("baseline_mean"))
+    if mean is None:
+        candidate = _as_float(point.get("mean"))
+        if candidate is None:
+            candidate = _as_float(raw.get("mean"))
+        if candidate is not None and not _is_placeholder_mean(candidate):
+            mean = candidate
 
     if value is not None and mean is not None and mean != 0:
         # The relative deviation, in the units the estimator compares in.

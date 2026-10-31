@@ -42,6 +42,55 @@ from config import API_KEY, BASE_URL, MODEL, MITM_DETECTION_ENABLED, JSON_OUTPUT
 
 PROJECT_ROOT = Path(__file__).parent
 
+
+def _unwrap_result(payload):
+    """Return the detector result inside a react tool's payload.
+
+    The react tools wrap their output in ``{"success": ..., "result":
+    ...}``, and the traffic tool nests it one level further under
+    ``results`` keyed by AS.  The attribution needs the detector's own
+    dict, so the wrappers are peeled here rather than at every call
+    site.
+    """
+    if not isinstance(payload, dict):
+        return {}
+    inner = payload.get("result")
+    if isinstance(inner, dict) and inner:
+        return inner
+    return payload
+
+
+def _per_asn(traffic_result):
+    """Yield the per-AS traffic detector results."""
+    if not isinstance(traffic_result, dict):
+        return
+    results = traffic_result.get("results")
+    if isinstance(results, dict) and results:
+        for value in results.values():
+            if isinstance(value, dict):
+                yield value
+        return
+    if isinstance(results, list):
+        for value in results:
+            if isinstance(value, dict):
+                yield value
+        return
+    yield traffic_result
+
+
+def _parse_ts(value):
+    """Parse a timestamp into the naive-UTC form the estimator works on."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        from agents.temporal import parse_timestamp
+        return parse_timestamp(value)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
 class ChiefExpertAgent:
     """Chief Expert Agent — main orchestrator for BGP analysis."""
 
@@ -386,13 +435,27 @@ class ChiefExpertAgent:
             )
 
     def post_react_hcaf(self, react_result):
-        """Post-React AEA directional attribution.
+        """Post-React PADDLE directional attribution.
 
-        Returns (attribution_dict, status_string). Never returns None."""
+        Returns (attribution_dict, status_string). Never returns None.
+
+        The react run leaves the *detector results* in the shared
+        evidence bucket, not just a summary timeline.  PADDLE needs the
+        full result: the control plane is measured on the detector's own
+        routing features (the target's **own** announcements, which is
+        the channel that falls silent during an outage), and the traffic
+        side needs each observation's value **and** the historical mean
+        it was compared against, because that pair -- not the stored
+        z-score -- is what carries the direction of the departure.
+
+        A run that left only a summary timeline cannot support a
+        directional claim, and the estimator is asked to abstain rather
+        than to be handed a degraded input.
+        """
         try:
-            from agents.aea_runtime import run_aea
+            from agents.paddle_runtime import run_paddle
         except ImportError:
-            logger.debug("[HCAF] aea_runtime not available; skipping post-react attribution")
+            logger.debug("[HCAF] paddle_runtime not available; skipping post-react attribution")
             return {}, "skipped_no_engine"
 
         try:
@@ -405,63 +468,100 @@ class ChiefExpertAgent:
                 except (ValueError):
                     evidence = {}
 
-            routing_timeline = []
-            traffic_timeline = []
-            routing_ctx = {}
-            traffic_ctx = {}
+            routing_payload = evidence.get("analyze_routing") or {}
+            traffic_payload = evidence.get("analyze_traffic") or {}
+            if not routing_payload:
+                routing_payload = evidence.get("precomputed_routing") or {}
+            if not traffic_payload:
+                traffic_payload = evidence.get("precomputed_traffic") or {}
 
-            for tool_name, data in evidence.items():
-                if not isinstance(data, dict):
-                    continue
-                if "traffic_timeline" in data and isinstance(data["traffic_timeline"], list):
-                    for pt in data["traffic_timeline"]:
-                        if isinstance(pt, dict):
-                            traffic_timeline.append({
-                                "timestamp": pt.get("timestamp") or pt.get("time"),
-                                "score": pt.get("score") or pt.get("anomaly_score", 0),
-                            })
-                if "routing_timeline" in data and isinstance(data["routing_timeline"], list):
-                    for pt in data["routing_timeline"]:
-                        if isinstance(pt, dict):
-                            routing_timeline.append({
-                                "timestamp": pt.get("timestamp") or pt.get("time"),
-                                "score": pt.get("score") or pt.get("anomaly_score", 0),
-                            })
-                if "as_path" in data and isinstance(data["as_path"], list):
-                    routing_ctx["as_path"] = data["as_path"]
-                if "event_type" in data:
-                    routing_ctx["event_type"] = data["event_type"]
-                if "traffic_drop_ratio" in data:
-                    traffic_ctx["traffic_drop_ratio"] = data["traffic_drop_ratio"]
-                if "affected_prefix" in data:
-                    traffic_ctx["affected_prefix"] = data["affected_prefix"]
+            routing_result = _unwrap_result(routing_payload)
+            traffic_result = _unwrap_result(traffic_payload)
 
-            if not routing_timeline and not traffic_timeline:
+            if not routing_result or not traffic_result:
                 return {}, "skipped_no_data"
 
-            # Cap to avoid HCAF blowing up on huge payloads.
-            routing_timeline = routing_timeline[:200]
-            traffic_timeline = traffic_timeline[:200]
+            # The traffic detector's own anomaly list carries the value
+            # and the baseline it was compared against.  The serialised
+            # event stream is not used here: it carries a placeholder
+            # baseline, and a consumer that reads it reconstructs a
+            # deviation of hundreds of standard deviations with the sign
+            # inverted.
+            traffic_timeline = []
+            for asn_result in _per_asn(traffic_result):
+                for anomaly in (asn_result.get("anomalies") or []):
+                    if not isinstance(anomaly, dict):
+                        continue
+                    stamp = anomaly.get("timestamp") or anomaly.get("time")
+                    if not stamp:
+                        continue
+                    traffic_timeline.append({
+                        "timestamp": stamp,
+                        "event_type": "traffic_anomaly",
+                        "raw_event": anomaly,
+                    })
+                break
 
-            engine_result = run_aea(
-                routing_timeline=routing_timeline[:200],
-                traffic_timeline=traffic_timeline[:200],
-                routing_context=routing_ctx,
-                traffic_context=traffic_ctx,
+            routing_timeline = []
+            routing_context = {}
+            for key in ("origin_hijacked", "forge_hijacked",
+                        "origin_hijacking", "forge_hijacking",
+                        "route_leaks"):
+                for event in (routing_result.get(key) or []):
+                    if not isinstance(event, dict):
+                        continue
+                    stamp = (event.get("timestamp") or event.get("first_seen")
+                             or event.get("time"))
+                    if not stamp:
+                        continue
+                    routing_timeline.append({
+                        "timestamp": stamp,
+                        "event_type": event.get("event_type") or event.get("type"),
+                        "raw_event": event,
+                    })
+
+            outage = (routing_result.get("outage_analysis")
+                      or routing_result.get("outage") or {})
+            if outage.get("is_outage_suspected"):
+                stamp = outage.get("timestamp") or outage.get("first_seen")
+                if stamp:
+                    routing_timeline.append({
+                        "timestamp": stamp,
+                        "event_type": "outage",
+                        "raw_event": outage,
+                    })
+
+            if not traffic_timeline:
+                return {}, "skipped_no_data"
+
+            window_start = _parse_ts(getattr(react_result, "start_time", None))
+            window_end = _parse_ts(getattr(react_result, "end_time", None))
+
+            verdict, control_series, _observations = run_paddle(
+                routing_analysis=outage,
+                traffic_timeline=traffic_timeline,
+                routing_timeline=routing_timeline,
+                routing_context=routing_context,
+                traffic_block=traffic_result,
+                window_start=window_start,
+                window_end=window_end,
             )
-            verdict = engine_result[0]
             attribution = {
                 "direction": verdict.direction if verdict.committed else "unknown",
                 "committed": verdict.committed,
                 "reason": verdict.reason,
                 "vetoes": dict(verdict.vetoes),
-                "p_value": verdict.p_value,
-                "n_placebos": verdict.n_placebos,
-                "lag": verdict.lag,
+                "channel": verdict.channel,
+                "lag": verdict.lag_seconds,
+                "effect": verdict.effect,
+                "exclusivity_ratio": verdict.exclusivity_ratio,
+                "tau_traffic": (verdict.tau_response.isoformat()
+                                if verdict.tau_response else None),
+                "tau_routing": verdict.tau_control,
             }
             logger.info(
-                f"[AEA post-react] direction={attribution['direction']} "
-                f"reason={attribution['reason']}")
+                f"[PADDLE post-react] direction={attribution['direction']} "
+                f"reason={attribution['reason']} channel={attribution['channel']}")
             return attribution, "ok"
 
         except (AttributeError) as e:

@@ -92,6 +92,13 @@ class ControlPlaneEvidence:
     baseline: Dict[str, Dict[str, float]] = field(default_factory=dict)
     #: channel -> clock position -> the number of days that contributed.
     baseline_days: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    #: The **raw** per-slot counts over the whole scanned period, keyed by
+    #: absolute stamp.  The baseline above is a function of these and of
+    #: the window's start, so keeping the raw counts makes the
+    #: counterfactual recomputable without re-reading the archive -- which
+    #: matters because the archive scan is the expensive part and the
+    #: baseline's definition is the thing that gets fixed.
+    raw_counts: Dict[str, Dict[str, float]] = field(default_factory=dict)
     #: The target the series was measured for.
     target_as: str = ""
     #: How many update rows were read.
@@ -146,6 +153,73 @@ class ControlPlaneEvidence:
             "end": self.slots[-1].isoformat() if self.slots else None,
             "error": self.error,
         }
+
+    def to_payload(self) -> Dict[str, Any]:
+        """The serialisable form of this evidence.
+
+        The **raw counts** are included, not only the derived baseline.
+        The archive scan is the expensive step and the counterfactual's
+        definition is the part that gets corrected, so the raw material
+        is kept and the baseline is recomputed from it whenever the
+        definition changes.
+        """
+        return {
+            "slots": [s.isoformat() for s in self.slots],
+            "channels": self.channels,
+            "baseline": self.baseline,
+            "baseline_days": self.baseline_days,
+            "raw_counts": self.raw_counts,
+            "target_as": self.target_as,
+            "rows_scanned": self.rows_scanned,
+            "files_scanned": self.files_scanned,
+            "skipped_chunks": self.skipped_chunks,
+            "error": self.error,
+        }
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Dict[str, Any],
+        *,
+        window_start: Optional[datetime] = None,
+        baseline_days: int = BASELINE_DAYS,
+    ) -> "ControlPlaneEvidence":
+        """Rebuild the evidence from a serialised payload.
+
+        When the payload carries the raw counts, the counterfactual is
+        recomputed from them with the *current* definition of "the
+        preceding days".  A payload written by an older version, which
+        did not keep the raw counts, is rebuilt from its stored baseline
+        unchanged -- it cannot be improved without re-reading the
+        archive, and silently replacing it with an empty baseline would
+        turn a measurement into a refutation.
+        """
+        evidence = cls(target_as=str(payload.get("target_as") or ""))
+        evidence.slots = [datetime.fromisoformat(s)
+                          for s in (payload.get("slots") or [])]
+        evidence.channels = {k: list(v) for k, v
+                             in (payload.get("channels") or {}).items()}
+        evidence.rows_scanned = int(payload.get("rows_scanned") or 0)
+        evidence.files_scanned = int(payload.get("files_scanned") or 0)
+        evidence.skipped_chunks = int(payload.get("skipped_chunks") or 0)
+        evidence.error = str(payload.get("error") or "")
+
+        raw = payload.get("raw_counts") or {}
+        if raw and window_start is not None:
+            counts: Dict[str, Dict[datetime, float]] = {}
+            for channel, stamps in raw.items():
+                counts[channel] = {
+                    datetime.fromisoformat(stamp): float(value)
+                    for stamp, value in (stamps or {}).items()
+                }
+            _apply_baseline(evidence, counts, window_start, baseline_days)
+            return evidence
+
+        evidence.baseline = {k: dict(v) for k, v
+                             in (payload.get("baseline") or {}).items()}
+        evidence.baseline_days = {k: dict(v) for k, v
+                                  in (payload.get("baseline_days") or {}).items()}
+        return evidence
 
 
 def _normalise(chunk: pl.DataFrame) -> pl.DataFrame:
@@ -360,16 +434,48 @@ def build_control_plane_evidence(
         for channel in counts
     }
 
-    # The counterfactual: the same clock position on the earlier days.
-    # Each day contributes its own per-slot count, and the days are
-    # averaged slot by slot, so the result is directly comparable with
-    # the event window's per-slot counts.
+    # The raw counts are kept so that the counterfactual below -- and any
+    # later correction to how the counterfactual is defined -- can be
+    # recomputed without reading the archive again.
+    evidence.raw_counts = {
+        channel: {stamp.isoformat(): float(value)
+                  for stamp, value in channel_counts.items()}
+        for channel, channel_counts in counts.items()
+    }
+
+    _apply_baseline(evidence, counts, window_start, baseline_days)
+    return evidence
+
+
+def _apply_baseline(
+    evidence: ControlPlaneEvidence,
+    counts: Dict[str, Dict[datetime, float]],
+    window_start: datetime,
+    baseline_days: int,
+) -> None:
+    """Fill the evidence's counterfactual from the raw per-slot counts.
+
+    The counterfactual is the same clock position on the earlier days.
+    Each day contributes its own per-slot count, and the days are
+    averaged slot by slot, so the result is directly comparable with
+    the event window's per-slot counts.
+
+    The age of a candidate is measured in **elapsed seconds**, not in
+    calendar days.  The two differ exactly when the window crosses
+    midnight: the 03:00 slot of the *same* calendar date as the
+    window's start is, physically, the previous day's 03:00, and it is
+    the nearest counterfactual -- but a calendar-day subtraction calls
+    it "zero days old" and drops it, while a slot four days earlier
+    survives.  The window then loses its most relevant day and keeps
+    its least relevant one.
+    """
+    horizon = baseline_days * 86400.0
     for channel in counts:
         per_slot: Dict[str, List[float]] = {}
         day_hits: Dict[str, int] = {}
         for stamp, value in counts[channel].items():
-            delta = (window_start.date() - stamp.date()).days
-            if delta <= 0 or delta > baseline_days:
+            age = (window_start - stamp).total_seconds()
+            if age <= 0 or age > horizon:
                 continue
             key = stamp.strftime("%H:%M")
             per_slot.setdefault(key, []).append(float(value))
@@ -378,5 +484,3 @@ def build_control_plane_evidence(
             key: float(sum(vals) / len(vals)) for key, vals in per_slot.items()
         }
         evidence.baseline_days[channel] = day_hits
-
-    return evidence
