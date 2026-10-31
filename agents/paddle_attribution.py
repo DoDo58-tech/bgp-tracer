@@ -93,6 +93,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from agents.control_plane import (
+    BASELINE_DAYS,
     CONTROL_PLANE_CHANNELS,
     GRID_SECONDS,
     ControlPlaneSeries,
@@ -156,15 +157,28 @@ PADDLE_PROTOCOL: Dict[str, Any] = {
     "min_lag_seconds": 0.0,
 
     # ── V2: exclusivity against the same-clock placebo null ──────────────
-    #: How many times the placebo troughs' own worst displacement the
-    #: incident's displacement must exceed.
-    "min_exclusivity_ratio": 1.5,
+    #: The largest probability that an ordinary day is at least as
+    #: extreme as the incident.  The null is the empirical tail of the
+    #: placebo distribution of the *same* direction, so this is a
+    #: significance level and not a ratio.
+    "max_placebo_probability": 0.05,
     #: The absolute floor, so a channel that barely moves in both the
     #: incident and the placebo cannot pass on a large ratio alone.
     "min_absolute_displacement": 0.20,
     #: The control plane's displacement must be at least this, measured
     #: as a multiple of the same-clock baseline rate.  "One" is normal.
     "min_relative_displacement": 0.25,
+    #: The quantile of the placebo distribution that is used as the null.
+    #:
+    #: The null is a quantile rather than the maximum because the
+    #: maximum of a sample is the least stable statistic available: it
+    #: estimates the extreme order statistic from one draw, so a single
+    #: ordinary day that happens to contain a re-announcement burst
+    #: raises the null by an order of magnitude and no incident can ever
+    #: beat it.  The 95th percentile asks the same question -- "is this
+    #: more than an ordinary day does?" -- while ignoring the handful of
+    #: placebos that are ordinary only by luck.
+    "placebo_null_quantile": 0.95,
 
     # ── V3: scope and congruence ─────────────────────────────────────────
     #: The response must observe at least this many of the entities the
@@ -202,9 +216,10 @@ class CausalVerdict:
     lag_seconds: Optional[float] = None
     #: The control plane's deviation at the trough, in baseline units.
     effect: Optional[float] = None
-    #: The incident's displacement as a multiple of the placebo null.
-    exclusivity_ratio: Optional[float] = None
-    #: The worst placebo displacement, in the same units.
+    #: The probability that an ordinary day is at least as extreme as
+    #: the incident, measured against the placebo null.
+    exclusivity_probability: Optional[float] = None
+    #: The size of the placebo null, in the same units as the effect.
     baseline_displacement: Optional[float] = None
     channel: str = ""
     mechanism: Optional[str] = None
@@ -229,8 +244,9 @@ class CausalVerdict:
                             if self.lag_seconds is not None else None),
             "effect": (round(float(self.effect), 4)
                        if self.effect is not None else None),
-            "exclusivity_ratio": (round(float(self.exclusivity_ratio), 4)
-                                  if self.exclusivity_ratio is not None else None),
+            "exclusivity_probability": (
+                round(float(self.exclusivity_probability), 6)
+                if self.exclusivity_probability is not None else None),
             "baseline_displacement": (
                 round(float(self.baseline_displacement), 4)
                 if self.baseline_displacement is not None else None),
@@ -409,6 +425,19 @@ def control_displacement(
 
     The displacement is reported as a multiple of the counterfactual:
     one is normal, zero is silence, three is a threefold surge.
+
+    The two arms are summarised by their **median**, not their mean.
+    BGP announcement counts are heavy-tailed: a network that re-announces
+    its whole table after a session reset emits one enormous slot, and
+    a mean over a window containing it is set by that slot alone.  In
+    an outage that slot is the *last* burst before the silence, so a
+    mean reads the outage as a hundredfold surge and the congruence
+    test then refuses an outage whose whole signature is the opposite.
+
+    The median answers the question the estimator is actually asking:
+    what did this channel do *typically* in this window, compared with
+    what it typically did at the same clock positions on the earlier
+    days.  A burst is one slot, not the level.
     """
     stamps = control.stamps
     index = slot_index(stamps, trough)
@@ -423,15 +452,18 @@ def control_displacement(
     values = control.channel(channel)
     if len(values) != len(stamps):
         return None
-    observed = float(np.mean(values[lo:hi + 1]))
+    observed = float(np.median(values[lo:hi + 1]))
 
     # The counterfactual: the same clock slots on the previous days.
     window_start = stamps[lo]
     window_end = stamps[hi]
     baseline_map = same_clock_baseline(
         control.baseline_buckets(), channel, window_start, window_end)
-    expected = (float(np.mean([baseline_map.get(s.strftime("%H:%M"), 0.0)
-                               for s in stamps[lo:hi + 1]]))
+    # The counterfactual is summarised the same way as the treatment
+    # arm.  Pairing two different statistics would compare a median with
+    # a mean, and the ratio would not mean anything.
+    expected = (float(np.median([baseline_map.get(s.strftime("%H:%M"), 0.0)
+                                 for s in stamps[lo:hi + 1]]))
                 if stamps else 0.0)
 
     if expected <= 0:
@@ -473,6 +505,16 @@ def placebo_displacements(
 
     The null is therefore the instrument's own behaviour on the same
     quantity, at the same hour, on days without the incident.
+
+    The ratios are returned **signed**, because a silence and a surge
+    do not share a scale.  A channel's rate cannot fall below zero, so
+    the deepest silence any ordinary day reaches is a ratio of zero --
+    a deviation of one.  A surge has no such ceiling, and an ordinary
+    day that happens to contain a re-announcement burst reaches a ratio
+    of hundreds.  Comparing a silence against that surge distribution
+    would compare the smallest possible deviation with the largest
+    possible one, and no outage could ever be exclusive.  The caller
+    separates the two directions and compares each against its own.
     """
     baseline = control.baseline_buckets()
     if not baseline:
@@ -495,15 +537,15 @@ def placebo_displacements(
     for index in range(half_width_slots, len(stamps) - half_width_slots):
         lo = index - half_width_slots
         hi = index + half_width_slots
-        observed = float(np.mean(values[lo:hi + 1]))
+        observed = float(np.median(values[lo:hi + 1]))
         window_start = stamps[lo]
         window_end = stamps[hi]
         # The counterfactual for this placebo: the same clock slots on
         # the days *before* this anchor's day.
         baseline_map = same_clock_baseline(
             baseline, channel, window_start, window_end)
-        expected = float(np.mean([baseline_map.get(s.strftime("%H:%M"), 0.0)
-                                  for s in stamps[lo:hi + 1]]))
+        expected = float(np.median([baseline_map.get(s.strftime("%H:%M"), 0.0)
+                                    for s in stamps[lo:hi + 1]]))
         if expected <= 0:
             continue
         # A placebo whose counterfactual is **incomplete** is not a
@@ -537,15 +579,100 @@ def placebo_displacements(
                 break
             days = sum(
                 1 for stamp in by_position.get(position, ())
-                if 0 < (window_start - stamp).total_seconds() <= 4 * 86400
+                if 0 < (window_start - stamp).total_seconds() <= BASELINE_DAYS * 86400
             )
             if days < 1:
                 complete = False
                 break
         if not complete:
             continue
-        out.append(abs(observed / expected - 1.0))
+        out.append(observed / expected)
     return out
+
+
+def placebo_null(ratios: Sequence[float], quantile: float) -> float:
+    """The displacement an ordinary day reaches at the given quantile.
+
+    The null is a quantile rather than the maximum.  The maximum is
+    the least stable statistic of a sample: it estimates the extreme
+    order statistic from a single draw, so one ordinary day that
+    happened to contain a re-announcement burst raises the null by an
+    order of magnitude, and no incident can ever beat it.  A quantile
+    asks the same operational question -- "is this more than an
+    ordinary day does?" -- while ignoring the few placebos that are
+    ordinary only by luck.
+
+    The quantile is only meaningful once there are enough placebos to
+    estimate it, so a small sample falls back to its own maximum.
+    """
+    if not ratios:
+        return 0.0
+    values = sorted(ratios)
+    if len(values) < 20:
+        return values[-1]
+    index = min(len(values) - 1,
+                max(0, int(round(quantile * (len(values) - 1)))))
+    return values[index]
+
+
+def directional_null(ratio: float,
+                     placebos: Sequence[float],
+                     quantile: float) -> Dict[str, Any]:
+    """The null for a displacement, taken from the same direction.
+
+    A silence and a surge are not two sizes of the same thing.  The
+    rate of a channel cannot fall below zero, so the deepest silence
+    an ordinary day can reach is a ratio of zero; a surge has no
+    ceiling at all.  One unsigned null therefore compares the smallest
+    possible deviation against the largest possible one, and nothing
+    that goes quiet can ever beat it.
+
+    So the placebos are split by direction, and the incident is
+    compared against the distribution of its own kind: a silence has
+    to be deeper than an ordinary day's silence, a surge larger than an
+    ordinary day's surge.
+
+    The comparison is a **tail probability**, not a ratio against a
+    quantile.  The quantity being compared is a *boundary*: a channel
+    that falls silent reaches a ratio of exactly zero, and an ordinary
+    day that happens to fall silent reaches a ratio very near zero but
+    not exactly zero.  No quantile of the ordinary days can express
+    "no ordinary day reached this", because the incident is off the
+    scale of the distribution rather than far along it.  The
+    probability that an ordinary day is *at least* this extreme says
+    exactly what the exclusivity test asks, and it stays meaningful
+    when the distribution is bounded.
+
+    The reported ``null`` is the quantile of the matching direction,
+    so the size of the null can still be read alongside the
+    probability.
+    """
+    silences = [abs(1.0 - r) for r in placebos if r < 1.0]
+    surges = [abs(1.0 - r) for r in placebos if r > 1.0]
+
+    if ratio < 1.0:
+        matched = silences
+        direction = "silence"
+    else:
+        matched = surges
+        direction = "surge"
+
+    deviation = abs(ratio - 1.0)
+    if matched:
+        at_least_as_extreme = sum(1 for d in matched if d >= deviation)
+        # The plus one is the standard correction for a discrete
+        # distribution: the incident itself is one of the draws, so
+        # without it a probability of zero would be reported.
+        probability = (at_least_as_extreme + 1) / (len(matched) + 1)
+    else:
+        probability = 1.0
+
+    return {
+        "null": placebo_null(matched, quantile),
+        "direction": direction,
+        "n_matched": len(matched),
+        "probability": probability,
+    }
 
 
 def earliest_deviation(
@@ -690,12 +817,19 @@ def attribute(
         ratio = float(displacement["ratio"])
         deviation = abs(ratio - 1.0)
         placebos = placebo_displacements(control, channel)
-        null = max(placebos) if placebos else 0.0
+        null_info = directional_null(ratio, placebos,
+                                     cfg["placebo_null_quantile"])
+        null = float(null_info["null"])
+        probability = float(null_info["probability"])
         report = {
             "status": "measured",
             "ratio": round(ratio, 4),
             "deviation": round(deviation, 4),
             "null": round(null, 4),
+            "null_direction": null_info["direction"],
+            "p_value": round(probability, 6),
+            "n_placebos": len(placebos),
+            "n_matched_placebos": null_info["n_matched"],
             "observed": displacement.get("observed"),
             "expected": displacement.get("expected"),
         }
@@ -703,11 +837,11 @@ def attribute(
 
         if deviation < cfg["min_relative_displacement"]:
             failure = "below_displacement_floor"
-        elif null <= 1e-9:
-            # Without a placebo null the channel cannot be shown to be
-            # distinctive, however far it moved.
+        elif not null_info["n_matched"]:
+            # Without a placebo of the same direction the channel cannot
+            # be shown to be distinctive, however far it moved.
             failure = "no_placebo_null"
-        elif deviation / null < cfg["min_exclusivity_ratio"]:
+        elif probability > cfg["max_placebo_probability"]:
             failure = "not_exclusive"
         else:
             failure = ""
@@ -717,7 +851,7 @@ def attribute(
             if closest is None or deviation > closest[0]:
                 closest = (deviation, channel, failure, report)
             continue
-        candidates.append((deviation / null, channel, report))
+        candidates.append((probability, channel, report))
 
     verdict.tests["channels"] = channel_report
     if not candidates:
@@ -746,12 +880,14 @@ def attribute(
 
     # The strongest credible channel wins, and its identity is reported:
     # the verdict says *which* control-plane property moved.
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    ratio, channel, report = candidates[0]
+    # The most exclusive channel wins: the one whose displacement an
+    # ordinary day is least likely to reproduce.
+    candidates.sort(key=lambda item: item[0])
+    probability, channel, report = candidates[0]
     verdict.channel = channel
     verdict.tau_control = float(report["ratio"])
     verdict.effect = float(report["deviation"])
-    verdict.exclusivity_ratio = ratio
+    verdict.exclusivity_probability = probability
     verdict.baseline_displacement = float(report["null"])
 
     # ── V1: precedence ───────────────────────────────────────────────────

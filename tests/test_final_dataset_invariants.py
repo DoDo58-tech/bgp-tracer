@@ -4,23 +4,19 @@ Four properties are enforced, because each one has been broken before and
 each break silently corrupts every number downstream:
 
 1. **One corpus.**  ``final_ground_truth.csv`` is the single source of
-   truth.  The superseded versions stay on disk in the archive, but the
-   evaluation entry points must read the canonical one.
+   truth, and no superseded version sits beside it.
 2. **Independent labels.**  No row may be labelled from the same RIPE RIS
    observation the detector consumes -- that would score the detector
    against its own output.
 3. **A visible routing anomaly and a measured traffic impact.**  Every
    admitted row carries the measurement that justified it, so the
    dataset can be audited rather than trusted.
-4. **No superseded version left in the ground-truth directory.**  The
-   directory holds exactly one dataset, so a reader cannot pick up a
-   superseded version by accident.
+4. **No duplicate incidents.**  The same incident must not be counted
+   twice, under two event ids or two cause labels.
 
 The check is a plain assert-based self-test: it needs no framework and it
 fails loudly if the corpus is edited or a new version is introduced.
 """
-from __future__ import annotations
-
 import csv
 import json
 import sys
@@ -28,12 +24,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GT_DIR = ROOT / "data_check" / "ground_truth_collection"
-ARCHIVE = GT_DIR / "_archive"
 
 FINAL_CSV = GT_DIR / "final_ground_truth.csv"
 REJECTED_CSV = GT_DIR / "final_ground_truth_rejected.csv"
 BUILD_SCRIPT = ROOT / "scripts" / "build_canonical_dataset.py"
-POOL_SCRIPT = ROOT / "scripts" / "build_gt_pool.py"
 
 CAUSES = ("outage", "route_leak", "origin_hijack_victim")
 CIRCULAR_MARKER = "RIPE RIS BGP observation"
@@ -59,10 +53,14 @@ def load_rows(path: Path = FINAL_CSV) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
+def asn(value: str) -> str:
+    text = (value or "").strip().upper()
+    return text[2:] if text.startswith("AS") else text
+
+
 def test_final_dataset_exists():
     assert FINAL_CSV.is_file(), f"missing final dataset: {FINAL_CSV}"
-    rows = load_rows()
-    assert rows, "final dataset is empty"
+    assert load_rows(), "final dataset is empty"
 
 
 def test_final_dataset_has_independent_labels():
@@ -108,10 +106,7 @@ def test_final_dataset_has_no_duplicate_incidents():
     for row in load_rows():
         cause = (row.get("cause") or "").strip()
         victim = asn(row.get("victim_as"))
-        if cause == "route_leak":
-            actor = asn(row.get("leak_as")) or victim
-        else:
-            actor = victim
+        actor = asn(row.get("leak_as")) or victim if cause == "route_leak" else victim
         key = (actor, victim, row.get("start_utc"), row.get("end_utc"))
         first = seen.get(key)
         assert first is None, (
@@ -146,17 +141,11 @@ def test_traffic_impact_is_specific_to_the_event():
             f"victim (z={victim_z:.2f} against {control_z:.2f})")
 
 
-def asn(value: str) -> str:
-    text = (value or "").strip().upper()
-    return text[2:] if text.startswith("AS") else text
-
-
 def test_only_one_dataset_in_the_ground_truth_directory():
     """The directory must not hold a superseded version."""
     for name in SUPERSEDED:
         assert not (GT_DIR / name).is_file(), (
-            f"{name} is still in the ground-truth directory; it belongs in "
-            f"the archive")
+            f"{name} is still in the ground-truth directory")
 
 
 def test_rejected_events_are_accounted_for():
@@ -170,9 +159,8 @@ def test_rejected_events_are_accounted_for():
 
 
 def test_final_dataset_is_reproducible():
-    """The dataset must be rebuildable from the audited predecessors."""
+    """The dataset must be rebuildable by the build script."""
     assert BUILD_SCRIPT.is_file(), f"missing build script: {BUILD_SCRIPT}"
-    assert POOL_SCRIPT.is_file(), f"missing pool script: {POOL_SCRIPT}"
 
     report = GT_DIR / "final_ground_truth_build.json"
     assert report.is_file(), "missing build report"

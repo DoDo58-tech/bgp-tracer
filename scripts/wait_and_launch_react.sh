@@ -7,7 +7,7 @@
 # start fresh with the smaller prompts and finish within the budget.
 
 BATCH_DIR="/data/bgp_tracer/logs/4mode_batch_20261008_111109"
-CSV="/data/bgp_tracer/data_check/ground_truth_collection/final_balanced_dataset_v17.csv"
+CSV="/data/bgp_tracer/data_check/ground_truth_collection/final_ground_truth.csv"
 LOG="/data/bgp_tracer/logs/bgp_tracer.log"
 REACT_LOG="/data/bgp_tracer/logs/react_only_batch.log"
 V7_MAX_RUNTIME_S="${V7_MAX_RUNTIME_S:-21600}"   # 6h default

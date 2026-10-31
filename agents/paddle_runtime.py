@@ -93,22 +93,50 @@ def impact_window(
 ) -> Optional[Tuple[datetime, datetime]]:
     """The window the traffic detector reported as the impact.
 
-    The trough is searched inside this window, so that the anchor is
-    the event's own trough rather than the worst deviation of the whole
+    The trough is searched inside this window, so that the anchor is the
+    event's own trough rather than the worst deviation of the whole
     record.
+
+    The detector reports *every* consecutive run of anomalies, and the
+    first one is not necessarily the incident's.  A rise on the day
+    before an outage is also a run of anomalies, and taking it would
+    put the search window on the wrong day -- where the traffic did not
+    fall at all, and the estimator would find no trough and abstain.
+
+    So the window is chosen by the direction of the movement it
+    contains: the one that shows a *fall* is the impact.  When none of
+    them does, the longest run is the best available guess.
     """
     if not isinstance(traffic_block, dict):
         return None
+
+    anomalies = traffic_block.get("anomalies") or []
+    fall_by_window: Dict[Tuple[datetime, datetime], float] = {}
     for key in ("expanded_windows", "consecutive_anomaly_windows"):
         windows = traffic_block.get(key)
-        if isinstance(windows, list) and windows:
-            first = windows[0]
-            if not isinstance(first, dict):
+        if not isinstance(windows, list) or not windows:
+            continue
+        parsed = []
+        for item in windows:
+            if not isinstance(item, dict):
                 continue
-            start = parse_timestamp(first.get("start"))
-            end = parse_timestamp(first.get("end"))
-            if start is not None:
-                return (start, end if end is not None else start)
+            start = parse_timestamp(item.get("start"))
+            end = parse_timestamp(item.get("end"))
+            if start is None:
+                continue
+            parsed.append((start, end if end is not None else start))
+        if not parsed:
+            continue
+        for start, end in parsed:
+            fall_by_window[(start, end)] = drop_in_window(anomalies, start, end)
+        break
+
+    if fall_by_window:
+        falling = [w for w, drop in fall_by_window.items() if drop > 0]
+        if falling:
+            return max(falling, key=lambda w: fall_by_window[w])
+        return max(fall_by_window, key=lambda w: (w[1] - w[0]).total_seconds())
+
     period = traffic_block.get("original_outage_period")
     if isinstance(period, dict):
         start = parse_timestamp(period.get("start_time"))
@@ -116,6 +144,33 @@ def impact_window(
         if start is not None:
             return (start, end if end is not None else start)
     return None
+
+
+def drop_in_window(anomalies: Sequence[dict],
+                   start: datetime,
+                   end: datetime) -> float:
+    """The largest fall from the baseline inside one window.
+
+    The fall is read from the anomaly's own value and baseline, so it
+    is the detector's measurement and not a re-derivation of it.
+    """
+    worst = 0.0
+    for anomaly in anomalies:
+        if not isinstance(anomaly, dict):
+            continue
+        stamp = parse_timestamp(anomaly.get("timestamp"))
+        if stamp is None or stamp < start or stamp > end:
+            continue
+        value = anomaly.get("current_value")
+        mean = anomaly.get("historical_mean")
+        try:
+            value = float(value)
+            mean = float(mean)
+        except (TypeError, ValueError):
+            continue
+        if mean > 0:
+            worst = max(worst, (mean - value) / mean)
+    return worst
 
 
 def collect_scope(

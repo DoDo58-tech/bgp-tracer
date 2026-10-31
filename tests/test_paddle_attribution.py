@@ -191,15 +191,18 @@ def test_same_clock_baseline_spans_midnight():
         stamp = datetime(2025, 1, 24, 0, 0) + timedelta(minutes=5 * i)
         buckets[stamp] = {"announcement_count": 77.0}
     # Older days, at the same clock position.
-    for day, value in ((1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0)):
+    for day, value in ((1, 10.0), (2, 20.0), (3, 30.0), (4, 40.0),
+                       (5, 50.0), (6, 60.0), (7, 70.0)):
         stamp = datetime(2025, 1, 24) - timedelta(days=day)
         buckets[stamp.replace(hour=3, minute=0)] = {"announcement_count": value}
 
     baseline = same_clock_baseline(buckets, "volume", window_start, window_end)
-    # The nearest day (77) counts, the fourth-oldest (40) does not: the
-    # elapsed horizon is four days, and within it the nearest day is the
-    # one that matters.
-    assert baseline["03:00"] == pytest.approx((77.0 + 10.0 + 20.0 + 30.0) / 4)
+    # The nearest day (77) counts and so does the sixth-oldest (60);
+    # the seventh-oldest (70) falls outside the week-long horizon.  The
+    # horizon is shared with the archive, so the counterfactual and the
+    # placebo are measured over the same period.
+    assert baseline["03:00"] == pytest.approx(
+        (77.0 + 10.0 + 20.0 + 30.0 + 40.0 + 50.0 + 60.0) / 7)
     # The early-morning positions of the window's own calendar date are
     # the previous day's early-morning positions, and they are kept.
     assert baseline["00:00"] == pytest.approx(77.0)
@@ -262,11 +265,36 @@ def test_planted_outage_commits_routing_to_traffic():
     assert v.vetoes["V1"] == "pass"
     assert v.vetoes["V2"] == "pass"
     assert v.channel == "own_volume"
-    # The control plane was at half its normal rate at the trough.
-    assert v.tau_control == pytest.approx(0.4875, abs=0.05)
-    assert v.effect == pytest.approx(0.5125, abs=0.05)
-    # The incident beat the placebo null decisively.
-    assert v.exclusivity_ratio >= PADDLE_PROTOCOL["min_exclusivity_ratio"]
+    # The control plane was silent at the trough: the fixture plants a
+    # rate of 1.0 against a normal rate of 10.0, so the displacement is
+    # a tenth of normal.  The measurement is the median over the window,
+    # so it reads the silence rather than the average of the silence and
+    # the normal slots that precede it.
+    assert v.tau_control == pytest.approx(0.1, abs=0.02)
+    assert v.effect == pytest.approx(0.9, abs=0.02)
+    # The incident beat the placebo null decisively: an ordinary day
+    # reaching this silence is unlikely.
+    assert v.exclusivity_probability <= PADDLE_PROTOCOL["max_placebo_probability"]
+
+
+def test_a_burst_does_not_mask_the_silence_behind_it():
+    """One enormous slot must not stand for the window's level.
+
+    A network that re-announces its table emits a single huge slot
+    right before it goes quiet.  The mean over that window is the
+    burst; the median is the silence.  Reading the burst would turn an
+    outage into a surge and the congruence test would refuse the very
+    claim the window supports.
+    """
+    control = make_control()
+    stamps = control.stamps
+    values = control.channel("own_volume")
+    trough_index = stamps.index(ORIGIN + timedelta(seconds=STEP * 60))
+    values[trough_index - 1] = 8159.0
+
+    v = attribute(control, make_response())
+    assert v.reason == "committed", v.as_dict()
+    assert v.tau_control < 0.5, v.tau_control
 
 
 def test_control_plane_edge_after_the_trough_is_not_a_cause():
@@ -343,7 +371,7 @@ def test_no_commit_below_the_exclusivity_floor():
     """A displacement that cannot beat the placebo null is not evidence."""
     v = attribute(
         make_control(), make_response(),
-        protocol={"min_exclusivity_ratio": 1e9},
+        protocol={"max_placebo_probability": 0.0},
     )
     assert v.direction == UNKNOWN
     assert v.reason == "not_exclusive"
@@ -365,7 +393,7 @@ def test_verdicts_are_deterministic_and_protocol_identified():
     assert a == b
     assert a["protocol_hash"] == protocol_hash()
     assert protocol_hash() != protocol_hash(
-        dict(PADDLE_PROTOCOL, min_exclusivity_ratio=0.99))
+        dict(PADDLE_PROTOCOL, max_placebo_probability=0.99))
 
 
 def test_every_reason_has_a_name():

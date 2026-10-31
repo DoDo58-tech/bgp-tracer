@@ -22,21 +22,11 @@ LOG_DIR = PROJECT_ROOT / "results" / "eval" / "regen_logs"
 
 
 def gt_columns(rows: list[dict]) -> tuple[str, str, str]:
-    """Return (event_id, start, end) column names for a ground-truth file.
-
-    The v17 files use `start_time_utc`/`end_time_utc`; the v19+ files use
-    `start_utc`/`end_utc`.  The cause column is likewise spelled
-    `ground_truth_cause_label` in v17 and `cause` afterwards.
-    """
+    """The event_id, start, end and cause column names of a ground truth."""
     if not rows:
         raise ValueError("empty ground-truth file")
     keys = rows[0].keys()
-    if "start_utc" in keys:
-        start_col, end_col = "start_utc", "end_utc"
-    else:
-        start_col, end_col = "start_time_utc", "end_time_utc"
-    cause_col = "cause" if "cause" in keys else "ground_truth_cause_label"
-    return start_col, end_col, cause_col
+    return ("start_utc", "end_utc", "cause")
 
 
 def cache_name(asn: str, start: str, end: str) -> str:

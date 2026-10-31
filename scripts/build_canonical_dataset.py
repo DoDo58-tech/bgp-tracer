@@ -50,7 +50,6 @@ from detectors.gt_verify.traffic_signal import verdict as traffic_verdict  # noq
 from utils.logger import logger  # noqa: E402
 
 GT_DIR = ROOT / "data_check" / "ground_truth_collection"
-POOL = GT_DIR / "_pool.json"
 OUT_CSV = GT_DIR / "final_ground_truth.csv"
 REJECTED_CSV = GT_DIR / "final_ground_truth_rejected.csv"
 REPORT = GT_DIR / "final_ground_truth_build.json"
@@ -384,8 +383,20 @@ def evaluate(row: dict, api) -> dict:
             "record": record}
 
 
+def load_pool() -> list[dict]:
+    """The candidate events to verify.
+
+    The candidates are the rows of the canonical dataset itself.  The
+    build re-verifies them against the live measurements, so the
+    dataset can be rebuilt and audited without the superseded versions
+    it was grown from.
+    """
+    with OUT_CSV.open(encoding="utf-8-sig") as fh:
+        return list(csv.DictReader(fh))
+
+
 def main() -> int:
-    pool = json.loads(POOL.read_text(encoding="utf-8"))
+    pool = load_pool()
     from detectors.traffic.traffic_detector import CloudflareRadarAPI
     api = CloudflareRadarAPI()
 

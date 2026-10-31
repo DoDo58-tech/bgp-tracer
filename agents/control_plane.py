@@ -51,6 +51,7 @@ import numpy as np
 from agents.temporal import parse_timestamp
 
 __all__ = [
+    "BASELINE_DAYS",
     "CONTROL_PLANE_CHANNELS",
     "ControlPlaneSeries",
     "GRID_SECONDS",
@@ -61,6 +62,16 @@ __all__ = [
 
 #: The wall-clock width of one control-plane slot, in seconds.
 GRID_SECONDS = 300
+
+#: How many days before the event the counterfactual reaches.
+#:
+#: A week, so the counterfactual covers the whole weekly cycle and the
+#: placebo null has enough ordinary days to estimate a tail
+#: probability from.  The archive, the estimator and the placebo all
+#: use this number, because a counterfactual that reaches further back
+#: in one place and not in another would compare the incident with a
+#: different period than the placebo does.
+BASELINE_DAYS = 7
 
 #: The control-plane channels, carried separately into the vetoes.
 #:
@@ -82,12 +93,12 @@ CONTROL_PLANE_CHANNELS = ("own_volume", "own_withdrawal", "volume",
 #: of anything.  Each channel names the features it may be read from,
 #: in order of preference, and the first usable one wins.
 _CHANNEL_FEATURES: Dict[str, Tuple[str, ...]] = {
-    "own_volume": ("own_announcement_count",),
-    "own_withdrawal": ("own_withdrawal_count",),
-    "volume": ("announcement_count", "total_messages"),
-    "withdrawal": ("withdrawal_count",),
-    "origin_change": ("num_ori_change", "origin_change_count"),
-    "path_change": ("num_path_change", "path_change_rate"),
+    "own_volume": ("own_announcement_count", "own_volume"),
+    "own_withdrawal": ("own_withdrawal_count", "own_withdrawal"),
+    "volume": ("announcement_count", "total_messages", "volume"),
+    "withdrawal": ("withdrawal_count", "withdrawal"),
+    "origin_change": ("num_ori_change", "origin_change_count", "origin_change"),
+    "path_change": ("num_path_change", "path_change_rate", "path_change"),
 }
 
 
@@ -188,7 +199,13 @@ def to_float_value(value: Any) -> Optional[float]:
 
 def feature_value(entry: Dict[str, Any],
                    features: Sequence[str]) -> Optional[float]:
-    """The first usable value among ``features`` for one bucket."""
+    """The first usable value among ``features`` for one bucket.
+
+    A bucket may name its value either by the detector's feature name
+    (``announcement_count``) or by the channel it belongs to
+    (``volume``).  The archive counts the channels directly, so both
+    spellings have to resolve to the same number.
+    """
     for key in features:
         val = to_float_value(entry.get(key))
         if val is not None:
@@ -279,7 +296,7 @@ def same_clock_baseline(
     window_start: datetime,
     window_end: datetime,
     *,
-    days: int = 4,
+    days: int = BASELINE_DAYS,
 ) -> Dict[str, float]:
     """The channel's mean rate in the *same clock slots* on earlier days.
 

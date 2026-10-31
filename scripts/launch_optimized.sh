@@ -35,7 +35,7 @@ BUDGET_FILE="${LOG_DIR}/llm_budget.shared"
 touch "$BUDGET_FILE"
 
 # CSV
-CSV="data_check/ground_truth_collection/final_balanced_dataset_v17.csv"
+CSV="data_check/ground_truth_collection/final_ground_truth.csv"
 
 # Token-budget env vars (passed to chief_agent subprocesses)
 export REPORT_PAYLOAD_MAX_CHARS="${REPORT_PAYLOAD_MAX_CHARS:-30000}"

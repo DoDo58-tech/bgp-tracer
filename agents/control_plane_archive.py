@@ -55,8 +55,7 @@ __all__ = [
 #: The wall-clock width of one control-plane slot, in seconds.
 CONTROL_GRID_SECONDS = 300
 
-#: How many days before the event the counterfactual reaches.
-BASELINE_DAYS = 4
+from agents.control_plane import BASELINE_DAYS  # noqa: F401
 
 
 def read_buckets(block: Any) -> Dict[datetime, Dict[str, Any]]:
@@ -212,6 +211,7 @@ class ControlPlaneEvidence:
                     datetime.fromisoformat(stamp): float(value)
                     for stamp, value in (stamps or {}).items()
                 }
+            evidence.raw_counts = raw
             apply_baseline(evidence, counts, window_start, baseline_days)
             return evidence
 
@@ -231,23 +231,55 @@ def to_control_plane_series(evidence: ControlPlaneEvidence):
     grid as the event window.  Converting here keeps the estimator
     ignorant of where the measurement came from, so the archive path and
     the detector path are interchangeable behind one interface.
+
+    The baseline period is the *preceding days*, not the event window.
+    The placebo null is drawn from it, so it has to be a series over
+    those days rather than a counterfactual map over the event's own
+    clock positions.
     """
     from agents.control_plane import ControlPlaneSeries
 
     stamps = list(evidence.slots)
     if not stamps:
         return ControlPlaneSeries()
+
+    window_start = stamps[0]
+    all_stamps = sorted({
+        datetime.fromisoformat(s)
+        for raw in (evidence.raw_counts or {}).values()
+        for s in (raw or {})
+    })
+    baseline_stamps = [s for s in all_stamps if s < window_start]
+    baseline_channels = {
+        channel: [float(raw.get(stamp.isoformat(), 0.0))
+                  for stamp in baseline_stamps]
+        for channel, raw in (evidence.raw_counts or {}).items()
+    }
+
+    # The bucket map holds every slot the archive measured: the baseline
+    # days *and* the event window.  The estimator's counterfactual is
+    # built from the slots that precede the window, so the map has to
+    # span both.
+    bucket_map: Dict[datetime, Dict[str, float]] = {}
+    for channel, raw in (evidence.raw_counts or {}).items():
+        for stamp_text, value in raw.items():
+            stamp = datetime.fromisoformat(stamp_text)
+            bucket_map.setdefault(stamp, {})[channel] = float(value)
+    for stamp in stamps:
+        bucket_map.setdefault(stamp, {})
+
+    level = {
+        channel: float(sum(table.values()) / len(table)) if table else 0.0
+        for channel, table in evidence.baseline.items()
+    }
     return ControlPlaneSeries(
         stamps=stamps,
         channels={k: list(v) for k, v in evidence.channels.items()},
-        baseline={k: list(v) for k, v in evidence.baseline.items()},
-        baseline_stamps=stamps,
-        baseline_level={
-            channel: float(sum(values) / len(values)) if values else 0.0
-            for channel, values in evidence.baseline.items()
-        },
+        baseline=baseline_channels,
+        baseline_stamps=baseline_stamps,
+        baseline_level=level,
         bucket_seconds=float(CONTROL_GRID_SECONDS),
-        baseline_bucket_map={},
+        baseline_bucket_map=bucket_map,
     )
 
 
@@ -329,7 +361,7 @@ def build_control_plane_evidence(
     counts: Dict[str, Dict[datetime, int]] = {
         "own_volume": {},
         "own_withdrawal": {},
-        "involved_volume": {},
+        "volume": {},
         "origin_change": {},
         "path_change": {},
     }
@@ -402,7 +434,7 @@ def build_control_plane_evidence(
         involved = announcements.filter(
             pl.col("as_path").str.contains(str(asn)))
         for bucket, count in count_by_bucket(involved, "_bucket").items():
-            counts["involved_volume"][bucket] = count
+            counts["volume"][bucket] = count
 
         # A withdrawal carries no AS path, so it is attributed to the
         # target through the prefixes the target is seen to originate.

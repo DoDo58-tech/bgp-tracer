@@ -288,9 +288,9 @@ def main() -> int:
     }
     out["meta"] = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "corpus": "events present in the archived final_balanced_v20/v22 "
-                  "and absent from the canonical final_ground_truth.csv, "
-                  "which is the corpus the cause rule was developed against",
+        "corpus": "events present in heldout_events.json and absent from "
+                  "the canonical final_ground_truth.csv, which is the "
+                  "corpus the cause rule was developed against",
         "note": "The same caches, the same cause normaliser and the same "
                 "arbitration code as the main evaluation; the only "
                 "difference is that these events were not used to develop "
