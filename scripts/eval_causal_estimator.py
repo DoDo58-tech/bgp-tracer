@@ -22,26 +22,27 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from agents.aea_runtime import parse_timestamp  # noqa: E402
 from agents.cache_resolution import resolve_cache  # noqa: E402
-from agents.cdpr_attribution import (  # noqa: E402
-    CDPR_PROTOCOL,
+from agents.control_plane import CONTROL_PLANE_CHANNELS  # noqa: E402
+from agents.paddle_attribution import (  # noqa: E402
+    PADDLE_PROTOCOL,
     R2T,
     T2R,
     UNKNOWN,
     attribute,
     protocol_hash,
 )
-from agents.cdpr_runtime import (  # noqa: E402
+from agents.paddle_runtime import (  # noqa: E402
     build_control_plane_series,
     build_traffic_observations,
     collect_mechanism,
     collect_scope,
+    impact_window,
 )
-from agents.control_plane import CONTROL_PLANE_CHANNELS  # noqa: E402
+from agents.temporal import parse_timestamp  # noqa: E402
 
-GT_CSV = ROOT / "data_check" / "ground_truth_collection" / "final_ground_truth.csv"
-QUICK = ROOT / "results" / "quick"
+GT_CSV = ROOT / "data_check" / "ground_truth_collection/final_ground_truth.csv"
+QUICK = ROOT / "results/quick"
 
 #: The expected causal direction for each cause class.
 #:
@@ -93,8 +94,8 @@ def build_sides(cache: Path) -> Optional[Dict[str, Any]]:
     # detector could supply it: a series of measurements, each with the
     # magnitude of its deviation from the historical baseline.  The
     # anomaly list is only the subset that crossed the threshold, and a
-    # threshold-crossing subset has no shape -- it cannot show whether the
-    # response *followed* the control plane.
+    # threshold-crossing subset has no shape -- it cannot show whether
+    # the response *followed* the control plane.
     traffic_events: List[dict] = []
     traffic_events.extend(iter_events(corr.get("traffic_events_full")))
     if not traffic_events:
@@ -113,11 +114,8 @@ def build_sides(cache: Path) -> Optional[Dict[str, Any]]:
         if not ts:
             continue
         et = str(ev.get("event_type") or ev.get("type") or "")
-        severity = ev.get("severity")
-        score = float(severity) if isinstance(severity, (int, float)) else 0.8
         routing_timeline.append({
             "timestamp": ts,
-            "score": max(score, 0.5),
             "event_type": et or "routing",
             "raw_event": ev,
         })
@@ -127,21 +125,8 @@ def build_sides(cache: Path) -> Optional[Dict[str, Any]]:
         ts = ev.get("timestamp") or ev.get("first_seen") or ev.get("time")
         if not ts:
             continue
-        # The magnitude of the response is the deviation from the
-        # detector's own historical baseline.  A raw counter (packets per
-        # second) has no scale-free deviation and would make the response
-        # series incomparable across events, so the standardised
-        # deviation is used when the detector could compute one.
-        z = ev.get("z_score")
-        if isinstance(z, (int, float)):
-            score = abs(float(z))
-        else:
-            severity = ev.get("severity")
-            score = float(severity) if isinstance(severity, (int, float)) else 0.8
         traffic_timeline.append({
             "timestamp": ts,
-            "score": score,
-            "event_type": "traffic",
             "raw_event": ev,
         })
 
@@ -149,6 +134,7 @@ def build_sides(cache: Path) -> Optional[Dict[str, Any]]:
         "data": data,
         "routing": routing_timeline,
         "traffic": traffic_timeline,
+        "traffic_block": traffic_block,
         "analysis": routing_block.get("outage_analysis") or {},
     }
 
@@ -187,10 +173,8 @@ def main() -> int:
         routing = built["routing"]
         traffic = built["traffic"]
         data = built["data"]
-        if not routing or not traffic:
-            skipped.setdefault(
-                "no_routing_evidence" if not routing else "no_traffic_evidence",
-                []).append(event_id)
+        if not traffic:
+            skipped.setdefault("no_traffic_evidence", []).append(event_id)
             continue
 
         start = parse_timestamp(data.get("start_time"))
@@ -204,6 +188,7 @@ def main() -> int:
         traffic_observations = build_traffic_observations(traffic)
         routing_scope, traffic_scope = collect_scope(routing, traffic, {})
         mechanism = collect_mechanism(routing, {})
+        window = impact_window(built.get("traffic_block"))
 
         verdict = attribute(
             control,
@@ -211,6 +196,7 @@ def main() -> int:
             routing_mechanism=mechanism,
             routing_scope=routing_scope,
             series_scope=traffic_scope,
+            impact_window=window,
             protocol=overrides or None,
         )
         reasons[verdict.reason] += 1
@@ -239,7 +225,8 @@ def main() -> int:
             "baseline_displacement": (None if verdict.baseline_displacement is None
                                       else round(float(verdict.baseline_displacement), 4)),
             "tau_control": verdict.tau_control,
-            "tau_response": verdict.tau_response,
+            "tau_response": (verdict.tau_response.isoformat()
+                             if verdict.tau_response else None),
             "lag_seconds": verdict.lag_seconds,
             "mechanism": verdict.mechanism,
             "n_buckets": control.n_buckets,
@@ -261,9 +248,9 @@ def main() -> int:
     n_wrong = sum(1 for r in records if r["outcome"] == "wrong")
     n_abstain = sum(1 for r in records if r["outcome"] == "abstain")
     committed = n_correct + n_wrong
-    protocol = dict(CDPR_PROTOCOL, **overrides)
+    protocol = dict(PADDLE_PROTOCOL, **overrides)
     summary = {
-        "estimator": "CDPR",
+        "estimator": "PADDLE",
         "protocol": protocol,
         "protocol_hash": protocol_hash(protocol),
         "n_gt": len(rows),

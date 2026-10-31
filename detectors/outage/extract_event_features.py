@@ -335,6 +335,8 @@ def finalize_bucket_feature(b):
         'announcement_count': announcement_count,
         'withdrawal_count': b.get('withdrawal_count', 0),
         'total_messages': b.get('total_messages', 0),
+        'own_announcement_count': b.get('own_announcement_count', 0),
+        'own_withdrawal_count': b.get('own_withdrawal_count', 0),
         'flapping_prefix_count': len(b.get('flapping_prefixes', set())),
 
         # Route hijacking/leakage core features
@@ -461,6 +463,13 @@ def process_single_file_timeseries(file_path, target_as_list, prefix_to_target=N
                         'announcement_count': 0,
                         'withdrawal_count': 0,
                         'total_messages': 0,
+                        #: Announcements originated by the target itself.
+                        #: ``announcement_count`` counts every
+                        #: announcement that *involves* the target; this
+                        #: counts the ones it *originates*, which is the
+                        #: channel that falls silent during an outage.
+                        'own_announcement_count': 0,
+                        'own_withdrawal_count': 0,
                         'announced_prefixes': set(),
                         'withdrawn_prefixes': set(),
                         'unique_prefixes': set(),
@@ -518,6 +527,14 @@ def process_single_file_timeseries(file_path, target_as_list, prefix_to_target=N
                             b['peer_as_set'].add(bgp_msg['peer_as'])
 
                         origin_as = as_list[-1] if as_list else None
+
+                        # The target's *own* announcement: the origin of
+                        # the path is the target.  This is the channel
+                        # that falls silent during an outage -- the
+                        # target keeps receiving other people's routes
+                        # while it stops announcing its own.
+                        if origin_as is not None and str(origin_as) in target_as_set:
+                            b['own_announcement_count'] += 1
                         
                         route_state = prefix_routes[prefix]
                         
@@ -552,7 +569,14 @@ def process_single_file_timeseries(file_path, target_as_list, prefix_to_target=N
                     b['withdrawn_prefixes'].add(prefix)
                     b['unique_prefixes'].add(prefix)
                     b['prefix_withdraw_counts'][prefix] += 1
-                    
+
+                    # A withdrawal carries no AS path, so it is
+                    # attributed to the target through the prefix map:
+                    # the target announced that prefix, so the
+                    # target's withdrawal of it is the target's own.
+                    if prefix_to_target.get(prefix) in target_as_set:
+                        b['own_withdrawal_count'] += 1
+
                     route_state = prefix_routes[prefix]
                     if route_state['withdraw_count'] > 0 and route_state['last_as_path'] is None:
                         b['num_dup_W'] += 1

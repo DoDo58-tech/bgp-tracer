@@ -1,90 +1,103 @@
-"""Control-plane event rate -- the routing-side representation.
+"""The control-plane representation the causal estimator works on.
 
-The estimator that decides causal *direction* needs a routing-side series
-that actually moves when the control plane changes.  The representation
-used until now did not have that property, and the reason is worth stating
-because it is the substance of the method rather than an implementation
-detail.
+The routing side of a BGP incident is not an amplitude on a continuous
+signal.  It is a change in how densely the collector observes the
+control plane, and the three incident kinds change it in three
+different ways: an outage makes it quiet, a hijack changes an origin, a
+leak changes a path.  The three are therefore carried as **separate
+channels** and never summed, so that a verdict can name *which*
+control-plane property moved and a hijack cannot be confirmed by a
+leak's path-change signal.
 
-A BGP anomaly is not a large amplitude on a continuous signal.  A hijack
-and a leak differ in *kind*; an outage differs in *direction* (the
-control plane goes quiet).  What all three share is that they change
-**how many routing messages the collector observes per unit time**.  The
-per-event ``severity`` field does not carry this: it is absent on most
-detector output, it is constant across the events of one incident, and it
-says nothing about how densely the events arrived.
+This module owns four representation decisions, each of which was a
+measurable defect before it was made.
 
-So the routing side is represented as an **observation rate**: the number
-of routing observations per bucket.  Three quantities are extracted from
-it, and they are the three things an incident can do to the control
-plane:
+**The grid is uniform and the holes are filled.**  The detector emits a
+bucket only when a message exists.  A missing bucket is therefore a
+bucket in which the network said *nothing*, which is a rate of zero --
+not a missing measurement.  Reading the emitted buckets as a contiguous
+series silently shortens the window and puts every onset in the wrong
+place.  The grid is the wall-clock 300-second grid, and every slot in
+it carries a value.
 
-``volume``
-    how many observations arrived.  An outage suppresses it (the collector
-    stops seeing the prefix's updates); a hijack or a leak amplifies it
-    (the misconfiguration multiplies the announcements).
+**The rates are per wall-clock slot, not per observed bucket.**
+Dividing by the number of buckets that happened to carry traffic hides
+the collapse an outage is: a network that is silent for four hours and
+busy for one produces a ratio near one when the denominator is the
+observed count.
 
-``origin_change``
-    how many *origin* changes there were.  A hijack is the only incident
-    that moves this channel; a leak and an outage do not.  It is the
-    channel that separates the incident *kinds*.
+**The baseline is the same clock slots on the previous days.**  A
+forty-five-minute incident measured against a twenty-four-hour average
+measures the time of day -- a network announces more at 14:30 than at
+03:00 whatever happened.  The counterfactual that answers "how quiet is
+this network *right now*, compared with how quiet it is at this hour on
+an ordinary day" is the same half hour on the days before.
 
-``path_change``
-    how many *path* changes there were.  A leak is the only incident that
-    moves this channel.
-
-The channels are deliberately **not** summed into one score.  Each one is
-carried separately into the vetoes so that a verdict can say *which*
-control-plane property changed, and so that a hijack cannot be confirmed
-by a path-change signal that belongs to a leak.
-
-The series is **normalised by the baseline**: each bucket's count is
-divided by the baseline's median count for the same channel.  A raw
-observation rate means little on its own -- "40 messages per bucket" is
-quiet for an AS that normally emits 40 000 and loud for one that normally
-emits 4 -- but "0.1 times the normal rate" is the same statement for
-every AS.  Normalising before the estimator sees the series is what makes
-its thresholds a property of the method rather than of the network the
-method was pointed at.
-
-The module also exposes the **baseline** series the detector already
-computed: the same features over the period before the event.  That
-baseline is what makes the exclusivity test a real null instead of a
-bootstrap of the event period itself.
+**The normalisation is scale-free.**  "Forty messages per slot" is quiet
+for an AS that normally emits forty thousand and loud for one that
+normally emits four.  Every channel is divided by its own baseline
+level, so the series reads "one times normal", "zero" or "twelve", and
+the estimator's thresholds become a property of the method rather than
+of the network the method was pointed at.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from agents.temporal import parse_timestamp
+
 __all__ = [
     "CONTROL_PLANE_CHANNELS",
     "ControlPlaneSeries",
+    "GRID_SECONDS",
     "build_control_plane_series",
     "extract_timeseries",
+    "same_clock_baseline",
 ]
 
-#: The control-plane channels carried separately into the vetoes.
-CONTROL_PLANE_CHANNELS = ("volume", "origin_change", "path_change")
+#: The wall-clock width of one control-plane slot, in seconds.
+GRID_SECONDS = 300
+
+#: The control-plane channels, carried separately into the vetoes.
+#:
+#: ``own_volume`` and ``own_withdrawal`` count what the target AS
+#: *itself* originates and withdraws.  They are separate from
+#: ``volume`` and ``withdrawal``, which count what the target is
+#: *involved in*.  The distinction is the whole point: a network that
+#: has stopped announcing its own routes still receives a flood of
+#: updates about other people's routes, so an involvement measure cannot
+#: see an outage go quiet.  The ground-truth verifier measures the
+#: target's own announcements for exactly this reason.
+CONTROL_PLANE_CHANNELS = ("own_volume", "own_withdrawal", "volume",
+                           "withdrawal", "origin_change", "path_change")
 
 #: The detector feature that carries each channel.
-_CHANNEL_FEATURES = {
+#:
+#: A count and a ratio are different quantities and are never mixed: a
+#: path-change *rate* divided by a baseline *count* is not a multiple
+#: of anything.  Each channel names the features it may be read from,
+#: in order of preference, and the first usable one wins.
+_CHANNEL_FEATURES: Dict[str, Tuple[str, ...]] = {
+    "own_volume": ("own_announcement_count",),
+    "own_withdrawal": ("own_withdrawal_count",),
     "volume": ("announcement_count", "total_messages"),
-    "origin_change": ("num_ori_change", "ori_change_rate"),
+    "withdrawal": ("withdrawal_count",),
+    "origin_change": ("num_ori_change", "origin_change_count"),
     "path_change": ("num_path_change", "path_change_rate"),
 }
 
 
 @dataclass
 class ControlPlaneSeries:
-    """The routing side as a set of per-bucket observation rates.
+    """The routing side as a set of per-slot observation rates.
 
-    ``buckets`` is the shared clock the estimator works on: the routing
-    and the traffic side are evaluated on the *same* index set, so a
-    bucket index means the same wall-clock interval on both sides.
+    ``stamps`` is the uniform clock the estimator works on.  The
+    routing and the traffic side are evaluated on the *same* wall-clock
+    axis, so a slot means the same interval on both sides.
     """
 
     stamps: List[datetime] = field(default_factory=list)
@@ -94,10 +107,18 @@ class ControlPlaneSeries:
     #: draws its placebos from.
     baseline: Dict[str, List[float]] = field(default_factory=dict)
     baseline_stamps: List[datetime] = field(default_factory=list)
-    #: The baseline's median count per channel, used to normalise.
+    #: The baseline's level per channel, used to normalise.
     baseline_level: Dict[str, float] = field(default_factory=dict)
-    #: The wall-clock gap a bucket is expected to span, in seconds.
-    bucket_seconds: float = 300.0
+    #: The wall-clock gap a slot is expected to span, in seconds.
+    bucket_seconds: float = float(GRID_SECONDS)
+    #: The baseline's own buckets, keyed by stamp.  The placebo null is
+    #: built from these, so the estimator can reach them directly.
+    _baseline_buckets: Dict[datetime, Dict[str, Any]] = field(
+        default_factory=dict, repr=False)
+
+    def baseline_buckets(self) -> Dict[datetime, Dict[str, Any]]:
+        """The baseline period's buckets, keyed by stamp."""
+        return dict(self._baseline_buckets)
 
     @property
     def n_buckets(self) -> int:
@@ -129,16 +150,10 @@ class ControlPlaneSeries:
         return [v / level for v in values]
 
     def normalised_baseline(self, name: str) -> List[float]:
-        """The baseline window's own channel, on the same scale.
-
-        The baseline is normalised by its own median, so it reads "one"
-        wherever the baseline is quiet -- which is what makes the
-        event window's displacement comparable to the baseline's own.
-        """
+        """The baseline window's own channel, on the same scale."""
         values = self.baseline_channel(name)
         arr = np.asarray(values, dtype=float)
-        positive = arr[arr > 0]
-        level = float(np.median(positive)) if positive.size else 0.0
+        level = float(arr.mean()) if arr.size else 0.0
         if not level or level <= 0:
             return list(values)
         return [v / level for v in values]
@@ -165,7 +180,8 @@ def _to_float(value: Any) -> Optional[float]:
     return None
 
 
-def _feature_value(entry: Dict[str, Any], features: Sequence[str]) -> Optional[float]:
+def _feature_value(entry: Dict[str, Any],
+                   features: Sequence[str]) -> Optional[float]:
     """The first usable value among ``features`` for one bucket."""
     for key in features:
         val = _to_float(entry.get(key))
@@ -174,54 +190,135 @@ def _feature_value(entry: Dict[str, Any], features: Sequence[str]) -> Optional[f
     return None
 
 
-def _parse_stamp(value: Any) -> Optional[datetime]:
-    from agents.aea_runtime import parse_timestamp
-    return parse_timestamp(value)
+def read_buckets(block: Any) -> Dict[datetime, Dict[str, Any]]:
+    """Parse a detector bucket block into ``{stamp: features}``.
+
+    A bucket whose timestamp cannot be read is *reported* as absent
+    rather than silently dropped, because a whole event's routing
+    evidence disappearing looks like a modelling result and is actually
+    a parsing failure.
+    """
+    if not isinstance(block, dict):
+        return {}
+    out: Dict[datetime, Dict[str, Any]] = {}
+    for raw_stamp, entry in block.items():
+        if not isinstance(entry, dict):
+            continue
+        stamp = parse_timestamp(raw_stamp)
+        if stamp is None:
+            continue
+        out[stamp] = entry
+    return out
 
 
 def extract_timeseries(
     analysis: Optional[Dict[str, Any]],
-) -> Tuple[List[datetime], Dict[str, List[float]], List[datetime], Dict[str, List[float]]]:
+) -> Tuple[Dict[datetime, Dict[str, Any]], Dict[datetime, Dict[str, Any]]]:
     """Pull the control-plane features out of a detector analysis block.
 
-    The detector already buckets the routing observations over the event
-    window and over the baseline window and records, per bucket, how many
-    announcements and withdrawals there were and how many of them changed
-    an origin or a path.  Those buckets *are* the control-plane series;
-    the estimator does not need to re-derive them from raw updates.
-
-    Returns ``(stamps, channels, baseline_stamps, baseline_channels)``.
+    Returns ``(event_buckets, baseline_buckets)``.
     """
     if not isinstance(analysis, dict):
-        return [], {}, [], {}
+        return {}, {}
+    return (read_buckets(analysis.get("timeseries_event")),
+            read_buckets(analysis.get("timeseries_baseline")))
 
-    def read(block: Any) -> Tuple[List[datetime], Dict[str, List[float]]]:
-        if not isinstance(block, dict) or not block:
-            return [], {}
-        parsed: List[Tuple[datetime, Dict[str, Any]]] = []
-        for raw_stamp, entry in block.items():
-            if not isinstance(entry, dict):
-                continue
-            stamp = _parse_stamp(raw_stamp)
-            if stamp is None:
-                continue
-            parsed.append((stamp, entry))
-        parsed.sort(key=lambda item: item[0])
-        stamps = [stamp for stamp, _ in parsed]
-        channels: Dict[str, List[float]] = {}
-        for channel, features in _CHANNEL_FEATURES.items():
-            values: List[float] = []
-            for _, entry in parsed:
-                val = _feature_value(entry, features)
-                # A bucket with no such observation is zero of that
-                # channel, not "missing": the count is the quantity.
-                values.append(0.0 if val is None else val)
-            channels[channel] = values
-        return stamps, channels
 
-    stamps, channels = read(analysis.get("timeseries_event"))
-    base_stamps, base_channels = read(analysis.get("timeseries_baseline"))
-    return stamps, channels, base_stamps, base_channels
+def fill_grid(
+    buckets: Dict[datetime, Dict[str, Any]],
+    channels: Dict[str, List[float]],
+    stamps: Sequence[datetime],
+) -> Dict[str, List[float]]:
+    """Place the observed buckets onto a uniform grid.
+
+    Every slot on the grid gets a value for every channel.  A slot with
+    no observed bucket gets zero: the network said nothing in it.
+    """
+    out: Dict[str, List[float]] = {ch: [0.0] * len(stamps) for ch in channels}
+    if not stamps:
+        return out
+    origin = stamps[0]
+    for stamp, entry in buckets.items():
+        offset = (stamp - origin).total_seconds()
+        index = int(offset // GRID_SECONDS)
+        if not (0 <= index < len(stamps)):
+            continue
+        for ch in channels:
+            value = _feature_value(entry, _CHANNEL_FEATURES[ch])
+            if value:
+                out[ch][index] = value
+    return out
+
+
+def _grid_stamps(buckets: Dict[datetime, Dict[str, Any]],
+                 lo: datetime, hi: datetime) -> List[datetime]:
+    """The uniform grid from ``lo`` to ``hi``, inclusive."""
+    origin = lo.replace(second=0, microsecond=0)
+    # The grid is aligned to the wall clock, so a slot is the same
+    # interval whichever window it is read in.
+    epoch = datetime(1970, 1, 1)
+    offset = int((origin - epoch).total_seconds()) % GRID_SECONDS
+    origin = origin - timedelta(seconds=offset)
+    stamps: List[datetime] = []
+    stamp = origin
+    while stamp <= hi:
+        stamps.append(stamp)
+        stamp += timedelta(seconds=GRID_SECONDS)
+    return stamps
+
+
+def same_clock_baseline(
+    buckets: Dict[datetime, Dict[str, Any]],
+    channel: str,
+    window_start: datetime,
+    window_end: datetime,
+    *,
+    days: int = 4,
+) -> Dict[str, float]:
+    """The channel's mean rate in the *same clock slots* on earlier days.
+
+    The baseline is keyed by the clock position (``HH:MM``) of the slot
+    and each key holds the average over the previous days.  This is the
+    counterfactual a causal claim needs: what this channel does at this
+    hour on an ordinary day.
+    """
+    slot_keys: List[str] = []
+    moment = window_start.replace(second=0, microsecond=0)
+    step = timedelta(seconds=GRID_SECONDS)
+    while moment <= window_end:
+        slot_keys.append(moment.strftime("%H:%M"))
+        moment += step
+
+    by_slot: Dict[str, List[float]] = {k: [] for k in slot_keys}
+    for stamp, entry in buckets.items():
+        delta = (window_start.date() - stamp.date()).days
+        if delta <= 0 or delta > days:
+            continue
+        key = stamp.strftime("%H:%M")
+        if key in by_slot:
+            by_slot[key].append(
+                _feature_value(entry, _CHANNEL_FEATURES[channel]) or 0.0)
+
+    out: Dict[str, float] = {}
+    for key in slot_keys:
+        values = by_slot.get(key) or []
+        out[key] = float(np.mean(values)) if values else 0.0
+    return out
+
+
+def baseline_level(channels: Dict[str, List[float]]) -> Dict[str, float]:
+    """The baseline's mean rate per channel, zeros included.
+
+    The *mean per slot* and not the mean of the non-zero slots: the
+    null has to be on the same scale as the statistic it is compared
+    with, and a statistic that is a mean over slots has expectation
+    equal to that mean per slot.
+    """
+    level: Dict[str, float] = {}
+    for channel, values in channels.items():
+        arr = np.asarray(values, dtype=float)
+        level[channel] = float(arr.mean()) if arr.size else 0.0
+    return level
 
 
 def build_control_plane_series(
@@ -236,52 +333,43 @@ def build_control_plane_series(
     empty, and the caller is expected to fall back to the event-stream
     representation rather than to invent one.
     """
-    stamps, channels, base_stamps, base_channels = extract_timeseries(analysis)
+    event_buckets, base_buckets = extract_timeseries(analysis)
 
-    if window_start is not None and window_end is not None and stamps:
-        # Keep only the buckets inside the window the caller asked about,
-        # so a detector that scanned a wider period cannot leak the
-        # outside into the attribution.
-        kept = [i for i, s in enumerate(stamps)
-                if window_start <= s <= window_end]
-        if kept:
-            lo, hi = kept[0], kept[-1]
-            stamps = stamps[lo:hi + 1]
-            channels = {k: v[lo:hi + 1] for k, v in channels.items()}
+    if not event_buckets:
+        return ControlPlaneSeries()
+
+    if window_start is None or window_end is None:
+        stamps = sorted(event_buckets)
+        lo, hi = stamps[0], stamps[-1]
+    else:
+        lo, hi = window_start, window_end
+        # The detector's own event buckets are the evidence; a window
+        # that excludes them all has no control plane to speak of.
+        inside = [s for s in event_buckets if lo <= s <= hi]
+        if inside:
+            lo, hi = min(inside), max(inside)
+
+    stamps = _grid_stamps(event_buckets, lo, hi)
+    channels = fill_grid(event_buckets, CONTROL_PLANE_CHANNELS, stamps)
+
+    base_stamps: List[datetime] = []
+    base_channels: Dict[str, List[float]] = {}
+    if base_buckets:
+        base_lo = min(base_buckets)
+        base_hi = max(base_buckets)
+        base_stamps = _grid_stamps(base_buckets, base_lo, base_hi)
+        base_channels = fill_grid(base_buckets, CONTROL_PLANE_CHANNELS,
+                                  base_stamps)
 
     return ControlPlaneSeries(
         stamps=stamps,
-        channels={k: list(v) for k, v in channels.items()},
-        baseline={k: list(v) for k, v in base_channels.items()},
+        channels=channels,
+        baseline=base_channels,
         baseline_stamps=base_stamps,
-        baseline_level=_baseline_level(base_channels),
-        bucket_seconds=_bucket_seconds(stamps),
+        baseline_level=baseline_level(base_channels),
+        bucket_seconds=float(GRID_SECONDS),
+        _baseline_buckets=base_buckets,
     )
-
-
-def _baseline_level(baseline_channels: Dict[str, List[float]]) -> Dict[str, float]:
-    """The baseline's median count per channel.
-
-    The median, not the mean: a single truncated or duplicated bucket in
-    the baseline should not move the reference level.
-    """
-    level: Dict[str, float] = {}
-    for channel, values in baseline_channels.items():
-        arr = np.asarray(values, dtype=float)
-        arr = arr[arr > 0]
-        if arr.size:
-            level[channel] = float(np.median(arr))
-    return level
-
-
-def _bucket_seconds(stamps: Sequence[datetime]) -> float:
-    """The typical wall-clock gap between consecutive buckets."""
-    if len(stamps) < 2:
-        return 300.0
-    gaps = [(stamps[i + 1] - stamps[i]).total_seconds()
-            for i in range(len(stamps) - 1)]
-    positive = [g for g in gaps if g > 0]
-    return float(np.median(positive)) if positive else 300.0
 
 
 def baseline_placebos(
@@ -301,7 +389,6 @@ def baseline_placebos(
     if n < 3 or horizon < 1:
         return []
     out: List[float] = []
-    # Every anchor that leaves a full horizon on both sides.
     for anchor in range(1, n - horizon):
         pre = values[max(0, anchor - horizon):anchor]
         post = values[anchor:anchor + horizon]

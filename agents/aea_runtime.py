@@ -17,15 +17,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from agents.edge_ownership import (
-    AEA_PROTOCOL,
-    R2T,
-    T2R,
-    UNKNOWN,
-    OwnershipVerdict,
-    attribute,
-    protocol_hash,
-)
+from agents.temporal import as_utc_naive as _as_utc_naive
+from agents.temporal import parse_timestamp as parse_timestamp
 
 __all__ = [
     "AEA_PROTOCOL",

@@ -115,6 +115,22 @@ class ParquetOutageFeatureExtractor:
                 "announcement_count": 0,
                 "withdrawal_count": 0,
                 "total_messages": 0,
+                #: Announcements **originated by the target AS itself**.
+                #:
+                #: ``announcement_count`` counts every announcement that
+                #: *involves* the target -- one from a peer it talks to,
+                #: one whose path merely passes through it, one about a
+                #: prefix it owns.  That is the right measure of how busy
+                #: the target is in the collector's eyes, but it is the
+                #: wrong measure of whether the target is *operating*:
+                #: a network that has stopped announcing its own routes
+                #: still receives a flood of updates about other people's
+                #: routes.  An outage is the target falling silent, so the
+                #: channel that carries it is the target's **own**
+                #: announcement rate, measured as the origin AS of the
+                #: path.
+                "own_announcement_count": 0,
+                "own_withdrawal_count": 0,
                 "announced_prefixes": set(),
                 "withdrawn_prefixes": set(),
                 "num_ori_change": 0,
@@ -226,6 +242,12 @@ class ParquetOutageFeatureExtractor:
                 b["peer_as_set"].add(peer_as)
 
             origin_as = tokens[-1] if tokens else None
+            # The target's *own* announcement: the origin of the path is
+            # the target.  This is the channel that falls silent during
+            # an outage.
+            if origin_as is not None and str(origin_as) == str(self.target_as):
+                b["own_announcement_count"] += 1
+
             state = self._route_state.setdefault(
                 prefix,
                 {"last_as_path": None, "last_origin": None, "had_withdraw": False,
@@ -255,6 +277,12 @@ class ParquetOutageFeatureExtractor:
         else:
             b["withdrawal_count"] += 1
             b["withdrawn_prefixes"].add(prefix)
+            # A withdrawal carries no AS path, so it is attributed to
+            # the target through the prefix map: the target announced
+            # that prefix, so the target's withdrawal of it is the
+            # target's own withdrawal.
+            if self._prefix_to_target.get(prefix) == self.target_as:
+                b["own_withdrawal_count"] += 1
             state = self._route_state.setdefault(
                 prefix,
                 {"last_as_path": None, "last_origin": None, "had_withdraw": False,
@@ -282,6 +310,8 @@ class ParquetOutageFeatureExtractor:
                 "announcement_count": announcement_count,
                 "withdrawal_count": b["withdrawal_count"],
                 "total_messages": b["total_messages"],
+                "own_announcement_count": b["own_announcement_count"],
+                "own_withdrawal_count": b["own_withdrawal_count"],
                 "flapping_prefix_count": len(flapping),
                 "ori_change_rate": b["num_ori_change"] / rate_denominator,
                 "num_ori_change": b["num_ori_change"],
