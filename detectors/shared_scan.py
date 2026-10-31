@@ -69,7 +69,7 @@ class SharedUpdateScan:
     _rows_read: int = field(default=0, init=False)
     _chunks_outside_event: int = field(default=0, init=False)
 
-    def _requested(self) -> set:
+    def requested(self) -> set:
         if not self.detectors:
             return set()
         if "all" in self.detectors:
@@ -84,21 +84,21 @@ class SharedUpdateScan:
         return self.start
 
     # ── setup ──────────────────────────────────────────────────────────
-    def _setup(self, requested: set) -> None:
+    def setup(self, requested: set) -> None:
         if "hijack" in requested:
-            self._hijack_prepared = self._prepare_hijack()
+            self._hijack_prepared = self.prepare_hijack()
         if "leak" in requested:
-            self._leak_prepared = self._prepare_leak()
+            self._leak_prepared = self.prepare_leak()
         if "outage" in requested:
             for asn in self.target_asns:
                 from detectors.outage.outage_features_parquet import (
                     ParquetOutageFeatureExtractor,
                 )
                 self._outage_extractors[str(asn)] = ParquetOutageFeatureExtractor(
-                    self._asn_int(asn)
+                    self.asn_int(asn)
                 )
 
-    def _prepare_hijack(self):
+    def prepare_hijack(self):
         from detectors.hijack.hijack_prefix_processor import (
             get_target_prefixes_batch,
         )
@@ -107,7 +107,7 @@ class SharedUpdateScan:
 
         cleaned = [str(a).replace("AS", "").replace("as", "") for a in self.target_asns]
 
-        prefix_to_as, as_relationships_data = self._load_hijack_context(cleaned)
+        prefix_to_as, as_relationships_data = self.load_hijack_context(cleaned)
         if prefix_to_as is None:
             logger.warning("[shared-scan] hijack prefix map unavailable; skipping hijack")
             return None
@@ -128,7 +128,7 @@ class SharedUpdateScan:
             prefixes_by_as={asn: set(s) for asn, s in prefixes_by_as.items()},
         )
 
-    def _load_hijack_context(self, cleaned_as_list):
+    def load_hijack_context(self, cleaned_as_list):
         """Load the prefix-to-AS map and the AS relationship data.
 
         These depend on the AS, not on the updates, so they are loaded
@@ -193,7 +193,7 @@ class SharedUpdateScan:
 
         return prefix_to_as, as_relationships_data
 
-    def _prepare_leak(self):
+    def prepare_leak(self):
         from detectors.leak import leak_chunk_api
         from detectors.leak.leak_detector import find_pathprob_file
         from config import DEFAULT_LEAK_THRESHOLD
@@ -213,7 +213,7 @@ class SharedUpdateScan:
         }
 
     @staticmethod
-    def _asn_int(asn) -> int:
+    def asn_int(asn) -> int:
         try:
             text = str(asn).strip()
             if text.upper().startswith("AS"):
@@ -223,7 +223,7 @@ class SharedUpdateScan:
             return int(asn)
 
     # ── the scan ───────────────────────────────────────────────────────
-    def _iter_chunks(self):
+    def iter_chunks(self):
         from data.parquet_cache import iter_window_chunks
 
         return iter_window_chunks(
@@ -234,7 +234,7 @@ class SharedUpdateScan:
         )
 
     @staticmethod
-    def _chunk_is_in_event(chunk: pl.DataFrame, start: datetime, end: datetime) -> bool:
+    def chunk_is_in_event(chunk: pl.DataFrame, start: datetime, end: datetime) -> bool:
         """True when the chunk overlaps the event window.
 
         The outage detector needs the baseline, so it gets every chunk;
@@ -249,7 +249,7 @@ class SharedUpdateScan:
             return True
         return not (hi < start or lo > end)
 
-    def _consume(self, chunk: pl.DataFrame, requested: set, in_event: bool) -> None:
+    def consume(self, chunk: pl.DataFrame, requested: set, in_event: bool) -> None:
         if not in_event:
             # Baseline chunk: only the outage detector has any use for it.
             if "outage" in requested:
@@ -280,21 +280,21 @@ class SharedUpdateScan:
     # ── public entry point ─────────────────────────────────────────────
     def run(self) -> dict:
         """Execute the scan and return one result per detector."""
-        requested = self._requested()
+        requested = self.requested()
         if not requested:
             return {}
 
-        self._setup(requested)
+        self.setup(requested)
 
-        for chunk in self._iter_chunks():
+        for chunk in self.iter_chunks():
             if chunk is None or chunk.is_empty():
                 continue
             self._chunks_read += 1
             self._rows_read += chunk.height
-            in_event = self._chunk_is_in_event(chunk, self.start, self.end)
+            in_event = self.chunk_is_in_event(chunk, self.start, self.end)
             if not in_event:
                 self._chunks_outside_event += 1
-            self._consume(chunk, requested, in_event)
+            self.consume(chunk, requested, in_event)
 
         logger.info(
             "[shared-scan] %d chunks / %d rows read once for %s "
@@ -306,11 +306,11 @@ class SharedUpdateScan:
         )
 
         if "hijack" in requested:
-            self.hijack_result = self._finalize_hijack()
+            self.hijack_result = self.finalize_hijack()
         if "leak" in requested:
-            self.leak_result = self._finalize_leak()
+            self.leak_result = self.finalize_leak()
         if "outage" in requested:
-            self.outage_result = self._finalize_outage()
+            self.outage_result = self.finalize_outage()
 
         return {
             "hijack": self.hijack_result,
@@ -320,19 +320,19 @@ class SharedUpdateScan:
             "rows_read": self._rows_read,
         }
 
-    def _finalize_hijack(self):
+    def finalize_hijack(self):
         if not self._hijack_prepared:
             return None
         from detectors.hijack import hijack_chunk_api
         return hijack_chunk_api.finalize(self._hijack_prepared, self._hijack_alerts)
 
-    def _finalize_leak(self):
+    def finalize_leak(self):
         if not self._leak_prepared:
             return None
         from detectors.leak import leak_chunk_api
         return leak_chunk_api.finalize(self._leak_chunks, max_leaks=self.max_leaks)
 
-    def _finalize_outage(self):
+    def finalize_outage(self):
         """The per-AS feature series, one per target AS.
 
         The outage detector consumes these directly, so the series is

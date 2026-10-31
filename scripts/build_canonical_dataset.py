@@ -137,7 +137,7 @@ def traffic_strategies(row: dict) -> List[dict]:
     ]
 
 
-def _measure_with_strategy(api, strategy: dict, start, end, eid,
+def measure_with_strategy(api, strategy: dict, start, end, eid,
                             exclude_for_control) -> Tuple:
     """Measure one strategy.  Returns ``(measurement, control_z, control_drop)``."""
     measurement = measure(api, strategy["series"], start, end, eid,
@@ -187,7 +187,7 @@ def incident_key(row: dict) -> tuple:
     )
 
 
-def _routing_strength(row: dict) -> tuple:
+def routing_strength(row: dict) -> tuple:
     """How strong the routing evidence of an accepted row is.
 
     Used when two rows describe the same incident under different cause
@@ -316,7 +316,7 @@ def evaluate(row: dict, api) -> dict:
     try:
         for strategy in strategies:
             exclude = [strategy["series"]] if strategy["scope"] == "asn" else []
-            candidate, cz, cd = _measure_with_strategy(
+            candidate, cz, cd = measure_with_strategy(
                 api, strategy, start, end, eid, exclude
             )
             if candidate.error:
@@ -459,7 +459,7 @@ def main() -> int:
             # disagree about one incident, and the routing evidence
             # decides which label it gets.
             if candidate["cause"] != held["cause"]:
-                if _routing_strength(candidate) > _routing_strength(held):
+                if routing_strength(candidate) > routing_strength(held):
                     # The new row's routing evidence is stronger, so it
                     # replaces the held one.  The held row is the one
                     # that leaves the dataset, and the new row stays --

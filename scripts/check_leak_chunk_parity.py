@@ -52,7 +52,7 @@ def main() -> int:
     # into the unified event schema, while the chunk API returns the raw
     # detector records.  The comparison that matters is the underlying
     # evidence: the prefix each record refers to.
-    def _prefixes(records):
+    def prefixes(records):
         out = []
         for r in records or []:
             p = r.get("prefix")
@@ -61,8 +61,8 @@ def main() -> int:
             out.append(p)
         return out
 
-    same_leaks = sorted(_prefixes(standalone.get("route_leaks"))) == sorted(
-        _prefixes(shared.get("route_leaks"))
+    same_leaks = sorted(prefixes(standalone.get("route_leaks"))) == sorted(
+        prefixes(shared.get("route_leaks"))
     )
 
     out = {

@@ -198,7 +198,7 @@ _LOCAL_SNAPSHOTS: Optional[List[Tuple[datetime, Path]]] = None
 _SNAPSHOT_RE = re.compile(r"routeviews-(?:rv2|oix)-(\d{8})-\d{4}\.pfx2as\.parsed\.json$")
 
 
-def _local_snapshots() -> List[Tuple[datetime, Path]]:
+def local_snapshots() -> List[Tuple[datetime, Path]]:
     """The downloaded snapshots, ordered by their date."""
     global _LOCAL_SNAPSHOTS
     if _LOCAL_SNAPSHOTS is not None:
@@ -227,7 +227,7 @@ def _local_snapshots() -> List[Tuple[datetime, Path]]:
 
 def resolve_snapshot(when: datetime) -> Optional[Path]:
     """The snapshot that matches the date, without touching the network."""
-    snapshots = _local_snapshots()
+    snapshots = local_snapshots()
     if not snapshots:
         return None
     # The newest snapshot that is not after the event date.
@@ -280,7 +280,7 @@ def load_ownership(asn: int, when: datetime) -> Set[str]:
     return owned
 
 
-def _networks(prefixes: Set[str]) -> List:
+def networks(prefixes: Set[str]) -> List:
     """The prefixes as network objects, for containment tests."""
     import ipaddress
 
@@ -293,7 +293,7 @@ def _networks(prefixes: Set[str]) -> List:
     return out
 
 
-def _find_covering(prefix: str, index: Dict[str, str]) -> Optional[str]:
+def find_covering(prefix: str, index: Dict[str, str]) -> Optional[str]:
     """The owned prefix that contains ``prefix``, if any.
 
     A hijack is very often a *more-specific* announcement inside the
@@ -315,7 +315,7 @@ def _find_covering(prefix: str, index: Dict[str, str]) -> Optional[str]:
     return None
 
 
-def _coverage_index(prefixes: Set[str]) -> Tuple[Optional[str], Dict[str, str]]:
+def coverage_index(prefixes: Set[str]) -> Tuple[Optional[str], Dict[str, str]]:
     """A coarse-to-fine index of the owned address space.
 
     The containment test -- "does this announced prefix fall inside the
@@ -378,7 +378,7 @@ def _coverage_index(prefixes: Set[str]) -> Tuple[Optional[str], Dict[str, str]]:
     return "^" + "|".join(alternatives), exact
 
 
-def _scan_covering(df: pl.DataFrame, coarse: Optional[str], index: Dict[str, str],
+def scan_covering(df: pl.DataFrame, coarse: Optional[str], index: Dict[str, str],
                    target_as, out: Dict[str, Set[str]]) -> None:
     """Find the prefixes inside the victim's space that others announced.
 
@@ -404,13 +404,13 @@ def _scan_covering(df: pl.DataFrame, coarse: Optional[str], index: Dict[str, str
         prefix = str(row["prefix"])
         if prefix in out:
             continue
-        if _find_covering(prefix, index) is None:
+        if find_covering(prefix, index) is None:
             continue
         origins = {str(o) for o in (row["origins"] or []) if o is not None}
         out.setdefault(prefix, set()).update(origins)
 
 
-def _window_files(start: datetime, end: datetime) -> List[Path]:
+def window_files(start: datetime, end: datetime) -> List[Path]:
     """The parquet files covering the window.
 
     Only the files that already carry the current schema version are
@@ -428,7 +428,7 @@ def _window_files(start: datetime, end: datetime) -> List[Path]:
         return []
 
 
-def _iter_window_chunks(start: datetime, end: datetime):
+def iter_window_chunks(start: datetime, end: datetime):
     """Yield the update chunks covering the window.
 
     Going through the shared iterator means a stale cache is rebuilt from
@@ -442,7 +442,7 @@ def _iter_window_chunks(start: datetime, end: datetime):
     )
 
 
-def _normalize(chunk: pl.DataFrame) -> pl.DataFrame:
+def normalize(chunk: pl.DataFrame) -> pl.DataFrame:
     """Give the chunk the column names this module works with."""
     df = chunk
     if "as_path" not in df.columns and "as-path" in df.columns:
@@ -452,7 +452,7 @@ def _normalize(chunk: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def _bucketize(frame: pl.DataFrame) -> Dict[str, int]:
+def bucketize(frame: pl.DataFrame) -> Dict[str, int]:
     """The per-5-minute counts of a frame, keyed by the bucket start."""
     if frame.is_empty():
         return {}
@@ -467,7 +467,7 @@ def _bucketize(frame: pl.DataFrame) -> Dict[str, int]:
     }
 
 
-def _same_clock_baseline_from_buckets(ann_buckets: Dict[str, int],
+def same_clock_baseline_from_buckets(ann_buckets: Dict[str, int],
                                       wd_buckets: Dict[str, int],
                                       start: datetime, end: datetime):
     """The same-clock baseline, computed from buckets already counted.
@@ -493,7 +493,7 @@ def _same_clock_baseline_from_buckets(ann_buckets: Dict[str, int],
         event_slots.add(moment.strftime("%H:%M"))
         moment += step
 
-    def _collect(buckets: Dict[str, int], target: Dict[str, List[int]]) -> None:
+    def collect(buckets: Dict[str, int], target: Dict[str, List[int]]) -> None:
         for key, value in buckets.items():
             stamp = datetime.fromisoformat(key)
             if (start.date() - stamp.date()).days <= 0:
@@ -503,10 +503,10 @@ def _same_clock_baseline_from_buckets(ann_buckets: Dict[str, int],
                 continue
             target[slot].append(value)
 
-    _collect(ann_buckets, ann_per_day)
-    _collect(wd_buckets, wd_per_day)
+    collect(ann_buckets, ann_per_day)
+    collect(wd_buckets, wd_per_day)
 
-    def _average(per_day: Dict[str, List[int]]) -> Dict[str, int]:
+    def average(per_day: Dict[str, List[int]]) -> Dict[str, int]:
         out: Dict[str, int] = {}
         for slot, values in per_day.items():
             # The bucket key of the event window, for this slot.
@@ -521,10 +521,10 @@ def _same_clock_baseline_from_buckets(ann_buckets: Dict[str, int],
             out[key] = int(sum(values) / len(values))
         return out
 
-    return _average(ann_per_day), _average(wd_per_day)
+    return average(ann_per_day), average(wd_per_day)
 
 
-def _same_clock_baseline(announcements: pl.DataFrame, withdrawals: pl.DataFrame,
+def same_clock_baseline(announcements: pl.DataFrame, withdrawals: pl.DataFrame,
                          start: datetime, end: datetime):
     """The counts of the *same clock slots* on the days before the event.
 
@@ -539,11 +539,11 @@ def _same_clock_baseline(announcements: pl.DataFrame, withdrawals: pl.DataFrame,
     the baseline look four times as busy as it is, and every ratio
     would come out at a quarter of the truth.
     """
-    return (_mean_buckets(announcements, start, end),
-            _mean_buckets(withdrawals, start, end))
+    return (mean_buckets(announcements, start, end),
+            mean_buckets(withdrawals, start, end))
 
 
-def _mean_buckets(frame: pl.DataFrame, start: datetime,
+def mean_buckets(frame: pl.DataFrame, start: datetime,
                    end: datetime) -> Dict[str, int]:
     """The per-bucket counts of the baseline days, averaged over the days.
 
@@ -565,7 +565,7 @@ def _mean_buckets(frame: pl.DataFrame, start: datetime,
         # The bucket keys carry the day offset, so they are normalised
         # back onto the event window's clock before they are averaged.
         normalised = {}
-        for key, value in _bucketize(part).items():
+        for key, value in bucketize(part).items():
             stamp = datetime.fromisoformat(key)
             normalised[str(stamp + offset)] = value
         per_day.append(normalised)
@@ -580,7 +580,7 @@ def _mean_buckets(frame: pl.DataFrame, start: datetime,
     }
 
 
-def _detector_leak_signature(announcements: pl.DataFrame,
+def detector_leak_signature(announcements: pl.DataFrame,
                              leak_as, start: datetime, end: datetime):
     """The leak score from the detector's own signature.
 
@@ -691,7 +691,7 @@ def extract(event: dict) -> RoutingSignal:
                   else BASELINE_LEAD)
     hi = end + BASELINE_TAIL
 
-    files = _window_files(lo, hi)
+    files = window_files(lo, hi)
     signal.files_scanned = len(files)
     if not files:
         signal.error = "no_parquet_files"
@@ -712,7 +712,7 @@ def extract(event: dict) -> RoutingSignal:
     # matching against the owned set would miss exactly those events, so
     # an announcement is also tested for *containment* by the owned
     # prefix it falls inside.
-    victim_coarse, victim_index = _coverage_index(victim)
+    victim_coarse, victim_index = coverage_index(victim)
     actors = [a for a in (target_as, victim_as, leak_as, attacker_as)
               if a is not None]
 
@@ -738,7 +738,7 @@ def extract(event: dict) -> RoutingSignal:
     # A corrupt archive file must not abort the whole scan.  Some of the
     # older windows in the archive are truncated, and one bad file would
     # otherwise cost the whole event its measurement.
-    chunks = _iter_window_chunks(lo, hi)
+    chunks = iter_window_chunks(lo, hi)
     while True:
         try:
             chunk = next(chunks)
@@ -750,7 +750,7 @@ def extract(event: dict) -> RoutingSignal:
             continue
         if chunk is None or chunk.is_empty():
             continue
-        df = _normalize(chunk)
+        df = normalize(chunk)
         if "ts" not in df.columns:
             signal.error = "chunk_without_timestamp"
             return signal
@@ -784,7 +784,7 @@ def extract(event: dict) -> RoutingSignal:
         # filter.  The filter still keeps the frame small for the leak
         # and outage measurements.
         if signal.cause == "origin_hijack_victim" and victim_index:
-            _scan_covering(df, victim_coarse, victim_index, target_as,
+            scan_covering(df, victim_coarse, victim_index, target_as,
                             signal.hijack_covering)
 
         # The outage buckets, counted per chunk.  Only the target's own
@@ -866,7 +866,7 @@ def extract(event: dict) -> RoutingSignal:
             if start <= datetime.fromisoformat(key) <= end
         }
         signal.baseline_announcements, signal.baseline_withdrawals = (
-            _same_clock_baseline_from_buckets(
+            same_clock_baseline_from_buckets(
                 outage_ann_buckets, outage_wd_buckets, start, end
             )
         )
@@ -986,7 +986,7 @@ def extract(event: dict) -> RoutingSignal:
         # is the strongest available measurement of "is the routing
         # anomaly visible in the stream", so it is what the verdict is
         # based on.
-        count, prefixes, available = _detector_leak_signature(
+        count, prefixes, available = detector_leak_signature(
             announcements.filter(
                 (pl.col("ts") >= start) & (pl.col("ts") <= end)
             ),
@@ -1045,8 +1045,8 @@ def extract(event: dict) -> RoutingSignal:
     # back after it ended -- which is exactly what a recovery looks
     # like, and it hides the outage.
     in_event = (pl.col("ts") >= start) & (pl.col("ts") <= end)
-    event_ann = _bucketize(target_announcements.filter(in_event))
-    event_wd = _bucketize(target_withdrawals.filter(in_event))
+    event_ann = bucketize(target_announcements.filter(in_event))
+    event_wd = bucketize(target_withdrawals.filter(in_event))
 
     # The baseline is the *same clock slots* on the previous days.
     #
@@ -1055,7 +1055,7 @@ def extract(event: dict) -> RoutingSignal:
     # more at 14:30 than at 03:00 whatever happened.  The baseline that
     # answers "was this quiet compared with how this network normally
     # behaves at this hour" is the same half hour on the days before.
-    base_ann, base_wd = _same_clock_baseline(
+    base_ann, base_wd = same_clock_baseline(
         target_announcements, target_withdrawals, start, end
     )
 

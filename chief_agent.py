@@ -43,7 +43,7 @@ from config import API_KEY, BASE_URL, MODEL, MITM_DETECTION_ENABLED, JSON_OUTPUT
 PROJECT_ROOT = Path(__file__).parent
 
 
-def _unwrap_result(payload):
+def unwrap_result(payload):
     """Return the detector result inside a react tool's payload.
 
     The react tools wrap their output in ``{"success": ..., "result":
@@ -60,7 +60,7 @@ def _unwrap_result(payload):
     return payload
 
 
-def _per_asn(traffic_result):
+def per_asn_results(traffic_result):
     """Yield the per-AS traffic detector results."""
     if not isinstance(traffic_result, dict):
         return
@@ -78,7 +78,7 @@ def _per_asn(traffic_result):
     yield traffic_result
 
 
-def _parse_ts(value):
+def parse_ts_value(value):
     """Parse a timestamp into the naive-UTC form the estimator works on."""
     if value is None:
         return None
@@ -475,8 +475,8 @@ class ChiefExpertAgent:
             if not traffic_payload:
                 traffic_payload = evidence.get("precomputed_traffic") or {}
 
-            routing_result = _unwrap_result(routing_payload)
-            traffic_result = _unwrap_result(traffic_payload)
+            routing_result = unwrap_result(routing_payload)
+            traffic_result = unwrap_result(traffic_payload)
 
             if not routing_result or not traffic_result:
                 return {}, "skipped_no_data"
@@ -488,7 +488,7 @@ class ChiefExpertAgent:
             # deviation of hundreds of standard deviations with the sign
             # inverted.
             traffic_timeline = []
-            for asn_result in _per_asn(traffic_result):
+            for asn_result in per_asn_results(traffic_result):
                 for anomaly in (asn_result.get("anomalies") or []):
                     if not isinstance(anomaly, dict):
                         continue
@@ -534,8 +534,8 @@ class ChiefExpertAgent:
             if not traffic_timeline:
                 return {}, "skipped_no_data"
 
-            window_start = _parse_ts(getattr(react_result, "start_time", None))
-            window_end = _parse_ts(getattr(react_result, "end_time", None))
+            window_start = parse_ts_value(getattr(react_result, "start_time", None))
+            window_end = parse_ts_value(getattr(react_result, "end_time", None))
 
             verdict, control_series, _observations = run_paddle(
                 routing_analysis=outage,

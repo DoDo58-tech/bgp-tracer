@@ -40,7 +40,7 @@ def bucket_start(ts: datetime) -> datetime:
     return ts.replace(minute=minute, second=0, microsecond=0)
 
 
-def _entropy(values: list) -> float:
+def entropy(values: list) -> float:
     if not values:
         return 0.0
     counts = Counter(values)
@@ -51,7 +51,7 @@ def _entropy(values: list) -> float:
     )
 
 
-def _edit_distance(old: list, new: list) -> int:
+def edit_distance(old: list, new: list) -> int:
     """Levenshtein distance over AS-path token lists.
 
     ``editdistance`` (the C extension the text implementation uses) is
@@ -73,7 +73,7 @@ def _edit_distance(old: list, new: list) -> int:
     return prev[-1]
 
 
-def _clean_tokens(path_series: pl.Series) -> pl.Series:
+def clean_tokens(path_series: pl.Series) -> pl.Series:
     """Split an AS-path column into a token list without empty entries."""
     return (
         path_series.fill_null("")
@@ -108,7 +108,7 @@ class ParquetOutageFeatureExtractor:
         self._rows_relevant = 0
 
     # ── helpers ────────────────────────────────────────────────────────
-    def _bucket(self, key: str) -> dict:
+    def bucket(self, key: str) -> dict:
         b = self._buckets.get(key)
         if b is None:
             b = {
@@ -172,7 +172,7 @@ class ParquetOutageFeatureExtractor:
 
         self._rows_seen += df.height
 
-        tokens = _clean_tokens(df.get_column("as_path"))
+        tokens = clean_tokens(df.get_column("as_path"))
         peer_as = df.get_column("peer_as").fill_null("")
 
         # Remember which prefixes the target originates, so a later
@@ -213,9 +213,9 @@ class ParquetOutageFeatureExtractor:
         ).iter_rows(named=True)
 
         for row in rows:
-            self._consume_row(row)
+            self.consume_row(row)
 
-    def _consume_row(self, row: dict) -> None:
+    def consume_row(self, row: dict) -> None:
         bucket = row["_bucket"]
         key = bucket.isoformat()
         msg_type = row["announce"]
@@ -224,7 +224,7 @@ class ParquetOutageFeatureExtractor:
         ts = row["ts"]
         peer_as = row["peer_as"]
 
-        b = self._bucket(key)
+        b = self.bucket(key)
         b["total_messages"] += 1
         self._bucket_prefix_types[key][prefix].add(msg_type)
 
@@ -269,7 +269,7 @@ class ParquetOutageFeatureExtractor:
                 elif path_len < old_len:
                     b["num_shorter"] += 1
                 b["edit_distances"].append(
-                    _edit_distance(state["last_as_path"].split(), tokens)
+                    edit_distance(state["last_as_path"].split(), tokens)
                 )
 
             state["last_as_path"] = path_str
@@ -321,7 +321,7 @@ class ParquetOutageFeatureExtractor:
                     sum(b["arrival_intervals"]) / len(b["arrival_intervals"])
                     if b["arrival_intervals"] else 0
                 ),
-                "editDis_entropy": _entropy(b["edit_distances"]),
+                "editDis_entropy": entropy(b["edit_distances"]),
                 "unique_as_count": len(b["unique_as_set"]),
                 "unique_peer_as_count": len(b["peer_as_set"]),
                 "avg_path_length": (

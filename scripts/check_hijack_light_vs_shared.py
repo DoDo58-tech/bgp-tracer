@@ -20,7 +20,7 @@ WINDOW = ("2025-07-14 00:00", "2025-07-14 02:00")
 TARGET_AS = "13335"
 
 
-def _key(alerts):
+def key(alerts):
     """A stable identity for an alert, independent of dict ordering."""
     out = []
     for a in alerts or []:
@@ -54,10 +54,10 @@ def main() -> int:
 
     entry = (shared.get("hijack") or {}).get(TARGET_AS) or {}
 
-    light_victim = _key(light.get("origin_hijacked"))
-    light_attacker = _key(light.get("origin_hijacking"))
-    shared_victim = _key(entry.get("origin_hijacked"))
-    shared_attacker = _key(entry.get("origin_hijacking"))
+    light_victim = key(light.get("origin_hijacked"))
+    light_attacker = key(light.get("origin_hijacking"))
+    shared_victim = key(entry.get("origin_hijacked"))
+    shared_attacker = key(entry.get("origin_hijacking"))
 
     out = {
         "window": WINDOW,

@@ -59,7 +59,7 @@ _TIMESTAMP_PATTERN = re.compile(
 _TS_FORMATS = ["%Y-%m-%d %H:%M:%S", "%m/%d/%y %H:%M:%S", "%m/%d/%Y %H:%M:%S"]
 
 
-def _parse_timestamp_expr():
+def parse_timestamp_expr():
     """Parse the MRT timestamp column, tolerating both archive formats.
 
     Polars' ``strptime`` takes a single format string, so the formats are
@@ -147,7 +147,7 @@ def write_meta(parquet, source):
             pass
 
 
-def _parquet_version_matches(parquet) -> bool:
+def parquet_version_matches(parquet) -> bool:
     """True when the cached parquet carries the current schema version."""
     meta = read_meta(parquet)
     if meta is None:
@@ -224,7 +224,7 @@ def txt_to_announcements_df(txt_path, include_withdrawals: bool = False):
     if df.is_empty():
         return df
     df = df.with_columns(
-        _parse_timestamp_expr().alias("ts")
+        parse_timestamp_expr().alias("ts")
     )
     return align_to_canonical(df)
 
@@ -271,7 +271,7 @@ def read_gz_into_df(gz_path):
         return pl.DataFrame()
     df = pl.DataFrame(rows, schema=_COLUMNS, orient="row")
     df = df.with_columns(
-        _parse_timestamp_expr().alias("ts")
+        parse_timestamp_expr().alias("ts")
     )
     return align_to_canonical(df)
 
@@ -467,7 +467,7 @@ def iter_window_chunks(
         # A parquet file is only usable when its schema version matches the
         # current one.  An older file holds announcements only, so reusing
         # it would silently strip the withdrawals the outage detector needs.
-        if parquet.exists() and _parquet_version_matches(parquet):
+        if parquet.exists() and parquet_version_matches(parquet):
             fpath = parquet
         elif txt_path.exists() and txt_path.stat().st_size > 0:
             fpath = ensure_parquet(txt_path)

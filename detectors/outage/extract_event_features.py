@@ -372,7 +372,7 @@ def finalize_bucket_feature(b):
     }
 
 
-def _collect_owned_prefixes(file_path, target_as_set):
+def collect_owned_prefixes(file_path, target_as_set):
     """Prefixes the target AS originates in this file.
 
     A withdrawal carries no AS path, so attributing it to the victim
@@ -420,7 +420,7 @@ def process_single_file_timeseries(file_path, target_as_list, prefix_to_target=N
     # Ownership for this file is resolved up front so that a withdrawal
     # is judged against the whole file rather than against the stream
     # position it happens to sit at.
-    file_owned = _collect_owned_prefixes(file_path, target_as_set)
+    file_owned = collect_owned_prefixes(file_path, target_as_set)
     prefix_to_target.update({p: target_as_list[0] for p in file_owned})
     line_count = 0
     relevant_count = 0

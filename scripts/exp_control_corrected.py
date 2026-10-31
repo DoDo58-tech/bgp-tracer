@@ -56,7 +56,7 @@ CHANNEL_FEATURES: Dict[str, Tuple[str, ...]] = {
 }
 
 
-def _num(value: Any) -> Optional[float]:
+def num(value: Any) -> Optional[float]:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -80,7 +80,7 @@ def read_buckets(block: Any) -> Dict[datetime, Dict[str, Any]]:
 
 def channel_value(entry: Dict[str, Any], channel: str) -> float:
     for key in CHANNEL_FEATURES[channel]:
-        val = _num(entry.get(key))
+        val = num(entry.get(key))
         if val is not None:
             return val
     return 0.0
@@ -211,8 +211,8 @@ def traffic_points(cache: Dict[str, Any]) -> List[Dict[str, Any]]:
         out.append({
             "ts": ts,
             "z": abs(float(e.get("z_score") or 0.0)),
-            "value": _num(e.get("current_value")) if _num(e.get("current_value"))
-            is not None else _num(e.get("value")),
+            "value": num(e.get("current_value")) if num(e.get("current_value"))
+            is not None else num(e.get("value")),
             "method": str(e.get("method") or ""),
             "severity": str(e.get("severity") or ""),
         })

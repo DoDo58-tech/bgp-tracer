@@ -82,7 +82,7 @@ def main() -> int:
     # only, so the comparison has to be restricted to the event buckets.
     series = shared_outage_series.get(TARGET_AS) or {}
     solo_features = (solo_outage.get("event_features") or {})
-    shared_features = _aggregate(series, start, end)
+    shared_features = aggregate(series, start, end)
     # Every feature the outage detector reports on the event window has
     # to agree.  Comparing only the three counters would hide a
     # divergence in the path-length metrics, which the outage score uses.
@@ -119,7 +119,7 @@ def main() -> int:
     return 0 if (leak_same and outage_same) else 2
 
 
-def _aggregate(series: dict, start=None, end=None) -> dict:
+def aggregate(series: dict, start=None, end=None) -> dict:
     """Total the buckets, optionally restricted to the event window."""
     totals = {
         "announcement_count": 0,

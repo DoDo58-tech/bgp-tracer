@@ -212,7 +212,7 @@ class ControlPlaneEvidence:
                     datetime.fromisoformat(stamp): float(value)
                     for stamp, value in (stamps or {}).items()
                 }
-            _apply_baseline(evidence, counts, window_start, baseline_days)
+            apply_baseline(evidence, counts, window_start, baseline_days)
             return evidence
 
         evidence.baseline = {k: dict(v) for k, v
@@ -222,7 +222,45 @@ class ControlPlaneEvidence:
         return evidence
 
 
-def _normalise(chunk: pl.DataFrame) -> pl.DataFrame:
+def to_control_plane_series(evidence: ControlPlaneEvidence):
+    """The archive evidence as the estimator's control-plane series.
+
+    The two representations carry the same measurement in different
+    shapes: the evidence keeps the counterfactual as a *map* from clock
+    position to rate, while the estimator wants a series on the same
+    grid as the event window.  Converting here keeps the estimator
+    ignorant of where the measurement came from, so the archive path and
+    the detector path are interchangeable behind one interface.
+    """
+    from agents.control_plane import ControlPlaneSeries
+
+    stamps = list(evidence.slots)
+    if not stamps:
+        return ControlPlaneSeries()
+    return ControlPlaneSeries(
+        stamps=stamps,
+        channels={k: list(v) for k, v in evidence.channels.items()},
+        baseline={k: list(v) for k, v in evidence.baseline.items()},
+        baseline_stamps=stamps,
+        baseline_level={
+            channel: float(sum(values) / len(values)) if values else 0.0
+            for channel, values in evidence.baseline.items()
+        },
+        bucket_seconds=float(CONTROL_GRID_SECONDS),
+        baseline_bucket_map={},
+    )
+
+
+def series_from_payload(payload: Dict[str, Any], *,
+                         window_start: Optional[datetime] = None,
+                         baseline_days: int = BASELINE_DAYS):
+    """The estimator's series, rebuilt from a serialised archive payload."""
+    evidence = ControlPlaneEvidence.from_payload(
+        payload, window_start=window_start, baseline_days=baseline_days)
+    return to_control_plane_series(evidence)
+
+
+def normalise_chunk(chunk: pl.DataFrame) -> pl.DataFrame:
     """Give the chunk the column names this module works with."""
     df = chunk
     if "as_path" not in df.columns and "as-path" in df.columns:
@@ -232,7 +270,7 @@ def _normalise(chunk: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def _grid(lo: datetime, hi: datetime) -> List[datetime]:
+def grid_stamps_for(lo: datetime, hi: datetime) -> List[datetime]:
     """The uniform wall-clock grid from ``lo`` to ``hi``, inclusive."""
     origin = lo.replace(second=0, microsecond=0)
     epoch = datetime(1970, 1, 1)
@@ -246,7 +284,7 @@ def _grid(lo: datetime, hi: datetime) -> List[datetime]:
     return stamps
 
 
-def _count_by_bucket(df: pl.DataFrame, column: str) -> Dict[datetime, int]:
+def count_by_bucket(df: pl.DataFrame, column: str) -> Dict[datetime, int]:
     """The per-bucket count of the rows where ``column`` is true."""
     if df.is_empty():
         return {}
@@ -322,7 +360,7 @@ def build_control_plane_evidence(
         if chunk is None or chunk.is_empty():
             continue
         evidence.files_scanned += 1
-        df = _normalise(chunk)
+        df = normalise_chunk(chunk)
         if "ts" not in df.columns or "announce" not in df.columns:
             continue
         df = df.filter((pl.col("ts") >= lo) & (pl.col("ts") <= hi))
@@ -353,7 +391,7 @@ def build_control_plane_evidence(
         # outage -- the target keeps receiving other people's routes
         # while it stops announcing its own.
         own = announcements.filter(pl.col("origin_as") == asn)
-        for bucket, count in _count_by_bucket(own, "_bucket").items():
+        for bucket, count in count_by_bucket(own, "_bucket").items():
             counts["own_volume"][bucket] = count
 
         # The target's *involvement*: the announcements whose path
@@ -363,7 +401,7 @@ def build_control_plane_evidence(
         # leaves the involvement channel roughly flat.
         involved = announcements.filter(
             pl.col("as_path").str.contains(str(asn)))
-        for bucket, count in _count_by_bucket(involved, "_bucket").items():
+        for bucket, count in count_by_bucket(involved, "_bucket").items():
             counts["involved_volume"][bucket] = count
 
         # A withdrawal carries no AS path, so it is attributed to the
@@ -373,7 +411,7 @@ def build_control_plane_evidence(
         if owned and not withdrawals.is_empty():
             own_wd = withdrawals.filter(
                 pl.col("prefix").is_in(list(owned)))
-            for bucket, count in _count_by_bucket(own_wd, "_bucket").items():
+            for bucket, count in count_by_bucket(own_wd, "_bucket").items():
                 counts["own_withdrawal"][bucket] = count
 
         # Origin changes and path inflations are detected against the
@@ -402,7 +440,7 @@ def build_control_plane_evidence(
                 & pl.col("origin_as").is_not_null()
                 & (pl.col("_prev_origin") != pl.col("origin_as"))
             )
-            for bucket, count in _count_by_bucket(origin_changed,
+            for bucket, count in count_by_bucket(origin_changed,
                                                   "_bucket").items():
                 counts["origin_change"][bucket] = count
 
@@ -410,7 +448,7 @@ def build_control_plane_evidence(
                 pl.col("_prev_len").is_not_null()
                 & (pl.col("path_len") >= pl.col("_prev_len") + 2)
             )
-            for bucket, count in _count_by_bucket(path_inflated,
+            for bucket, count in count_by_bucket(path_inflated,
                                                   "_bucket").items():
                 counts["path_change"][bucket] = count
 
@@ -427,7 +465,7 @@ def build_control_plane_evidence(
         return evidence
 
     # The event window's grid, filled.
-    slots = _grid(window_start, window_end)
+    slots = grid_stamps_for(window_start, window_end)
     evidence.slots = slots
     evidence.channels = {
         channel: [float(counts[channel].get(stamp, 0)) for stamp in slots]
@@ -443,11 +481,11 @@ def build_control_plane_evidence(
         for channel, channel_counts in counts.items()
     }
 
-    _apply_baseline(evidence, counts, window_start, baseline_days)
+    apply_baseline(evidence, counts, window_start, baseline_days)
     return evidence
 
 
-def _apply_baseline(
+def apply_baseline(
     evidence: ControlPlaneEvidence,
     counts: Dict[str, Dict[datetime, float]],
     window_start: datetime,

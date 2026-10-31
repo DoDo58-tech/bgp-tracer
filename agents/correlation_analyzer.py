@@ -31,7 +31,7 @@ class TemporalEvent:
         self.asn = asn  # relevant AS for routing events
 
 
-def _as_number(value: Any) -> Optional[float]:
+def as_number(value: Any) -> Optional[float]:
     """Return ``value`` as a float, or ``None`` when it is not a number.
 
     ``bool`` is excluded on purpose: ``True`` is not a measurement of one.
@@ -233,8 +233,8 @@ def extract_traffic_events(
         # compared against.  The direction is therefore *derived* here
         # whenever the pair is available, and the recorded annotation is
         # only trusted when it is actually a direction.
-        raw_mean_num = _as_number(raw_mean)
-        raw_value_num = _as_number(raw_value)
+        raw_mean_num = as_number(raw_mean)
+        raw_value_num = as_number(raw_value)
         derived_pct: Optional[float] = None
         derived_direction: Optional[str] = None
         if raw_value_num is not None and raw_mean_num is not None \
@@ -256,7 +256,7 @@ def extract_traffic_events(
             direction = "unknown"
 
         recorded_pct = a.get("pct_change")
-        recorded_pct_num = _as_number(recorded_pct)
+        recorded_pct_num = as_number(recorded_pct)
         if derived_pct is not None:
             pct_change = derived_pct
         elif recorded_pct_num is not None:

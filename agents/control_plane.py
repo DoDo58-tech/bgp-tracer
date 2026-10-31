@@ -113,12 +113,18 @@ class ControlPlaneSeries:
     bucket_seconds: float = float(GRID_SECONDS)
     #: The baseline's own buckets, keyed by stamp.  The placebo null is
     #: built from these, so the estimator can reach them directly.
-    _baseline_buckets: Dict[datetime, Dict[str, Any]] = field(
+    #:
+    #: The field is named ``baseline_bucket_map`` rather than
+    #: ``_baseline_buckets`` because the project does not use a leading
+    #: underscore to mark a name, and because a private field whose
+    #: stripped name collides with the accessor of the same purpose reads
+    #: like a rename that has not finished.
+    baseline_bucket_map: Dict[datetime, Dict[str, Any]] = field(
         default_factory=dict, repr=False)
 
     def baseline_buckets(self) -> Dict[datetime, Dict[str, Any]]:
         """The baseline period's buckets, keyed by stamp."""
-        return dict(self._baseline_buckets)
+        return dict(self.baseline_bucket_map)
 
     @property
     def n_buckets(self) -> int:
@@ -172,7 +178,7 @@ class ControlPlaneSeries:
         }
 
 
-def _to_float(value: Any) -> Optional[float]:
+def to_float_value(value: Any) -> Optional[float]:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -180,11 +186,11 @@ def _to_float(value: Any) -> Optional[float]:
     return None
 
 
-def _feature_value(entry: Dict[str, Any],
+def feature_value(entry: Dict[str, Any],
                    features: Sequence[str]) -> Optional[float]:
     """The first usable value among ``features`` for one bucket."""
     for key in features:
-        val = _to_float(entry.get(key))
+        val = to_float_value(entry.get(key))
         if val is not None:
             return val
     return None
@@ -244,13 +250,13 @@ def fill_grid(
         if not (0 <= index < len(stamps)):
             continue
         for ch in channels:
-            value = _feature_value(entry, _CHANNEL_FEATURES[ch])
+            value = feature_value(entry, _CHANNEL_FEATURES[ch])
             if value:
                 out[ch][index] = value
     return out
 
 
-def _grid_stamps(buckets: Dict[datetime, Dict[str, Any]],
+def grid_stamps(buckets: Dict[datetime, Dict[str, Any]],
                  lo: datetime, hi: datetime) -> List[datetime]:
     """The uniform grid from ``lo`` to ``hi``, inclusive."""
     origin = lo.replace(second=0, microsecond=0)
@@ -309,7 +315,7 @@ def same_clock_baseline(
         key = stamp.strftime("%H:%M")
         if key in by_slot:
             by_slot[key].append(
-                _feature_value(entry, _CHANNEL_FEATURES[channel]) or 0.0)
+                feature_value(entry, _CHANNEL_FEATURES[channel]) or 0.0)
 
     out: Dict[str, float] = {}
     for key in slot_keys:
@@ -361,7 +367,7 @@ def build_control_plane_series(
         if inside:
             lo, hi = min(inside), max(inside)
 
-    stamps = _grid_stamps(event_buckets, lo, hi)
+    stamps = grid_stamps(event_buckets, lo, hi)
     channels = fill_grid(event_buckets, CONTROL_PLANE_CHANNELS, stamps)
 
     base_stamps: List[datetime] = []
@@ -369,7 +375,7 @@ def build_control_plane_series(
     if base_buckets:
         base_lo = min(base_buckets)
         base_hi = max(base_buckets)
-        base_stamps = _grid_stamps(base_buckets, base_lo, base_hi)
+        base_stamps = grid_stamps(base_buckets, base_lo, base_hi)
         base_channels = fill_grid(base_buckets, CONTROL_PLANE_CHANNELS,
                                   base_stamps)
 
@@ -380,7 +386,7 @@ def build_control_plane_series(
         baseline_stamps=base_stamps,
         baseline_level=baseline_level(base_channels),
         bucket_seconds=float(GRID_SECONDS),
-        _baseline_buckets=base_buckets,
+        baseline_bucket_map=base_buckets,
     )
 
 

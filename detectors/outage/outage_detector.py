@@ -415,7 +415,7 @@ class RouteOutageDetector:
     _parsed_cache_order: List[str] = field(default_factory=list, init=False)
 
     @staticmethod
-    def _query_files(query_start, query_end):
+    def query_files(query_start, query_end):
         """The decoded text files that back the query range.
 
         Only used to list the sources in the report; the analysis itself
@@ -435,7 +435,7 @@ class RouteOutageDetector:
         24-hour baseline used to read as ~17 GB of text.  The text path
         stays as a fallback for a window the parquet cache cannot serve.
         """
-        asn_int = self._asn_int(asn)
+        asn_int = self.asn_int(asn)
 
         try:
             from detectors.outage.outage_features_parquet import (
@@ -476,7 +476,7 @@ class RouteOutageDetector:
             return {}
 
     @staticmethod
-    def _asn_int(asn) -> int:
+    def asn_int(asn) -> int:
         try:
             text = str(asn).strip()
             if text.upper().startswith("AS"):
@@ -551,7 +551,7 @@ class RouteOutageDetector:
 
         # The report lists the files the analysis was based on.  When the
         # caller supplied the series there are no files of ours to name.
-        data_files = [] if timeseries_supplied else self._query_files(query_start, query_end)
+        data_files = [] if timeseries_supplied else self.query_files(query_start, query_end)
 
         if not timeseries:
             logger.info(

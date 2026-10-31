@@ -67,7 +67,7 @@ KEEP_AS_IS = {
 }
 
 
-def _is_kept(rel: str) -> bool:
+def is_kept(rel: str) -> bool:
     """Whether a path may keep referring to the legacy file names.
 
     The builders and the archive tooling have to name the legacy files:
@@ -108,7 +108,7 @@ def main() -> int:
             rel = path.relative_to(ROOT).as_posix()
         except ValueError:
             continue
-        if _is_kept(rel):
+        if is_kept(rel):
             continue
         if rewrite(path):
             changed.append(rel)

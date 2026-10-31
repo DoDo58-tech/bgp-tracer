@@ -77,7 +77,7 @@ ROUTE_KINDS = (
 )
 
 
-def _num(value: Any) -> Optional[float]:
+def num(value: Any) -> Optional[float]:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -101,7 +101,7 @@ def read_buckets(block: Any) -> Dict[datetime, Dict[str, Any]]:
 
 def channel_value(entry: Dict[str, Any], channel: str) -> float:
     for key in CHANNEL_FEATURES[channel]:
-        val = _num(entry.get(key))
+        val = num(entry.get(key))
         if val is not None:
             return val
     return 0.0
@@ -249,9 +249,9 @@ def traffic_trough(cache: Dict[str, Any]) -> Optional[datetime]:
         ts = parse_timestamp(e.get("timestamp") or e.get("time"))
         if ts is None:
             continue
-        val = _num(e.get("current_value"))
+        val = num(e.get("current_value"))
         if val is None:
-            val = _num(e.get("value"))
+            val = num(e.get("value"))
         if val is None:
             continue
         if best is None or val < best[1]:

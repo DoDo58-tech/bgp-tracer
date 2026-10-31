@@ -146,7 +146,7 @@ class TrafficMeasurement:
         }
 
 
-def _z_and_drop(window: np.ndarray, baseline: np.ndarray) -> Tuple[float, float]:
+def z_and_drop(window: np.ndarray, baseline: np.ndarray) -> Tuple[float, float]:
     """The worst z-score of the window and the drop at its trough.
 
     The window and the baseline are right-aligned, so index *i* of one
@@ -174,7 +174,7 @@ def _z_and_drop(window: np.ndarray, baseline: np.ndarray) -> Tuple[float, float]
     return z_min, pct_drop
 
 
-def _align_baseline(weeks: Sequence[np.ndarray], length: int) -> np.ndarray:
+def align_baseline(weeks: Sequence[np.ndarray], length: int) -> np.ndarray:
     """Right-align the baseline weeks and average them."""
     usable = [w for w in weeks if w.size > 0]
     if not usable:
@@ -183,7 +183,7 @@ def _align_baseline(weeks: Sequence[np.ndarray], length: int) -> np.ndarray:
     return np.mean(np.vstack(tail), axis=0)
 
 
-def _within(stamp: str, start: datetime, end: datetime) -> bool:
+def within(stamp: str, start: datetime, end: datetime) -> bool:
     """Whether a timestamp sits inside a window.
 
     The timestamp comes from Radar as an ISO string in UTC.  The
@@ -201,7 +201,7 @@ def _within(stamp: str, start: datetime, end: datetime) -> bool:
     return start <= moment <= end
 
 
-def _trough_time(stamps: Sequence[str], series: np.ndarray) -> str:
+def trough_time(stamps: Sequence[str], series: np.ndarray) -> str:
     """The timestamp of the lowest sample of the series."""
     if series.size == 0 or not stamps:
         return ""
@@ -211,7 +211,7 @@ def _trough_time(stamps: Sequence[str], series: np.ndarray) -> str:
     return stamps[index]
 
 
-def _spans(start: datetime, end: datetime) -> List[Tuple[datetime, datetime]]:
+def measurement_spans(start: datetime, end: datetime) -> List[Tuple[datetime, datetime]]:
     """The measurement window and the baseline weeks, as one span list.
 
     All of these are fetched together, so Radar normalises them on one
@@ -226,20 +226,20 @@ def _spans(start: datetime, end: datetime) -> List[Tuple[datetime, datetime]]:
     return spans
 
 
-def _cache_key(series_id: str, scope: str, lo: datetime, hi: datetime) -> Path:
+def cache_key_for(series_id: str, scope: str, lo: datetime, hi: datetime) -> Path:
     tag = "prefix" if scope == "prefix" else "asn"
     name = f"{tag}_{series_id.replace('/', '_')}_{lo:%Y%m%d%H%M}_{hi:%Y%m%d%H%M}.json"
     return CACHE_DIR / name
 
 
-def _cache_path(series_id: str, scope: str, lo: datetime, hi: datetime,
+def cache_path_for(series_id: str, scope: str, lo: datetime, hi: datetime,
                 endpoint: str = "http") -> Path:
     tag = "prefix" if scope == "prefix" else "asn"
     safe = series_id.replace("/", "_").replace(":", "_")
     return CACHE_DIR / f"{endpoint}_{tag}_{safe}_{lo:%Y%m%d%H%M}_{hi:%Y%m%d%H%M}.json"
 
 
-def _read_cache(path: Path) -> Optional[Tuple[List[str], List[float]]]:
+def read_cache(path: Path) -> Optional[Tuple[List[str], List[float]]]:
     if not path.is_file():
         return None
     try:
@@ -253,7 +253,7 @@ def _read_cache(path: Path) -> Optional[Tuple[List[str], List[float]]]:
     return list(stamps), [float(v) for v in values]
 
 
-def _write_cache(path: Path, stamps: Sequence[str], values: Sequence[float]) -> None:
+def write_cache(path: Path, stamps: Sequence[str], values: Sequence[float]) -> None:
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")
@@ -266,7 +266,7 @@ def _write_cache(path: Path, stamps: Sequence[str], values: Sequence[float]) -> 
         logger.debug("[gt-verify] traffic cache write failed: %r", exc)
 
 
-def _fetch_shared(api, series_id: str, scope: str,
+def fetch_shared(api, series_id: str, scope: str,
                   spans: Sequence[Tuple[datetime, datetime]],
                   endpoint: str = "http",
                   ) -> Tuple[Dict[Tuple[datetime, datetime], Tuple[List[str], List[float]]], str]:
@@ -291,8 +291,8 @@ def _fetch_shared(api, series_id: str, scope: str,
 
     lo = min(s for s, _ in spans)
     hi = max(e for _, e in spans)
-    cache_path = _cache_path(str(series_id), scope, lo, hi, endpoint)
-    cached = _read_cache(cache_path)
+    cache_path = cache_path_for(str(series_id), scope, lo, hi, endpoint)
+    cached = read_cache(cache_path)
     if cached is not None:
         stamps, values = cached
     else:
@@ -303,7 +303,7 @@ def _fetch_shared(api, series_id: str, scope: str,
             last_error = str(exc)[:300]
             stamps, values = [], []
         if stamps:
-            _write_cache(cache_path, stamps, values)
+            write_cache(cache_path, stamps, values)
         else:
             return {
                 span: ([], []) for span in spans
@@ -323,7 +323,7 @@ def _fetch_shared(api, series_id: str, scope: str,
     return out, ""
 
 
-def _slice(series: Tuple[List[str], List[float]], start: datetime,
+def slice_series(series: Tuple[List[str], List[float]], start: datetime,
            end: datetime) -> np.ndarray:
     """The samples of the series that fall inside the window."""
     stamps, values = series
@@ -344,8 +344,8 @@ def measure(api, series_id: str, start: datetime, end: datetime,
         event_id=event_id, scope=scope, series_id=str(series_id),
     )
 
-    spans = _spans(start, end)
-    fetched, error = _fetch_shared(api, str(series_id), scope, spans,
+    spans = measurement_spans(start, end)
+    fetched, error = fetch_shared(api, str(series_id), scope, spans,
                                    endpoint=endpoint)
     if error:
         measurement.error = error
@@ -402,7 +402,7 @@ def measure(api, series_id: str, start: datetime, end: datetime,
     weeks: List[np.ndarray] = []
     for week in range(1, BASELINE_WEEKS + 1):
         span = spans[week]
-        base = _slice(fetched[span], span[0], span[1])
+        base = slice_series(fetched[span], span[0], span[1])
         if base.size:
             weeks.append(base)
     if not weeks:
@@ -415,11 +415,11 @@ def measure(api, series_id: str, start: datetime, end: datetime,
         measurement.error = "baseline too short"
         measurement.no_data_reason = "baseline_too_short"
         return measurement
-    baseline = _align_baseline(weeks, length)
+    baseline = align_baseline(weeks, length)
     measurement.n_baseline = int(baseline.size)
 
-    measurement.z_min, measurement.pct_drop = _z_and_drop(event, baseline)
-    measurement.trough_time = _trough_time(
+    measurement.z_min, measurement.pct_drop = z_and_drop(event, baseline)
+    measurement.trough_time = trough_time(
         [stamps[i] for i in event_idx], event
     )
     # The trough has to sit inside the *padded* window -- the published
@@ -436,7 +436,7 @@ def measure(api, series_id: str, start: datetime, end: datetime,
     # The check is still worth making explicit: the trough has to be in
     # the window that was actually compared against the baseline, or the
     # drop and the window would be two different things.
-    measurement.trough_in_event = _within(
+    measurement.trough_in_event = within(
         measurement.trough_time,
         start - EVENT_LEAD,
         end + EVENT_TAIL,

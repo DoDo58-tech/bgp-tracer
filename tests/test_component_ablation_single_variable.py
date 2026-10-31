@@ -41,7 +41,7 @@ class _FakeContext:
             setattr(self, key, value)
 
 
-def _engine():
+def make_engine():
     """A workflow engine with the ablation switches under test.
 
     The engine is built without running anything: the gate is a plain
@@ -60,7 +60,7 @@ def test_joint_evidence_ablation_does_not_short_circuit_reasoning():
     was ablated -- using it would be using a stage's own absence as
     evidence against the next stage.
     """
-    engine = _engine()
+    engine = make_engine()
     engine.ablate["joint_evidence"] = True
     engine.skip_unnecessary_analysis = True
 
@@ -88,7 +88,7 @@ def test_joint_evidence_ablation_keeps_reasoning_even_without_anomalies():
     An event with no explicit anomalies is exactly the case where the
     gate would fire, so it is the case worth pinning.
     """
-    engine = _engine()
+    engine = make_engine()
     engine.ablate["joint_evidence"] = True
     engine.skip_unnecessary_analysis = True
 
@@ -103,7 +103,7 @@ def test_the_gate_still_fires_for_a_normal_run():
     threshold still skips reasoning.  That is the gate doing its job,
     and it is what makes the reasoning ablation arm comparable.
     """
-    engine = _engine()
+    engine = make_engine()
     engine.ablate["joint_evidence"] = False
     engine.skip_unnecessary_analysis = True
 
@@ -137,7 +137,7 @@ def test_the_baseline_arm_suspends_the_gate_too():
     )
     try:
         reset_ablation_switches()
-        engine = _engine()
+        engine = make_engine()
         engine.ablate["joint_evidence"] = False
         engine.skip_unnecessary_analysis = True
 
@@ -167,7 +167,7 @@ def test_the_baseline_arm_suspends_the_gate_too():
 
 def test_the_gate_still_fires_for_a_strong_tier_run():
     """A strong joint tier lets reasoning through, as before."""
-    engine = _engine()
+    engine = make_engine()
     engine.ablate["joint_evidence"] = False
     engine.skip_unnecessary_analysis = True
 
@@ -186,7 +186,7 @@ def test_each_ablation_switch_is_read_independently():
     The arms are compared against each other, so a switch that turned
     two stages off would make every comparison involving it wrong.
     """
-    engine = _engine()
+    engine = make_engine()
     assert not any(engine.ablate.values()), (
         "the engine came up with an ablation already active")
 

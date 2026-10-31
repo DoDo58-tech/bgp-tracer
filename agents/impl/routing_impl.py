@@ -22,7 +22,7 @@ def get_outage_detector():
     return RouteOutageDetector()
 
 
-def _outage_baseline_start(start_dt, end_dt, periodicity):
+def outage_baseline_start(start_dt, end_dt, periodicity):
     """The start of the baseline the outage detector needs.
 
     The outage detector compares the event window against a baseline that
@@ -43,7 +43,7 @@ def _outage_baseline_start(start_dt, end_dt, periodicity):
         return start_dt
 
 
-def _hijack_from_shared(shared, asn, start_dt, end_dt, skip_forge):
+def hijack_from_shared(shared, asn, start_dt, end_dt, skip_forge):
     """Shape the shared scan's hijack output like the detector's own."""
     result = (shared or {}).get("hijack")
     if not result:
@@ -75,7 +75,7 @@ def _hijack_from_shared(shared, asn, start_dt, end_dt, skip_forge):
     }
 
 
-def _leak_from_shared(shared, asn, start_time, end_time):
+def leak_from_shared(shared, asn, start_time, end_time):
     """Shape the shared scan's leak output like the detector's own."""
     result = (shared or {}).get("leak")
     if result is None:
@@ -308,7 +308,7 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
 
         baseline_start = None
         if "outage" in requested:
-            baseline_start = _outage_baseline_start(start_dt, end_dt, periodicity)
+            baseline_start = outage_baseline_start(start_dt, end_dt, periodicity)
 
         shared = {}
         if requested:
@@ -343,7 +343,7 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
             }
             logger.info("Hijack streaming skipped (light mode single-pass)")
         else:
-            hijack_results = _hijack_from_shared(shared, asn, start_dt, end_dt, skip_forge)
+            hijack_results = hijack_from_shared(shared, asn, start_dt, end_dt, skip_forge)
             if not hijack_results.get("success"):
                 logger.warning(
                     f"Hijack detection failed for AS{asn}: {hijack_results.get('error', 'unknown')}. "
@@ -377,7 +377,7 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
             }
             logger.info("Leak detection skipped in light mode")
         else:
-            leak_result = _leak_from_shared(shared, asn, start_time, end_time)
+            leak_result = leak_from_shared(shared, asn, start_time, end_time)
 
         if skip_outage:
             # Same placeholder problem as the leak branch above: a skipped

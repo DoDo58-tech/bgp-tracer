@@ -64,7 +64,7 @@ def load_rows(path: Path) -> list[dict]:
         return [dict(r) for r in csv.DictReader(fh)]
 
 
-def _source_path(name: str) -> Path:
+def source_path(name: str) -> Path:
     """The file holding a version, whether it is archived or not."""
     live = GT_DIR / name
     if live.is_file():
@@ -75,7 +75,7 @@ def _source_path(name: str) -> Path:
 def main() -> int:
     pool: dict[str, dict] = {}
     for name in SOURCE_FILES:
-        path = _source_path(name)
+        path = source_path(name)
         for row in load_rows(path):
             eid = (row.get("event_id") or "").strip()
             if not eid:

@@ -107,9 +107,9 @@ def test_final_dataset_has_no_duplicate_incidents():
     seen: dict[tuple, str] = {}
     for row in load_rows():
         cause = (row.get("cause") or "").strip()
-        victim = _asn(row.get("victim_as"))
+        victim = asn(row.get("victim_as"))
         if cause == "route_leak":
-            actor = _asn(row.get("leak_as")) or victim
+            actor = asn(row.get("leak_as")) or victim
         else:
             actor = victim
         key = (actor, victim, row.get("start_utc"), row.get("end_utc"))
@@ -146,7 +146,7 @@ def test_traffic_impact_is_specific_to_the_event():
             f"victim (z={victim_z:.2f} against {control_z:.2f})")
 
 
-def _asn(value: str) -> str:
+def asn(value: str) -> str:
     text = (value or "").strip().upper()
     return text[2:] if text.startswith("AS") else text
 

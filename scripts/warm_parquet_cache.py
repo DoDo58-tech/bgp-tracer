@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
-def _build_one(stamp: str) -> tuple[str, str]:
+def build_one(stamp: str) -> tuple[str, str]:
     """Build the parquet for one window stamp.
 
     Returns ``(stamp, status)`` where status is ``cached``, ``missing``
@@ -98,7 +98,7 @@ def main() -> int:
     counts: dict[str, int] = {}
     done = 0
     with ProcessPoolExecutor(max_workers=args.workers) as pool:
-        futures = {pool.submit(_build_one, stamp): stamp for stamp in stamps}
+        futures = {pool.submit(build_one, stamp): stamp for stamp in stamps}
         for future in as_completed(futures):
             try:
                 stamp, status = future.result()

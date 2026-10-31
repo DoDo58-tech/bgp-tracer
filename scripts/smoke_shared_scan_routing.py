@@ -39,7 +39,7 @@ def main() -> int:
     elapsed = time.time() - t0
     print(f"[smoke] done in {elapsed:.1f}s")
 
-    def _count(key):
+    def count(key):
         v = result.get(key)
         return len(v) if isinstance(v, list) else (0 if v is None else v)
 
@@ -49,8 +49,8 @@ def main() -> int:
     summary = {
         "elapsed_seconds": round(elapsed, 1),
         "success": result.get("success"),
-        "origin_hijacked": _count("origin_hijacked"),
-        "origin_hijacking": _count("origin_hijacking"),
+        "origin_hijacked": count("origin_hijacked"),
+        "origin_hijacking": count("origin_hijacking"),
         "leak_count": result.get("leak_count"),
         "leak_total_detected": result.get("leak_count_total"),
         "leak_skipped": result.get("leak_analysis_skipped"),

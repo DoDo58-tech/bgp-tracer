@@ -247,7 +247,7 @@ class CausalVerdict:
 # ── The data plane's deviation ─────────────────────────────────────────
 
 
-def _as_float(value: Any) -> Optional[float]:
+def as_float_value(value: Any) -> Optional[float]:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -265,7 +265,7 @@ def _as_float(value: Any) -> Optional[float]:
 _PLACEHOLDER_MEAN = 0.001
 
 
-def _is_placeholder_mean(value: float) -> bool:
+def is_placeholder_mean(value: float) -> bool:
     """Whether ``value`` is the sentinel baseline rather than a measurement."""
     return abs(value - _PLACEHOLDER_MEAN) < 1e-12
 
@@ -306,38 +306,38 @@ def traffic_deviation(point: Dict[str, Any]) -> Optional[float]:
     raw = point.get("raw_event")
     raw = raw if isinstance(raw, dict) else {}
 
-    value = _as_float(point.get("current_value"))
+    value = as_float_value(point.get("current_value"))
     if value is None:
-        value = _as_float(raw.get("current_value"))
+        value = as_float_value(raw.get("current_value"))
     if value is None:
-        value = _as_float(point.get("value"))
+        value = as_float_value(point.get("value"))
     if value is None:
-        value = _as_float(raw.get("value"))
+        value = as_float_value(raw.get("value"))
 
     # The baseline, read from the fields that actually carry a
     # measurement.  The placeholder is recognised and refused, because a
     # baseline of 0.001 is a stand-in for "unknown", not an observation.
-    mean = _as_float(point.get("historical_mean"))
+    mean = as_float_value(point.get("historical_mean"))
     if mean is None:
-        mean = _as_float(raw.get("historical_mean"))
+        mean = as_float_value(raw.get("historical_mean"))
     if mean is None:
-        mean = _as_float(point.get("baseline_mean"))
+        mean = as_float_value(point.get("baseline_mean"))
     if mean is None:
-        mean = _as_float(raw.get("baseline_mean"))
+        mean = as_float_value(raw.get("baseline_mean"))
     if mean is None:
-        candidate = _as_float(point.get("mean"))
+        candidate = as_float_value(point.get("mean"))
         if candidate is None:
-            candidate = _as_float(raw.get("mean"))
-        if candidate is not None and not _is_placeholder_mean(candidate):
+            candidate = as_float_value(raw.get("mean"))
+        if candidate is not None and not is_placeholder_mean(candidate):
             mean = candidate
 
     if value is not None and mean is not None and mean != 0:
         # The relative deviation, in the units the estimator compares in.
         return (value - mean) / abs(mean)
 
-    z = _as_float(point.get("z_score"))
+    z = as_float_value(point.get("z_score"))
     if z is None:
-        z = _as_float(raw.get("z_score"))
+        z = as_float_value(raw.get("z_score"))
     if z is None:
         return None
     # The stored z-score's sign is not trusted to carry the direction,
@@ -486,6 +486,12 @@ def placebo_displacements(
         return []
 
     out: List[float] = []
+    # The baseline's buckets indexed by clock position, so the coverage of
+    # a window's positions is a lookup rather than a scan.
+    by_position: Dict[str, List[datetime]] = {}
+    for stamp in baseline:
+        by_position.setdefault(stamp.strftime("%H:%M"), []).append(stamp)
+
     for index in range(half_width_slots, len(stamps) - half_width_slots):
         lo = index - half_width_slots
         hi = index + half_width_slots
@@ -499,6 +505,44 @@ def placebo_displacements(
         expected = float(np.mean([baseline_map.get(s.strftime("%H:%M"), 0.0)
                                   for s in stamps[lo:hi + 1]]))
         if expected <= 0:
+            continue
+        # A placebo whose counterfactual is **incomplete** is not a
+        # measurement of ordinary behaviour, and it must not enter the
+        # null.
+        #
+        # The clock positions near the *start* of the baseline period have
+        # fewer days behind them, and the positions after the last
+        # baseline day have none at all.  Such a window's "expected" is
+        # an average over a shorter period, and it is systematically too
+        # small: the measured deviation against it is enormous -- six or
+        # seven times normal -- which would make the null so wide that no
+        # incident could ever pass it.
+        #
+        # A window that also straddles the end of the baseline period
+        # has the same defect, because part of it lies in the future
+        # relative to the anchor.
+        #
+        # Both are excluded by requiring every clock position in the
+        # window to have at least one preceding day to measure it
+        # against.  The null is then built only from placebos that are
+        # measured the same way the incident is measured, which is the
+        # whole point of a placebo.
+        positions = {s.strftime("%H:%M") for s in stamps[lo:hi + 1]}
+        if not positions:
+            continue
+        complete = True
+        for position in positions:
+            if baseline_map.get(position, 0.0) <= 0:
+                complete = False
+                break
+            days = sum(
+                1 for stamp in by_position.get(position, ())
+                if 0 < (window_start - stamp).total_seconds() <= 4 * 86400
+            )
+            if days < 1:
+                complete = False
+                break
+        if not complete:
             continue
         out.append(abs(observed / expected - 1.0))
     return out
@@ -625,6 +669,14 @@ def attribute(
     # ── The control plane, measured at the trough ────────────────────────
     channel_report: Dict[str, Dict[str, Any]] = {}
     candidates: List[Tuple[float, str, Dict[str, Any]]] = []
+    #: The channel that came closest to being usable, and why it did not
+    #: make it.  Without this the estimator cannot say *which* test a
+    #: channel failed, and "no control-plane edge" would cover both
+    #: "the control plane did not move" and "it moved, but not
+    #: distinguishably from an ordinary day" -- two very different
+    #: findings.
+    closest: Optional[Tuple[float, str, str, Dict[str, Any]]] = None
+
     for channel in CONTROL_PLANE_CHANNELS:
         raw = control.channel(channel)
         if len(raw) < 2 or float(np.ptp(raw)) < 1e-9:
@@ -648,11 +700,22 @@ def attribute(
             "expected": displacement.get("expected"),
         }
         channel_report[channel] = report
+
         if deviation < cfg["min_relative_displacement"]:
-            continue
-        if null <= 1e-9:
-            continue
-        if deviation / null < cfg["min_exclusivity_ratio"]:
+            failure = "below_displacement_floor"
+        elif null <= 1e-9:
+            # Without a placebo null the channel cannot be shown to be
+            # distinctive, however far it moved.
+            failure = "no_placebo_null"
+        elif deviation / null < cfg["min_exclusivity_ratio"]:
+            failure = "not_exclusive"
+        else:
+            failure = ""
+
+        if failure:
+            report["failed"] = failure
+            if closest is None or deviation > closest[0]:
+                closest = (deviation, channel, failure, report)
             continue
         candidates.append((deviation / null, channel, report))
 
@@ -662,6 +725,22 @@ def attribute(
                    for v in channel_report.values()):
             return stop("control_plane_flat", {"V1": "fail"},
                         {"channels": channel_report})
+        if closest is not None and closest[2] == "not_exclusive":
+            # The control plane *did* move, and it moved further than the
+            # absolute floor -- but an ordinary day at the same hour
+            # moves at least as far.  That is a refutation of
+            # distinctiveness, and it is reported as one.
+            return stop("not_exclusive",
+                        {"V1": "pass", "V2": "fail", "V3": "not_run",
+                         "V4": "not_run"},
+                        {"channels": channel_report,
+                         "exclusivity": {
+                             "channel": closest[1],
+                             "effect": round(closest[0], 4),
+                             "null": closest[3].get("null"),
+                             "ratio": (round(closest[0] / closest[3]["null"], 4)
+                                       if closest[3].get("null") else None),
+                         }})
         return stop("no_control_plane_edge", blocked,
                     {"channels": channel_report})
 

@@ -59,7 +59,7 @@ def as_utc_naive(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _try_iso(text: str) -> Optional[datetime]:
+def try_iso(text: str) -> Optional[datetime]:
     candidate = text.replace("Z", "+00:00")
     try:
         return datetime.fromisoformat(candidate)
@@ -81,7 +81,7 @@ def parse_timestamp_strict(value: object) -> Optional[datetime]:
     if not text:
         return None
 
-    iso = _try_iso(text)
+    iso = try_iso(text)
     if iso is not None:
         return as_utc_naive(iso)
 
@@ -89,7 +89,7 @@ def parse_timestamp_strict(value: object) -> Optional[datetime]:
     # normalised before the format table is tried.
     normalised = text.replace("/", "-")
     if normalised != text:
-        iso = _try_iso(normalised)
+        iso = try_iso(normalised)
         if iso is not None:
             return as_utc_naive(iso)
 
