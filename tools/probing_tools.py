@@ -139,7 +139,7 @@ class TracerouteProbe:
                                     lambda ip=hop_ip: socket.gethostbyaddr(ip)
                                 )
                                 hop_entry["name"] = name
-                            except (ValueError):
+                            except ValueError:
                                 pass
 
                             method_success = True
@@ -219,7 +219,7 @@ class TracerouteProbe:
                 if code and code.isdigit() and 200 <= int(code) < 600:
                     internet_reachable = True
                     break
-            except (ValueError):
+            except ValueError:
                 continue
 
         if not internet_reachable:
@@ -261,7 +261,7 @@ class TracerouteProbe:
                         "rtt_ms": None, "note": "reachability confirmed via curl"
                     }]
                     return result
-            except (ValueError):
+            except ValueError:
                 continue
 
         # Target IP not reachable on common ports, but internet works
@@ -315,7 +315,7 @@ class TracerouteProbe:
             result.data["method"] = self.method
         except subprocess.TimeoutExpired:
             result.error = "timeout"
-        except (AttributeError) as e:
+        except AttributeError as e:
             result.error = str(e)
 
         return result
@@ -337,7 +337,7 @@ class TracerouteProbe:
         return "\n".join(lines)
 
 
-def parse_system_traceroute(output_text) -> List[Dict[str, Any]]:
+def parse_system_traceroute(output_text):
     """Parse system traceroute output into structured hop data."""
     import re
     output = output_text  # NOTE: parameter is `output_text`; body uses `output`.

@@ -26,7 +26,7 @@ _TOKEN_RE = re.compile(
 _ASN_RE = re.compile(r"^quick_(?:AS)?(\d+)_")
 
 
-def parse_datetime(value: object) -> Optional[datetime]:
+def parse_datetime(value: object):
     """Parse the timestamp spellings that appear in filenames and GT rows."""
     if value is None:
         return None
@@ -51,7 +51,7 @@ def parse_datetime(value: object) -> Optional[datetime]:
     return None
 
 
-def parse_window_from_stem(stem: str) -> Optional[Tuple[datetime, datetime]]:
+def parse_window_from_stem(stem: str):
     """Return ``(start, end)`` encoded in a cache filename, or ``None``."""
     tokens: list[Tuple[int, int, int, int, int, int]] = []
     for m in _TOKEN_RE.finditer(stem):
@@ -72,7 +72,7 @@ def parse_window_from_stem(stem: str) -> Optional[Tuple[datetime, datetime]]:
     return start, end
 
 
-def cache_asn(path: Path) -> Optional[str]:
+def cache_asn(path: Path):
     """ASN encoded in a cache filename (``quick_12479_...``), if any."""
     m = _ASN_RE.match(path.stem)
     return m.group(1) if m else None
@@ -87,12 +87,12 @@ class CacheMatch:
     overlap_seconds: float = 0.0
 
     @property
-    def strict(self) -> bool:
+    def strict(self):
         """True when the cache window was actually used to justify the match."""
         return self.kind in ("event_id", "exact", "contains", "overlap")
 
 
-def candidates(quick_dir: Path) -> Iterable[Path]:
+def candidates(quick_dir: Path):
     """Every quick cache under ``quick_dir``, at any depth.
 
     The tree holds caches in nested run directories as well as at the top
@@ -110,7 +110,7 @@ def candidates(quick_dir: Path) -> Iterable[Path]:
     return sorted(quick_dir.rglob("quick_*.json"))
 
 
-def newest(paths: list[Path]) -> Path:
+def newest(paths: list[Path]):
     """Return the most recently written file.
 
     A cache is a measurement of one window at one point in time.  When
@@ -133,7 +133,7 @@ def resolve_cache(
     event_id: Optional[str] = None,
     allow_same_date: bool = False,
     min_overlap_frac: float = 0.5,
-) -> Optional[CacheMatch]:
+):
     """Resolve one event to one cache file, structurally."""
     if not quick_dir.is_dir():
         return None
@@ -212,7 +212,7 @@ def infer_hour_offset(
     *,
     min_share: float = 0.9,
     max_shift: int = 14,
-) -> int:
+):
     """Infer a whole-hour shift that aligns event timestamps with a window."""
     if start is None or end is None or end <= start:
         return 0
@@ -220,7 +220,7 @@ def infer_hour_offset(
     if not parsed:
         return 0
 
-    def share(hours: int) -> float:
+    def share(hours: int):
         shift = timedelta(hours=hours)
         inside = sum(1 for t in parsed if start <= t + shift <= end)
         return inside / len(parsed)
@@ -237,11 +237,11 @@ def infer_hour_offset(
     return best_shift if best_share >= min_share else 0
 
 
-def cache_identity(path: Path) -> dict:
+def cache_identity(path: Path):
     """Read the identifying fields of a cache without loading its timeline."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (ValueError):
+    except ValueError:
         return {}
     return {
         "event_id": data.get("event_id"),

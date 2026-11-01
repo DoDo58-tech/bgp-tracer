@@ -129,7 +129,7 @@ async def rpki_validate(tool_input, session):
 _roa_cache: tuple[float, List[dict]] | None = None
 
 
-async def fetch_roas_cached(session) -> List[dict]:
+async def fetch_roas_cached(session):
     """Fetch all ROAs from Cloudflare, caching for 5 minutes."""
     global _roa_cache
     import time
@@ -184,12 +184,12 @@ def build_roa_map(roas: List[dict]):
                 "expires": expires,
                 "validation": roa.get("validation", ""),
             })
-        except (ValueError):
+        except ValueError:
             continue
     return mp
 
 
-def validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple[str, dict | None]:
+def validate_announcement(prefix: str, origin_asn: str, roa_map: dict):
     """
     Validate a single announcement against ROA map.
     Returns: (status, matched_roa_dict)
@@ -202,7 +202,7 @@ def validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple[
 
     try:
         ann_prefix = ip_network(prefix, strict=False)
-    except (ValueError):
+    except ValueError:
         return "not_found", None
 
     candidates = []
@@ -212,7 +212,7 @@ def validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple[
                 for roa in roa_list:
                     if roa["origin_asn"] == origin_asn:
                         candidates.append(roa)
-        except (ValueError):
+        except ValueError:
             continue
 
     if not candidates:
@@ -232,7 +232,7 @@ def validate_announcement(prefix: str, origin_asn: str, roa_map: dict) -> tuple[
     return "not_found", None
 
 
-def extract_announcements(routing_data, asn) -> List[dict]:
+def extract_announcements(routing_data, asn):
     """Extract announcements from routing_result for a given AS."""
     announcements = []
     for key in ["origin_hijacked", "forge_hijacked", "route_leaks"]:

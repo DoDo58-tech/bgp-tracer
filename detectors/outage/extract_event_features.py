@@ -141,13 +141,13 @@ def download_and_decode(url, gz_path, txt_path):
                 try:
                     proc.kill()
                     proc.wait(timeout=5)
-                except (ValueError):
+                except ValueError:
                     pass
             raise
         if retcode != 0:
             return False
         return written > 0
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.debug(f"Download/decode failed for {url}: {e}")
         return False
 
@@ -200,7 +200,7 @@ def find_update_files(time_start, time_end, auto_download=True):
         for fut in as_completed(futures):
             try:
                 (rounded_time, txt_path), ok = fut.result()
-            except (AttributeError) as exc:
+            except AttributeError as exc:
                 logger.debug(f"download worker crashed: {exc}")
                 continue
             if ok:
@@ -584,7 +584,7 @@ def process_single_file_timeseries(file_path, target_as_list, prefix_to_target=N
                     route_state['had_withdraw'] = True
                     route_state['withdraw_count'] += 1
                     route_state['last_as_path'] = None
-    except (ValueError) as e:
+    except ValueError as e:
         print(f"Warning: failed to process file {file_path}: {e}")
 
     for bucket_dt, b in buckets.items():
@@ -966,7 +966,7 @@ def process_event(row):
                 if len(parts) >= 2:
                     time_str = parts[1]  # YYYYMMDD.HHMM
                     return datetime.strptime(time_str, '%Y%m%d.%H%M')
-            except (ValueError):
+            except ValueError:
                 pass
             return datetime.min
         
@@ -1019,7 +1019,7 @@ def process_event(row):
                 try:
                     ts_dt = datetime.fromisoformat(ts_str)
                     row = {'timestamp': ts_dt.strftime('%Y-%m-%d %H:%M:%S')}
-                except (ValueError):
+                except ValueError:
                     row = {'timestamp': ts_str}
                 row.update(features)
                 csv_data.append(row)
@@ -1073,7 +1073,7 @@ def process_event(row):
         
         return result
         
-    except (AttributeError) as e:
+    except AttributeError as e:
         print(f"  Error: failed to process event {event_name}: {e}")
         import traceback
         traceback.print_exc()

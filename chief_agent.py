@@ -260,7 +260,7 @@ class ChiefExpertAgent:
                         end_time=normalize_time(multi_end),
                         output_dir=PROJECT_ROOT / "results"
                     )
-                except (AttributeError) as e:
+                except AttributeError as e:
                     logger.warning(f"Batch HTML report failed: {e}")
 
             return {
@@ -293,7 +293,7 @@ class ChiefExpertAgent:
                 v = getattr(result, attr, None)
                 if v:
                     return int(v)
-        except (ValueError):
+        except ValueError:
             pass
         try:
             from llm.llm_factory import get_global_token_counter
@@ -301,7 +301,7 @@ class ChiefExpertAgent:
             if tok_before is not None:
                 return max(0, now - int(tok_before))
             return now
-        except (ValueError):
+        except ValueError:
             pass
         return 0
 
@@ -337,7 +337,7 @@ class ChiefExpertAgent:
             try:
                 from llm.llm_factory import get_global_token_counter as _gtc
                 _tok_before = int(_gtc())
-            except (ValueError):
+            except ValueError:
                 _tok_before = None
 
             result = await agent.run(
@@ -361,7 +361,7 @@ class ChiefExpertAgent:
                 report_path = report_path or (
                     (_bucket.get("generate_report") or {}).get("report_path", "")
                 )
-            except (ValueError):
+            except ValueError:
                 pass
             report_generated = valid_llm_html_report(report_path)
             partial_success = bool(result.success) and report_generated
@@ -465,7 +465,7 @@ class ChiefExpertAgent:
                     from agents.react_agent import shared_evidence
                     if react_result.run_id:
                         evidence = shared_evidence(react_result.run_id) or {}
-                except (ValueError):
+                except ValueError:
                     evidence = {}
 
             routing_payload = evidence.get("analyze_routing") or {}
@@ -554,7 +554,7 @@ class ChiefExpertAgent:
                 "channel": verdict.channel,
                 "lag": verdict.lag_seconds,
                 "effect": verdict.effect,
-                "exclusivity_ratio": verdict.exclusivity_ratio,
+                "exclusivity_probability": verdict.exclusivity_probability,
                 "tau_traffic": (verdict.tau_response.isoformat()
                                 if verdict.tau_response else None),
                 "tau_routing": verdict.tau_control,
@@ -564,7 +564,7 @@ class ChiefExpertAgent:
                 f"reason={attribution['reason']} channel={attribution['channel']}")
             return attribution, "ok"
 
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"[HCAF post-react] failed: {e}")
             return {}, "failed"
 
@@ -591,7 +591,7 @@ class ChiefExpertAgent:
         try:
             from llm.llm_factory import get_global_token_counter as _gtc
             _tok_before = int(_gtc())
-        except (ValueError):
+        except ValueError:
             _tok_before = None
 
         try:
@@ -773,7 +773,7 @@ class ChiefExpertAgent:
                         f"total={tokens} (prompt={pt}, completion={ct}), "
                         f"by_agent={list(tb_summary['by_agent'].keys())}"
                     )
-        except (ValueError):
+        except ValueError:
             pass
 
         # Method 3: process-wide counter, measured as a delta over the run
@@ -783,7 +783,7 @@ class ChiefExpertAgent:
                 delta = max(0, int(get_global_token_counter()) - int(tok_before))
                 if delta > tokens:
                     tokens = delta
-            except (ValueError):
+            except ValueError:
                 pass
 
         return tokens
@@ -819,7 +819,7 @@ class ChiefExpertAgent:
                 r_anom += int(rr.get(k) or 0)
             # More anomalies → higher confidence. 0 anomalies → low confidence.
             return min(1.0, 0.2 + 0.15 * min(t_anom, 4) + 0.20 * min(r_anom, 2))
-        except (ValueError):
+        except ValueError:
             return 0.0
 
     @staticmethod
@@ -862,7 +862,7 @@ class ChiefExpertAgent:
                 if isinstance(lst, list) and lst:
                     return len(lst)
             return 0
-        except (ValueError):
+        except ValueError:
             return 0
 
     def build_trace(self, context):
@@ -1105,12 +1105,12 @@ class ChiefExpertAgent:
                         continue
                     try:
                         parsed_times.append(isoparse(str(ts).replace('Z', '+00:00')))
-                    except (ValueError):
+                    except ValueError:
                         continue
                 if parsed_times:
                     detected_start = min(parsed_times).isoformat()
                     detected_end = max(parsed_times).isoformat()
-            except (ValueError):
+            except ValueError:
                 pass
 
         detected_start = detected_start or start_time
@@ -1122,7 +1122,7 @@ class ChiefExpertAgent:
                     dt = datetime.strptime(ts_str.split('Z')[0], '%Y-%m-%dT%H:%M:%S')
                     return dt.strftime('%Y-%m-%d %H:%M')
                 return ts_str
-            except (ValueError):
+            except ValueError:
                 return ts_str
 
         return normalize_ts(detected_start), normalize_ts(detected_end)
@@ -1184,7 +1184,7 @@ class ChiefExpertAgent:
                         f"direction={hcaf.get('direction')}, "
                         f"confidence={hcaf.get('confidence', 0):.0%}"
                     )
-            except (AttributeError) as _hcaf_err:
+            except AttributeError as _hcaf_err:
                 logger.warning(f"[_generate_report] Direct-mode HCAF failed: {_hcaf_err}")
 
         # Debug logging
@@ -1407,7 +1407,7 @@ def light_origin_hijack(asn, start_time, end_time):
                 prefix_to_as = merge_prefix2as_with_ipv6(
                     prefix_to_as, v6, asn=asn,
                 )
-        except (AttributeError) as _v6e:
+        except AttributeError as _v6e:
             logger.debug(f"[light-hijack] IPv6 overlay merge skipped: {_v6e}")
 
         target_owned = {p for p, owners in prefix_to_as.items()
@@ -1429,7 +1429,7 @@ def light_origin_hijack(asn, start_time, end_time):
             f"{len(origin_hijacking)} attacker origin hijacks (single-pass)"
         )
         return {"origin_hijacked": origin_hijacked, "origin_hijacking": origin_hijacking}
-    except (AttributeError) as _e:
+    except AttributeError as _e:
         logger.warning(f"[light-hijack] failed (fallback to streaming): {_e}")
         return {"origin_hijacked": [], "origin_hijacking": []}
 
@@ -1630,7 +1630,7 @@ def analyze_traffic_outage(
         out_dir.mkdir(parents=True, exist_ok=True)
         metrics.save(out_dir / f"{slug}_metrics.json")
         metrics.reset()
-    except (AttributeError) as _exc:
+    except AttributeError as _exc:
         logger.debug(f"[tracing] metrics save skipped: {_exc!r}")
     return result
 
@@ -1645,7 +1645,7 @@ def run_quick_analysis_async(
     event_id: Optional[str] = None,
     skip_leak: Optional[bool] = None,
     skip_outage: Optional[bool] = None,
-) -> dict:
+):
     """Phase 1 sync driver. 0 LLM. ~60 s. Returns the quick-phase result dict."""
     t0 = perf_counter()
     warnings: list = []
@@ -1663,7 +1663,7 @@ def run_quick_analysis_async(
             traffic_raw = {"success": False, "error": f"traffic_agent returned non-dict: {type(traffic_raw).__name__}"}
         if not traffic_raw.get("success"):
             warnings.append(f"traffic_agent: {traffic_raw.get('error', 'unknown error')}")
-    except (AttributeError) as _e:
+    except AttributeError as _e:
         logger.warning(f"[quick] traffic_agent crashed: {_e!r}")
         warnings.append(f"traffic_agent crashed: {_e!r}")
         traffic_raw = {"success": False, "error": str(_e), "anomaly_count": 0}
@@ -1680,7 +1680,7 @@ def run_quick_analysis_async(
             routing_raw = {"success": False, "error": f"routing returned non-dict: {type(routing_raw).__name__}"}
         if not routing_raw.get("success"):
             warnings.append(f"routing: {routing_raw.get('error', 'unknown error')}")
-    except (AttributeError) as _e:
+    except AttributeError as _e:
         logger.warning(f"[quick] _async_quick_routing crashed: {_e!r}")
         warnings.append(f"routing crashed: {_e!r}")
         routing_raw = {
@@ -1700,7 +1700,7 @@ def run_quick_analysis_async(
                     tr_inner.get("anomaly_window")
                     or tr_inner.get("traffic_anomaly_window")
                 )
-        except (ValueError):
+        except ValueError:
             traffic_anomaly_window = None
 
         correlation = analyze_temporal_correlation(
@@ -1711,7 +1711,7 @@ def run_quick_analysis_async(
         )
         if not isinstance(correlation, dict):
             correlation = {"summary": {}, "correlation": {}, "hypotheses": []}
-    except (AttributeError) as _e:
+    except AttributeError as _e:
         logger.warning(f"[quick] correlation analyzer crashed: {_e!r}")
         warnings.append(f"correlation crashed: {_e!r}")
         correlation = {"summary": {}, "correlation": {}, "hypotheses": []}
@@ -1784,7 +1784,7 @@ def analyze_quick(
     event_id: Optional[str] = None,
     skip_leak: Optional[bool] = None,
     skip_outage: Optional[bool] = None,
-) -> dict:
+):
     """**Phase 1** of the two-phase diagnosis. Sync. 0 LLM. ~60 s.
     
     Returns a JSON-serializable dict with raw traffic / routing / correlation
@@ -1804,7 +1804,7 @@ def analyze_deep_from_quick(
     user_input: Optional[str] = None,
     analysis_mode: str = "traffic_first",
     debate_rounds: int = 1,
-) -> dict:
+):
     """**Phase 2** of the two-phase diagnosis. Sync. ~3-5 min, runs the LLM.
     
     Returns:
@@ -1883,7 +1883,7 @@ def analyze_deep_from_quick(
         out_dir.mkdir(parents=True, exist_ok=True)
         metrics.save(out_dir / f"{slug}_metrics.json")
         metrics.reset()
-    except (AttributeError) as _exc:  # noqa: BLE001 — observability never breaks deep
+    except AttributeError as _exc:  # noqa: BLE001 — observability never breaks deep
         logger.debug(f"[tracing] deep-phase metrics save skipped: {_exc!r}")
 
     return deep_result
@@ -1911,7 +1911,7 @@ def load_quick_cache(cache_path_str):
         return None
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except (ValueError):
+    except ValueError:
         return None
 
 # CLI
@@ -2078,7 +2078,7 @@ if __name__ == "__main__":
                 end_time=args.end,
                 analysis_mode=mode_arg,
             )
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.error(f"Analysis failed: {e}\n{traceback.format_exc()}")
             sys.exit(1)
 
@@ -2106,7 +2106,7 @@ if __name__ == "__main__":
                     try:
                         from datetime import datetime as _dt
                         execution_minutes = (_dt.fromisoformat(end) - _dt.fromisoformat(start)).total_seconds() / 60.0
-                    except (ValueError):
+                    except ValueError:
                         execution_minutes = None
         execution_minutes = execution_minutes if execution_minutes is not None else 0
         token_count = result.get('token_count')

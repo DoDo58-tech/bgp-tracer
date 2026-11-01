@@ -15,6 +15,8 @@ import argparse
 import csv
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -146,14 +148,92 @@ def load_evidence(asn, lo, hi, refresh=False):
     return payload
 
 
-def main() -> int:
+def warm_cache(events):
+    """Build the parquet cache for every window the corpus needs.
+
+    The scan reads every five-minute update file in the window and in
+    the baseline days before it.  A file whose parquet is missing has
+    to be decoded from its raw text first, and the same files are
+    needed by every event.  So the cache is built once, for exactly
+    the ranges the corpus covers, and the scan then reads parquet.
+
+    The workers are few, because the decode is disk-heavy and the point
+    is to keep the machine responsive.
+    """
+    from agents.control_plane import BASELINE_DAYS
+
+    ranges = []
+    for event in events:
+        cache = load_cache_for(event)
+        if cache is None:
+            continue
+        lo, hi = scan_window(cache, event)
+        if lo is None:
+            continue
+        ranges.append((lo - timedelta(days=BASELINE_DAYS), hi))
+
+    if not ranges:
+        return
+
+    stamps = set()
+    for lo, hi in ranges:
+        stamp = lo.replace(second=0, microsecond=0)
+        stamp = stamp.replace(minute=(stamp.minute // 5) * 5)
+        while stamp <= hi:
+            stamps.add(stamp)
+            stamp += timedelta(minutes=5)
+
+    todo = [s for s in sorted(stamps) if not parquet_ready(s)]
+    if not todo:
+        print(f"parquet cache: {len(stamps)} window(s) ready")
+        return
+    print(f"parquet cache: building {len(todo)} of {len(stamps)} window(s)",
+          flush=True)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        list(pool.map(build_window, todo))
+    print(f"parquet cache: {len(stamps)} window(s) ready", flush=True)
+
+
+def parquet_ready(stamp):
+    from data.parquet_cache import PARQUET_DIR, parquet_version_matches
+    text = stamp.strftime("%Y%m%d.%H%M")
+    path = PARQUET_DIR / f"updates.{text}.parquet"
+    return path.exists() and parquet_version_matches(path)
+
+
+def build_window(stamp):
+    from data.parquet_cache import DECODED_DIR, UPDATES_ROOT, ensure_parquet
+    text = stamp.strftime("%Y%m%d.%H%M")
+    for source in (DECODED_DIR / f"updates.{text}.txt",
+                   UPDATES_ROOT / f"updates.{text}.gz"):
+        if source.exists() and source.stat().st_size > 0:
+            ensure_parquet(source)
+            return
+    return
+
+
+def load_cache_for(event):
+    """The detector cache for one event, or None."""
+    asn = str(event.get("victim_as") or event.get("target_as") or "")
+    match = resolve_cache(asn, event.get("start_utc"), event.get("end_utc"),
+                          QUICK, event_id=event.get("event_id") or "",
+                          allow_same_date=False)
+    if match is None:
+        return None
+    return json.loads(match.path.read_text(encoding="utf-8"))
+
+
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gt", default=str(GT_CSV))
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     ap.add_argument("--refresh", action="store_true")
+    ap.add_argument("--no-warm", action="store_true")
     args = ap.parse_args()
 
     events = list(csv.DictReader(open(args.gt, encoding="utf-8")))
+    if not args.no_warm:
+        warm_cache(events)
     records = []
 
     for event in events:

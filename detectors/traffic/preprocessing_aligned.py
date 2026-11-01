@@ -22,7 +22,7 @@ def preprocess_traffic_data_aligned(current_values, historical_data, timestamps)
         for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S+00:00", "%Y-%m-%d %H:%M:%S"):
             try:
                 return datetime.strptime(ts_str, fmt)
-            except (ValueError):
+            except ValueError:
                 continue
         return None
 

@@ -35,12 +35,12 @@ from utils.logger import logger
 BUCKET_MINUTES = 5
 
 
-def bucket_start(ts: datetime) -> datetime:
+def bucket_start(ts: datetime):
     minute = (ts.minute // BUCKET_MINUTES) * BUCKET_MINUTES
     return ts.replace(minute=minute, second=0, microsecond=0)
 
 
-def entropy(values: list) -> float:
+def entropy(values: list):
     if not values:
         return 0.0
     counts = Counter(values)
@@ -51,7 +51,7 @@ def entropy(values: list) -> float:
     )
 
 
-def edit_distance(old: list, new: list) -> int:
+def edit_distance(old: list, new: list):
     """Levenshtein distance over AS-path token lists.
 
     ``editdistance`` (the C extension the text implementation uses) is
@@ -73,7 +73,7 @@ def edit_distance(old: list, new: list) -> int:
     return prev[-1]
 
 
-def clean_tokens(path_series: pl.Series) -> pl.Series:
+def clean_tokens(path_series: pl.Series):
     """Split an AS-path column into a token list without empty entries."""
     return (
         path_series.fill_null("")
@@ -108,7 +108,7 @@ class ParquetOutageFeatureExtractor:
         self._rows_relevant = 0
 
     # ── helpers ────────────────────────────────────────────────────────
-    def bucket(self, key: str) -> dict:
+    def bucket(self, key: str):
         b = self._buckets.get(key)
         if b is None:
             b = {
@@ -150,7 +150,7 @@ class ParquetOutageFeatureExtractor:
         return b
 
     # ── main entry point ───────────────────────────────────────────────
-    def consume(self, df: pl.DataFrame) -> None:
+    def consume(self, df: pl.DataFrame):
         """Fold one parquet chunk into the running feature state."""
         if df is None or df.is_empty():
             return
@@ -215,7 +215,7 @@ class ParquetOutageFeatureExtractor:
         for row in rows:
             self.consume_row(row)
 
-    def consume_row(self, row: dict) -> None:
+    def consume_row(self, row: dict):
         bucket = row["_bucket"]
         key = bucket.isoformat()
         msg_type = row["announce"]
@@ -295,7 +295,7 @@ class ParquetOutageFeatureExtractor:
             state["last_as_path"] = None
 
     # ── output ─────────────────────────────────────────────────────────
-    def finalize(self) -> Dict[str, dict]:
+    def finalize(self):
         """Return ``{bucket_iso: feature_dict}`` for every observed bucket."""
         out: Dict[str, dict] = {}
         for key, b in self._buckets.items():
@@ -342,7 +342,7 @@ class ParquetOutageFeatureExtractor:
 def extract_timeseries_from_chunks(
     chunks: Iterable[pl.DataFrame],
     target_as: int,
-) -> Dict[str, dict]:
+):
     """Convenience wrapper: consume an iterable of chunks, return features."""
     extractor = ParquetOutageFeatureExtractor(target_as)
     for chunk in chunks:

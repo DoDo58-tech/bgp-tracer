@@ -72,7 +72,7 @@ CAUSE_ALIASES = (
 )
 
 
-def normalize_cause(raw: str) -> str:
+def normalize_cause(raw: str):
     text = str(raw or "").strip().lower().replace("-", " ")
     if not text:
         return ""
@@ -86,14 +86,14 @@ def normalize_cause(raw: str) -> str:
     return text
 
 
-def load_events() -> list[dict]:
+def load_events():
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     from component_ablation_gt import load_gt
 
     return load_gt()
 
 
-def run_cell(stage: str, ev: dict) -> dict:
+def run_cell(stage: str, ev: dict):
     from chief_agent import analyze_deep_from_quick
 
     env_var = STAGES.get(stage)
@@ -142,7 +142,40 @@ def run_cell(stage: str, ev: dict) -> dict:
     return rec
 
 
-def summarize(values: list[float]) -> dict:
+def run_stage(stage: str, events: list, workers: int):
+    """The cells of one arm, in parallel when there is more than one.
+
+    The ablation switch is an environment variable, so each cell has to
+    run in its own process: a switch set for one event would leak into
+    the next one.
+    """
+    if not events:
+        return []
+    if workers <= 1 or len(events) == 1:
+        return [run_cell(stage, ev) for ev in events]
+
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    records = []
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(run_cell, stage, ev): ev for ev in events}
+        for fut in as_completed(futures):
+            ev = futures[fut]
+            try:
+                records.append(fut.result())
+            except Exception as exc:  # noqa: BLE001
+                records.append({
+                    "stage": stage,
+                    "event_id": ev["event_id"],
+                    "gt_cause": ev["gt_cause"],
+                    "resolved": True,
+                    "success": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                })
+    return records
+
+
+def summarize(values: list[float]):
     if not values:
         return {}
     ordered = sorted(values)
@@ -173,12 +206,13 @@ def bootstrap_ci(values: list[float], n: int = 2000, seed: int = 20240117):
     ]
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(OUT_PATH))
     ap.add_argument("--repeats", type=int, default=3)
     ap.add_argument("--stages", default=",".join(STAGES.keys()))
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--workers", type=int, default=1)
     args = ap.parse_args()
 
     stages = [s.strip() for s in args.stages.split(",") if s.strip()]
@@ -215,19 +249,19 @@ def main() -> int:
                     "records": [],
                 }
                 out.setdefault("runs", []).append(run_rec)
-            for ev in events:
-                key = (rep, stage, ev["event_id"])
-                if key in done:
-                    continue
-                rec = run_cell(stage, ev)
+
+            pending = [ev for ev in events
+                       if (rep, stage, ev["event_id"]) not in done]
+            records = run_stage(stage, pending, args.workers)
+            for rec in records:
                 run_rec["records"].append(rec)
-                done.add(key)
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_text(json.dumps(out, indent=1, default=str))
+                done.add((rep, stage, rec.get("event_id")))
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(out, indent=1, default=str))
+            for rec in records:
                 logger.info(
-                    f"[repeat {rep}] {stage:20s} {ev['event_id']:44s} "
-                    f"cause={rec.get('cause', '-')} gt={ev['gt_cause']} "
-                    f"ok={rec.get('success')}"
+                    f"[repeat {rep}] {stage:20s} {rec.get('event_id', ''):44s} "
+                    f"cause={rec.get('cause', '-')} ok={rec.get('success')}"
                 )
 
     # ── Aggregate ──────────────────────────────────────────────────────

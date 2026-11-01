@@ -139,7 +139,7 @@ class RoutingSignal:
     ownership_loaded: bool = True
     error: str = ""
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             "event_id": self.event_id,
             "cause": self.cause,
@@ -162,7 +162,7 @@ class RoutingSignal:
         }
 
 
-def asn_int(value: str) -> Optional[int]:
+def asn_int(value: str):
     text = (value or "").strip().upper()
     if text.startswith("AS"):
         text = text[2:]
@@ -172,7 +172,7 @@ def asn_int(value: str) -> Optional[int]:
         return None
 
 
-def parse_ts(value: str) -> Optional[datetime]:
+def parse_ts(value: str):
     text = (value or "").strip().replace("Z", "")
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
@@ -198,7 +198,7 @@ _LOCAL_SNAPSHOTS: Optional[List[Tuple[datetime, Path]]] = None
 _SNAPSHOT_RE = re.compile(r"routeviews-(?:rv2|oix)-(\d{8})-\d{4}\.pfx2as\.parsed\.json$")
 
 
-def local_snapshots() -> List[Tuple[datetime, Path]]:
+def local_snapshots():
     """The downloaded snapshots, ordered by their date."""
     global _LOCAL_SNAPSHOTS
     if _LOCAL_SNAPSHOTS is not None:
@@ -225,7 +225,7 @@ def local_snapshots() -> List[Tuple[datetime, Path]]:
     return found
 
 
-def resolve_snapshot(when: datetime) -> Optional[Path]:
+def resolve_snapshot(when: datetime):
     """The snapshot that matches the date, without touching the network."""
     snapshots = local_snapshots()
     if not snapshots:
@@ -244,7 +244,7 @@ def resolve_snapshot(when: datetime) -> Optional[Path]:
     return best
 
 
-def load_ownership(asn: int, when: datetime) -> Set[str]:
+def load_ownership(asn: int, when: datetime):
     """The prefixes the AS held, according to the prefix-to-AS map of the day.
 
     The map is a RouteViews snapshot, so it is the *authoritative* record
@@ -280,7 +280,7 @@ def load_ownership(asn: int, when: datetime) -> Set[str]:
     return owned
 
 
-def networks(prefixes: Set[str]) -> List:
+def networks(prefixes: Set[str]):
     """The prefixes as network objects, for containment tests."""
     import ipaddress
 
@@ -293,7 +293,7 @@ def networks(prefixes: Set[str]) -> List:
     return out
 
 
-def find_covering(prefix: str, index: Dict[str, str]) -> Optional[str]:
+def find_covering(prefix: str, index: Dict[str, str]):
     """The owned prefix that contains ``prefix``, if any.
 
     A hijack is very often a *more-specific* announcement inside the
@@ -315,7 +315,7 @@ def find_covering(prefix: str, index: Dict[str, str]) -> Optional[str]:
     return None
 
 
-def coverage_index(prefixes: Set[str]) -> Tuple[Optional[str], Dict[str, str]]:
+def coverage_index(prefixes: Set[str]):
     """A coarse-to-fine index of the owned address space.
 
     The containment test -- "does this announced prefix fall inside the
@@ -379,7 +379,7 @@ def coverage_index(prefixes: Set[str]) -> Tuple[Optional[str], Dict[str, str]]:
 
 
 def scan_covering(df: pl.DataFrame, coarse: Optional[str], index: Dict[str, str],
-                   target_as, out: Dict[str, Set[str]]) -> None:
+                   target_as, out: Dict[str, Set[str]]):
     """Find the prefixes inside the victim's space that others announced.
 
     The scan runs over the *distinct* prefixes of the chunk rather than
@@ -410,7 +410,7 @@ def scan_covering(df: pl.DataFrame, coarse: Optional[str], index: Dict[str, str]
         out.setdefault(prefix, set()).update(origins)
 
 
-def window_files(start: datetime, end: datetime) -> List[Path]:
+def window_files(start: datetime, end: datetime):
     """The parquet files covering the window.
 
     Only the files that already carry the current schema version are
@@ -442,7 +442,7 @@ def iter_window_chunks(start: datetime, end: datetime):
     )
 
 
-def normalize(chunk: pl.DataFrame) -> pl.DataFrame:
+def normalize(chunk: pl.DataFrame):
     """Give the chunk the column names this module works with."""
     df = chunk
     if "as_path" not in df.columns and "as-path" in df.columns:
@@ -452,7 +452,7 @@ def normalize(chunk: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def bucketize(frame: pl.DataFrame) -> Dict[str, int]:
+def bucketize(frame: pl.DataFrame):
     """The per-5-minute counts of a frame, keyed by the bucket start."""
     if frame.is_empty():
         return {}
@@ -493,7 +493,7 @@ def same_clock_baseline_from_buckets(ann_buckets: Dict[str, int],
         event_slots.add(moment.strftime("%H:%M"))
         moment += step
 
-    def collect(buckets: Dict[str, int], target: Dict[str, List[int]]) -> None:
+    def collect(buckets: Dict[str, int], target: Dict[str, List[int]]):
         for key, value in buckets.items():
             stamp = datetime.fromisoformat(key)
             if (start.date() - stamp.date()).days <= 0:
@@ -506,7 +506,7 @@ def same_clock_baseline_from_buckets(ann_buckets: Dict[str, int],
     collect(ann_buckets, ann_per_day)
     collect(wd_buckets, wd_per_day)
 
-    def average(per_day: Dict[str, List[int]]) -> Dict[str, int]:
+    def average(per_day: Dict[str, List[int]]):
         out: Dict[str, int] = {}
         for slot, values in per_day.items():
             # The bucket key of the event window, for this slot.
@@ -544,7 +544,7 @@ def same_clock_baseline(announcements: pl.DataFrame, withdrawals: pl.DataFrame,
 
 
 def mean_buckets(frame: pl.DataFrame, start: datetime,
-                   end: datetime) -> Dict[str, int]:
+                   end: datetime):
     """The per-bucket counts of the baseline days, averaged over the days.
 
     Each baseline day contributes its own per-bucket counts, and the
@@ -648,7 +648,7 @@ def detector_leak_signature(announcements: pl.DataFrame,
     return len(leaks or []), prefixes, True
 
 
-def extract(event: dict) -> RoutingSignal:
+def extract(event: dict):
     """Measure the routing anomaly of one event."""
     signal = RoutingSignal(
         event_id=event.get("event_id", ""),
@@ -1076,7 +1076,7 @@ def extract(event: dict) -> RoutingSignal:
     return signal
 
 
-def summarize(signal: RoutingSignal) -> dict:
+def summarize(signal: RoutingSignal):
     """Reduce the raw signal to the verdict fields the dataset stores."""
     if signal.error:
         return {

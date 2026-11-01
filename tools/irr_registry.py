@@ -39,7 +39,7 @@ def clean_whois(content):
     return "\n".join(lines)
 
 
-def parse_aut_num(content: str) -> dict[str, Any]:
+def parse_aut_num(content: str):
     """Parse aut-num (AS registration) object from IRR."""
     text = content
     result = {
@@ -72,7 +72,7 @@ def parse_aut_num(content: str) -> dict[str, Any]:
     return result
 
 
-def parse_route_objects(content: str) -> list[dict]:
+def parse_route_objects(content: str):
     """Parse route/route6 objects from IRR."""
     text = content
     objects = []
@@ -109,7 +109,7 @@ async def whois_query(server, query, timeout=10):
         return response.decode("utf-8", errors="ignore")
     except asyncio.TimeoutError:
         return f"[Timeout connecting to {server}]"
-    except (ValueError) as e:
+    except ValueError as e:
         return f"[Error {server}: {e}]"
     finally:
         # Close the socket in a ``finally`` so any exception during
@@ -117,13 +117,13 @@ async def whois_query(server, query, timeout=10):
             try:
                 writer.close()
                 await writer.wait_closed()
-            except (ValueError):
+            except ValueError:
                 pass
 
 
 async def query_irr_server(
     server_name: str, asn: str, prefix: str = ""
-) -> dict[str, Any]:
+):
     """Query a single IRR server for AS info and prefix authorization."""
     server = IRR_SERVERS.get(server_name, server_name)
 
@@ -169,7 +169,7 @@ async def query_irr_server(
                     ):
                         authorized = True
                         break
-                except (ValueError):
+                except ValueError:
                     pass
 
     return {
@@ -182,7 +182,7 @@ async def query_irr_server(
     }
 
 
-async def irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
+async def irr_registry_lookup(tool_input: dict, session):
     """Query Internet Routing Registry (IRR) databases for an AS.
     
     Returns:
@@ -259,7 +259,7 @@ async def irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
                             prefix_authorized = True
                             authorization_reason = f"Prefix {prefix} is covered by registered super-prefix {pfx}"
                             break
-                    except (ValueError):
+                    except ValueError:
                         pass
         if not prefix_authorized:
             authorization_reason = f"Prefix {prefix} NOT found in IRR records — possible unauthorized announcement"
@@ -329,7 +329,7 @@ async def irr_registry_lookup(tool_input: dict, session) -> dict[str, Any]:
     }
 
 
-async def lookup_prefix_origin_async(prefix_str: str) -> dict[str, Any]:
+async def lookup_prefix_origin_async(prefix_str: str):
     """Convenience wrapper for probe_executor: query IRR for a prefix.
     
     Returns a dict with at least:
@@ -357,7 +357,7 @@ async def lookup_prefix_origin_async(prefix_str: str) -> dict[str, Any]:
             if result.get("route_objects"):
                 found = True
                 sources.append(server)
-        except (ValueError):
+        except ValueError:
             continue
 
     return {

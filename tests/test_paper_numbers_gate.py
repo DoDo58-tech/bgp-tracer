@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "check_paper_numbers.py"
 
 
-def run() -> subprocess.CompletedProcess:
+def run():
     return subprocess.run(
         [sys.executable, str(SCRIPT)],
         capture_output=True, text=True, cwd=str(PROJECT_ROOT),

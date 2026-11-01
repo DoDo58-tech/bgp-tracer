@@ -47,14 +47,14 @@ OUT_PATH = PROJECT_ROOT / "results" / "eval" / "arbitration_policies.json"
 CLASSES = ("outage", "route_leak", "origin_hijack_victim")
 
 
-def load_events() -> list[dict]:
+def load_events():
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     from component_ablation_gt import load_gt
 
     return load_gt()
 
 
-def build_rows() -> list[dict]:
+def build_rows():
     events = {e["event_id"]: e for e in load_events()}
     agent = {
         r["event_id"]: r
@@ -126,7 +126,7 @@ def build_rows() -> list[dict]:
     return rows
 
 
-def mechanism(row: dict) -> str:
+def mechanism(row: dict):
     """The physical mechanism the detectors measured.
 
     This is deliberately a *mechanism*, not a cause.  A mass withdrawal
@@ -216,7 +216,7 @@ POLICIES = {
 }
 
 
-def score(rows: list[dict], predict) -> dict:
+def score(rows: list[dict], predict):
     correct = 0
     per_class = {c: {"n": 0, "correct": 0} for c in CLASSES}
     for r in rows:
@@ -243,7 +243,7 @@ def score(rows: list[dict], predict) -> dict:
     }
 
 
-def main() -> int:
+def main():
     rows = build_rows()
     out = {"n": len(rows), "policies": {}}
 

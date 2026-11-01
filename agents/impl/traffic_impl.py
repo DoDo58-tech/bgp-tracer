@@ -145,7 +145,7 @@ Use English only.
                 snippet = _extract_json_object(raw)
                 if snippet is not None:
                     return json.loads(snippet)
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.error(f"LLM analysis failed: {e}")
         return {"error": "LLM analysis unavailable"}
 
@@ -167,7 +167,7 @@ def lookup_as_by_country(country_name, asorg_file=None):
                 results.append({"asn": asn, "as_name": asn_to_name.get(asn, "Unknown"),
                                 "org_name": info.get("name", "Unknown"), "country": info.get("country", "Unknown")})
         return results
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error looking up AS by country: {e}")
         return []
 
@@ -285,7 +285,7 @@ async def analyze_single_as_traffic(asn, start_time, end_time, routing_analysis=
             start_dt = start_dt.astimezone(timezone.utc).replace(tzinfo=None)
         if end_dt.tzinfo is not None:
             end_dt = end_dt.astimezone(timezone.utc).replace(tzinfo=None)
-    except (ValueError) as e:
+    except ValueError as e:
         return {"success": False, "error": f"Invalid time: {e}"}
 
     llm_agent = LLMEnhancedTrafficAgent()
@@ -313,7 +313,7 @@ async def analyze_single_as_traffic(asn, start_time, end_time, routing_analysis=
                 t = datetime.strptime(a["timestamp"], "%Y-%m-%dT%H:%M:%SZ")
                 if start_d <= t <= end_d:
                     within.append(a)
-            except (ValueError):
+            except ValueError:
                 pass
         result["outage_period_anomalies"] = within
         result["outage_period_anomaly_count"] = len(within)
@@ -368,7 +368,7 @@ async def run_traffic_agent_batch(
                         end_time=end_dt.strftime("%Y-%m-%d %H:%M"),
                     )
                     return asn, r
-                except (ValueError) as exc:
+                except ValueError as exc:
                     return asn, {"success": False, "error": str(exc), "asn": str(asn)}
 
         tasks = [one(a) for a in as_list]
@@ -394,7 +394,7 @@ async def run_traffic_agent_batch(
             "anomaly_as_list": anomaly_as_list,
             "errors": errors if errors else None,
         }
-    except (ValueError) as e:
+    except ValueError as e:
         return {
             "success": False,
             "error": str(e),
@@ -437,7 +437,7 @@ async def run_traffic_agent_async(user_input=None, asn=None, start_time=None,
         if not all([asn, start_time, end_time]):
             return {"success": False, "error": "Missing required parameters"}
         return await analyze_single_as_traffic(asn, start_time, end_time, routing_analysis, use_llm=use_llm)
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Traffic agent error: {e}")
         return {"success": False, "error": str(e)}
 

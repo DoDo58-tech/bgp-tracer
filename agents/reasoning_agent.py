@@ -160,7 +160,7 @@ class ReasoningAgent:
             
             return final_result
             
-        except (AttributeError) as e:
+        except AttributeError as e:
             return {
                 "success": False, 
                 "error": str(e),
@@ -339,7 +339,7 @@ class ReasoningAgent:
                 "extended_analysis_end": extended_analysis_end.strftime('%Y-%m-%d %H:%M')
             }
             
-        except (AttributeError) as e:
+        except AttributeError as e:
             self.reasoning_trace.append(f"- Data collection failed: {str(e)}")
             return {"success": False, "error": str(e)}
 
@@ -427,7 +427,7 @@ class ReasoningAgent:
 
             return summary
 
-        except (AttributeError) as e:
+        except AttributeError as e:
             self.reasoning_trace.append(f"- Multi-role classification failed: {e}")
             return None
 
@@ -499,7 +499,7 @@ class ReasoningAgent:
 
             return result
 
-        except (AttributeError) as e:
+        except AttributeError as e:
             self.reasoning_trace.append(f"- Auxiliary enrichment failed: {e}")
             return None
 
@@ -508,7 +508,7 @@ class ReasoningAgent:
         routing_data: dict,
         traffic_data: dict,
         enrichment_result: dict = None,
-    ) -> list[dict]:
+    ):
         """Bug Fix 3.1: ( enhanced_reasoning_agent.py)."""
         gaps = []
         gap_counter = 0
@@ -679,7 +679,7 @@ class ReasoningAgent:
                 "confidence_scores": self.confidence_scores.copy()
             }
             
-        except (AttributeError) as e:
+        except AttributeError as e:
             self.reasoning_trace.append(f"Round {round_num} failed: {str(e)}")
             return {"round_num": round_num, "error": str(e)}
     
@@ -744,7 +744,7 @@ class ReasoningAgent:
                 "asorg_file": routing_data.get("asorg_file")
             }
             
-        except (AttributeError) as e:
+        except AttributeError as e:
             self.reasoning_trace.append(f"Final integration failed: {str(e)}")
             return {
                 "success": False,
@@ -965,7 +965,7 @@ class ReasoningAgent:
         """Safe byte estimate for any object (used in P5 summary-only prompts)."""
         try:
             return len(json.dumps(obj, ensure_ascii=False, default=str))
-        except (ValueError):
+        except ValueError:
             return len(str(obj))
 
     @staticmethod
@@ -1090,7 +1090,7 @@ Respond concisely in JSON:
                     f"resolvability={item.get('resolvability', 'N/A')}"
                 )
             return analysis_result
-        except (AttributeError) as e:
+        except AttributeError as e:
             self.reasoning_trace.append(f"  LLM deeper analysis failed: {e}")
             return {}
 
@@ -1758,13 +1758,13 @@ def run_reasoning_agent(asn = None, start_time = None, end_time = None,
                 try:
                     from agents.traffic_agent import normalize_time
                     start_time = normalize_time(str(start_time))
-                except (ValueError):
+                except ValueError:
                     pass
             if end_time:
                 try:
                     from agents.traffic_agent import normalize_time
                     end_time = normalize_time(str(end_time))
-                except (ValueError):
+                except ValueError:
                     pass
         
         # Validate required parameters
@@ -1839,7 +1839,7 @@ def run_reasoning_agent(asn = None, start_time = None, end_time = None,
         # Pass pre-generated hypotheses to avoid duplicate hypothesis generation
         return agent.perform_multi_round_analysis(max_rounds, workflow_claims=workflow_claims)
         
-    except (ValueError) as e:
+    except ValueError as e:
         return {"success": False, "error": str(e)}
 
 
@@ -2031,7 +2031,7 @@ def run_reasoning_agent_batch(
                                 "total_prefix_hijacks": len(hijack_data.get("origin_hijacked", [])) + len(hijack_data.get("forge_hijacked", [])),
                                 "total_prefix_hijacking": len(hijack_data.get("origin_hijacking", [])) + len(hijack_data.get("forge_hijacking", [])),
                             }
-                        except (AttributeError) as exc:
+                        except AttributeError as exc:
                             logger.error(f"Routing analysis failed for AS{asn}: {exc}")
                             result = {
                                 "success": False,
@@ -2057,7 +2057,7 @@ def run_reasoning_agent_batch(
                             end_time=window_end_str,
                             target_asns=[str(asn)]
                         )
-                    except (AttributeError) as exc:
+                    except AttributeError as exc:
                         logger.error(f"Routing analysis failed for AS{asn}: {exc}")
                         result = {
                             "success": False,
@@ -2193,7 +2193,7 @@ def run_reasoning_agent_batch(
             "analysis_timestamp": datetime.now().isoformat()
         }
         
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Batch reasoning analysis failed: {str(e)}", exc_info=True)
         return {
             "success": False,

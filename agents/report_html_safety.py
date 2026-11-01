@@ -61,7 +61,7 @@ def repair_missing_lt(markup):
     return repaired
 
 
-def validate_html_balance(markup: str) -> "tuple[bool, list[str]]":
+def validate_html_balance(markup: str):
     """Return ``(ok, problems)`` for a candidate HTML body."""
     if not markup:
         return False, ["empty html"]

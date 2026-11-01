@@ -81,12 +81,12 @@ _GAP_IMPACT = (
 _MIN_STATEMENT_WORDS = 12
 
 
-def statement(text: str) -> str:
+def statement(text: str):
     """Flatten prose into a comparable, lower-cased string."""
     return " ".join((text or "").lower().split())
 
 
-def mentions_alternative(text: str) -> bool:
+def mentions_alternative(text: str):
     """True if the text records a named alternative *and* why it was rejected."""
     body = statement(text)
     if not body:
@@ -107,7 +107,7 @@ def mentions_alternative(text: str) -> bool:
     return False
 
 
-def mentions_gap(text: str) -> bool:
+def mentions_gap(text: str):
     """True if the text names an absent input *and* states its consequence."""
     body = statement(text)
     if not body:
@@ -127,7 +127,7 @@ def mentions_gap(text: str) -> bool:
 # ── Arm 1: monolithic ────────────────────────────────────────────────────────
 
 
-def score_monolithic(quick: dict) -> dict:
+def score_monolithic(quick: dict):
     """The one-shot arm produces a prose object; score what it contains."""
     from agent_value_ablation import run_monolithic
 
@@ -161,7 +161,7 @@ def score_monolithic(quick: dict) -> dict:
 # ── Arm 2: agent pipeline ────────────────────────────────────────────────────
 
 
-def score_agent(quick: dict) -> dict:
+def score_agent(quick: dict):
     from chief_agent import analyze_deep_from_quick
 
     res = analyze_deep_from_quick(quick_result=quick, analysis_mode="traffic_first")
@@ -228,7 +228,7 @@ def score_agent(quick: dict) -> dict:
                 html = _P(p).read_text(errors="replace")
         import re as _re
         report_text = _re.sub(r"<[^>]+>", " ", html)
-    except (ValueError):  # noqa: BLE001
+    except ValueError:  # noqa: BLE001
         report_text = ""
 
     # Q4 and Q5 ask whether the *record* exists, not whether the prose
@@ -262,14 +262,14 @@ def score_agent(quick: dict) -> dict:
 # ── Driver ───────────────────────────────────────────────────────────────────
 
 
-def score_pair(pair: tuple[str, dict]) -> list[dict]:
+def score_pair(pair: tuple[str, dict]):
     """Score both arms on one event.  Safe to call in a worker process."""
     eid, quick = pair
     rows = []
     for arm, fn in (("monolithic", score_monolithic), ("agent", score_agent)):
         try:
             rec = fn(quick)
-        except (AttributeError) as exc:  # noqa: BLE001
+        except AttributeError as exc:  # noqa: BLE001
             logger.error(f"[explain] {eid} {arm} failed: {exc}")
             rec = {q: False for q in QUESTIONS} | {"error": str(exc)}
         rec["arm"] = arm
@@ -278,7 +278,7 @@ def score_pair(pair: tuple[str, dict]) -> list[dict]:
     return rows
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--events", type=int, default=4)
     ap.add_argument("--out", default=str(OUT_PATH))

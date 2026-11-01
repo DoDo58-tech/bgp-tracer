@@ -27,7 +27,7 @@ class TokenBudget:
         self._total_completion: int = 0
 
     @classmethod
-    def get_instance(cls, run_id) -> "TokenBudget":
+    def get_instance(cls, run_id):
         if run_id not in cls._instances:
             cls._instances[run_id] = cls(run_id)
         return cls._instances[run_id]
@@ -46,10 +46,10 @@ class TokenBudget:
         self._total_prompt += prompt_tokens
         self._total_completion += completion_tokens
 
-    def total(self) -> tuple[int, int]:
+    def total(self):
         return self._total_prompt, self._total_completion
 
-    def by_agent(self) -> dict[str, tuple[int, int]]:
+    def by_agent(self):
         result: dict[str, tuple[int, int]] = {}
         for rec in self._records:
             pt, ct = result.get(rec.agent, (0, 0))

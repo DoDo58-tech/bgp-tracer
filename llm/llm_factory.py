@@ -41,7 +41,7 @@ def get_thinking_disable():
         return None
     try:
         _extra_body_disable = _json.loads(raw)
-    except (ValueError):
+    except ValueError:
         _extra_body_disable = None
     return _extra_body_disable
 
@@ -87,7 +87,7 @@ def build_token_counter():
     try:
         enc = tiktoken.get_encoding("cl100k_base")
         handler = TokenCountingHandler(tokenizer=enc.encode)
-    except (AttributeError):
+    except AttributeError:
         handler = TokenCountingHandler(tokenizer=lambda s: list(s.encode("utf-8")))
     _GLOBAL_TOKEN_HANDLER = handler
     register_token_counter(handler)
@@ -104,7 +104,7 @@ def register_token_counter(handler):
     try:
         if handler is not None and handler not in _GLOBAL_TOKEN_HANDLERS:
             _GLOBAL_TOKEN_HANDLERS.append(handler)
-    except (ValueError):
+    except ValueError:
         pass
 
 
@@ -113,7 +113,7 @@ def get_global_token_counter():
     if _GLOBAL_TOKEN_HANDLER is not None:
         try:
             return int(getattr(_GLOBAL_TOKEN_HANDLER, "total_llm_token_count", 0) or 0)
-        except (ValueError):
+        except ValueError:
             pass
     total = 0
     seen = set()
@@ -123,12 +123,12 @@ def get_global_token_counter():
         seen.add(id(h))
         try:
             total += int(getattr(h, "total_llm_token_count", 0) or 0)
-        except (ValueError):
+        except ValueError:
             continue
     return total
 
 
-def extract_usage_from_response(response) -> tuple[int, int]:
+def extract_usage_from_response(response):
     """Best-effort extraction of (prompt_tokens, completion_tokens) from a
     raw OpenAI / OpenAI-compatible response object."""
     if response is None:
@@ -142,7 +142,7 @@ def extract_usage_from_response(response) -> tuple[int, int]:
         ct = int(getattr(usage, "output_tokens", 0) or 0)
         if pt or ct:
             return pt, ct
-    except (ValueError):
+    except ValueError:
         pass
     # Standard schema (prompt/completion tokens).
     try:
@@ -150,7 +150,7 @@ def extract_usage_from_response(response) -> tuple[int, int]:
         ct = int(getattr(usage, "completion_tokens", 0) or 0)
         if pt or ct:
             return pt, ct
-    except (ValueError):
+    except ValueError:
         pass
     # Fallback: total_tokens - completion when only totals reported.
     try:
@@ -158,7 +158,7 @@ def extract_usage_from_response(response) -> tuple[int, int]:
         ct = int(getattr(usage, "completion_tokens", 0) or 0)
         if total and ct:
             return total - ct, ct
-    except (ValueError):
+    except ValueError:
         pass
     return 0, 0
 
@@ -191,7 +191,7 @@ def record_token_usage_to_budget(response, agent_name="OpenAICompatibleLLM"):
             # / ``total_llm_token_count`` properties that sum the list.
             if hasattr(h, "llm_token_counts"):
                 h.llm_token_counts.append(event)
-        except (ValueError):
+        except ValueError:
             continue
 
 
@@ -200,7 +200,7 @@ def reset_global_token_counter():
     for h in list(_GLOBAL_TOKEN_HANDLERS):
         try:
             h.reset_counts()
-        except (ValueError):
+        except ValueError:
             continue
 
 
@@ -259,7 +259,7 @@ class _RateLimitBreaker:
             self._cooldown_until = now + base_cooldown
             return False
 
-    def is_open(self) -> tuple[bool, float]:
+    def is_open(self):
         """Return (open?, seconds_remaining_until_closed).
 
         Only True when the breaker has TRIPPED (not just throttled).
@@ -339,7 +339,7 @@ class _BudgetTracker:
                         self._calls.append(ts_mono)
                     except ValueError:
                         pass
-        except (AttributeError):
+        except AttributeError:
             # Don't crash if file is unreadable; budget check will just
             # be conservative (only count in-process calls).
             self._calls.clear()
@@ -359,7 +359,7 @@ class _BudgetTracker:
                 self._append_count = getattr(self, "_append_count", 0) + 1
                 if self._append_count % rotate_every == 0:
                     self.rotate_shared()
-        except (ValueError):
+        except ValueError:
             # Don't fail the LLM call just because the budget file
             pass
 
@@ -384,7 +384,7 @@ class _BudgetTracker:
             with open(tmp, "w") as f:
                 f.writelines(keep)
             os.replace(tmp, self._shared_path)
-        except (ValueError):
+        except ValueError:
             pass
 
     @staticmethod
@@ -399,7 +399,7 @@ class _BudgetTracker:
             self._calls.popleft()
         return len(self._calls)
 
-    def remaining_budget(self) -> tuple[int, int]:
+    def remaining_budget(self):
         """Return (remaining_calls, max_calls)."""
         used = self.window_len()
         max_calls = int(self.env("BUDGET_MAX_CALLS", 950, int))
@@ -592,7 +592,7 @@ class OpenAICompatibleLLM(LLM):
                     return False
                 if code in (500, 502, 503, 504):
                     return True
-        except (ValueError):
+        except ValueError:
             pass
         kw = [
             "500", "502", "503", "504",
@@ -611,7 +611,7 @@ class OpenAICompatibleLLM(LLM):
             status = getattr(exc, "response", None)
             if status is not None and getattr(status, "status_code", None) == 429:
                 return True
-        except (ValueError):
+        except ValueError:
             pass
         err_lower = str(exc).lower()
         return "429" in err_lower or "rate limit" in err_lower
@@ -690,11 +690,8 @@ class OpenAICompatibleLLM(LLM):
         and optional JSON extraction."""
         from llama_index.core.base.llms.types import CompletionResponse
         # ── Budget tracker guard (entry) ───────────────────────────────
-        from llm.llm_factory import get_budget_tracker, BudgetExhausted
-        try:
-            get_budget_tracker().check_and_record()
-        except BudgetExhausted:
-            raise
+        from llm.llm_factory import get_budget_tracker
+        get_budget_tracker().check_and_record()
 
 
         # ── Circuit breaker guard (entry) ─────────────────────────────────
@@ -767,7 +764,7 @@ class OpenAICompatibleLLM(LLM):
 
                 try:
                     record_token_usage_to_budget(response, agent_name="llm.complete")
-                except (ValueError):
+                except ValueError:
                     pass
 
                 if not json_mode:
@@ -864,11 +861,8 @@ class OpenAICompatibleLLM(LLM):
             raise last_exc
 
     def stream_complete(self, prompt, formatted=False, **kwargs):
-        from llm.llm_factory import get_budget_tracker, BudgetExhausted
-        try:
-            get_budget_tracker().check_and_record()
-        except BudgetExhausted:
-            raise
+        from llm.llm_factory import get_budget_tracker
+        get_budget_tracker().check_and_record()
 
         self.breaker_guard()
         try:
@@ -915,11 +909,8 @@ class OpenAICompatibleLLM(LLM):
             raise RuntimeError(f"LLM stream call failed: {e}") from e
 
     def chat(self, messages, **kwargs):
-        from llm.llm_factory import get_budget_tracker, BudgetExhausted
-        try:
-            get_budget_tracker().check_and_record()
-        except BudgetExhausted:
-            raise
+        from llm.llm_factory import get_budget_tracker
+        get_budget_tracker().check_and_record()
 
         self.breaker_guard()
         try:
@@ -944,7 +935,7 @@ class OpenAICompatibleLLM(LLM):
             msg_content = extract_message_text(response.choices[0].message)
             try:
                 record_token_usage_to_budget(response, agent_name="llm.chat")
-            except (ValueError):
+            except ValueError:
                 pass
             return ChatResponse(
                 message=ChatMessage(
@@ -983,11 +974,8 @@ class OpenAICompatibleLLM(LLM):
 
     def stream_chat(self, messages, **kwargs):
         # Budget tracker guard (entry) — check rolling-window budget
-        from llm.llm_factory import get_budget_tracker, BudgetExhausted
-        try:
-            get_budget_tracker().check_and_record()
-        except BudgetExhausted:
-            raise
+        from llm.llm_factory import get_budget_tracker
+        get_budget_tracker().check_and_record()
 
         try:
             openai_messages = []

@@ -243,7 +243,7 @@ stages, which ones actually change the decision? We ablate each one in
 turn through the engine's own stage switches---joint evidence generation,
 HCAF causal attribution, hypothesis generation, multi-round reasoning, the
 Evidence Blackboard, and external enrichment---and re-run the identical
-39-event corpus with the identical caches and scorer. Each arm disables
+17-event corpus with the identical caches and scorer. Each arm disables
 exactly one stage, so the delta against the full pipeline is attributable
 to that stage alone. Because the pipeline calls a language model, a repeat
 is an independent draw of its stochastic part, and the \emph{spread} column
@@ -283,7 +283,7 @@ the expensive stages are justified by the artefact they produce rather
 than by the accuracy they add.
 \begin{table}[!htbp]
 \centering
-\caption{Component ablation over the 39-event corpus, three repeats per
+\caption{Component ablation over the 17-event corpus, three repeats per
 arm. Each arm disables exactly one coordination stage and re-runs the same
 events with the same cached evidence and the same scorer.
 \emph{Accuracy} is the mean over the repeats; \emph{Delta} is the paired

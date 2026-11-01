@@ -26,7 +26,7 @@ def safe_event_get(event, key, default=None):
     if callable(getter):
         try:
             return getter(key, default)
-        except (ValueError):
+        except ValueError:
             pass
     return getattr(event, key, default)
 
@@ -119,7 +119,7 @@ If multiple types are possible, provide alternative classifications with confide
         time_range: str = "unknown",
         duration_minutes: float = 0.0,
         run_id: str = "",
-    ) -> Dict[str, Any]:
+    ):
         """Returns:
         {
         "incident_type": str,
@@ -193,7 +193,7 @@ If multiple types are possible, provide alternative classifications with confide
             ) from e
 
 
-    def parse_llm_response(self, response) -> Dict[str, Any]:
+    def parse_llm_response(self, response):
         """ LLM """
         try:
             # Use brace-balanced extraction so values containing
@@ -308,7 +308,7 @@ Assess the severity of this incident based on:
         asn: str = "unknown",
         time_range: str = "unknown",
         run_id: str = "",
-    ) -> Dict[str, Any]:
+    ):
         """Returns:
         {
         "severity": "High/Medium/Low",
@@ -378,7 +378,7 @@ Assess the severity of this incident based on:
             ) from e
 
 
-    def parse_llm_response(self, response) -> Dict[str, Any]:
+    def parse_llm_response(self, response):
         """ LLM """
         try:
             snippet = _extract_json_object(response)
@@ -483,7 +483,7 @@ Consider timing, intensity, and possible alternative explanations.
         routing_data: Dict[str, Any],
         traffic_data: Dict[str, Any],
         run_id: str = "",
-    ) -> Dict[str, Any]:
+    ):
         """Returns:
         {
         "has_correlation": bool,
@@ -587,7 +587,7 @@ Consider timing, intensity, and possible alternative explanations.
             ) from e
 
 
-    def parse_llm_response(self, response) -> Dict[str, Any]:
+    def parse_llm_response(self, response):
         """ LLM """
         try:
             snippet = _extract_json_object(response)

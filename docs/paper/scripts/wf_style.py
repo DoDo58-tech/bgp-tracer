@@ -19,7 +19,7 @@ _FONT_FILES = {
 _cache: dict = {}
 
 
-def _pil(size_px: int, weight: int):
+def load_font(size_px: int, weight: int):
     key = (size_px, weight)
     if key not in _cache:
         _cache[key] = ImageFont.truetype(_FONT_FILES[weight], size_px)
@@ -28,7 +28,7 @@ def _pil(size_px: int, weight: int):
 
 def em_width(s: str, weight: int = 400) -> float:
     """Width of `s` in em units (multiply by the font size for canvas units)."""
-    return _pil(400, weight).getlength(s) / 400.0
+    return load_font(400, weight).getlength(s) / 400.0
 
 
 def tw(s: str, size: float, weight: int = 400) -> float:
@@ -142,7 +142,7 @@ def path(d, stroke=SLATE, sw=2.0, fill="none", dash=None, cap="round"):
 
 
 # ---------------------------------------------------------------- arrows ---
-def _style(kind, color):
+def arrow_style(kind, color):
     if kind == "solid":
         return None, color
     if kind == "dashed":
@@ -150,7 +150,7 @@ def _style(kind, color):
     return "4 8", color
 
 
-def _head(x2, y2, ux, uy, head, col):
+def arrow_head(x2, y2, ux, uy, head, col):
     bx, by = x2 - ux * head, y2 - uy * head
     px, py = -uy * head * 0.40, ux * head * 0.40
     tri = (f"{x2:.1f},{y2:.1f} {bx + px:.1f},{by + py:.1f} "
@@ -159,18 +159,18 @@ def _head(x2, y2, ux, uy, head, col):
 
 
 def arrow(x1, y1, x2, y2, kind="solid", color=SLATE, sw=2.4, head=11.0):
-    dash, col = _style(kind, color)
+    dash, col = arrow_style(kind, color)
     dx, dy = x2 - x1, y2 - y1
     ln = (dx * dx + dy * dy) ** 0.5 or 1.0
     ux, uy = dx / ln, dy / ln
     bx, by = x2 - ux * head, y2 - uy * head
     return (line(x1, y1, bx, by, col, sw, dash)
-            + _head(x2, y2, ux, uy, head, col))
+            + arrow_head(x2, y2, ux, uy, head, col))
 
 
 def arrow_h(x1, y, x2, kind="solid", color=SLATE, sw=2.4, head=11.0):
     s = 1 if x2 >= x1 else -1
-    dash, col = _style(kind, color)
+    dash, col = arrow_style(kind, color)
     bx = x2 - s * head
     tri = f"{x2:.1f},{y:.1f} {bx:.1f},{y - 5.0:.1f} {bx:.1f},{y + 5.0:.1f}"
     return (line(x1, y, bx, y, col, sw, dash)
@@ -179,7 +179,7 @@ def arrow_h(x1, y, x2, kind="solid", color=SLATE, sw=2.4, head=11.0):
 
 def arrow_v(x, y1, y2, kind="solid", color=SLATE, sw=2.4, head=11.0):
     s = 1 if y2 >= y1 else -1
-    dash, col = _style(kind, color)
+    dash, col = arrow_style(kind, color)
     by = y2 - s * head
     tri = f"{x:.1f},{y2:.1f} {x - 5.0:.1f},{by:.1f} {x + 5.0:.1f},{by:.1f}"
     return (line(x, y1, x, by, col, sw, dash)

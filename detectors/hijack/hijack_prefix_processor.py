@@ -17,7 +17,7 @@ def get_target_prefixes(target_as, prefix_to_as):
         logger.info(f"Found {len(target_prefixes)} prefixes for AS{target_as}")
         return target_prefixes
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error getting target prefixes for AS{target_as}: {e}")
         return []
 
@@ -34,7 +34,7 @@ def get_target_prefixes_batch(target_as_list, prefix_to_as):
         logger.info(f"Found {total_prefixes} total prefixes for {len(target_as_list)} ASes")
         return results
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error in batch prefix processing: {e}")
         return {}
 
@@ -72,7 +72,7 @@ class BinaryPrefixTrie:
             current['network'] = network
             self.prefix_count += 1
 
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Failed to insert prefix {prefix}: {e}")
 
     def is_subnet(self, prefix):
@@ -110,7 +110,7 @@ class BinaryPrefixTrie:
 
             return matched_prefix is not None
 
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Failed to check prefix {prefix}: {e}")
             return False
 

@@ -65,7 +65,7 @@ CAUSE_ALIASES = (
 )
 
 
-def normalize_cause(raw: str) -> str:
+def normalize_cause(raw: str):
     text = str(raw or "").strip().lower().replace("-", " ")
     if not text:
         return ""
@@ -79,7 +79,7 @@ def normalize_cause(raw: str) -> str:
     return text
 
 
-def load_gt() -> list[dict]:
+def load_gt():
     """Load the corpus, separating label-conflicting windows.
 
     Two events in the corpus share an (ASN, window) pair but carry
@@ -113,7 +113,7 @@ def load_gt() -> list[dict]:
     return out
 
 
-def run_one(quick: dict) -> dict:
+def run_one(quick: dict):
     from chief_agent import analyze_deep_from_quick
 
     res = analyze_deep_from_quick(quick_result=quick, analysis_mode="traffic_first")
@@ -148,7 +148,7 @@ def run_one(quick: dict) -> dict:
     }
 
 
-def run_cell(stage: str, ev: dict) -> dict:
+def run_cell(stage: str, ev: dict):
     """Run one (stage, event) cell.  Safe to call in a worker process."""
     env_var = STAGES.get(stage)
     match = resolve_cache(
@@ -191,7 +191,7 @@ def run_cell(stage: str, ev: dict) -> dict:
     return rec
 
 
-def check_single_variable(records: list[dict]) -> dict:
+def check_single_variable(records: list[dict]):
     """Check that each arm really varied exactly one stage.
 
     The ablation's claim is that the delta against the full agent is
@@ -253,7 +253,7 @@ def check_single_variable(records: list[dict]) -> dict:
     }
 
 
-def score(records: list[dict]) -> dict:
+def score(records: list[dict]):
     scored = [r for r in records if r.get("resolved")]
     ok = [r for r in scored if r.get("success")]
     correct = [r for r in ok if r.get("cause") and r["cause"] == r.get("gt_cause")]
@@ -278,7 +278,7 @@ def score(records: list[dict]) -> dict:
     }
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(OUT_PATH))
     ap.add_argument("--stages", default=",".join(STAGES.keys()))

@@ -38,7 +38,7 @@ QUICK_DIR = PROJECT_ROOT / "results" / "quick"
 OUT_PATH = PROJECT_ROOT / "results" / "eval" / "cause_mapping_scores.json"
 
 
-def load_gt() -> list[dict]:
+def load_gt():
     rows = list(csv.DictReader(GT_CSV.open()))
     out = []
     for r in rows:
@@ -54,7 +54,7 @@ def load_gt() -> list[dict]:
     return out
 
 
-def main() -> int:
+def main():
     builder = EvidenceChainBuilder()
     records = []
     for ev in load_gt():

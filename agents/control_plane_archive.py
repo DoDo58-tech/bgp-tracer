@@ -58,7 +58,7 @@ CONTROL_GRID_SECONDS = 300
 from agents.control_plane import BASELINE_DAYS  # noqa: F401
 
 
-def read_buckets(block: Any) -> Dict[datetime, Dict[str, Any]]:
+def read_buckets(block: Any):
     """Parse a detector bucket block into ``{stamp: features}``."""
     if not isinstance(block, dict):
         return {}
@@ -109,13 +109,13 @@ class ControlPlaneEvidence:
     error: str = ""
 
     @property
-    def n_slots(self) -> int:
+    def n_slots(self):
         return len(self.slots)
 
-    def channel(self, name: str) -> List[float]:
+    def channel(self, name: str):
         return self.channels.get(name) or []
 
-    def slot_index(self, stamp: datetime) -> Optional[int]:
+    def slot_index(self, stamp: datetime):
         if not self.slots:
             return None
         offset = (stamp - self.slots[0]).total_seconds()
@@ -125,7 +125,7 @@ class ControlPlaneEvidence:
         return index
 
     def baseline_for(self, channel: str,
-                     stamps: Sequence[datetime]) -> List[float]:
+                     stamps: Sequence[datetime]):
         """The counterfactual rate for each of ``stamps``.
 
         The clock position of each stamp is looked up in the baseline
@@ -136,11 +136,11 @@ class ControlPlaneEvidence:
         return [float(table.get(s.strftime("%H:%M"), 0.0)) for s in stamps]
 
     def baseline_mean(self, channel: str,
-                      stamps: Sequence[datetime]) -> float:
+                      stamps: Sequence[datetime]):
         values = self.baseline_for(channel, stamps)
         return float(sum(values) / len(values)) if values else 0.0
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self):
         return {
             "target_as": self.target_as,
             "n_slots": self.n_slots,
@@ -153,7 +153,7 @@ class ControlPlaneEvidence:
             "error": self.error,
         }
 
-    def to_payload(self) -> Dict[str, Any]:
+    def to_payload(self):
         """The serialisable form of this evidence.
 
         The **raw counts** are included, not only the derived baseline.
@@ -182,7 +182,7 @@ class ControlPlaneEvidence:
         *,
         window_start: Optional[datetime] = None,
         baseline_days: int = BASELINE_DAYS,
-    ) -> "ControlPlaneEvidence":
+    ):
         """Rebuild the evidence from a serialised payload.
 
         When the payload carries the raw counts, the counterfactual is
@@ -292,7 +292,7 @@ def series_from_payload(payload: Dict[str, Any], *,
     return to_control_plane_series(evidence)
 
 
-def normalise_chunk(chunk: pl.DataFrame) -> pl.DataFrame:
+def normalise_chunk(chunk: pl.DataFrame):
     """Give the chunk the column names this module works with."""
     df = chunk
     if "as_path" not in df.columns and "as-path" in df.columns:
@@ -302,7 +302,7 @@ def normalise_chunk(chunk: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
-def grid_stamps_for(lo: datetime, hi: datetime) -> List[datetime]:
+def grid_stamps_for(lo: datetime, hi: datetime):
     """The uniform wall-clock grid from ``lo`` to ``hi``, inclusive."""
     origin = lo.replace(second=0, microsecond=0)
     epoch = datetime(1970, 1, 1)
@@ -316,7 +316,7 @@ def grid_stamps_for(lo: datetime, hi: datetime) -> List[datetime]:
     return stamps
 
 
-def count_by_bucket(df: pl.DataFrame, column: str) -> Dict[datetime, int]:
+def count_by_bucket(df: pl.DataFrame, column: str):
     """The per-bucket count of the rows where ``column`` is true."""
     if df.is_empty():
         return {}
@@ -334,7 +334,7 @@ def build_control_plane_evidence(
     *,
     baseline_days: int = BASELINE_DAYS,
     include_withdrawals: bool = True,
-) -> ControlPlaneEvidence:
+):
     """Measure the target's own control-plane activity around a window.
 
     The event window and the baseline days are read from the same
@@ -431,8 +431,13 @@ def build_control_plane_evidence(
         # measures, and it is carried separately so that the two can be
         # compared -- an outage moves the own-announcement channel and
         # leaves the involvement channel roughly flat.
+        #
+        # The match is literal rather than a regular expression: the
+        # scan reads every update in a week, and a regex over hundreds
+        # of millions of paths costs more than the rest of the query
+        # put together.
         involved = announcements.filter(
-            pl.col("as_path").str.contains(str(asn)))
+            pl.col("as_path").str.contains(str(asn), literal=True))
         for bucket, count in count_by_bucket(involved, "_bucket").items():
             counts["volume"][bucket] = count
 
@@ -457,7 +462,7 @@ def build_control_plane_evidence(
         # hundreds of millions of rows and the reduction is what makes
         # the scan finish.
         relevant = announcements.filter(
-            pl.col("as_path").str.contains(str(asn))
+            pl.col("as_path").str.contains(str(asn), literal=True)
             | pl.col("prefix").is_in(list(owned))
             | (pl.col("origin_as") == asn)
         )
@@ -522,7 +527,7 @@ def apply_baseline(
     counts: Dict[str, Dict[datetime, float]],
     window_start: datetime,
     baseline_days: int,
-) -> None:
+):
     """Fill the evidence's counterfactual from the raw per-slot counts.
 
     The counterfactual is the same clock position on the earlier days.

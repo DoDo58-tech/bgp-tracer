@@ -30,7 +30,7 @@ def make_json_safe(value, _seen=None):
             return str(value)
         finally:
             _seen.discard(obj_id)
-    except (ValueError):
+    except ValueError:
         return str(value)
 
 

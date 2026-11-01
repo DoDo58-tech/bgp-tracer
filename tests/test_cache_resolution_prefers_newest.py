@@ -23,7 +23,7 @@ from pathlib import Path
 from agents.cache_resolution import resolve_cache
 
 
-def write_cache(path: Path, marker: str) -> None:
+def write_cache(path: Path, marker: str):
     path.write_text(
         json.dumps({"asn": "16509", "marker": marker}), encoding="utf-8"
     )

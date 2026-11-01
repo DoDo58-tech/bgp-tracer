@@ -1,7 +1,7 @@
-"""The canonical ground-truth seed: the accepted events and the rejected ones.
+"""The accepted and the rejected ground-truth events, read from the dataset.
 
-Both lists are read from the canonical dataset, so this module cannot
-drift away from it.
+Both lists come from the canonical CSVs, so this module cannot drift
+away from them.
 """
 import csv
 from pathlib import Path
@@ -9,8 +9,7 @@ from pathlib import Path
 from data_check.gt_dataset import CANONICAL_GT_CSV, REJECTED_GT_CSV
 
 
-def load_ids(path: Path) -> list[str]:
-    """Read the ``event_id`` column from a ground-truth CSV."""
+def load_ids(path):
     if not path.is_file():
         return []
     with path.open(newline="", encoding="utf-8-sig") as fh:

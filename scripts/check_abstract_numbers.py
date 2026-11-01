@@ -28,7 +28,7 @@ PAPER = Path(os.environ.get(
 ))
 
 
-def load(name: str) -> dict:
+def load(name: str):
     p = EVAL / name
     if not p.exists():
         raise SystemExit(f"FAIL: missing artefact {p}")
@@ -45,7 +45,7 @@ def get(d: dict, path: str):
     return cur
 
 
-def paper_number(label: str) -> str:
+def paper_number(label: str):
     """The rendered LaTeX form of a float, as the paper prints it."""
     return label
 
@@ -93,7 +93,7 @@ CHECKS = [
 ]
 
 
-def close_enough(value, expected: str) -> bool:
+def close_enough(value, expected: str):
     got = str(value)
     if got == expected:
         return True
@@ -104,7 +104,7 @@ def close_enough(value, expected: str) -> bool:
         return False
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()

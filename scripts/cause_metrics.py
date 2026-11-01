@@ -42,11 +42,11 @@ CLASSES = ("outage", "route_leak", "origin_hijack_victim")
 ARMS = ("agent", "rule")
 
 
-def load_rows() -> list[dict]:
+def load_rows():
     return json.loads(FEATURE_TABLE.read_text())["rows"]
 
 
-def is_decidable(r: dict) -> bool:
+def is_decidable(r: dict):
     """Does this event's cache carry a physical signature at all?"""
     if r.get("traffic_available"):
         return True
@@ -57,7 +57,7 @@ def is_decidable(r: dict) -> bool:
     return False
 
 
-def score(rows: list[dict], key: str, subset: list[dict] | None = None) -> dict:
+def score(rows: list[dict], key: str, subset: list[dict] | None = None):
     subset = subset if subset is not None else rows
     per_class = {c: {"n": 0, "correct": 0} for c in CLASSES}
     answered = 0
@@ -97,7 +97,7 @@ def score(rows: list[dict], key: str, subset: list[dict] | None = None) -> dict:
     }
 
 
-def main() -> int:
+def main():
     rows = load_rows()
     decidable = [r for r in rows if is_decidable(r)]
     undecidable = [r for r in rows if not is_decidable(r)]

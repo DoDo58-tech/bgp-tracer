@@ -112,7 +112,7 @@ def build_covered_subnet_set(target_prefixes):
                     next_pl = cur_net.prefixlen + 1
                     for sub in cur_net.subnets(new_prefix=next_pl):
                         frontier.append(str(sub))
-        except (ValueError):
+        except ValueError:
             pass
     return len(covered), covered
 
@@ -139,7 +139,7 @@ def load_full_day_bgp_data(start_time, end_time):
         gc.collect()
         return df
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error loading BGP window data: {e}")
         return pl.DataFrame()
 
@@ -245,7 +245,7 @@ def detect_hijacks_streaming(
             "no_data_reason": "ripestat_or_batch_failed",
         }, asn=target_as).to_dict()
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Hijack detection failed for AS{target_as}: {e}")
         import traceback as _tb_hijack
         _tb_hijack.print_exc()
@@ -402,7 +402,7 @@ def process_chunk_worker(args):
                     if isinstance(alert, dict):
                         alert.setdefault("__asn", asn_str)
                         alerts.append(alert)
-            except (AttributeError) as e:
+            except AttributeError as e:
                 worker_log.debug(
                     f"[chunk-worker] forge detection failed for AS{asn}: {e}"
                 )
@@ -412,7 +412,7 @@ def process_chunk_worker(args):
                 analyzed_df, prefix_to_as, target_as=asn,
                 prefixes_by_as=prefixes_by_as,
             )
-        except (AttributeError) as e:
+        except AttributeError as e:
             worker_log.debug(
                 f"[chunk-worker] origin detection failed for AS{asn}: {e}"
             )
@@ -506,7 +506,7 @@ def detect_hijacks_batch(
 
         if ipv6_prefixes_count > 0:
             logger.info(f"Total IPv6 prefixes added from RIPEstat: {ipv6_prefixes_count}")
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.warning(f"Failed to load IPv6 prefixes from RIPEstat: {e}")
 
     #  RPKI ROA （ IPv4/IPv6 ）
@@ -524,7 +524,7 @@ def detect_hijacks_batch(
             rpki_ipv4 = sum(1 for p in rpki_data if ':' not in p)
             rpki_ipv6 = sum(1 for p in rpki_data if ':' in p)
             logger.info(f"RPKI ROA: Added {added} prefixes (IPv4: {rpki_ipv4}, IPv6: {rpki_ipv6})")
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.warning(f"Failed to load RPKI ROA data: {e}")
 
     prefixes_by_as = get_target_prefixes_batch(cleaned_as_list, prefix_to_as)
@@ -621,7 +621,7 @@ def detect_hijacks_batch(
                         _keep_cols = ["prefix", "as-path", "A/W", "timestamp"]
                         _cols_present = [c for c in _keep_cols if c in df_chunk.columns]
                         _chunk_records = df_chunk.select(_cols_present).to_dicts()
-                    except (AttributeError) as _exc:
+                    except AttributeError as _exc:
                         logger.debug(f"[chunk-iter] serialise failed: {_exc}; skipping {chunk_count}")
                         continue
 
@@ -652,7 +652,7 @@ def detect_hijacks_batch(
                 _mb = psutil.Process().memory_info().rss / 1024 / 1024
                 memory_peaks.append(_mb)
                 logger.info(f"[chunk-iter] memory after parallel run: {_mb:.1f}MB")
-            except (ValueError):
+            except ValueError:
                 pass
 
     else:

@@ -32,7 +32,7 @@ QUICK_DIR = PROJECT_ROOT / "results" / "quick"
 OUT_PATH = PROJECT_ROOT / "results" / "eval" / "leak_concentration.json"
 
 
-def load_gt() -> list[dict]:
+def load_gt():
     out = []
     for r in csv.DictReader(GT_CSV.open()):
         out.append(
@@ -49,7 +49,7 @@ def load_gt() -> list[dict]:
     return out
 
 
-def record_origin(event: dict) -> str:
+def record_origin(event: dict):
     """The origin AS of a leak record's flagged path."""
     evidence = event.get("evidence") or {}
     path = evidence.get("as_path") or event.get("as-path") or ""
@@ -57,14 +57,14 @@ def record_origin(event: dict) -> str:
     return tokens[-1] if tokens else ""
 
 
-def record_victim_in_path(event: dict, victim: str) -> bool:
+def record_victim_in_path(event: dict, victim: str):
     evidence = event.get("evidence") or {}
     path = evidence.get("as_path") or event.get("as-path") or ""
     tokens = [t for t in str(path).replace("|", " ").split() if t]
     return victim in tokens
 
 
-def analyze(path: Path, ev: dict) -> dict:
+def analyze(path: Path, ev: dict):
     d = json.loads(path.read_text())
     routing = d.get("routing") or {}
     victim = ev["asn"]
@@ -104,7 +104,7 @@ def analyze(path: Path, ev: dict) -> dict:
     }
 
 
-def main() -> int:
+def main():
     rows = []
     for ev in load_gt():
         match = resolve_cache(ev["asn"], ev["start"], ev["end"], QUICK_DIR)

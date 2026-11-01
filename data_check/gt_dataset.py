@@ -2,9 +2,8 @@
 
 There is exactly one ground-truth corpus in this project, and every
 script reads it from here.  The earlier layout kept a dozen versioned
-CSVs side by side, which meant every script had to know which version
-was current, and a script that picked the wrong one silently evaluated
-against a different corpus than its sibling.
+CSVs side by side, so a script that picked the wrong one silently
+evaluated against a different corpus than its sibling.
 
 The corpus is built by ``scripts/build_canonical_dataset.py``, which
 admits an event only when all three of the following hold:
@@ -30,7 +29,7 @@ REJECTED_GT_CSV = GT_DIR / "final_ground_truth_rejected.csv"
 BUILD_REPORT_JSON = GT_DIR / "final_ground_truth_build.json"
 
 
-def require_canonical() -> Path:
+def require_canonical():
     """The canonical dataset path, or a clear error if it is missing."""
     if not CANONICAL_GT_CSV.is_file():
         raise FileNotFoundError(

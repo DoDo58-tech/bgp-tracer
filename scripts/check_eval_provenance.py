@@ -19,7 +19,7 @@ _EVIDENCE_KEYS = ("cache_source", "cache_file", "evidence_path", "quick_cache",
                   "cache")
 
 
-def iter_records(path: Path) -> Iterable[dict]:
+def iter_records(path: Path):
     if path.suffix == ".jsonl":
         for line in path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -52,7 +52,7 @@ def iter_records(path: Path) -> Iterable[dict]:
                 yield from (r for r in rows if isinstance(r, dict))
 
 
-def resolve(src: str) -> Tuple[str, Path]:
+def resolve(src: str):
     """Classify one evidence reference: ('synthetic'|'missing'|'ok', path)."""
     if not src:
         return "empty", Path("")
@@ -67,7 +67,7 @@ def resolve(src: str) -> Tuple[str, Path]:
 
 
 def check(paths: List[Path], allow_synthetic: bool,
-          allow_no_ref: bool = False) -> int:
+          allow_no_ref: bool = False):
     failures = 0
     for path in paths:
         if not path.exists():
@@ -120,7 +120,7 @@ def check(paths: List[Path], allow_synthetic: bool,
     return failures
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("artefacts", nargs="+", type=Path)
     ap.add_argument(

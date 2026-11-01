@@ -30,7 +30,7 @@ VERDICTS = [
 # ── Evidence slimming (identical for every arm) ──────────────────────────────
 
 
-def slim_evidence(quick: dict) -> dict:
+def slim_evidence(quick: dict):
     """The evidence packet every arm is allowed to see."""
     tr = quick.get("traffic") or {}
     rr = quick.get("routing") or {}
@@ -77,7 +77,7 @@ Reply with ONLY a JSON object:
 {"verdict": "...", "confidence": 0.0-1.0, "cause": "short cause label", "reasoning": "one or two sentences"}"""
 
 
-def run_monolithic(quick: dict, run_id: str) -> dict:
+def run_monolithic(quick: dict, run_id: str):
     from config import MODEL, API_KEY, BASE_URL
     from llm.llm_factory import create_llm
 
@@ -90,7 +90,7 @@ def run_monolithic(quick: dict, run_id: str) -> dict:
     try:
         from llm.llm_factory import build_token_counter
         build_token_counter()
-    except (ValueError):  # noqa: BLE001
+    except ValueError:  # noqa: BLE001
         pass
 
     tok_before = snapshot_tokens()
@@ -104,7 +104,7 @@ def run_monolithic(quick: dict, run_id: str) -> dict:
         parsed, ok = llm.extract_json(text)
         if not ok or not isinstance(parsed, dict):
             parsed = {"verdict": "", "confidence": 0.0, "reasoning": f"unparsed: {text[:200]}"}
-    except (ValueError) as exc:  # noqa: BLE001
+    except ValueError as exc:  # noqa: BLE001
         parsed = {"verdict": "", "confidence": 0.0, "reasoning": f"error: {exc}"}
     elapsed = round(time.perf_counter() - t0, 2)
 
@@ -115,7 +115,7 @@ def run_monolithic(quick: dict, run_id: str) -> dict:
         from llm.llm_factory import extract_usage_from_response
         pt, ct = extract_usage_from_response(resp)
         tokens = int(pt) + int(ct)
-    except (ValueError):  # noqa: BLE001
+    except ValueError:  # noqa: BLE001
         tokens = 0
     if not tokens:
         tokens = max(0, snapshot_tokens() - tok_before)
@@ -139,16 +139,16 @@ def run_monolithic(quick: dict, run_id: str) -> dict:
 # ── Arm 2 / 3: the real pipelines ────────────────────────────────────────────
 
 
-def read_html(path: str) -> str:
+def read_html(path: str):
     try:
         if path and Path(path).exists():
             return Path(path).read_text(errors="replace")
-    except (ValueError):  # noqa: BLE001
+    except ValueError:  # noqa: BLE001
         pass
     return ""
 
 
-def norm_verdict(raw: str, text: str = "") -> str:
+def norm_verdict(raw: str, text: str = ""):
     """Map an arm's own vocabulary onto the shared five-class vocabulary."""
     r = (raw or "").strip().lower()
     aliases = {
@@ -173,7 +173,7 @@ def norm_verdict(raw: str, text: str = "") -> str:
     return f"unmapped:{r}"
 
 
-def collect_agent_metrics(res: dict) -> dict:
+def collect_agent_metrics(res: dict):
     cea = res.get("chief_expert_analysis") or {}
     rr = res.get("react_result") or {}
 
@@ -226,15 +226,15 @@ def collect_agent_metrics(res: dict) -> dict:
     }
 
 
-def snapshot_tokens() -> int:
+def snapshot_tokens():
     try:
         from llm.llm_factory import get_global_token_counter
         return int(get_global_token_counter())
-    except (ValueError):  # noqa: BLE001
+    except ValueError:  # noqa: BLE001
         return 0
 
 
-def run_pipeline(quick: dict, mode: str) -> dict:
+def run_pipeline(quick: dict, mode: str):
     from chief_agent import analyze_deep_from_quick
 
     # The factory counter is process-wide and never reset between arms, so a
@@ -245,7 +245,7 @@ def run_pipeline(quick: dict, mode: str) -> dict:
     try:
         res = analyze_deep_from_quick(quick_result=quick, analysis_mode=mode)
         ok = bool(res.get("success"))
-    except (AttributeError) as exc:  # noqa: BLE001
+    except AttributeError as exc:  # noqa: BLE001
         logger.error(f"[ablation] {mode} crashed: {exc}")
         traceback.print_exc()
         res, ok = {}, False
@@ -267,7 +267,7 @@ def run_pipeline(quick: dict, mode: str) -> dict:
 # ── Event selection ──────────────────────────────────────────────────────────
 
 
-def pick_events(quick_dir: Path, n_per_verdict: int) -> list[Path]:
+def pick_events(quick_dir: Path, n_per_verdict: int):
     """Pick the smallest-signal cache per Phase-1 verdict class.
     
     Deterministic: sort by (verdict, anomaly count, file name) so a re-run
@@ -276,7 +276,7 @@ def pick_events(quick_dir: Path, n_per_verdict: int) -> list[Path]:
     for f in sorted(quick_dir.glob("quick_*.json")):
         try:
             d = json.loads(f.read_text())
-        except (ValueError):  # noqa: BLE001
+        except ValueError:  # noqa: BLE001
             continue
         if not isinstance(d, dict) or not d.get("success"):
             continue
@@ -300,17 +300,17 @@ def pick_events(quick_dir: Path, n_per_verdict: int) -> list[Path]:
     return picked
 
 
-def verdict_of(path: Path) -> str:
+def verdict_of(path: Path):
     try:
         return (json.loads(path.read_text()) or {}).get("quick_verdict") or ""
-    except (ValueError):  # noqa: BLE001
+    except ValueError:  # noqa: BLE001
         return ""
 
 
 # ── Driver ───────────────────────────────────────────────────────────────────
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n-per-verdict", type=int, default=2)
     ap.add_argument("--arms", default="monolithic,traffic_first,react")
@@ -355,7 +355,7 @@ def main() -> int:
                     rec = run_monolithic(quick, run_id=f"mono-{eid}")
                 else:
                     rec = run_pipeline(quick, arm)
-            except (AttributeError) as exc:  # noqa: BLE001
+            except AttributeError as exc:  # noqa: BLE001
                 logger.error(f"[ablation] {eid} {arm} failed: {exc}")
                 rec = {"arm": arm, "verdict": "", "error": str(exc)}
             if arm == "react":

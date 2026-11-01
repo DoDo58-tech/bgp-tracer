@@ -69,7 +69,7 @@ class AutoProbeExecutor:
         probing_recommendations: List[dict],
         target_as: str = "",
         analysis_window: dict = None,
-    ) -> List[AutoProbeFinding]:
+    ):
         """Args:
         probing_recommendations: _report_agent._generate_refutable_hypotheses
         : {"action": str, "target": str, "reason": str, "method": str}
@@ -132,7 +132,7 @@ class AutoProbeExecutor:
         target: str,
         target_as: str,
         analysis_window: Optional[dict],
-    ) -> AutoProbeFinding:
+    ):
         """ action """
         started = datetime.now()
         base = AutoProbeFinding(action=action, target=target, success=False, summary="")
@@ -165,7 +165,7 @@ class AutoProbeExecutor:
 
             finding.execution_time_s = (datetime.now() - started).total_seconds()
             return finding
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f" {action} : {e}")
             return AutoProbeFinding(
                 action=action, target=target, success=False,
@@ -176,7 +176,7 @@ class AutoProbeExecutor:
 
     async def probe_victim_traffic(
         self, target: str, target_as: str
-    ) -> AutoProbeFinding:
+    ):
         """victim ASes"""
         ases = extract_as_numbers(target)
         if not ases:
@@ -191,7 +191,7 @@ class AutoProbeExecutor:
             try:
                 data = await self.query_cloudflare_radar_as(asn)
                 results.append({"asn": asn, **data})
-            except (AttributeError) as e:
+            except AttributeError as e:
                 results.append({"asn": asn, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -229,7 +229,7 @@ class AutoProbeExecutor:
             try:
                 origin_data = await self.query_ripe_ris_origin(prefix)
                 results.append({"prefix": prefix, **origin_data})
-            except (AttributeError) as e:
+            except AttributeError as e:
                 results.append({"prefix": prefix, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -302,7 +302,7 @@ class AutoProbeExecutor:
                     summary=f"traceroute  {target_ip} : {result.error}",
                     error=result.error or "probe_failed",
                 )
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"traceroute : {e}")
             return AutoProbeFinding(
                 action="traceroute_probing", target=target, success=False,
@@ -312,7 +312,7 @@ class AutoProbeExecutor:
 
     async def probe_traffic_data(
         self, target: str, target_as: str, analysis_window: Optional[dict],
-    ) -> AutoProbeFinding:
+    ):
         """ AS (Cloudflare Radar )"""
         asn = extract_first_as(target) or target_as
         if not asn:
@@ -330,7 +330,7 @@ class AutoProbeExecutor:
                 summary=f"AS{asn} （top location: {data.get('top_location', 'unknown')}）",
                 data=data,
             )
-        except (ValueError) as e:
+        except ValueError as e:
             return AutoProbeFinding(
                 action="collect_traffic_data", target=target, success=False,
                 summary=f": {e}",
@@ -339,7 +339,7 @@ class AutoProbeExecutor:
 
     async def probe_prefix_specific_traffic(
         self, target: str, target_as: str,
-    ) -> AutoProbeFinding:
+    ):
         """(Cloudflare Radar)"""
         prefixes = extract_prefixes(target)
         if not prefixes:
@@ -354,7 +354,7 @@ class AutoProbeExecutor:
             try:
                 data = await self.query_cloudflare_radar_prefix(prefix)
                 results.append({"prefix": prefix, **data})
-            except (AttributeError) as e:
+            except AttributeError as e:
                 results.append({"prefix": prefix, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -380,7 +380,7 @@ class AutoProbeExecutor:
             try:
                 data = await self.query_rpki_validation(prefix)
                 results.append({"prefix": prefix, **data})
-            except (AttributeError) as e:
+            except AttributeError as e:
                 results.append({"prefix": prefix, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -417,7 +417,7 @@ class AutoProbeExecutor:
                 summary=f"AS{asn}: {data.get('peer_count', 0)} peer, {data.get('provider_count', 0)} provider",
                 data=data,
             )
-        except (ValueError) as e:
+        except ValueError as e:
             return AutoProbeFinding(
                 action="as_topology", target=target, success=False,
                 summary=f": {e}",
@@ -441,7 +441,7 @@ class AutoProbeExecutor:
         results: list = []
         try:
             from tools.irr_registry import lookup_prefix_origin_async
-        except (ValueError) as exc:
+        except ValueError as exc:
             return AutoProbeFinding(
                 action="irr_registry", target=target, success=False,
                 summary=f"irr_registry module unavailable: {exc}",
@@ -452,7 +452,7 @@ class AutoProbeExecutor:
             try:
                 origin_info = await lookup_prefix_origin_async(prefix)
                 results.append({"prefix": prefix, **origin_info})
-            except (AttributeError) as e:
+            except AttributeError as e:
                 results.append({"prefix": prefix, "error": str(e)})
 
         success_count = sum(1 for r in results if "error" not in r)
@@ -664,7 +664,7 @@ class AutoProbeExecutor:
         try:
             import glob
             asrel_files = sorted(glob.glob("data/asrel/*.as-rel.txt"))
-        except (ValueError):
+        except ValueError:
             pass
 
         if not asrel_files:
@@ -706,7 +706,7 @@ class AutoProbeExecutor:
                             provider_count += 1
                         elif rel == "-1":
                             customer_count += 1
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.debug(f" AS-Relationship : {e}")
 
         return {
@@ -755,7 +755,7 @@ class AutoProbeExecutor:
             return None
 
 
-def extract_as_numbers(content) -> List[str]:
+def extract_as_numbers(content):
     """ "victim ASes: 20119, 34927, 207564" AS """
     import re
     text = content
@@ -769,7 +769,7 @@ def extract_as_numbers(content) -> List[str]:
     return result
 
 
-def extract_prefixes(content) -> List[str]:
+def extract_prefixes(content):
     """``"prefixes: 90.174.144.0/20, ..."`` ."""
     import re
     text = content
@@ -814,7 +814,7 @@ async def run_auto_probes(
     analysis_window: dict = None,
     timeout: float = 10.0,
     enable_external: bool = True,
-) -> List[AutoProbeFinding]:
+):
     executor = AutoProbeExecutor(
         timeout=timeout,
         enable_external=enable_external,

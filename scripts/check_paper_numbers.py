@@ -30,7 +30,7 @@ PAPER = Path(os.environ.get(
 ))
 
 
-def normalise(text: str) -> str:
+def normalise(text: str):
     text = re.sub(r"\s+", " ", text)
     for a, b in (("\\%", "%"), ("{,}", ","), ("$", ""), ("\\", ""),
                  ("\\,", ""), ("~", " "), ("&amp;", "&")):
@@ -38,7 +38,7 @@ def normalise(text: str) -> str:
     return text
 
 
-def percent(value: float) -> str:
+def percent(value: float):
     """A percentage printed the way the paper prints it.
 
     ``49/400`` is exactly 12.25%, which the paper prints as 12.3%
@@ -50,14 +50,14 @@ def percent(value: float) -> str:
     return f"{exact}%"
 
 
-def load(name: str) -> dict:
+def load(name: str):
     path = EVAL / name
     if not path.exists():
         raise SystemExit(f"FAIL: missing artefact {path}")
     return json.loads(path.read_text())
 
 
-def main() -> int:
+def main():
     paper = normalise(" ".join(
         p.read_text() for p in sorted(PAPER.glob("*.tex"))))
 
@@ -67,7 +67,7 @@ def main() -> int:
     agent = load("gt_agent_full.json")["summary"]
     rules = load("gt_rule_only.json")["summary"]
     mono = load("gt_baseline_monolithic.json")["summary"]
-    expl = load("explainability_audit_corpus.json")["summary"]
+    expl = load("explainability_audit.json")["summary"]
     ablation = load("component_ablation_summary.json")["summary"]
     heldout = load("heldout_validation.json")["arms"]
 

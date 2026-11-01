@@ -34,7 +34,7 @@ class ParentPrefixTrie:
             else:  # IPv6
                 self.ipv6_prefixes[prefix_str] = (network, origins)
                 self.insert_into_trie(self.ipv6_root, network, prefix_str, origins)
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Failed to insert prefix {prefix_str}: {e}")
 
     def insert_into_trie(self, root, network, prefix_str, origins):
@@ -124,7 +124,7 @@ class ParentPrefixTrie:
             
             return result
             
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.debug(f"Error in parent prefix lookup for {target_prefix}: {e}")
             return None, None
 
@@ -151,7 +151,7 @@ def build_optimized_prefix_lookup(prefix_to_as):
             network = ipaddress.ip_network(prefix_str, strict=False)
             trie.insert(prefix_str, origins)
             valid_count += 1
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Invalid prefix format: {prefix_str} - {e}")
             invalid_count += 1
             continue
@@ -181,7 +181,7 @@ def find_parent_prefix_optimized(target_prefix, trie):
                 if parent_network.supernet_of(target_network):
                     return parent_prefix, origins
             return None, None
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.debug(f"Error in parent prefix lookup for {target_prefix}: {e}")
             return None, None
 
@@ -279,7 +279,7 @@ def check_origin_hijack_vectorized(row, prefix_to_as, target_as=None):
             'target_as': target_as,  # Store target AS for reference
         }
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.warning(f"Error in origin hijack check: {e}")
         return None
 
@@ -750,7 +750,7 @@ def batch_check_connection_frequency(updates_df, as_relationships,
                 '_fake_as1_list', '_fake_as2_list', '_fake_conn_list']
         return result.drop([c for c in drop if c in result.columns])
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Vectorized forge detection failed: {e} — using legacy fallback")
         import traceback; traceback.print_exc()
         return batch_check_connection_frequency_legacy(
@@ -776,7 +776,7 @@ def batch_connection_frequency_polars(conn_keys, full_day_data):
     if not isinstance(full_day_data, pl.DataFrame):
         try:
             full_day_data = pl.DataFrame(full_day_data)
-        except (ValueError):
+        except ValueError:
             return {k: None for k in conn_keys}
     if full_day_data.is_empty() or 'as-path' not in full_day_data.columns:
         return {k: None for k in conn_keys}
@@ -828,7 +828,7 @@ def batch_connection_frequency_polars(conn_keys, full_day_data):
         try:
             matched_mask = full_day_data.select(union_expr).to_series()
             df = full_day_data.filter(matched_mask)
-        except (ValueError):
+        except ValueError:
             df = full_day_data
 
         # Per-key scan: for each key, count rows where ``as-path``
@@ -839,7 +839,7 @@ def batch_connection_frequency_polars(conn_keys, full_day_data):
             for k in valid_keys:
                 try:
                     c = df.select(as_path_col.str.contains(k).sum()).item()
-                except (ValueError):
+                except ValueError:
                     c = 0
                 counts_by_key[k] = int(c or 0)
 
@@ -864,7 +864,7 @@ def batch_connection_frequency_polars(conn_keys, full_day_data):
                 'note': f'Analyzed {total_updates:,} updates (batch)',
                 'analysis_timestamp': '',
             }
-    except (AttributeError) as _e:
+    except AttributeError as _e:
         # Top-level failure: degrade to per-key None so caller falls
         # back to the legacy path.
         logger.debug(f"[batch-pol] fast path failed: {_e!r}")
@@ -965,7 +965,7 @@ def batch_check_connection_frequency_legacy(updates_df, as_relationships,
             pl.Series('fake_connections', fake_conn_list)
         ])
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Legacy fallback also failed: {e}")
         import traceback; traceback.print_exc()
         if isinstance(updates_df, pl.DataFrame):
@@ -1000,7 +1000,7 @@ def calculate_adaptive_threshold(updates_df, fake_connection, date_str):
         try:
             as1, as2 = fake_connection.split('|')
             target_as = as1 if as1.isdigit() else as2
-        except (ValueError):
+        except ValueError:
             return DEFAULT_FORGE_THRESHOLD
 
         # Count AS activity using polars
@@ -1023,7 +1023,7 @@ def calculate_adaptive_threshold(updates_df, fake_connection, date_str):
 
         return threshold
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.warning(f"Error calculating adaptive threshold: {e}")
         return DEFAULT_FORGE_THRESHOLD
 
@@ -1150,7 +1150,7 @@ def analyze_connection_frequency(fake_connection, date_str, updates_df, end_time
 
         return result
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error analyzing connection frequency: {e}")
         return {
             'connection': fake_connection,
@@ -1244,13 +1244,13 @@ def detect_forge_hijacks(updates_df, as_relationships,
                 }
                 alerts.append(alert)
 
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"Error generating alert: {e}")
                 continue
 
         logger.info(f"Detected {len(alerts)} potential forged path hijacks")
         return alerts, analyzed_df
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error detecting forged path hijacks: {e}")
         return [], updates_df

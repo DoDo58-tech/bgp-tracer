@@ -160,7 +160,7 @@ Based on the evidence collected, identify:
                     temperature=DEFAULT_TEMP_REASONING
                 )
                 self._llm_initialized = True
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"Failed to initialize LLM for hypothesis identification: {e}")
                 self._llm_initialized = True
 
@@ -172,7 +172,7 @@ Based on the evidence collected, identify:
         multi_scale_analysis: Optional[dict],
         asn: str = "unknown",
         time_range: str = "unknown",
-    ) -> Dict[str, Any]:
+    ):
         """Returns:
         {
         "assumptions": [...],
@@ -275,7 +275,7 @@ Based on the evidence collected, identify:
         else:
             return "No causal link detected"
 
-    def parse_llm_response(self, response) -> Dict[str, Any]:
+    def parse_llm_response(self, response):
         """ LLM """
         try:
             # Use brace-balanced extraction to avoid the previous
@@ -299,7 +299,7 @@ Based on the evidence collected, identify:
         self, 
         traffic_result: dict, 
         routing_result: dict
-    ) -> Dict[str, Any]:
+    ):
         assumptions = [
             {
                 "assumption": "BGP ",
@@ -389,7 +389,7 @@ class EvidenceChainBuilder:
         asn: str = "unknown",
         time_range: str = "unknown",
         agent_judgement: Optional[dict] = None,
-    ) -> EvidenceChain:
+    ):
         """Build the unified evidence chain.
 
         ``traffic_result``, ``routing_result``, ``causal_analysis`` and
@@ -481,7 +481,7 @@ class EvidenceChainBuilder:
         routing_result: dict,
         causal_analysis: Optional[dict],
         bayesian_result: Optional[dict],
-    ) -> str:
+    ):
         """The verdict the detector rule alone would commit to."""
         if bayesian_result:
             return bayesian_result.get("verdict", "inconclusive")
@@ -498,7 +498,7 @@ class EvidenceChainBuilder:
         self,
         traffic_result: dict,
         routing_result: dict,
-    ) -> str:
+    ):
         """Return the cause that the physical layer states unambiguously.
 
         This is the *veto* side of the agent/rule arbitration.  An agent
@@ -539,7 +539,7 @@ class EvidenceChainBuilder:
         self,
         routing_result: dict,
         victim_asn=None,
-    ) -> int:
+    ):
         """Hijack records whose origin is neither the victim nor legitimate.
 
         A hijack detector reports two very different things under the
@@ -593,7 +593,7 @@ class EvidenceChainBuilder:
         routing_result: dict,
         agent_judgement: Optional[dict],
         verdict: str,
-    ) -> str:
+    ):
         """Derive the cause label that the verdict axis implies.
 
         The ground-truth corpus labels a *cause* (outage, route_leak,
@@ -670,7 +670,7 @@ class EvidenceChainBuilder:
         self,
         agent_cause: str,
         routing_result: dict,
-    ) -> bool:
+    ):
         """Is the agent's proposed cause supported by an independent record?
 
         A proposal for an origin hijack is corroborated when the
@@ -696,7 +696,7 @@ class EvidenceChainBuilder:
         agent_cause: str,
         traffic_result: dict,
         routing_result: dict,
-    ) -> bool:
+    ):
         """May the agent decide when the physical layer observed nothing?
 
         When the traffic layer has no data, the cause rule has no
@@ -725,7 +725,7 @@ class EvidenceChainBuilder:
         # read that, so the agent's contextual reading decides.
         return agent_cause in ("outage", "route_leak")
 
-    def normalize_cause(self, raw: str) -> str:
+    def normalize_cause(self, raw: str):
         """Map a free-text cause onto the corpus's cause vocabulary.
 
         The incident classifier answers in prose ("Origin Hijacking",
@@ -759,7 +759,7 @@ class EvidenceChainBuilder:
                 return label
         return ""
 
-    def count_evidenced_leaks(self, routing_result: dict, victim_asn=None) -> int:
+    def count_evidenced_leaks(self, routing_result: dict, victim_asn=None):
         """Leak events that carry real physical evidence.
 
         The leak detector fires on a PathProb score, so it also fires on
@@ -827,7 +827,7 @@ class EvidenceChainBuilder:
             evidenced += 1
         return evidenced
 
-    def has_withdrawal_surge(self, outage: dict) -> bool:
+    def has_withdrawal_surge(self, outage: dict):
         """True when the victim actively withdrew its own routes.
 
         A leak makes a peer announce the victim's prefixes with a longer
@@ -848,7 +848,7 @@ class EvidenceChainBuilder:
         prefix_disappeared = "prefix_disappearance" in indicators
         return announcement_dropped or prefix_disappeared or withdrawals > announcements
 
-    def withdrawal_ratio(self, outage: dict) -> float:
+    def withdrawal_ratio(self, outage: dict):
         """Withdrawals per announcement in the event window.
 
         This is the measured discriminator between an outage and the other
@@ -877,7 +877,7 @@ class EvidenceChainBuilder:
         traffic_result: dict,
         routing_result: dict,
         verdict: str,
-    ) -> str:
+    ):
         """Map detector evidence onto the corpus's cause vocabulary.
 
         The routing layer does not separate the classes on this corpus.
@@ -1248,7 +1248,7 @@ class EvidenceChainBuilder:
         routing_result: dict,
         causal_analysis: Optional[dict],
         bayesian_result: Optional[dict],
-    ) -> list:
+    ):
         steps = []
 
         traffic_anomaly = (traffic_result or {}).get("anomaly_count", 0) > 0
@@ -1304,7 +1304,7 @@ class EvidenceChainBuilder:
         traffic_result: dict,
         routing_result: dict,
         evidence_chain: list,
-    ) -> list:
+    ):
         """()"""
         assumptions = [
             "BGP ",
@@ -1323,7 +1323,7 @@ class EvidenceChainBuilder:
         evidence_chain: list,
         traffic_result: dict,
         routing_result: dict
-    ) -> list:
+    ):
         limitations = [
             "BGP feed lag 15-30 minutes",
             "CDN/RIS API rate limit",
@@ -1346,7 +1346,7 @@ class EvidenceChainBuilder:
         traffic_result: dict,
         routing_result: dict,
         causal_analysis: Optional[dict] = None,
-    ) -> list:
+    ):
         gaps = []
 
         if not traffic_result or not traffic_result.get("data_available", True):
@@ -1396,7 +1396,7 @@ class EvidenceChainBuilder:
         causal_analysis: Optional[dict] = None,
         bayesian_result: Optional[dict] = None,
         chosen_verdict: str = "",
-    ) -> list:
+    ):
         """Enumerate the verdict classes the analysis considered and rejected."""
         if bayesian_result:
             # The Bayesian path replaces the rule entirely; there is no
@@ -1461,7 +1461,7 @@ class EvidenceChainBuilder:
         causal_analysis: Optional[dict],
         bayesian_result: Optional[dict],
         agent_judgement: Optional[dict] = None,
-    ) -> str:
+    ):
         """Arbitrate the final verdict.
 
         The detector rule is the default.  ``agent_judgement`` carries the
@@ -1496,7 +1496,7 @@ class EvidenceChainBuilder:
         traffic_anomaly: bool,
         routing_anomaly: bool,
         correlation: bool,
-    ) -> str:
+    ):
         if traffic_anomaly and routing_anomaly and correlation:
             return "correlated_observations"
         elif traffic_anomaly and routing_anomaly:
@@ -1508,7 +1508,7 @@ class EvidenceChainBuilder:
         else:
             return "verified_normal"
 
-    def agent_verdict_proposal(self, agent_judgement: Optional[dict]) -> tuple:
+    def agent_verdict_proposal(self, agent_judgement: Optional[dict]):
         """Extract a usable verdict proposal from the agent's judgement.
 
         Returns ``(verdict_or_None, confidence, reason)``.  The verdict is
@@ -1571,7 +1571,7 @@ class EvidenceChainBuilder:
         self,
         rule_verdict: str,
         agent_judgement: Optional[dict],
-    ) -> str:
+    ):
         """Return the committed verdict for a rule proposal and an agent proposal."""
         proposal, _confidence, _reason = self.agent_verdict_proposal(agent_judgement)
         if proposal is None:
@@ -1583,7 +1583,7 @@ class EvidenceChainBuilder:
         rule_verdict: str,
         agent_judgement: Optional[dict],
         committed_verdict: str,
-    ) -> dict:
+    ):
         """Describe how the committed verdict was reached.
 
         This is the audit trail for the paper's "the agent can change the
@@ -1609,7 +1609,7 @@ class EvidenceChainBuilder:
         self,
         evidence_chain: list,
         bayesian_result: Optional[dict],
-    ) -> float:
+    ):
         if bayesian_result:
             return bayesian_result.get("confidence", 0.5)
 
@@ -1634,7 +1634,7 @@ class EvidenceChainBuilder:
         traffic_result: dict,
         routing_result: dict,
         bayesian_result: Optional[dict],
-    ) -> str:
+    ):
         if bayesian_result:
             return bayesian_result.get("best_hypothesis", "unknown")
 

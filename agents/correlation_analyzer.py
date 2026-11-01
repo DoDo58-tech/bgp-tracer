@@ -31,7 +31,7 @@ class TemporalEvent:
         self.asn = asn  # relevant AS for routing events
 
 
-def as_number(value: Any) -> Optional[float]:
+def as_number(value: Any):
     """Return ``value`` as a float, or ``None`` when it is not a number.
 
     ``bool`` is excluded on purpose: ``True`` is not a measurement of one.
@@ -131,7 +131,7 @@ def resolve_fallback_timestamp(routing_result, analysis_window):
             s, e = parse_timestamp(start.strip()), parse_timestamp(end.strip())
             if s and e:
                 return s + (e - s) / 2
-        except (ValueError):
+        except ValueError:
             pass
     # Last resort — keep events "real" so the routing_event_count matches
     return datetime(1970, 1, 1)
@@ -163,7 +163,7 @@ def resolve_event_timestamp(event_dict, fallback_ts, fallback_used_box):
 def extract_traffic_events(
     traffic_raw=None,
     traffic_anomaly_window=None,
-) -> list[TemporalEvent]:
+):
     """Pull TemporalEvent objects from traffic_raw, falling back to window synthesis."""
     events: list[TemporalEvent] = []
     traffic_raw = traffic_raw or {}
@@ -354,7 +354,7 @@ def extract_traffic_events(
     return deduped
 
 
-def extract_routing_events(routing_result=None, target_as="", analysis_window=None) -> list[TemporalEvent]:
+def extract_routing_events(routing_result=None, target_as="", analysis_window=None):
     """Pull TemporalEvent objects from routing_result across flat/nested/annotation_package formats."""
     events = []
     routing_result = routing_result or {}
@@ -615,7 +615,7 @@ def compute_delta_t(
     traffic_events,
     routing_events,
     traffic_anomaly_window=None,
-) -> list[dict]:
+):
     """ΔT per traffic event = traffic_ts - earliest_routing_ts."""
     if not routing_events:
         return []
@@ -659,7 +659,7 @@ def compute_delta_t(
                 "direction": "drop",
                 "synthesized_from_cluster_window": True,
             })
-        except (ValueError):
+        except ValueError:
             pass
     return results
 
@@ -670,7 +670,7 @@ def assign_correlation_level(
     delta_ts,
     traffic_anomaly_window=None,
     traffic_raw=None,
-) -> dict:
+):
     """Pre-compute correlation signal indicators."""
     routing_count = len(routing_events)
     traffic_count = len(traffic_events)
@@ -765,7 +765,7 @@ def assign_correlation_level(
     }
 
 
-def build_merged_timeline(traffic_events, routing_events) -> list[dict]:
+def build_merged_timeline(traffic_events, routing_events):
     """Build a sorted merged timeline."""
     all_events = []
     for e in traffic_events:
@@ -817,7 +817,7 @@ def generate_refutable_hypotheses(
     traffic_events,
     delta_ts,
     target_as: str,
-) -> list[dict]:
+):
     """Build 2-4 ranked refutable hypotheses."""
     hypotheses = []
     signals = correlation.get("signals", {})
@@ -1009,7 +1009,7 @@ def analyze_temporal_correlation(
     prefix_traffic_results=None,
     correlation_score_result=None,
     traffic_anomaly_window=None,
-) -> dict:
+):
     """Pre-compute temporal features (ΔT, signal indicators, timeline, hypotheses) for correlation analysis."""
     traffic_events = extract_traffic_events(traffic_raw or {}, traffic_anomaly_window)
     routing_events = extract_routing_events(

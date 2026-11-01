@@ -166,7 +166,7 @@ def sign_test(rows, incumbent, candidate):
     }
 
 
-def main() -> int:
+def main():
     rows = build_rows()
     out = {"n": len(rows), "bootstrap_n": BOOTSTRAP_N, "seed": SEED, "policies": {}}
 

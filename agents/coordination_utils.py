@@ -11,7 +11,7 @@ def load_json(filepath):
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             return json.load(f)
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.warning(f"Failed to load JSON from {filepath}: {e}")
         return {}
 
@@ -29,7 +29,7 @@ def lookup_org_info(asn, asorg_file):
         asn_norm = asn_norm[2:]
     try:
         asn_norm = str(int(asn_norm))
-    except (ValueError):
+    except ValueError:
         pass
 
     org_id = asn_to_org_id.get(asn_norm)
@@ -53,7 +53,7 @@ def normalize_time(value):
         try:
             dt = datetime.strptime(value, fmt)
             return dt.strftime("%Y-%m-%d %H:%M")
-        except (ValueError):
+        except ValueError:
             continue
     return value
 
@@ -82,7 +82,7 @@ def query_as_relationships(asn, asrel_file):
             normalised = [str(x).strip().upper().lstrip("AS") for x in customer_providers]
             if asn_stripped in normalised:
                 customers.append(str(customer_asn).strip().upper().lstrip("AS"))
-        except (ValueError):
+        except ValueError:
             continue
     return {
         "success": True,

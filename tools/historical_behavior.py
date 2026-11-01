@@ -26,7 +26,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 HISTORICAL_CASES_DIR = PROJECT_ROOT / "data" / "historical_cases"
 
 
-async def fetch_bgpview_events(asn: str, days: int = 365) -> list[dict]:
+async def fetch_bgpview_events(asn: str, days: int = 365):
     """Fetch historical BGP events for an AS from BGPView.io."""
     url = BGPVIEW_EVENTS_URL.format(asn=asn)
     params = {
@@ -55,7 +55,7 @@ async def fetch_bgpview_events(asn: str, days: int = 365) -> list[dict]:
     return []
 
 
-async def fetch_ripestat_incidents(asn_id: str) -> list[dict]:
+async def fetch_ripestat_incidents(asn_id: str):
     """Fetch RIPE RIS incident history for an AS."""
     asn = asn_id  # NOTE: parameter is `asn_id`; body uses `asn`.
     params = {"resource": f"AS{asn}"}
@@ -79,7 +79,7 @@ async def fetch_ripestat_incidents(asn_id: str) -> list[dict]:
     return []
 
 
-def load_local_historical_cases(asn: str, timeframe_days: int = 730) -> list[dict]:
+def load_local_historical_cases(asn: str, timeframe_days: int = 730):
     """Load our own ground truth historical cases for this AS."""
     cases = []
     if not HISTORICAL_CASES_DIR.exists():
@@ -104,7 +104,7 @@ def load_local_historical_cases(asn: str, timeframe_days: int = 730) -> list[dic
                 case_date = datetime.strptime(date_str[:10], "%Y-%m-%d")
                 if case_date < cutoff:
                     continue
-            except (ValueError):
+            except ValueError:
                 pass
 
             cases.append({
@@ -116,13 +116,13 @@ def load_local_historical_cases(asn: str, timeframe_days: int = 730) -> list[dic
                 "severity": data.get("severity"),
                 "source": "local_ground_truth",
             })
-        except (ValueError):
+        except ValueError:
             pass
 
     return cases
 
 
-def analyze_reoffense_pattern(events: list[dict]) -> dict[str, Any]:
+def analyze_reoffense_pattern(events: list[dict]):
     """Analyze if an AS shows a pattern of repeat offenses."""
     if not events:
         return {
@@ -165,7 +165,7 @@ def analyze_reoffense_pattern(events: list[dict]) -> dict[str, Any]:
         if d:
             try:
                 dates.append(datetime.strptime(str(d)[:10], "%Y-%m-%d"))
-            except (ValueError):
+            except ValueError:
                 pass
 
     frequency = "unknown"
@@ -196,7 +196,7 @@ def analyze_reoffense_pattern(events: list[dict]) -> dict[str, Any]:
     }
 
 
-def build_reoffense_narrative(pattern: dict, events: list[dict]) -> str:
+def build_reoffense_narrative(pattern: dict, events: list[dict]):
     """Build a human-readable narrative about the AS's history."""
     if not pattern["is_repeat_offender"]:
         return (
@@ -232,7 +232,7 @@ def build_reoffense_narrative(pattern: dict, events: list[dict]) -> str:
     return " ".join(parts)
 
 
-async def historical_behavior_lookup(tool_input: dict, session) -> dict[str, Any]:
+async def historical_behavior_lookup(tool_input: dict, session):
     """Look up an AS's historical BGP incident record.
     
     Returns:

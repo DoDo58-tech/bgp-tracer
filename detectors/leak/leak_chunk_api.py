@@ -45,7 +45,7 @@ def prepare(pathprob_file: str, target_asns: Optional[Sequence[str]] = None):
 def filter_target_announcements(
     df_chunk: pl.DataFrame,
     target_asns: set,
-) -> tuple:
+):
     """Reduce a chunk to the announcements the leak detector scores.
 
     A path that merely *transits* the target AS is normal traffic.  A
@@ -103,7 +103,7 @@ def consume_chunk(
     asrelprob: dict,
     threshold: float,
     target_asns: set,
-) -> dict:
+):
     """Score one chunk.  Returns the counters and the leak records."""
     from detectors.leak.leak_detector import detect_route_leaks_vectorized
 
@@ -151,7 +151,7 @@ def consume_chunk(
 def finalize(
     chunk_results: Iterable[dict],
     max_leaks: int = 5000,
-) -> dict:
+):
     """Assemble the per-chunk results into the detector's output shape."""
     all_leaks: List[dict] = []
     total_leak_count = 0

@@ -206,7 +206,7 @@ class RadarSpanFetcher:
         self.global_series = global_series
         self._cache: dict[tuple, tuple[list[str], list[float]]] = {}
 
-    def chunk_bounds(self, lo: datetime, hi: datetime) -> list[tuple[datetime, datetime]]:
+    def chunk_bounds(self, lo: datetime, hi: datetime):
         """Split ``[lo, hi]`` into overlapping spans that fit inside the limit.
 
         Each span is at most ``MAX_SPAN`` long, and consecutive spans
@@ -259,7 +259,7 @@ class RadarSpanFetcher:
             )
         return [a * v for v in src_vals]
 
-    def fetch_chunk(self, lo: datetime, hi: datetime) -> tuple[list[str], list[float]]:
+    def fetch_chunk(self, lo: datetime, hi: datetime):
         """Fetch one chunk, applying the interval fallback chain on HTTP 400."""
         params = {
             "dateStart": lo.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -513,7 +513,7 @@ def safe_multi_scale(api, asn, current_values, timestamps, query_start, query_en
         )
         logger.info(f"Multi-scale: anomaly={result.is_anomaly}, score={result.weighted_score:.2f}")
         return result
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.warning(f"Multi-scale detection failed: {e}")
         return None
 
@@ -622,7 +622,7 @@ class CloudflareRadarAPI:
                     logger.info(f"🔁 Adaptive retry: ±7-day window ({len(vals_w)} pts)")
                     query_start, query_end = wider_start, wider_end
                     timestamps, current_values = ts_w, vals_w
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"Adaptive retry failed: {e}")
 
         anomalies, historical_data = [], []
@@ -704,7 +704,7 @@ class CloudflareRadarAPI:
                     historical_stds=historical_stds, gap_minutes=30, expansion_hours=2)
                 for w in expanded_windows:
                     logger.info(f"📊 Anomaly cluster window: {w['start']} ~ {w['end']} ({w['anomaly_count']} pts)")
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"Cluster & boundary expansion failed: {e}")
 
         plot_path = None
@@ -787,7 +787,7 @@ class CloudflareRadarAPI:
                     historical_periods.append({"week_offset": week_offset, "weekly_ago": week_offset,
                                                "period_kind": "week", "start": period_start, "end": period_end,
                                                "timestamps": timestamps, "values": values})
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"Failed historical week {week_offset}: {e}")
 
         analysis_period = f"Previous 4 weeks before {query_start.strftime('%Y-%m-%d %H:%M')} to {query_end.strftime('%Y-%m-%d %H:%M')}"
@@ -988,7 +988,7 @@ class CloudflareRadarAPI:
                 ))
             shared = self.get_traffic_windows_shared_scale(asn, windows)
             timestamps, current_values = shared.get((query_start, query_end), ([], []))
-        except (AttributeError) as e:
+        except AttributeError as e:
             error_text = str(e).lower()
             no_data_reason = ("cloudflare_authentication_failed"
                               if "token is not configured" in error_text or "authentication failed" in error_text
@@ -1060,7 +1060,7 @@ class CloudflareRadarAPI:
                     historical_stds=historical_stds.tolist() if hasattr(historical_stds, "tolist") else historical_stds,
                     anomalies=anomalies,
                     title_suffix=f" [{event_type.upper()} - {as_role.upper()}]")
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"Plot generation failed: {e}")
 
         return wrap(DetectionType.TRAFFIC, {

@@ -31,14 +31,14 @@ QUICK_DIR = PROJECT_ROOT / "results" / "quick"
 OUT_PATH = PROJECT_ROOT / "results" / "eval" / "cause_feature_table.json"
 
 
-def load_events() -> list[dict]:
+def load_events():
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     from component_ablation_gt import load_gt
 
     return load_gt()
 
 
-def predictions() -> dict:
+def predictions():
     out = {}
     for name, key in (("gt_agent_full", "agent"), ("gt_rule_only", "rule")):
         path = PROJECT_ROOT / "results" / "eval" / f"{name}.json"
@@ -50,7 +50,7 @@ def predictions() -> dict:
     return out
 
 
-def main() -> int:
+def main():
     builder = EvidenceChainBuilder()
     preds = predictions()
     rows = []

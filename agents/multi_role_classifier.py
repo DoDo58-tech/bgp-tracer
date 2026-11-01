@@ -92,7 +92,7 @@ class MultiRoleResult:
             "detection_gap": self.detection_gap,
         }
 
-    def get_active_roles(self) -> list[str]:
+    def get_active_roles(self):
         return [r for r, c in self.roles.items() if c.is_active]
 
     def get_summary(self):
@@ -113,7 +113,7 @@ class MultiRoleResult:
 
 # ── Helper Functions ───────────────────────────────────────────────────────────
 
-def score_by_count(count: int, thresholds: dict[str, int]) -> tuple[float, str]:
+def score_by_count(count: int, thresholds: dict[str, int]):
     """Map event count to confidence score and severity."""
     if count == 0:
         return 0.0, "none"
@@ -128,7 +128,7 @@ def score_by_count(count: int, thresholds: dict[str, int]) -> tuple[float, str]:
     return 0.3, "low"
 
 
-def extract_events(data: list[dict], key: str = "prefix") -> tuple[list[str], list[str], list[str]]:
+def extract_events(data: list[dict], key: str = "prefix"):
     """Extract prefixes, asns, timestamps from event list."""
     prefixes, asns, times = [], [], []
     for ev in data:
@@ -167,7 +167,7 @@ class MultiRoleClassifier:
         routing_data: dict,
         traffic_data: Optional[dict] = None,
         asn_info: Optional[dict] = None,
-    ) -> MultiRoleResult:
+    ):
         """Classify all applicable roles for an AS.
         
         Returns:
@@ -283,7 +283,7 @@ class MultiRoleClassifier:
         forge_hijacking: list,
         path_manipulation: list,
         route_leaks: list,
-    ) -> RoleClassification:
+    ):
         """Classify if this AS acted as an attacker."""
         sub_types = []
         evidence = RoleEvidence()
@@ -406,7 +406,7 @@ class MultiRoleClassifier:
         outage_score: float,
         is_outage: bool,
         traffic_data: Optional[dict],
-    ) -> RoleClassification:
+    ):
         """Classify if this AS was a victim."""
         sub_types = []
         evidence = RoleEvidence()
@@ -511,7 +511,7 @@ class MultiRoleClassifier:
         self,
         route_leaks: list,
         path_leaks: list,
-    ) -> RoleClassification:
+    ):
         """Classify if this AS was a route leaker (passive recipient of leaked routes)."""
         sub_types = []
         evidence = RoleEvidence()
@@ -567,7 +567,7 @@ class MultiRoleClassifier:
         self,
         path_manipulation: list,
         origin_hijacking: list,
-    ) -> RoleClassification:
+    ):
         """Classify if this AS was a conduit (inserted in path but not attacker/victim)."""
         # Conduit: AS appears in path_manipulation but wasn't the hijacker
         # (This is a specialized detection — simplified here)
@@ -590,7 +590,7 @@ class MultiRoleClassifier:
         attacker: RoleClassification,
         victim: RoleClassification,
         leaker: RoleClassification,
-    ) -> RoleClassification:
+    ):
         """Classify if the AS had internal faults (misconfiguration, software bugs)
         that LOOK like BGP attacks but are actually internal issues.
         
@@ -652,7 +652,7 @@ class MultiRoleClassifier:
         self,
         origin_hijacking: list,
         origin_hijacked: list,
-    ) -> Optional[dict]:
+    ):
         """Detect self-hijack: AS announces its own prefixes as a different AS
         (or vice versa: AS's prefixes were announced by itself as a different origin)."""
         if not origin_hijacking or not origin_hijacked:
@@ -698,7 +698,7 @@ class MultiRoleClassifier:
         self,
         origin_hijacked: list,
         origin_hijacking: list,
-    ) -> Optional[dict]:
+    ):
         """Detect temporal pattern: AS was FIRST hijacked, then LATER became a hijacker.
         This is the "compromised account" pattern (e.g., AS49581 Orange España RPKI case)."""
         if not origin_hijacked or not origin_hijacking:
@@ -716,7 +716,7 @@ class MultiRoleClassifier:
                         for fmt in ["%m/%d/%y %H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
                             hijacked_times.append(datetime.strptime(str(v), fmt))
                             break
-                    except (ValueError):
+                    except ValueError:
                         pass
 
         for ev in origin_hijacking:
@@ -727,7 +727,7 @@ class MultiRoleClassifier:
                         for fmt in ["%m/%d/%y %H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
                             hijacking_times.append(datetime.strptime(str(v), fmt))
                             break
-                    except (ValueError):
+                    except ValueError:
                         pass
 
         if not hijacked_times or not hijacking_times:
@@ -763,7 +763,7 @@ class MultiRoleClassifier:
         self,
         origin_hijacking: list,
         origin_hijacked: list,
-    ) -> Optional[dict]:
+    ):
         """
         Detect temporal pattern: AS was FIRST a hijacker, then LATER got hijacked.
         This is the "revenge" or "collateral damage" pattern.
@@ -781,7 +781,7 @@ class MultiRoleClassifier:
                         for fmt in ["%m/%d/%y %H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
                             hijacked_times.append(datetime.strptime(str(v), fmt))
                             break
-                    except (ValueError):
+                    except ValueError:
                         pass
 
         for ev in origin_hijacking:
@@ -792,7 +792,7 @@ class MultiRoleClassifier:
                         for fmt in ["%m/%d/%y %H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
                             hijacking_times.append(datetime.strptime(str(v), fmt))
                             break
-                    except (ValueError):
+                    except ValueError:
                         pass
 
         if not hijacked_times or not hijacking_times:
@@ -830,7 +830,7 @@ class MultiRoleClassifier:
         self_hijack: Optional[dict],
         victim_becomes_attacker: Optional[dict],
         attacker_becomes_victim: Optional[dict],
-    ) -> str:
+    ):
         """Assess how complex this AS's role picture is."""
         role_count = len(active_roles)
 
@@ -863,7 +863,7 @@ class MultiRoleClassifier:
         roles: dict[str, RoleClassification],
         routing_data: dict,
         traffic_data: Optional[dict],
-    ) -> str:
+    ):
         """Recommend how deep the analysis should go."""
         if complexity == "clean":
             return "quick"
@@ -891,7 +891,7 @@ class MultiRoleClassifier:
         victim_becomes_attacker: Optional[dict],
         attacker_becomes_victim: Optional[dict],
         detection_gap: bool = False,
-    ) -> str:
+    ):
         """Build a comprehensive narrative explaining all roles and patterns."""
         lines = [f"Multi-Role Analysis for AS{asn}:"]
 

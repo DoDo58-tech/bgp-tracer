@@ -9,36 +9,27 @@ channels** and never summed, so that a verdict can name *which*
 control-plane property moved and a hijack cannot be confirmed by a
 leak's path-change signal.
 
-This module owns four representation decisions, each of which was a
-measurable defect before it was made.
+Four representation decisions, each of which was a measurable defect
+before it was made.
 
-**The grid is uniform and the holes are filled.**  The detector emits a
-bucket only when a message exists.  A missing bucket is therefore a
-bucket in which the network said *nothing*, which is a rate of zero --
-not a missing measurement.  Reading the emitted buckets as a contiguous
-series silently shortens the window and puts every onset in the wrong
-place.  The grid is the wall-clock 300-second grid, and every slot in
-it carries a value.
+The grid is uniform and the holes are filled.  The detector emits a
+bucket only when a message exists, but a missing bucket is a bucket in
+which the network said *nothing* -- a rate of zero, not a missing
+measurement.  The grid is the wall-clock 300-second grid and every slot
+carries a value.
 
-**The rates are per wall-clock slot, not per observed bucket.**
-Dividing by the number of buckets that happened to carry traffic hides
-the collapse an outage is: a network that is silent for four hours and
-busy for one produces a ratio near one when the denominator is the
-observed count.
+The rates are per wall-clock slot, not per observed bucket.  Dividing by
+the number of buckets that happened to carry traffic hides the collapse
+an outage is.
 
-**The baseline is the same clock slots on the previous days.**  A
+The baseline is the same clock slots on the previous days.  A
 forty-five-minute incident measured against a twenty-four-hour average
-measures the time of day -- a network announces more at 14:30 than at
-03:00 whatever happened.  The counterfactual that answers "how quiet is
-this network *right now*, compared with how quiet it is at this hour on
-an ordinary day" is the same half hour on the days before.
+measures the time of day, not the incident.
 
-**The normalisation is scale-free.**  "Forty messages per slot" is quiet
-for an AS that normally emits forty thousand and loud for one that
-normally emits four.  Every channel is divided by its own baseline
-level, so the series reads "one times normal", "zero" or "twelve", and
-the estimator's thresholds become a property of the method rather than
-of the network the method was pointed at.
+The normalisation is scale-free.  Every channel is divided by its own
+baseline level, so the series reads "one times normal", "zero" or
+"twelve", and the estimator's thresholds become a property of the method
+rather than of the network the method was pointed at.
 """
 from __future__ import annotations
 
@@ -133,27 +124,27 @@ class ControlPlaneSeries:
     baseline_bucket_map: Dict[datetime, Dict[str, Any]] = field(
         default_factory=dict, repr=False)
 
-    def baseline_buckets(self) -> Dict[datetime, Dict[str, Any]]:
+    def baseline_buckets(self):
         """The baseline period's buckets, keyed by stamp."""
         return dict(self.baseline_bucket_map)
 
     @property
-    def n_buckets(self) -> int:
+    def n_buckets(self):
         return len(self.stamps)
 
     @property
-    def has_baseline(self) -> bool:
+    def has_baseline(self):
         return bool(self.baseline) and any(
             len(v) >= 2 for v in self.baseline.values() if v is not None
         )
 
-    def channel(self, name: str) -> List[float]:
+    def channel(self, name: str):
         return self.channels.get(name) or []
 
-    def baseline_channel(self, name: str) -> List[float]:
+    def baseline_channel(self, name: str):
         return self.baseline.get(name) or []
 
-    def normalised(self, name: str) -> List[float]:
+    def normalised(self, name: str):
         """The channel as a multiple of its own baseline level.
 
         One means "the control plane is behaving as it normally does",
@@ -166,7 +157,7 @@ class ControlPlaneSeries:
             return list(values)
         return [v / level for v in values]
 
-    def normalised_baseline(self, name: str) -> List[float]:
+    def normalised_baseline(self, name: str):
         """The baseline window's own channel, on the same scale."""
         values = self.baseline_channel(name)
         arr = np.asarray(values, dtype=float)
@@ -175,7 +166,7 @@ class ControlPlaneSeries:
             return list(values)
         return [v / level for v in values]
 
-    def as_dict(self) -> Dict[str, Any]:
+    def as_dict(self):
         return {
             "n_buckets": self.n_buckets,
             "channels": {k: len(v) for k, v in self.channels.items()},
@@ -189,7 +180,7 @@ class ControlPlaneSeries:
         }
 
 
-def to_float_value(value: Any) -> Optional[float]:
+def to_float_value(value: Any):
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -198,7 +189,7 @@ def to_float_value(value: Any) -> Optional[float]:
 
 
 def feature_value(entry: Dict[str, Any],
-                   features: Sequence[str]) -> Optional[float]:
+                   features: Sequence[str]):
     """The first usable value among ``features`` for one bucket.
 
     A bucket may name its value either by the detector's feature name
@@ -213,7 +204,7 @@ def feature_value(entry: Dict[str, Any],
     return None
 
 
-def read_buckets(block: Any) -> Dict[datetime, Dict[str, Any]]:
+def read_buckets(block: Any):
     """Parse a detector bucket block into ``{stamp: features}``.
 
     A bucket whose timestamp cannot be read is *reported* as absent
@@ -236,7 +227,7 @@ def read_buckets(block: Any) -> Dict[datetime, Dict[str, Any]]:
 
 def extract_timeseries(
     analysis: Optional[Dict[str, Any]],
-) -> Tuple[Dict[datetime, Dict[str, Any]], Dict[datetime, Dict[str, Any]]]:
+):
     """Pull the control-plane features out of a detector analysis block.
 
     Returns ``(event_buckets, baseline_buckets)``.
@@ -251,7 +242,7 @@ def fill_grid(
     buckets: Dict[datetime, Dict[str, Any]],
     channels: Dict[str, List[float]],
     stamps: Sequence[datetime],
-) -> Dict[str, List[float]]:
+):
     """Place the observed buckets onto a uniform grid.
 
     Every slot on the grid gets a value for every channel.  A slot with
@@ -274,7 +265,7 @@ def fill_grid(
 
 
 def grid_stamps(buckets: Dict[datetime, Dict[str, Any]],
-                 lo: datetime, hi: datetime) -> List[datetime]:
+                 lo: datetime, hi: datetime):
     """The uniform grid from ``lo`` to ``hi``, inclusive."""
     origin = lo.replace(second=0, microsecond=0)
     # The grid is aligned to the wall clock, so a slot is the same
@@ -297,7 +288,7 @@ def same_clock_baseline(
     window_end: datetime,
     *,
     days: int = BASELINE_DAYS,
-) -> Dict[str, float]:
+):
     """The channel's mean rate in the *same clock slots* on earlier days.
 
     The baseline is keyed by the clock position (``HH:MM``) of the slot
@@ -341,7 +332,7 @@ def same_clock_baseline(
     return out
 
 
-def baseline_level(channels: Dict[str, List[float]]) -> Dict[str, float]:
+def baseline_level(channels: Dict[str, List[float]]):
     """The baseline's mean rate per channel, zeros included.
 
     The *mean per slot* and not the mean of the non-zero slots: the
@@ -361,7 +352,7 @@ def build_control_plane_series(
     *,
     window_start: Optional[datetime] = None,
     window_end: Optional[datetime] = None,
-) -> ControlPlaneSeries:
+):
     """Build the routing-side control-plane series for one window.
 
     When the detector could not supply a feature series the series is
@@ -411,7 +402,7 @@ def baseline_placebos(
     baseline: Dict[str, List[float]],
     channel: str,
     horizon: int,
-) -> List[float]:
+):
     """The displacement the channel shows at placebo anchors in the baseline.
 
     The baseline is the same measurement over the period before the

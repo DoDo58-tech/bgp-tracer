@@ -21,7 +21,7 @@ QUICK_DIR_NAME = ("results", "quick")
 def load_corpus_events(
     project_root: Path,
     exclude_conflicts: bool = True,
-) -> list[dict]:
+):
     """Return the corpus events that can be resolved to a cached result.
 
     Two events in the corpus share an (ASN, window) pair but carry

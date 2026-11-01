@@ -38,7 +38,7 @@ DEFAULT_OUT_DIR = PROJECT_ROOT / "results" / "cloudflare_alerts" / "raw"
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
-def now_iso() -> str:
+def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -50,7 +50,7 @@ def request_with_retry(
     headers: Optional[Dict[str, str]] = None,
     params: Optional[Dict[str, Any]] = None,
     json_body: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+):
     """One HTTP call with exponential backoff + rate-limit (429) handling."""
     last_err: Optional[Exception] = None
     for attempt in range(MAX_RETRIES):
@@ -109,7 +109,7 @@ def fetch_annotations(
     seen_ids: Set[str],
     raw_records: List[Dict[str, Any]],
     max_records: int = 0,
-) -> List[Dict[str, Any]]:
+):
     # The /radar/annotations API requires BOTH dateStart AND dateEnd, AND
     # the server cannot return events that haven't happened yet, so dateEnd
     # must be strictly before ``now()``. Use a 5-minute safety margin.
@@ -184,7 +184,7 @@ def fetch_leaks(
     max_records: int = 0,
     persist_path: Optional["Path"] = None,
     persist_every: int = 5,
-) -> int:
+):
     base_params: Dict[str, Any] = {
         "format": "json",
         "limit": MAX_PER_PAGE,
@@ -233,7 +233,7 @@ def fetch_leaks(
                 )
                 print(f"  [leaks] persisted {len(raw_records)} records "
                       f"to {persist_path.name}", file=sys.stderr)
-            except (AttributeError) as _e:
+            except AttributeError as _e:
                 print(f"  [leaks] persist failed: {_e}", file=sys.stderr)
         page += 1
     return pages_fetched
@@ -252,7 +252,7 @@ def fetch_hijacks(
     max_records: int = 0,
     persist_path: Optional["Path"] = None,
     persist_every: int = 5,
-) -> int:
+):
     base_params: Dict[str, Any] = {
         "format": "json",
         "limit": MAX_PER_PAGE,
@@ -301,7 +301,7 @@ def fetch_hijacks(
                 )
                 print(f"  [hijacks] persisted {len(raw_records)} records "
                       f"to {persist_path.name}", file=sys.stderr)
-            except (AttributeError) as _e:
+            except AttributeError as _e:
                 print(f"  [hijacks] persist failed: {_e}",
                       file=sys.stderr)
         page += 1
@@ -309,7 +309,7 @@ def fetch_hijacks(
 
 
 # ── Normalisation ───────────────────────────────────────────────────────
-def normalise_annotation(a: dict) -> Optional[Dict[str, Any]]:
+def normalise_annotation(a: dict):
     """OUTAGE/GENERAL/EVENT → common alert record."""
     asns = a.get("asns") or []
     event_type = a.get("eventType")
@@ -337,7 +337,7 @@ def normalise_annotation(a: dict) -> Optional[Dict[str, Any]]:
     }
 
 
-def severity_annotation(a: dict) -> float:
+def severity_annotation(a: dict):
     """Heuristic severity 0-1 for annotations.  OUTAGE > GENERAL."""
     et = a.get("eventType")
     if et == "OUTAGE":
@@ -350,7 +350,7 @@ def severity_annotation(a: dict) -> float:
         return 0.5
 
 
-def normalise_leak(ev: dict) -> Dict[str, Any]:
+def normalise_leak(ev: dict):
     leak_asn = ev.get("leak_asn")
     leak_seg = ev.get("leak_seg") or []
     # leak_seg = [origin_asn, leak_asn, ...peers], so peers = leak_seg[2:]
@@ -382,7 +382,7 @@ def normalise_leak(ev: dict) -> Dict[str, Any]:
     }
 
 
-def severity_leak(ev: dict) -> float:
+def severity_leak(ev: dict):
     """Heuristic 0-1 based on leak_count/prefix_count/peer_count."""
     leak_count = ev.get("leak_count") or 0
     prefix_count = ev.get("prefix_count") or 0
@@ -394,7 +394,7 @@ def severity_leak(ev: dict) -> float:
     return round(0.5 * s_leak + 0.3 * s_prefix + 0.2 * s_peer, 3)
 
 
-def normalise_hijack(ev: dict) -> Dict[str, Any]:
+def normalise_hijack(ev: dict):
     hijacker = ev.get("hijacker_asn")
     victims = ev.get("victim_asns") or []
     asns = [str(hijacker)] + [str(v) for v in victims]
@@ -425,7 +425,7 @@ def normalise_hijack(ev: dict) -> Dict[str, Any]:
     }
 
 
-def severity_hijack(ev: dict) -> float:
+def severity_hijack(ev: dict):
     cs = ev.get("confidence_score") or 0
     # Cloudflare confidence_score typically 1..12; higher = more confident.
     # normalise by /12
@@ -440,7 +440,7 @@ def severity_hijack(ev: dict) -> float:
 
 
 # ── CLI ──────────────────────────────────────────────────────────────────
-def parse_args() -> argparse.Namespace:
+def parse_args():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--token", default=os.environ.get("CLOUDFLARE_API_TOKEN", ""))
     ap.add_argument("--date-start", default="2025-01-01T00:00:00Z")
@@ -479,7 +479,7 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def main() -> int:
+def main():
     args = parse_args()
     if not args.token:
         print("ERROR: --token or CLOUDFLARE_API_TOKEN required", file=sys.stderr)

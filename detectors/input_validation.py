@@ -158,7 +158,7 @@ def validate_time_window(
     start_label: str = "start_time",
     end_label: str = "end_time",
     min_duration_seconds: int = 0,
-) -> Tuple[datetime, datetime]:
+):
     """Parse and sanity-check a window. Returns (start, end) as datetimes."""
     start = parse_timestamp(start_time, start_label)
     end = parse_timestamp(end_time, end_label)
@@ -186,7 +186,7 @@ def validate_detection_request(
     start_label: str = "start_time",
     end_label: str = "end_time",
     min_duration_seconds: int = 0,
-) -> Tuple[str, datetime, datetime]:
+):
     """Validate (asn, start, end) and return (asn_digits, start, end)."""
     clean_asn = validate_asn(asn, asn_label)
     start, end = validate_time_window(

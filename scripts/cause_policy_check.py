@@ -32,14 +32,14 @@ OUT_PATH = PROJECT_ROOT / "results" / "eval" / "cause_policy_check.json"
 CLASSES = ("outage", "route_leak", "origin_hijack_victim")
 
 
-def load_events() -> list[dict]:
+def load_events():
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     from component_ablation_gt import load_gt
 
     return load_gt()
 
 
-def main() -> int:
+def main():
     builder = EvidenceChainBuilder()
     events = {e["event_id"]: e for e in load_events()}
     agent = {

@@ -38,7 +38,7 @@ QUICK_DIR = PROJECT_ROOT / "results" / "quick"
 GT_CSV = PROJECT_ROOT / "data_check" / "ground_truth_collection" / "final_ground_truth.csv"
 
 
-def load_gt() -> list[dict]:
+def load_gt():
     out = []
     for r in csv.DictReader(GT_CSV.open()):
         out.append(
@@ -55,13 +55,13 @@ def load_gt() -> list[dict]:
     return out
 
 
-def window_buckets(start: str, end: str) -> list[Path]:
+def window_buckets(start: str, end: str):
     start_dt = datetime.fromisoformat(start)
     end_dt = datetime.fromisoformat(end)
     return [p for p in list_window_parquets(start_dt, end_dt) if p.exists()]
 
 
-def read_announcements(buckets: list[Path]) -> pl.DataFrame:
+def read_announcements(buckets: list[Path]):
     parts = []
     for bucket in buckets:
         try:
@@ -78,7 +78,7 @@ def read_announcements(buckets: list[Path]) -> pl.DataFrame:
     return pl.concat(parts, how="vertical_relaxed")
 
 
-def scan_window(buckets: list[Path], victim: str) -> dict:
+def scan_window(buckets: list[Path], victim: str):
     df = read_announcements(buckets)
     if df.is_empty():
         return {"buckets": len(buckets), "announcements": 0}
@@ -122,7 +122,7 @@ def scan_window(buckets: list[Path], victim: str) -> dict:
     }
 
 
-def main() -> None:
+def main():
     events = load_gt()
     out_rows = []
     for ev in events:

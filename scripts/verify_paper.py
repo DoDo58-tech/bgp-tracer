@@ -50,7 +50,7 @@ GATES = [
 ]
 
 
-def main() -> int:
+def main():
     failed = []
     for name, cmd in GATES:
         proc = subprocess.run(cmd, capture_output=True, text=True,

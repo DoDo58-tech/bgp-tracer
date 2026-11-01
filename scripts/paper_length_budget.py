@@ -43,12 +43,12 @@ SECTIONS = [
 ]
 
 
-def strip_comments(text: str) -> str:
+def strip_comments(text: str):
     text = re.sub(r"(?<!\\)%.*", "", text)
     return text
 
 
-def split_floats(text: str) -> tuple:
+def split_floats(text: str):
     """Separate float environments from the prose around them."""
     float_re = re.compile(
         r"\\begin\{(table|figure)\*?\}.*?\\end\{\1\*?\}", re.S
@@ -59,13 +59,13 @@ def split_floats(text: str) -> tuple:
     return prose, float_chars, len(floats)
 
 
-def count_words(text: str) -> int:
+def count_words(text: str):
     text = re.sub(r"\\[a-zA-Z]+\*?(\[[^\]]*\])?", " ", text)
     text = re.sub(r"[{}$&\\~^_]", " ", text)
     return len([w for w in text.split() if any(ch.isalnum() for ch in w)])
 
 
-def pdf_page_map() -> dict:
+def pdf_page_map():
     """The page each section heading lands on, read from the PDF."""
     try:
         import pypdf
@@ -85,7 +85,7 @@ def pdf_page_map() -> dict:
     return pages
 
 
-def pdf_page_budget() -> dict:
+def pdf_page_budget():
     """The measured page split, read from the compiled PDF.
 
     The submission limit counts the pages before the references; the
@@ -119,7 +119,7 @@ def pdf_page_budget() -> dict:
     }
 
 
-def main() -> int:
+def main():
     page_map = pdf_page_map()
     rows = []
     for name in SECTIONS:

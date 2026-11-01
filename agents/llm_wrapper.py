@@ -19,7 +19,7 @@ def llm_complete(
     max_retries: int = 2,
     timeout: Optional[float] = None,
     **kwargs,
-) -> Any:
+):
     """Wrap ``llm.complete`` with token-budget recording and uniform error handling.
     
     Returns:
@@ -44,7 +44,7 @@ def llm_complete(
     try:
         from agents.payload_builder import record_llm_call
         record_llm_call(run_id, agent_name, prompt_text, response)
-    except (AttributeError) as exc:
+    except AttributeError as exc:
         logger.debug(f"[{agent_name}] record_llm_call skipped: {exc}")
 
     logger.info(

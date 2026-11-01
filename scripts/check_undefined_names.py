@@ -26,7 +26,7 @@ ROOTS = ("agents", "detectors", "scripts", "tools", "llm", "data", "utils",
 BUILTINS = set(dir(builtins))
 
 
-def bound_names(tree: ast.Module) -> set[str]:
+def bound_names(tree: ast.Module):
     """Every name bound anywhere in the module (module scope, imports,
     function args, locals, comprehension targets, except-as, defs)."""
     out: set[str] = set()
@@ -50,7 +50,7 @@ def bound_names(tree: ast.Module) -> set[str]:
     return out
 
 
-def main() -> int:
+def main():
     files: list[Path] = []
     for root in ROOTS:
         p = PROJECT_ROOT / root

@@ -25,7 +25,7 @@ import pytest
 from tools.tool_registry import Tool, ToolParameter, ToolRegistry
 
 
-def make_registry_with_failing_tool(exc: Exception) -> ToolRegistry:
+def make_registry_with_failing_tool(exc: Exception):
     registry = ToolRegistry()
 
     async def failing_handler(tool_input, session):

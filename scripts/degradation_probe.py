@@ -71,7 +71,7 @@ class _Fault:
         for restore in reversed(self._restore):
             try:
                 restore()
-            except (ValueError):  # noqa: BLE001
+            except ValueError:  # noqa: BLE001
                 pass
         self._restore = []
         return False
@@ -129,7 +129,7 @@ async def skipped_reasoning(self, context):
 # ── Run one (event, fault) ───────────────────────────────────────────────────
 
 
-def artefact_class(html: str) -> str:
+def artefact_class(html: str):
     if not html:
         return "none"
     head = html[:2000].lower()
@@ -138,7 +138,7 @@ def artefact_class(html: str) -> str:
     return "llm_report"
 
 
-def find_html(res: dict) -> str:
+def find_html(res: dict):
     cea = res.get("chief_expert_analysis") or {}
     rep = res.get("report_result") or res.get("analysis_report") or {}
     html = rep.get("html") or ""
@@ -152,12 +152,12 @@ def find_html(res: dict) -> str:
                 p = PROJECT_ROOT / p
             if p.exists():
                 return p.read_text(errors="replace")
-        except (ValueError):  # noqa: BLE001
+        except ValueError:  # noqa: BLE001
             pass
     return ""
 
 
-def run_one(quick: dict, fault: str) -> dict:
+def run_one(quick: dict, fault: str):
     from chief_agent import analyze_deep_from_quick
 
     t0 = time.perf_counter()
@@ -166,7 +166,7 @@ def run_one(quick: dict, fault: str) -> dict:
     try:
         with _Fault(fault):
             res = analyze_deep_from_quick(quick_result=quick, analysis_mode="traffic_first")
-    except (AttributeError) as exc:  # noqa: BLE001
+    except AttributeError as exc:  # noqa: BLE001
         err = f"{type(exc).__name__}: {exc}"
         logger.error(f"[degradation] {fault} raised: {exc}")
         traceback.print_exc()
@@ -200,7 +200,7 @@ def run_one(quick: dict, fault: str) -> dict:
 # ── Driver ───────────────────────────────────────────────────────────────────
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--events", type=int, default=3)
     ap.add_argument("--faults", default=",".join(FAULTS))

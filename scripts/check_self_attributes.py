@@ -73,7 +73,7 @@ def collect(paths: list[Path]):
     return defined, assigned, reads
 
 
-def main() -> int:
+def main():
     files: list[Path] = []
     for root in ROOTS:
         p = PROJECT_ROOT / root

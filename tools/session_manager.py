@@ -74,7 +74,7 @@ class SessionManager:
         tool_name: str,
         tool_input: Dict[str, Any],
         tool_result: Dict[str, Any],
-    ) -> None:
+    ):
         turn = Turn(
             role="tool",
             content=f"Called tool: {tool_name}",
@@ -98,7 +98,7 @@ class SessionManager:
     def get_evidence(self, tool_name):
         return self.evidence.get(tool_name)
 
-    def get_all_evidence(self) -> Dict[str, dict]:
+    def get_all_evidence(self):
         return dict(self.evidence)
 
     def set_time_window(self, start, end):
@@ -144,7 +144,7 @@ class SessionManager:
         return path
 
     @classmethod
-    def load(cls, path) -> "SessionManager":
+    def load(cls, path):
         data = json.loads(path.read_text())
         session = cls(
             asn=data.get("asn"),

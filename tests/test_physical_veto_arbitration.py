@@ -41,7 +41,7 @@ def routing(**kw):
 
 
 @pytest.fixture()
-def builder() -> EvidenceChainBuilder:
+def builder():
     return EvidenceChainBuilder()
 
 

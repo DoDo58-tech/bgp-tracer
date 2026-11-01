@@ -33,7 +33,7 @@ QUICK_DIR = PROJECT_ROOT / "results" / "quick"
 OUT_PATH = PROJECT_ROOT / "results" / "eval" / "signal_information.json"
 
 
-def load_events() -> list[dict]:
+def load_events():
     rows = list(csv.DictReader(GT_CSV.open()))
     out = []
     for r in rows:
@@ -87,7 +87,7 @@ SIGNALS = (
 )
 
 
-def signal_value(rec: dict, signal: str) -> bool:
+def signal_value(rec: dict, signal: str):
     if signal == "traffic_available":
         return rec["traffic_available"]
     if signal == "traffic_signal":
@@ -109,7 +109,7 @@ def signal_value(rec: dict, signal: str) -> bool:
     raise KeyError(signal)
 
 
-def main() -> int:
+def main():
     events = load_events()
     classes = sorted({e["cause"] for e in events})
     n = len(events)

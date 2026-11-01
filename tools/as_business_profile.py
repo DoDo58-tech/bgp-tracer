@@ -29,7 +29,7 @@ CATEGORY_PATTERNS = {
 }
 
 
-def categorize(domains: List[str]) -> Dict[str, List[str]]:
+def categorize(domains: List[str]):
     categories = {k: [] for k in CATEGORY_PATTERNS}
     categorized = set()
     for d in domains:
@@ -239,7 +239,7 @@ async def fetch_bgpview_prefixes(asn_id):
         return {}
 
 
-async def fetch_passive_dns(asn_id) -> List[str]:
+async def fetch_passive_dns(asn_id):
     """Fetch passive DNS from CIRCL for all IP ranges of the AS.
     CIRCL API: GET https://www.circl.lu/pdns/query/<IP_OR_DOMAIN>
     Returns all domain names that resolved to IPs in the queried range."""
@@ -250,7 +250,7 @@ async def fetch_passive_dns(asn_id) -> List[str]:
     bgp_data = await fetch_bgpview_prefixes(asn)
     prefixes = bgp_data.get("prefixes", [])[:20]  # limit to avoid rate limits
 
-    async def query_prefix(prefix_str) -> List[str]:
+    async def query_prefix(prefix_str):
         url = f"{CIRCL_PDNS_URL}/{prefix_str}"
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
@@ -288,7 +288,7 @@ async def fetch_passive_dns(asn_id) -> List[str]:
 
 def infer_business_type(asn: str, name: str, desc: str,
                           prefix_count: int, domain_count: int,
-                          categories: dict) -> tuple[str, str]:
+                          categories: dict):
     """Infer the AS business type from available data."""
 
     n = name.lower()
@@ -385,7 +385,7 @@ def assess_pdns_quality(domains: List[str], prefixes: List[dict]):
 def build_assessment(asn: str, as_name: str, business_type: str,
                       type_reason: str, domain_count: int,
                       pdns_quality: dict, indicators: dict,
-                      categories: dict) -> str:
+                      categories: dict):
     """Build a narrative business assessment."""
 
     parts = [f"AS{asn} ('{as_name}') operates as a {business_type}."]

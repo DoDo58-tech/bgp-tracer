@@ -61,7 +61,7 @@ elapsed = round(time.perf_counter() - t0, 2)
 tokens = max(0, snap_tokens() - tok_before)
 
 eb = res.get("evidence_board") or {{}}
-def _count(key):
+def count_items(key):
     v = eb.get(key)
     if isinstance(v, dict):
         v = v.get("value")
@@ -70,9 +70,9 @@ def _count(key):
 cea = res.get("chief_expert_analysis") or {{}}
 verdict_raw = cea.get("evidence_verdict") or res.get("quick_verdict") or ""
 
-from scripts.agent_value_ablation import _norm_verdict
+from scripts.agent_value_ablation import norm_verdict
 answer = str(cea.get("answer") or "")
-verdict = _norm_verdict(verdict_raw, answer)
+verdict = norm_verdict(verdict_raw, answer)
 
 rep = res.get("report_result") or res.get("analysis_report") or {{}}
 html = rep.get("html") or ""
@@ -90,12 +90,12 @@ out = {{
     "confidence": cea.get("confidence_score"),
     "latency_s": elapsed,
     "tokens": tokens,
-    "observations": _count("observations"),
-    "claims": _count("claims"),
-    "challenges": _count("challenges"),
-    "alternatives": _count("alternatives"),
-    "gaps": _count("gaps"),
-    "verdicts": _count("verdicts"),
+    "observations": count_items("observations"),
+    "claims": count_items("claims"),
+    "challenges": count_items("challenges"),
+    "alternatives": count_items("alternatives"),
+    "gaps": count_items("gaps"),
+    "verdicts": count_items("verdicts"),
     "reasoning_steps": len(res.get("reasoning_trace") or []),
     "html_bytes": len(html),
     "llm_report": bool(html) and not is_fallback,
@@ -107,7 +107,7 @@ print("{end}")
 '''
 
 
-def run_child(arm: str, env_overrides: dict, quick_path: Path) -> dict:
+def run_child(arm: str, env_overrides: dict, quick_path: Path):
     env = dict(os.environ)
     # Remove any inherited ablation switch so each arm is isolated.
     for var in (
@@ -150,7 +150,7 @@ def run_child(arm: str, env_overrides: dict, quick_path: Path) -> dict:
                 "raw": payload[:1000]}
 
 
-def norm_verdict_local(raw: str, text: str = "") -> str:
+def norm_verdict_local(raw: str, text: str = ""):
     """Fallback normaliser (the child's import may fail in odd installs)."""
     r = (raw or "").strip().lower()
     aliases = {
@@ -170,7 +170,7 @@ def norm_verdict_local(raw: str, text: str = "") -> str:
     return r
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--events", type=int, default=3,
                     help="Number of cached windows per arm.")

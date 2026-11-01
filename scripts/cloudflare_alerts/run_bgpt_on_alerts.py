@@ -52,7 +52,7 @@ NON_ACTION = {
 
 
 # ── Time window utilities ───────────────────────────────────────────────
-def parse_iso(s: Optional[str]) -> Optional[datetime]:
+def parse_iso(s: Optional[str]):
     if not s:
         return None
     s = s.strip().rstrip("Z")
@@ -71,7 +71,7 @@ def make_window(
     before_s: int = DEFAULT_WINDOW_BEFORE_S,
     after_s: int = DEFAULT_WINDOW_AFTER_S,
     max_hours: int = MAX_WINDOW_HOURS,
-) -> Optional[Tuple[str, str]]:
+):
     """Return ("YYYY-MM-DD HH:MM", "YYYY-MM-DD HH:MM") suitable for analyze_quick."""
     from datetime import timedelta as _td
     start_dt = parse_iso(start_iso)
@@ -110,7 +110,7 @@ def make_window(
 
 
 # ── Alert normalization ────────────────────────────────────────────────
-def alert_to_bgpl_payload(alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def alert_to_bgpl_payload(alert: Dict[str, Any]):
     """Convert a normalized alert dict to the BGP Tracer input format.
 
     Returns None if the alert cannot be processed (no ASN, no time window, etc.)
@@ -201,7 +201,7 @@ print(json.dumps(rec, ensure_ascii=False, default=str))
 '''
 
 
-def run_one_subprocess(alert: Dict[str, Any], timeout_s: int) -> Dict[str, Any]:
+def run_one_subprocess(alert: Dict[str, Any], timeout_s: int):
     """Run one alert through BGP Tracer in a fresh subprocess."""
     tmp_input = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
     try:
@@ -259,7 +259,7 @@ def run_one_subprocess(alert: Dict[str, Any], timeout_s: int) -> Dict[str, Any]:
 
 
 # ── CLI ─────────────────────────────────────────────────────────────────
-def parse_args() -> argparse.Namespace:
+def parse_args():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--raw-dir", default=str(DEFAULT_RAW_DIR),
                     help="Directory containing raw_alerts.json")
@@ -284,7 +284,7 @@ def parse_args() -> argparse.Namespace:
 
 
 # ── Main ─────────────────────────────────────────────────────────────────
-def main() -> int:
+def main():
     args = parse_args()
     raw_dir = Path(args.raw_dir)
     out_dir = Path(args.out_dir)
@@ -324,7 +324,7 @@ def main() -> int:
             if line:
                 try:
                     done_ids.add(json.loads(line).get("alert_id", ""))
-                except (ValueError):
+                except ValueError:
                     pass
         skipped = sum(1 for a in todo if a.get("alert_id", "") in done_ids)
         todo = [a for a in todo if a.get("alert_id", "") not in done_ids]
@@ -338,7 +338,7 @@ def main() -> int:
         records: List[Dict[str, Any]] = []
         records_lock = threading.Lock()
 
-        def process_one(i: int, alert: Dict[str, Any]) -> Dict[str, Any]:
+        def process_one(i: int, alert: Dict[str, Any]):
             alert_id = alert.get("alert_id", f"unknown:{i}")
             log.info("--- alert %d/%d: %s (AS%s) starting ---",
                      i + 1, len(todo), alert_id, alert.get("asn", "?"))
@@ -391,7 +391,7 @@ def main() -> int:
         if line:
             try:
                 all_records.append(json.loads(line))
-            except (ValueError):
+            except ValueError:
                 pass
 
     by_status: Dict[str, int] = {}
@@ -441,7 +441,7 @@ def main() -> int:
                   "outage_score", "correlation_level", "traffic_signal_present",
                   "elapsed_s", "status", "bgpt_actionable", "description"]
 
-    def write_csv(path: Path, rows: List[Dict[str, Any]]) -> None:
+    def write_csv(path: Path, rows: List[Dict[str, Any]]):
         with path.open("w", newline="", encoding="utf-8") as f:
             w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
             w.writeheader()

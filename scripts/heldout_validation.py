@@ -46,7 +46,7 @@ OUT_PATH = EVAL / "heldout_validation.json"
 CLASSES = ("outage", "route_leak", "origin_hijack_victim", "roa_misconfig")
 
 
-def normalize_cause(raw: str) -> str:
+def normalize_cause(raw: str):
     """Map a free-text cause onto the corpus vocabulary.
 
     This is the same mapping the main evaluation uses, so the two
@@ -71,7 +71,7 @@ def normalize_cause(raw: str) -> str:
     return ""
 
 
-def run_agent_arm(quick: dict) -> dict:
+def run_agent_arm(quick: dict):
     """The agent's proposal and the cause it committed to.
 
     The two are different quantities and the arbitration needs both.
@@ -115,7 +115,7 @@ def run_agent_arm(quick: dict) -> dict:
     }
 
 
-def run_rule_arm(quick: dict) -> dict:
+def run_rule_arm(quick: dict):
     """The deterministic physical rule alone."""
     from detectors.evidence_chain_builder import EvidenceChainBuilder
 
@@ -127,7 +127,7 @@ def run_rule_arm(quick: dict) -> dict:
     return {"success": True, "cause": cause, "cause_raw": cause}
 
 
-def count_cross_origin(quick: dict, victim_asn: str) -> int:
+def count_cross_origin(quick: dict, victim_asn: str):
     """Physical corroboration: a third party announcing the victim's prefixes."""
     routing = quick.get("routing") or {}
     victim = str(
@@ -149,14 +149,14 @@ def count_cross_origin(quick: dict, victim_asn: str) -> int:
     return count
 
 
-def traffic_observed(quick: dict) -> bool:
+def traffic_observed(quick: dict):
     traffic = quick.get("traffic") or {}
     return bool(
         traffic.get("data_available", traffic.get("success", False))
     )
 
 
-def score(rows: list[dict], predict) -> dict:
+def score(rows: list[dict], predict):
     per_class: dict = {}
     correct = 0
     for row in rows:
@@ -186,7 +186,7 @@ def score(rows: list[dict], predict) -> dict:
     }
 
 
-def gate_predict(row: dict) -> str:
+def gate_predict(row: dict):
     """The production arbitration rule, applied to one row."""
     proposal = row.get("agent_cause") or ""
     rule = row.get("rule_cause") or ""
@@ -197,7 +197,7 @@ def gate_predict(row: dict) -> str:
     return rule
 
 
-def deterministic_cross_origin(row: dict) -> str:
+def deterministic_cross_origin(row: dict):
     """Strongest purely deterministic alternative: no agent input at all."""
     if row["cross_origin"] > 0 and row["rule_cause"] != "origin_hijack_victim":
         return "origin_hijack_victim"
@@ -211,7 +211,7 @@ def constant_gate(constant: str):
     proposal: a constant that reproduces the gate arm's accuracy means
     the free-text cause contributed nothing.
     """
-    def predict(row: dict) -> str:
+    def predict(row: dict):
         proposal = constant
         rule = row.get("rule_cause") or ""
         if proposal == "origin_hijack_victim" and row["cross_origin"] > 0:
@@ -222,7 +222,7 @@ def constant_gate(constant: str):
     return predict
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(OUT_PATH))
     ap.add_argument("--limit", type=int, default=0)

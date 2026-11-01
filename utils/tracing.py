@@ -33,7 +33,7 @@ class StageEvent:
     def is_error(self):
         return self.error is not None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self):
         return {
             "name": self.name,
             "start_ts": self.start_ts,
@@ -57,11 +57,11 @@ class MetricsRegistry:
         with self._lock:
             self._events.append(event)
 
-    def all(self) -> list[StageEvent]:
+    def all(self):
         with self._lock:
             return list(self._events)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self):
         with self._lock:
             events = [e.to_dict() for e in self._events]
         # Aggregate by stage name for one-glance dashboards.
@@ -118,7 +118,7 @@ metrics = MetricsRegistry()
 
 # ── Public context manager ────────────────────────────────────────────────
 @contextmanager
-def stage(name: str, **attrs: Any) -> Iterator["_StageHandle"]:
+def stage(name: str, **attrs: Any):
     """Wrap a block as a tracked stage."""
     started = time.monotonic()
     handle = _StageHandle(name=name, start_ts=started, attrs=dict(attrs))
@@ -155,7 +155,7 @@ class _StageHandle:
         name: str,
         start_ts: float,
         attrs: dict[str, Any],
-    ) -> None:
+    ):
         self.name = name
         self.start_ts = start_ts
         self.end_ts = 0.0

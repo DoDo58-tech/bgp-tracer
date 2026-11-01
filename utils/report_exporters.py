@@ -175,7 +175,7 @@ def generate_comprehensive_report(
                     with open(plot_p, "rb") as _f:
                         traffic_plot_base64 = base64.b64encode(_f.read()).decode("utf-8")
                     logger.info(f"[Report] Embedded traffic plot: {traffic_plot_path}")
-            except (AttributeError) as _e:
+            except AttributeError as _e:
                 logger.warning(f"[Report] Failed to embed traffic plot: {_e}")
 
         # ── Call 100%% LLM-driven report generator ───────────────────────────────
@@ -310,7 +310,7 @@ def generate_batch_html_report(batch_result: Dict[str, Any], start_time,
         logger.info(f"Batch HTML report saved to: {file_path}")
         return str(file_path)
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error generating batch HTML report: {e}")
         return ""
 
@@ -330,7 +330,7 @@ def make_json_serializable(data):
     else:
         try:
             return str(data)
-        except (ValueError):
+        except ValueError:
             return repr(data)
 
 
@@ -346,7 +346,7 @@ def assess_as_severity(result: Dict[str, Any]):
             return "medium"
         else:
             return "low"
-    except (ValueError):
+    except ValueError:
         return "unknown"
 
 
@@ -384,12 +384,12 @@ def generate_as_section_html(asn_id, result: Dict[str, Any], template):
 
         return html
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error generating AS section HTML: {e}")
         return f"<div>Error generating section for AS{asn_id}: {str(e)}</div>"
 
 
-def generate_batch_recommendations(routing_anomalies, traffic_anomalies, high_severity_as) -> List[str]:
+def generate_batch_recommendations(routing_anomalies, traffic_anomalies, high_severity_as):
     """Generate recommendations for batch analysis."""
     recommendations = []
 

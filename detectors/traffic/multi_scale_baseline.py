@@ -98,7 +98,7 @@ class MultiScaleBaseline:
                 for cfg in self.SCALES.values()
             ]
             fetched = shared_fn(str(asn).replace("AS", ""), windows)
-        except (AttributeError) as exc:  # noqa: BLE001 - degrade to per-scale fetch
+        except AttributeError as exc:  # noqa: BLE001 - degrade to per-scale fetch
             logger.warning("[MultiScale] Shared-scale prefetch failed: %s", exc)
             return None
         out = {}
@@ -117,7 +117,7 @@ class MultiScaleBaseline:
         current_timestamps: list,
         current_start: datetime,
         current_end: datetime,
-    ) -> MultiScaleDecision:
+    ):
         """Compare the current window against baselines at several scales.
 
         ``current_values``/``current_timestamps`` are the event window;
@@ -210,7 +210,7 @@ class MultiScaleBaseline:
         current_start: datetime,
         current_end: datetime,
         shared: dict | None = None,
-    ) -> ScaleResult:
+    ):
         offset = config['offset']
         past_start = current_start - offset
         past_end = current_end - offset
@@ -320,7 +320,7 @@ class MultiScaleBaseline:
         past_values: list,
         past_timestamps: list,
         offset: timedelta,
-    ) -> tuple[list[float], list[float]]:
+    ):
         """Pair each current sample with its offset historical timestamp."""
         if len(current_values) != len(current_timestamps) or len(past_values) != len(past_timestamps):
             return [], []
@@ -364,7 +364,7 @@ class MultiScaleBaseline:
         anomaly_count: int,
         weighted_score: float,
         total_scales: int,
-    ) -> float:
+    ):
         # Guard the zero-scale case: with no available scale there is no vote
         # ratio to form, and dividing by zero would abort detection entirely.
         vote_ratio = (anomaly_count / total_scales) if total_scales else 0.0
@@ -378,7 +378,7 @@ class MultiScaleBaseline:
         anomaly_count: int,
         weighted_score: float,
         direction: str = None,
-    ) -> str:
+    ):
         available_results = [r for r in scale_results if r.available]
         if not available_results:
             return "，"
@@ -791,7 +791,7 @@ class CausalCorrelationScorer:
         self,
         routing_events: list,
         traffic_anomalies: list,
-    ) -> float:
+    ):
         routing_intensity = len(routing_events)
 
         traffic_drops = []
@@ -857,7 +857,7 @@ class CausalCorrelationScorer:
         intensity_score: float,
         confounder_penalty: float,
         association_score: float,
-    ) -> str:
+    ):
         """Describe evidence strength without converting correlation into causality."""
         parts = []
         if temporal_score >= 0.7:

@@ -28,7 +28,7 @@ SUMMARY_PATH = (
 )
 
 
-def summarize(values: list[float]) -> dict:
+def summarize(values: list[float]):
     if not values:
         return {}
     ordered = sorted(values)
@@ -45,7 +45,7 @@ def summarize(values: list[float]) -> dict:
 
 
 def bootstrap_ci(values: list[float], n: int = 2000,
-                 seed: int = 20240117) -> list:
+                 seed: int = 20240117):
     if len(values) < 2:
         return [values[0], values[0]] if values else [None, None]
     rng = random.Random(seed)
@@ -58,7 +58,7 @@ def bootstrap_ci(values: list[float], n: int = 2000,
             round(means[int(0.975 * (n - 1))], 4)]
 
 
-def per_run_stats(runs: list[dict]) -> dict:
+def per_run_stats(runs: list[dict]):
     table: dict = {}
     for run in runs:
         rep = run.get("repeat")
@@ -83,7 +83,7 @@ def per_run_stats(runs: list[dict]) -> dict:
     return table
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--path", default=str(DEFAULT_PATH))
     args = ap.parse_args()

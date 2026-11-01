@@ -22,7 +22,7 @@ ROOTS = ("agents", "detectors", "scripts", "tools", "llm", "data", "utils")
 TOP_FILES = ("workflow_engine.py", "chief_agent.py")
 
 
-def resolve_module(mod: str) -> Path | None:
+def resolve_module(mod: str):
     rel = mod.replace(".", "/")
     for cand in (PROJECT_ROOT / f"{rel}.py", PROJECT_ROOT / rel / "__init__.py"):
         if cand.exists():
@@ -37,7 +37,7 @@ def arity_of(fn: ast.FunctionDef | ast.AsyncFunctionDef):
     return n_req, n_pos, a.vararg is not None
 
 
-def main() -> int:
+def main():
     files: list[Path] = []
     for root in ROOTS:
         p = PROJECT_ROOT / root
@@ -51,7 +51,7 @@ def main() -> int:
     # cache module -> {name: (req,pos,vararg)}
     sig_cache: dict[Path, dict[str, tuple]] = {}
 
-    def sigs_for(path: Path) -> dict[str, tuple]:
+    def sigs_for(path: Path):
         if path in sig_cache:
             return sig_cache[path]
         out = {}

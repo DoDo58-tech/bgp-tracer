@@ -38,19 +38,19 @@ CLASSES = ("outage", "route_leak", "origin_hijack_victim")
 SEED = 20240117
 
 
-def load_events() -> list[dict]:
+def load_events():
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     from component_ablation_gt import load_gt
 
     return load_gt()
 
 
-def path_asns(record: dict) -> list:
+def path_asns(record: dict):
     raw = str(record.get("as_path") or "")
     return [hop for hop in raw.split() if hop.strip().isdigit()]
 
 
-def analyse(routing: dict, victim: str) -> dict:
+def analyse(routing: dict, victim: str):
     records = routing.get("origin_hijacked") or []
     victim_d = str(victim).replace("AS", "").strip()
     total = 0
@@ -93,7 +93,7 @@ def permutation_p(positives, negatives, seed=SEED, trials=5000):
     }
 
 
-def main() -> int:
+def main():
     events = {e["event_id"]: e for e in load_events()}
     rows = []
     for eid, ev in events.items():

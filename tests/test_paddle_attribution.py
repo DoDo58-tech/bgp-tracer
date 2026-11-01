@@ -52,7 +52,7 @@ def make_control(
     days: int = 4,
     jitter: float = 0.10,
     seed: int = 7,
-) -> ControlPlaneSeries:
+):
     """A control plane that is normal until ``tau`` and then moves.
 
     The baseline is four ordinary days whose rates carry the natural
@@ -431,3 +431,48 @@ def test_the_estimator_commits_only_one_direction_per_pair():
         })
     backward = attribute(make_control(), flat)
     assert backward.direction == UNKNOWN
+
+
+def test_the_production_consumers_read_the_verdict_without_raising():
+    """The verdict's public surface has to match what the pipeline reads.
+
+    The pipeline builds its attribution dict from a fixed list of
+    verdict attributes, and the whole stage sits inside an
+    ``except AttributeError``.  So a field renamed in the estimator does
+    not raise -- it silently turns every committed verdict into a failed
+    stage, and the paper's causal numbers stop being produced without a
+    single error anywhere.
+    """
+    from workflow_engine import paddle_explanation
+
+    verdict = attribute(make_control(), make_response())
+    assert verdict.committed, verdict.as_dict()
+
+    # Every attribute the production path reads off the verdict.
+    for name in ("direction", "reason", "vetoes", "channel", "lag_seconds",
+                 "effect", "exclusivity_probability", "tau_response",
+                 "tau_control", "baseline_displacement", "mechanism", "tests"):
+        assert hasattr(verdict, name), (
+            f"CausalVerdict has no attribute {name!r}; the production "
+            f"pipeline reads it and would fail the whole causal stage"
+        )
+
+    # The explanation the report renders, on a committed verdict.
+    assert "PADDLE committed" in paddle_explanation(verdict)
+
+    # And the post-react attribution dict the workflow builds.
+    attribution = {
+        "direction": verdict.direction if verdict.committed else "unknown",
+        "committed": verdict.committed,
+        "reason": verdict.reason,
+        "vetoes": dict(verdict.vetoes),
+        "channel": verdict.channel,
+        "lag": verdict.lag_seconds,
+        "effect": verdict.effect,
+        "exclusivity_probability": verdict.exclusivity_probability,
+        "tau_traffic": (verdict.tau_response.isoformat()
+                        if verdict.tau_response else None),
+        "tau_routing": verdict.tau_control,
+    }
+    assert attribution["committed"] is True
+    assert attribution["direction"] == R2T

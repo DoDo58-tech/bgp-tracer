@@ -35,7 +35,7 @@ def card_temporal_alignment(
     routing_events: List[Dict],
     traffic_anomalies: List[Dict],
     traffic_anomaly_window: Optional[Dict] = None,
-) -> Dict[str, Any]:
+):
     """Card 1: How closely do routing events and traffic anomalies overlap in time?"""
     routing_ts = []
     for ev in routing_events or []:
@@ -98,7 +98,7 @@ def card_blast_radius(
     traffic_anomalies: List[Dict],
     prefix_traffic: Optional[Dict] = None,
     victim_traffic: Optional[Dict] = None,
-) -> Dict[str, Any]:
+):
     """Card 2: How wide is the impact (affected prefixes × traffic deviation)?"""
     prefixes = set()
     severities = []
@@ -172,7 +172,7 @@ def card_falsification(
     routing_events: List[Dict],
     traffic_anomalies: List[Dict],
     confounders: Optional[Dict] = None,
-) -> Dict[str, Any]:
+):
     """Card 3: Are there credible alternative explanations?"""
     confounders = confounders or {}
 
@@ -234,7 +234,7 @@ def analyse_joint_evidence(
     causal_evidence: Optional[Dict] = None,
     routing_available: bool = True,
     traffic_available: bool = True,
-) -> Dict[str, Any]:
+):
     """Run the three-card joint evidence analysis.
     
     Returns:

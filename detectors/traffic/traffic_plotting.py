@@ -298,6 +298,6 @@ def plot_traffic_comparison_beautiful(
         plt.close()
         return output_path
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error generating traffic comparison chart: {e}")
         return ""

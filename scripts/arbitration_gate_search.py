@@ -78,7 +78,7 @@ def make_gate(spec: dict):
     return gate
 
 
-def candidate_specs() -> list[dict]:
+def candidate_specs():
     specs = []
     for corroborated in (True, False):
         for leak_withdrawals in (0, 1000, 3000, 5000, 8000):
@@ -100,7 +100,7 @@ def candidate_specs() -> list[dict]:
     return specs
 
 
-def accuracy(rows, gate) -> float:
+def accuracy(rows, gate):
     if not rows:
         return 0.0
     return sum(1 for r in rows if gate(r) == r["gt_cause"]) / len(rows)
@@ -144,7 +144,7 @@ def loo_accuracy(rows, spec, folds=FOLDS, seed=SEED):
     return correct, total
 
 
-def main() -> int:
+def main():
     rows = build_rows()
     incumbent = {
         "corroborated": False,

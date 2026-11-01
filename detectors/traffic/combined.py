@@ -120,7 +120,7 @@ def detect_anomalies_combined(
                         if a.get("index") == idx:
                             a["sudden_drop"] = True
                             break
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Sudden drop detection failed: {e}")
 
     # ── 5.  ────────────────────────────────────────────
@@ -139,7 +139,7 @@ def detect_anomalies_combined(
                         if a.get("index") == idx:
                             a["sudden_drop_to_zero"] = True
                             break
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Sudden drop-to-zero detection failed: {e}")
 
     # ── 6.  ────────────────────────────────────────────────
@@ -154,7 +154,7 @@ def detect_anomalies_combined(
                 combined.append({**oa, "_skip_context_filter": True,
                                  "confidence": "high", "ml_detected": False,
                                  "detected_by": ["sudden_jump"]})
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Sudden jump detection failed: {e}")
 
     # ── 7.  ─────────────────────────────────────────
@@ -172,7 +172,7 @@ def detect_anomalies_combined(
                         if a.get("index") == idx:
                             a["post_jump_drop"] = True
                             break
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Post-jump drop detection failed: {e}")
 
     # ── 8.  ──────────────────────────────────────────────
@@ -199,7 +199,7 @@ def detect_anomalies_combined(
                             a["percentile_deviation"] = oa.get("deviation")
                             a["percentile_direction"] = oa.get("direction")
                             break
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Percentile detection failed: {e}")
 
     # ── 9. Cross-modal fusion (AND/OR) ────────────────
@@ -222,7 +222,7 @@ def detect_anomalies_combined(
                         if a.get("index") == idx:
                             a["peak_trough"] = True
                             break
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Peak-trough detection failed: {e}")
 
     # ── 10.  context  ──────────────────────────────────────
@@ -546,7 +546,7 @@ def fallback_detection(
         if pt_anomalies:
             logger.info(f"Fallback peak-trough: {len(pt_anomalies)} anomalies")
             return pt_anomalies
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.debug(f"Fallback peak-trough failed: {e}")
 
     if hist is not None:

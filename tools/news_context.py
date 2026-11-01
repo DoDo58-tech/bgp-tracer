@@ -32,7 +32,7 @@ RIPE_INCIDENTS_URL = "https://stat.ripe.net/ris/incidents"
 BGPUPDATES_URL = "https://bgpupdates.nl/feed/"
 
 
-async def search_duckduckgo(query: str, num_results: int = 10) -> list[dict]:
+async def search_duckduckgo(query: str, num_results: int = 10):
     """
     Search DuckDuckGo for news/articles.
     Uses the HTML interface which doesn't require API keys.
@@ -95,7 +95,7 @@ def clean_html(content):
 
 async def query_ripe_incidents(
     asn: str, timeframe_days: int = 30
-) -> list[dict]:
+):
     """Query RIPE NCC RIS incident reports for this AS."""
     params = {
         "resource": f"AS{asn}",
@@ -133,7 +133,7 @@ async def query_ripe_incidents(
     return []
 
 
-def build_search_queries(asn: str, prefix: str, event_type: str, country: str) -> list[str]:
+def build_search_queries(asn: str, prefix: str, event_type: str, country: str):
     """Build targeted search queries based on what we know about the incident."""
     queries = []
     asn_str = f"AS{asn}"
@@ -174,7 +174,7 @@ def build_search_queries(asn: str, prefix: str, event_type: str, country: str) -
     return deduped[:5]  # Limit to avoid too many searches
 
 
-def extract_incident_context(news_results: list[dict]) -> dict[str, Any]:
+def extract_incident_context(news_results: list[dict]):
     """Extract structured context from news results.
     Human analysts look for:
     - What happened (confirmed via news)
@@ -228,7 +228,7 @@ def extract_incident_context(news_results: list[dict]) -> dict[str, Any]:
     return context
 
 
-async def news_context_search(tool_input: dict, session) -> dict[str, Any]:
+async def news_context_search(tool_input: dict, session):
     """Search for news and incident context about a BGP event.
     
     Returns:

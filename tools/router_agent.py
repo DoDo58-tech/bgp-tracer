@@ -49,7 +49,7 @@ class RouterAgent:
         self,
         user_message: str,
         session: SessionManager,
-    ) -> str:
+    ):
         """Process one user message using ReAct loop."""
         self._round = 0
         self._react_trace = []
@@ -71,7 +71,7 @@ class RouterAgent:
         self,
         session: SessionManager,
         user_message: str,
-    ) -> str:
+    ):
         """The core ReAct loop: Think → Action → Observe → repeat."""
         context = self.build_context(session, user_message)
 
@@ -137,7 +137,7 @@ class RouterAgent:
         self,
         context: str,
         session: SessionManager,
-    ) -> str:
+    ):
         """Ask the LLM to think about the next step using ReAct format."""
 
         prompt = f"""You are a BGP network analysis expert using the ReAct (Reasoning + Acting) pattern.
@@ -197,11 +197,11 @@ Now, what is your next step?"""
         try:
             resp = await asyncio.to_thread(self.llm.complete, prompt)
             return resp.text if hasattr(resp, "text") else str(resp)
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.error(f"[ReAct] LLM think failed: {e}")
             return "Thought: I encountered an error. Let me try to generate a report with what we have.\nAction: Answer\nAction Input: {}"
 
-    def parse_react_response(self, response) -> Dict[str, Any]:
+    def parse_react_response(self, response):
         """Parse LLM's ReAct response into thought, action, and input."""
 
         # Extract Thought

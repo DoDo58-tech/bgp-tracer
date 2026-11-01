@@ -45,14 +45,14 @@ QUICK_DIR = PROJECT_ROOT / "results" / "quick"
 OUT_PATH = PROJECT_ROOT / "results" / "eval" / "agent_corroboration.json"
 
 
-def load_events() -> list[dict]:
+def load_events():
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     from component_ablation_gt import load_gt
 
     return load_gt()
 
 
-def cross_origin_counts(routing: dict, victim: str) -> dict:
+def cross_origin_counts(routing: dict, victim: str):
     records = routing.get("origin_hijacked") or []
     cross = 0
     self_flag = 0
@@ -79,7 +79,7 @@ def cross_origin_counts(routing: dict, victim: str) -> dict:
     }
 
 
-def main() -> int:
+def main():
     events = {e["event_id"]: e for e in load_events()}
     agent = {
         r["event_id"]: r

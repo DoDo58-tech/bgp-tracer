@@ -31,7 +31,7 @@ def extract_routing_confidence(
     forge_hijacking,
     leaks,
     has_outage,
-) -> float:
+):
     """Best-effort confidence for the routing layer."""
     has_anomaly = bool(
         hijacked_alerts or origin_hijacking or forge_hijacking or leaks or has_outage

@@ -471,12 +471,12 @@ class RouteOutageDetector:
         except FileNotFoundError as exc:
             logger.warning("Outage detector file error: %s", exc)
             return {}
-        except (AttributeError) as exc:
+        except AttributeError as exc:
             logger.error("Outage detector failed: %s", exc)
             return {}
 
     @staticmethod
-    def asn_int(asn) -> int:
+    def asn_int(asn):
         try:
             text = str(asn).strip()
             if text.upper().startswith("AS"):

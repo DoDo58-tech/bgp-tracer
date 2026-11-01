@@ -67,7 +67,7 @@ CAUSES = ("outage", "route_leak", "origin_hijack_victim")
 CIRCULAR_MARKER = "RIPE RIS BGP observation"
 
 
-def asn_int(value: str) -> str:
+def asn_int(value: str):
     text = (value or "").strip().upper()
     if text.startswith("AS"):
         text = text[2:]
@@ -79,7 +79,7 @@ def parse_ts(value: str):
     return _parse(value)
 
 
-def target_of(row: dict) -> str:
+def target_of(row: dict):
     """The ASN the detector is run against.
 
     A route leak is a property of the *leaking* AS, not of the victim:
@@ -97,7 +97,7 @@ def target_of(row: dict) -> str:
     return ""
 
 
-def traffic_strategies(row: dict) -> List[dict]:
+def traffic_strategies(row: dict):
     """The measurement strategies to try, in order.
 
     Which series shows the impact of an event depends on what the event
@@ -137,7 +137,7 @@ def traffic_strategies(row: dict) -> List[dict]:
 
 
 def measure_with_strategy(api, strategy: dict, start, end, eid,
-                            exclude_for_control) -> Tuple:
+                            exclude_for_control):
     """Measure one strategy.  Returns ``(measurement, control_z, control_drop)``."""
     measurement = measure(api, strategy["series"], start, end, eid,
                           scope=strategy["scope"],
@@ -151,7 +151,7 @@ def measure_with_strategy(api, strategy: dict, start, end, eid,
     return measurement, control_z, control_drop
 
 
-def incident_key(row: dict) -> tuple:
+def incident_key(row: dict):
     """The identity of the *incident*, not of the event row.
 
     Two rows can describe the same real-world incident: the same
@@ -186,7 +186,7 @@ def incident_key(row: dict) -> tuple:
     )
 
 
-def routing_strength(row: dict) -> tuple:
+def routing_strength(row: dict):
     """How strong the routing evidence of an accepted row is.
 
     Used when two rows describe the same incident under different cause
@@ -238,7 +238,7 @@ def routing_strength(row: dict) -> tuple:
     return (0, 0.0)
 
 
-def evidence_state(row: dict) -> tuple[bool, str]:
+def evidence_state(row: dict):
     """Whether the row has independent public evidence, and why not if not."""
     source = (row.get("source") or "").strip()
     url = (row.get("source_url") or "").strip()
@@ -251,7 +251,7 @@ def evidence_state(row: dict) -> tuple[bool, str]:
     return True, ""
 
 
-def evaluate(row: dict, api) -> dict:
+def evaluate(row: dict, api):
     """Decide one event.
 
     Returns a dict with ``accepted`` (the dataset row or ``None``),
@@ -262,7 +262,7 @@ def evaluate(row: dict, api) -> dict:
     cause = (row.get("cause") or "").strip()
     record: dict = {"event_id": eid, "cause": cause}
 
-    def reject(reason: str) -> dict:
+    def reject(reason: str):
         return {
             "event_id": eid, "accepted": None,
             "rejected": {"event_id": eid, "cause": cause, "reason": reason},
@@ -383,7 +383,7 @@ def evaluate(row: dict, api) -> dict:
             "record": record}
 
 
-def load_pool() -> list[dict]:
+def load_pool():
     """The candidate events to verify.
 
     The candidates are the rows of the canonical dataset itself.  The
@@ -395,7 +395,7 @@ def load_pool() -> list[dict]:
         return list(csv.DictReader(fh))
 
 
-def main() -> int:
+def main():
     pool = load_pool()
     from detectors.traffic.traffic_detector import CloudflareRadarAPI
     api = CloudflareRadarAPI()

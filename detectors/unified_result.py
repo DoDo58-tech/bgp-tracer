@@ -242,19 +242,19 @@ class UnifiedDetectionResult:
     anomalies: List[AnomalyDetail] = field(default_factory=list)
     
     @property
-    def origin_hijacked(self) -> List[AnomalyDetail]:
+    def origin_hijacked(self):
         """origin_hijacked ()"""
         return [a for a in self.anomalies
                 if (a.subtype and 'origin_hijacked' in a.subtype) or a.type == 'origin_hijack']
 
     @property
-    def forge_hijacked(self) -> List[AnomalyDetail]:
+    def forge_hijacked(self):
         """forge_hijacked ()"""
         return [a for a in self.anomalies
                 if (a.subtype and 'forge_hijacked' in a.subtype) or a.type == 'forge_hijack']
 
     @property
-    def route_leaks(self) -> List[AnomalyDetail]:
+    def route_leaks(self):
         """route_leaks ()"""
         return [a for a in self.anomalies if a.type == 'leak']
     
@@ -394,7 +394,7 @@ def wrap(
     success: Optional[bool] = None,
     data_available: Optional[bool] = None,
     no_data_reason: str = "",
-) -> UnifiedDetectionResult:
+):
     """Wrap a raw detector dict into a UnifiedDetectionResult without forcing
     the detector author to spell out every field.
     

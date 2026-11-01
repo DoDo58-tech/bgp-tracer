@@ -36,7 +36,7 @@ AGENT_VERDICT_TO_CAUSE = {
 LABEL_CAUSES = ("outage", "route_leak", "origin_hijack_victim", "roa_misconfig")
 
 
-def load_gt() -> tuple[list[dict], list[dict]]:
+def load_gt():
     """Load the corpus, separating label-conflicting windows.
 
     Two events in the corpus share an (ASN, window) pair but carry
@@ -81,7 +81,7 @@ def load_gt() -> tuple[list[dict], list[dict]]:
     return out, conflicted
 
 
-def load_detector_fired() -> dict[str, bool]:
+def load_detector_fired():
     """Whether the traffic detector fired, per event."""
     audit_dir = PROJECT_ROOT / "results" / "gt_audit_v22"
     out: dict[str, bool] = {}
@@ -92,7 +92,7 @@ def load_detector_fired() -> dict[str, bool]:
             continue
         try:
             d = json.loads(p.read_text())
-        except (ValueError):  # noqa: BLE001
+        except ValueError:  # noqa: BLE001
             continue
         ev = d.get("evidence") or {}
         fired = bool(ev.get("traffic_anomaly_count")) or bool(
@@ -102,7 +102,7 @@ def load_detector_fired() -> dict[str, bool]:
     return out
 
 
-def norm_verdict(raw: str) -> str:
+def norm_verdict(raw: str):
     r = (raw or "").strip().lower()
     aliases = {
         "cooccurring_anomalies": "correlation_uncertain",
@@ -117,7 +117,7 @@ def norm_verdict(raw: str) -> str:
     return aliases.get(r, r)
 
 
-def run_agent(quick: dict) -> dict:
+def run_agent(quick: dict):
     """Run the full agent pipeline and extract what it committed."""
     from chief_agent import analyze_deep_from_quick
 
@@ -160,7 +160,7 @@ def run_agent(quick: dict) -> dict:
     }
 
 
-def normalize_cause_label(raw: str) -> str:
+def normalize_cause_label(raw: str):
     """Map a free-text cause onto the corpus's cause labels.
 
     Both arms are scored through this function, so the comparison is
@@ -192,7 +192,7 @@ def normalize_cause_label(raw: str) -> str:
     return ""
 
 
-def run_baseline(quick: dict, event_id: str) -> dict:
+def run_baseline(quick: dict, event_id: str):
     """Score the monolithic one-shot LLM arm on the same evidence.
 
     This is the control for the agent pipeline: one LLM call, one pass
@@ -226,7 +226,7 @@ def run_baseline(quick: dict, event_id: str) -> dict:
     }
 
 
-def run_rule_only(quick: dict) -> dict:
+def run_rule_only(quick: dict):
     """Score the pure-detector arm: no LLM at all.
 
     Runs the deterministic decision tree (physical veto + cause tree)
@@ -270,7 +270,7 @@ def run_rule_only(quick: dict) -> dict:
     }
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(OUT_PATH))
     ap.add_argument("--limit", type=int, default=0)

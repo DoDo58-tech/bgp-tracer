@@ -54,7 +54,7 @@ def pytest_configure(config):
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
-) -> None:
+):
     """Two responsibilities:
 
     1. Skip network-marked tests unless ``BGP_TRACER_RUN_NETWORK_TESTS=1``.

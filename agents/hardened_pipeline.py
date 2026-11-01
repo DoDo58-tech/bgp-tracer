@@ -16,7 +16,7 @@ _SECTION_NAMES = [
 
 # ── Splitter ──────────────────────────────────────────────────────────────
 
-def split_llm_prose_blocks(markup) -> Dict[str, str]:
+def split_llm_prose_blocks(markup):
     """Split LLM-authored HTML into per-section prose blocks."""
     blocks: Dict[str, str] = {}
     for name in _SECTION_NAMES:
@@ -131,7 +131,7 @@ def deterministic_postprocess(
     inject_tca: bool = True,
     inject_correlation_gauge: bool = True,
     inject_traffic_plot: bool = True,
-) -> str:
+):
     """Replace the body of the report between <body> and </body> with a
     deterministic, payload-driven version."""
     payload = payload or {}
@@ -250,7 +250,7 @@ def scrub_pathological_fragments(markup):
     return html
 
 
-def assert_no_known_issues(markup) -> Tuple[bool, List[str]]:
+def assert_no_known_issues(markup):
     """Return (passed, problems). The list of problems is empty when passed."""
     problems: List[str] = []
     html = markup

@@ -85,7 +85,7 @@ class ToolRegistry:
         self._tools[tool.name] = tool
         logger.info(f"[ToolRegistry] Registered: {tool.name}")
 
-    def list_tools(self) -> List[dict]:
+    def list_tools(self):
         return [t.to_dict() for t in self._tools.values() if t.enabled]
 
     async def call(
@@ -93,7 +93,7 @@ class ToolRegistry:
         tool_name: str,
         tool_input: Dict[str, Any],
         session,
-    ) -> ToolResult:
+    ):
         """Execute a tool by name and return a ToolResult."""
         entry = self._tools.get(tool_name)
         if not entry:
@@ -149,7 +149,7 @@ class ToolRegistry:
         self,
         calls: List[Dict[str, Any]],
         session,
-    ) -> List[ToolResult]:
+    ):
         """Execute a sequence of tool calls, returning all results."""
         results = []
         for call in calls:

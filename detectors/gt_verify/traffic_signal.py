@@ -127,7 +127,7 @@ class TrafficMeasurement:
     #: Why the measurement failed, in words.
     no_data_reason: str = ""
 
-    def to_dict(self) -> dict:
+    def to_dict(self):
         return {
             "event_id": self.event_id,
             "traffic_scope": self.scope,
@@ -146,7 +146,7 @@ class TrafficMeasurement:
         }
 
 
-def z_and_drop(window: np.ndarray, baseline: np.ndarray) -> Tuple[float, float]:
+def z_and_drop(window: np.ndarray, baseline: np.ndarray):
     """The worst z-score of the window and the drop at its trough.
 
     The window and the baseline are right-aligned, so index *i* of one
@@ -174,7 +174,7 @@ def z_and_drop(window: np.ndarray, baseline: np.ndarray) -> Tuple[float, float]:
     return z_min, pct_drop
 
 
-def align_baseline(weeks: Sequence[np.ndarray], length: int) -> np.ndarray:
+def align_baseline(weeks: Sequence[np.ndarray], length: int):
     """Right-align the baseline weeks and average them."""
     usable = [w for w in weeks if w.size > 0]
     if not usable:
@@ -183,7 +183,7 @@ def align_baseline(weeks: Sequence[np.ndarray], length: int) -> np.ndarray:
     return np.mean(np.vstack(tail), axis=0)
 
 
-def within(stamp: str, start: datetime, end: datetime) -> bool:
+def within(stamp: str, start: datetime, end: datetime):
     """Whether a timestamp sits inside a window.
 
     The timestamp comes from Radar as an ISO string in UTC.  The
@@ -201,7 +201,7 @@ def within(stamp: str, start: datetime, end: datetime) -> bool:
     return start <= moment <= end
 
 
-def trough_time(stamps: Sequence[str], series: np.ndarray) -> str:
+def trough_time(stamps: Sequence[str], series: np.ndarray):
     """The timestamp of the lowest sample of the series."""
     if series.size == 0 or not stamps:
         return ""
@@ -211,7 +211,7 @@ def trough_time(stamps: Sequence[str], series: np.ndarray) -> str:
     return stamps[index]
 
 
-def measurement_spans(start: datetime, end: datetime) -> List[Tuple[datetime, datetime]]:
+def measurement_spans(start: datetime, end: datetime):
     """The measurement window and the baseline weeks, as one span list.
 
     All of these are fetched together, so Radar normalises them on one
@@ -226,20 +226,20 @@ def measurement_spans(start: datetime, end: datetime) -> List[Tuple[datetime, da
     return spans
 
 
-def cache_key_for(series_id: str, scope: str, lo: datetime, hi: datetime) -> Path:
+def cache_key_for(series_id: str, scope: str, lo: datetime, hi: datetime):
     tag = "prefix" if scope == "prefix" else "asn"
     name = f"{tag}_{series_id.replace('/', '_')}_{lo:%Y%m%d%H%M}_{hi:%Y%m%d%H%M}.json"
     return CACHE_DIR / name
 
 
 def cache_path_for(series_id: str, scope: str, lo: datetime, hi: datetime,
-                endpoint: str = "http") -> Path:
+                endpoint: str = "http"):
     tag = "prefix" if scope == "prefix" else "asn"
     safe = series_id.replace("/", "_").replace(":", "_")
     return CACHE_DIR / f"{endpoint}_{tag}_{safe}_{lo:%Y%m%d%H%M}_{hi:%Y%m%d%H%M}.json"
 
 
-def read_cache(path: Path) -> Optional[Tuple[List[str], List[float]]]:
+def read_cache(path: Path):
     if not path.is_file():
         return None
     try:
@@ -253,7 +253,7 @@ def read_cache(path: Path) -> Optional[Tuple[List[str], List[float]]]:
     return list(stamps), [float(v) for v in values]
 
 
-def write_cache(path: Path, stamps: Sequence[str], values: Sequence[float]) -> None:
+def write_cache(path: Path, stamps: Sequence[str], values: Sequence[float]):
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")
@@ -269,7 +269,7 @@ def write_cache(path: Path, stamps: Sequence[str], values: Sequence[float]) -> N
 def fetch_shared(api, series_id: str, scope: str,
                   spans: Sequence[Tuple[datetime, datetime]],
                   endpoint: str = "http",
-                  ) -> Tuple[Dict[Tuple[datetime, datetime], Tuple[List[str], List[float]]], str]:
+                  ):
     """Fetch every span on one scale.
 
     The project's ``RadarSpanFetcher`` already solves the shared-scale
@@ -324,7 +324,7 @@ def fetch_shared(api, series_id: str, scope: str,
 
 
 def slice_series(series: Tuple[List[str], List[float]], start: datetime,
-           end: datetime) -> np.ndarray:
+           end: datetime):
     """The samples of the series that fall inside the window."""
     stamps, values = series
     if not stamps:
@@ -338,7 +338,7 @@ def slice_series(series: Tuple[List[str], List[float]], start: datetime,
 def measure(api, series_id: str, start: datetime, end: datetime,
             event_id: str = "", scope: str = "asn",
             use_cache: bool = True,
-            endpoint: str = "http") -> TrafficMeasurement:
+            endpoint: str = "http"):
     """Measure the traffic impact on one series over one event window."""
     measurement = TrafficMeasurement(
         event_id=event_id, scope=scope, series_id=str(series_id),
@@ -446,7 +446,7 @@ def measure(api, series_id: str, start: datetime, end: datetime,
 
 def measure_control(api, start: datetime, end: datetime,
                     exclude: Sequence[str] = (),
-                    endpoint: str = "http") -> Tuple[float, float]:
+                    endpoint: str = "http"):
     """Measure a control network over the same window.
 
     The control is a large, well-connected network that the event does
@@ -474,7 +474,7 @@ def measure_control(api, start: datetime, end: datetime,
 
 
 def verdict(measurement: TrafficMeasurement, control_z: float,
-            control_drop: float) -> dict:
+            control_drop: float):
     """Turn the measurements into the verdict the dataset stores.
 
     The impact has to be visible *and* specific: the z-score must be

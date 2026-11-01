@@ -26,7 +26,7 @@ NON_ACTIONABLE = {
 }
 
 
-def load_records(jsonl_path: Path) -> List[Dict[str, Any]]:
+def load_records(jsonl_path: Path):
     records = []
     if not jsonl_path.exists():
         return records
@@ -36,12 +36,12 @@ def load_records(jsonl_path: Path) -> List[Dict[str, Any]]:
             continue
         try:
             records.append(json.loads(line))
-        except (ValueError):
+        except ValueError:
             continue
     return records
 
 
-def classify_verdict(v: Optional[str]) -> str:
+def classify_verdict(v: Optional[str]):
     if v is None or v == "" or v == "unknown":
         return "unknown"
     if v in NON_ACTIONABLE:
@@ -49,7 +49,7 @@ def classify_verdict(v: Optional[str]) -> str:
     return v  # real_incident, traffic_only, routing_only, etc.
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--in-dir", default=str(DEFAULT_IN_DIR))
     ap.add_argument("--out-dir", default=None)
@@ -235,7 +235,7 @@ operator's priority queue for human review.**
                     start = (r.get("start_time") or "")[:19]
                     desc = (r.get("description") or "")[:100]
                     break
-        except (ValueError):
+        except ValueError:
             pass
         readme += f"| `{alert_id}` | {d.get('source')} | AS{asn} | {start} | {rid} | {tid} |\n"
     # Always render descriptions (loaded separately)
@@ -243,7 +243,7 @@ operator's priority queue for human review.**
     try:
         raw = json.loads((out_dir / "raw" / "raw_alerts.json").read_text())
         raw_by_id = {r.get("alert_id"): r for r in raw if isinstance(r, dict)}
-    except (ValueError):
+    except ValueError:
         raw_by_id = {}
     for d in sorted(dangerous_records, key=lambda x: x.get("start_time") or ""):
         alert_id = d.get("alert_id", "")

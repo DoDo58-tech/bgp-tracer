@@ -48,12 +48,12 @@ SUPERSEDED = (
 )
 
 
-def load_rows(path: Path = FINAL_CSV) -> list[dict]:
+def load_rows(path: Path = FINAL_CSV):
     with path.open(encoding="utf-8-sig") as fh:
         return list(csv.DictReader(fh))
 
 
-def asn(value: str) -> str:
+def asn(value: str):
     text = (value or "").strip().upper()
     return text[2:] if text.startswith("AS") else text
 

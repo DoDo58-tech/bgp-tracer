@@ -28,14 +28,14 @@ OUT_PATH = EVAL / "cause_axis_result.json"
 CLASSES = ("outage", "route_leak", "origin_hijack_victim")
 
 
-def load(name: str) -> dict:
+def load(name: str):
     return {
         r["event_id"]: r
         for r in json.loads((EVAL / f"{name}.json").read_text())["records"]
     }
 
 
-def mcnemar_exact(b: int, c: int) -> float:
+def mcnemar_exact(b: int, c: int):
     """Two-sided exact p for the discordant pairs."""
     n = b + c
     if n == 0:
@@ -45,7 +45,7 @@ def mcnemar_exact(b: int, c: int) -> float:
     return min(1.0, 2 * tail)
 
 
-def wilson(k: int, n: int, z: float = 1.96) -> tuple:
+def wilson(k: int, n: int, z: float = 1.96):
     if n == 0:
         return (None, None)
     p = k / n
@@ -74,7 +74,7 @@ def bootstrap_ci(rows, predict, n_boot: int = 2000, seed: int = 20240117):
     ]
 
 
-def metric_family(rows: dict, predict) -> dict:
+def metric_family(rows: dict, predict):
     per_class = {c: {"n": 0, "correct": 0} for c in CLASSES}
     answered = 0
     correct = 0
@@ -114,7 +114,7 @@ def metric_family(rows: dict, predict) -> dict:
     }
 
 
-def main() -> int:
+def main():
     agent = load("gt_agent_full_v2")
     rules = load("gt_rule_only_v2")
 

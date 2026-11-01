@@ -49,7 +49,7 @@ EXPECTED = ("ValueError", "TypeError", "KeyError", "IndexError",
             "StopIteration", "ArithmeticError", "UnicodeDecodeError")
 
 
-def is_risky(node: ast.AST) -> bool:
+def is_risky(node: ast.AST):
     """True when the expression can raise for external reasons."""
     for sub in ast.walk(node):
         if isinstance(sub, ast.Call):
@@ -72,7 +72,7 @@ def is_risky(node: ast.AST) -> bool:
     return False
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()

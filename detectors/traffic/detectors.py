@@ -123,6 +123,6 @@ def detect_anomalies_isolation_forest(current_values, historical_values, contami
                     "severity": "high" if -score > 0.6 else "medium" if -score > 0.4 else "low",
                 })
         return anomalies
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.warning(f"Isolation Forest detection failed: {e}")
         return []

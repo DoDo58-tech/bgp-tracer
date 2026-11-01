@@ -50,7 +50,7 @@ def load_json(name: str):
     return json.loads(path.read_text())
 
 
-def summarise_distribution(values: list[float]) -> dict:
+def summarise_distribution(values: list[float]):
     if not values:
         return {}
     ordered = sorted(values)
@@ -64,7 +64,7 @@ def summarise_distribution(values: list[float]) -> dict:
     }
 
 
-def main() -> int:
+def main():
     rows = []
     with GT_CSV.open() as fh:
         for r in csv.DictReader(fh):

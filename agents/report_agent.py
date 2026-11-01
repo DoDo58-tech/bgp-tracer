@@ -94,7 +94,7 @@ def check_updates_data_availability(routing_result, start_time, end_time):
                     # ±6h padding for trace-back
                     if (start_dt.replace(hour=0, minute=0) - file_dt.replace(hour=0, minute=0)).days >= -1:
                         timestamps_in_window.append(file_dt)
-            except (ValueError):
+            except ValueError:
                 continue
         if timestamps_in_window:
             coverage["coverage_start"] = timestamps_in_window[0].isoformat()
@@ -282,7 +282,7 @@ async def try_fetch_rpki_fallback(routing_result, start_time, end_time):
                         })
                     _rpki_cloudflare_cache["data"] = roa_data
                     _rpki_cloudflare_cache["fetched_at"] = now
-                except (AttributeError) as e:
+                except AttributeError as e:
                     logger.warning(f"[rpki_fallback] Cloudflare parse failed: {e}")
     except (httpx.HTTPError, OSError, ValueError, KeyError, IndexError, AttributeError, TypeError) as e:
         logger.warning(f"[rpki_fallback] Cloudflare fetch failed: {e}")
@@ -435,7 +435,7 @@ def safe_read_sync(bb, section, key, default=None):
             return section_data if section_data is not None else default
         val = section_data.get(key, default) if isinstance(section_data, dict) else default
         return val if val is not None else default
-    except (ValueError):
+    except ValueError:
         return default
 
 async def safe_read(bb, section, key, default=None):
@@ -443,7 +443,7 @@ async def safe_read(bb, section, key, default=None):
     try:
         val = await bb.read(section, key, default)
         return val if val is not None else default
-    except (ValueError):
+    except ValueError:
         return default
 
 
@@ -493,7 +493,7 @@ def estimate_size(obj):
     try:
         import json as _json
         return len(_json.dumps(obj, default=str))
-    except (ValueError):
+    except ValueError:
         return 0
 
 
@@ -606,7 +606,7 @@ def trim_to_size(data, max_bytes=_MAX_PAYLOAD_BYTES):
                                 continue
                 else:
                     truncated_ok = True  # fits without slicing
-            except (AttributeError) as e:
+            except AttributeError as e:
                 from utils.logger import logger as _logger
                 _logger.warning(f"[ReportAgent] JSON re-encode failed during truncation: {e!r}")
 
@@ -754,7 +754,7 @@ def extract_plot_path(traffic_result, traffic_raw, reasoning_result):
             resolved = str(Path(candidate).resolve())
             if Path(resolved).is_file():
                 return resolved
-        except (ValueError):
+        except ValueError:
             continue
     # Final fallback: search the filesystem for a recent plot matching asn
     try:
@@ -774,7 +774,7 @@ def extract_plot_path(traffic_result, traffic_raw, reasoning_result):
                 )
                 if matches:
                     return matches[0]
-    except (ValueError):
+    except ValueError:
         pass
     return None
 
@@ -835,7 +835,7 @@ def embed_file_as_base64(path_str):
         path = Path(path_str).resolve()
         if path.exists() and path.is_file():
             return base64.b64encode(path.read_bytes()).decode("utf-8")
-    except (AttributeError) as exc:
+    except AttributeError as exc:
         logger.warning(f"Failed to embed traffic plot {path_str}: {exc}")
     return None
 
@@ -1246,7 +1246,7 @@ class ReportAgent(Agent):
             try:
                 traffic_local = traffic
                 routing_local = await self.bb.read_section("routing")
-            except (ValueError):
+            except ValueError:
                 traffic_local = traffic
                 routing_local = {}
             try:
@@ -1263,7 +1263,7 @@ class ReportAgent(Agent):
                 await self.bb.write("report", "used_fallback", True)
                 self.state = AgentState.DONE
                 return TaskResult(success=True, data={"html": fallback_html}, agent=self.name)
-            except (AttributeError) as fallback_err:
+            except AttributeError as fallback_err:
                 logger.error(f"Fallback render also failed: {fallback_err}")
                 self.state = AgentState.ERROR
                 return TaskResult(success=False, error=f"{e}; fallback={fallback_err}", agent=self.name)
@@ -1283,7 +1283,7 @@ class ReportAgent(Agent):
         traffic_anomaly_window: Optional[dict] = None,
         correlation_analysis: Optional[dict] = None,
         enhanced: bool = False,
-    ) -> str:
+    ):
         """Generate HTML report using pre-computed correlation analysis + CoT-enhanced LLM prompt."""
 
         rr = reasoning_result if isinstance(reasoning_result, dict) else {}
@@ -1292,7 +1292,7 @@ class ReportAgent(Agent):
         # Pull calibration / integrated_analysis from the blackboard only when
         try:
             bb_reasoning = await safe_read(self.bb, "reasoning", None, default={}) or {}
-        except (ValueError):
+        except ValueError:
             bb_reasoning = {}
         if isinstance(bb_reasoning, dict):
             integrated_analysis = integrated_analysis or bb_reasoning.get("integrated_analysis") or {}
@@ -1502,7 +1502,7 @@ class ReportAgent(Agent):
                 start_time=str(start_time) if start_time else "",
                 end_time=str(end_time) if end_time else "",
             )
-        except (AttributeError) as _scrub_err:
+        except AttributeError as _scrub_err:
             logger.debug(f"_scrub_json_key_placeholders failed: {_scrub_err}")
 
         # Post-process: replace LLM-generated Origin Hijack / Route Leak / Traffic
@@ -1515,7 +1515,7 @@ class ReportAgent(Agent):
                 asn=asn,
                 payload=payload if isinstance(payload, dict) else None,
             )
-        except (AttributeError) as _inj_err:
+        except AttributeError as _inj_err:
             logger.warning(f"_inject_code_rendered_tables failed: {_inj_err}")
 
         # Enforce required sections + minimum hypothesis-card count.
@@ -1529,7 +1529,7 @@ class ReportAgent(Agent):
                 payload=payload if isinstance(payload, dict) else None,
                 correlation_analysis=_correlation_analysis,
             )
-        except (AttributeError) as _sec_err:
+        except AttributeError as _sec_err:
             logger.warning(f"_enforce_section_completeness failed: {_sec_err}")
 
         # Final validation — if the document is still unbalanced after all
@@ -1567,7 +1567,7 @@ class ReportAgent(Agent):
                         f"empty. rebuilt_len={len(rebuilt)} kproblems={re_kproblems[:3]}"
                     )
                     return ""
-            except (AttributeError) as _rebuild_err:
+            except AttributeError as _rebuild_err:
                 logger.warning(f"hardened_postprocess failed: {_rebuild_err}")
                 return ""
 
@@ -1582,7 +1582,7 @@ def safe_str(value, default="—"):
     if isinstance(value, (dict, list)):
         try:
             return json.dumps(value, ensure_ascii=False, default=json_serial_helper)[:200]
-        except (ValueError):
+        except ValueError:
             return default
     s = str(value).strip()
     return s if s else default
@@ -2127,7 +2127,7 @@ def render_tca_section(
     correlation_analysis: dict,
     *,
     correlation_norm: Optional[dict] = None,
-) -> str:
+):
     """Render the deterministic Causal Direction (TCA) section."""
     if not isinstance(payload, dict):
         payload = {}
@@ -2772,7 +2772,7 @@ def compute_top_cause(
     *,
     target_as: str = "",
     hcaf_direction: str = "",
-) -> dict:
+):
     """Return the single most likely cause + per-cause confidence breakdown."""
     # BUG-R141 2026-09-29: the event lists in the LLM payload are truncated
     def count(key, events_key):
@@ -2977,7 +2977,7 @@ def compute_top_cause(
                 if m:
                     claimants.add(m.group(1))
         leak_unique_claimants = len(claimants)
-    except (ValueError):
+    except ValueError:
         leak_unique_claimants = 0
     # Hijacker concentration: how many of the hijack events come
     hijacker_top_share = 0.0
@@ -2998,7 +2998,7 @@ def compute_top_cause(
                 hijacker_unique = len(_hijacker_counts)
                 top_n = _hijacker_counts.most_common(1)[0][1]
                 hijacker_top_share = top_n / max(1, origin_hijacked_n + forge_hijacked_n)
-    except (ValueError):
+    except ValueError:
         hijacker_top_share = 0.0
     # BUG-FIX 2026-10-16 (V22 audit): a *true single-actor hijack*
     leak_induced_hijack = (
@@ -3149,7 +3149,7 @@ def compute_top_cause(
                     and str(e.get("claimed_as") or "") == str(_effective_target_as)
                 )
                 leak_self_origin_share = _self / max(1, len(_leak_list))
-        except (ValueError):
+        except ValueError:
             pass
         if (
             outage_suspected
@@ -3429,7 +3429,7 @@ def render_diagnosis(
     routing_norm: dict,
     correlation_norm: dict,
     target_as: str,
-) -> str:
+):
     """Render the Diagnosis section: a single-paragraph plain-English verdict."""
     cause = top_cause.get("cause", "no_clear_anomaly")
     label = top_cause.get("label") or _CAUSE_LABEL.get(cause, cause)
@@ -3513,7 +3513,7 @@ def render_attack_timeline(
     correlation_norm: dict,
     target_as: str,
     max_rows: int = 30,
-) -> str:
+):
     """Render the Attack Timeline section: a chronological table that lets
     the reviewer see *when* each routing or traffic signal landed and what
     type it was. Falls back gracefully when no merged timeline is available."""
@@ -3680,7 +3680,7 @@ def render_key_metrics(
     traffic_norm: dict,
     routing_norm: dict,
     correlation_norm: dict,
-) -> str:
+):
     """Render the Key Metrics section: a compact 2-column metric table."""
     m = top_cause.get("supporting_metrics") or {}
     traffic_anomaly = int(m.get("traffic_anomaly_count") or traffic_norm.get("anomaly_count") or 0)
@@ -3734,7 +3734,7 @@ def render_executive_summary(
     traffic_norm: dict,
     correlation_norm: dict,
     quick_verdict: str = "",
-) -> str:
+):
     """Render the top-of-report Executive Summary card."""
     m = top_cause.get("supporting_metrics") or {}
     cause = top_cause.get("cause", "no_clear_anomaly")
@@ -3830,7 +3830,7 @@ def render_evidence_chain(
     correlation_norm: dict,
     target_as: str,
     delta_ts: list,
-) -> str:
+):
     """Render the deterministic Evidence Chain / Reasoning section."""
     m = top_cause.get("supporting_metrics") or {}
     cause = top_cause.get("cause", "no_clear_anomaly")
@@ -4032,7 +4032,7 @@ def render_counterfactual_section(
     routing_norm: dict,
     traffic_norm: dict,
     correlation_norm: dict,
-) -> str:
+):
     """Render the Counterfactual Analysis section."""
     cause = top_cause.get("cause", "no_clear_anomaly")
     m = top_cause.get("supporting_metrics") or {}
@@ -4110,7 +4110,7 @@ def inject_code_rendered_tables(
     reasoning_result,
     asn: str,
     payload=None,
-) -> str:
+):
     """Strip every LLM-generated table and inject deterministic Python-rendered tables."""
     if not html:
         return html
@@ -4464,7 +4464,7 @@ def inject_code_rendered_tables(
     # ── 5) Generic HTML repair for any remaining LLM artefacts ──────────
     try:
         html = repair_llm_html(html)
-    except (AttributeError) as _repair_err:
+    except AttributeError as _repair_err:
         logger.debug(f"_repair_llm_html failed (non-fatal): {_repair_err}")
 
     # ── 6) Reorder body sections into the reviewer-facing sequence ──
@@ -4783,7 +4783,7 @@ def enforce_section_completeness(
     *,
     payload: Optional[dict] = None,
     correlation_analysis: Optional[dict] = None,
-) -> str:
+):
     """Ensure every required ``<h2>`` is present and Refutable
     Hypotheses has ≥ ``_MIN_HYPOTHESIS_CARDS`` deterministic cards."""
     if not html:
@@ -5045,7 +5045,7 @@ async def run_auto_probes_impl(
     correlation_analysis: Optional[dict],
     routing_result: dict,
     traffic_result: dict,
-) -> list:
+):
     """Auto-probe runner for traffic_first / legacy mode."""
     # ── Priority 1: read from blackboard (enhanced mode writes them here) ──
     bb = getattr(self, "bb", None)
@@ -5054,7 +5054,7 @@ async def run_auto_probes_impl(
             findings = await safe_read(bb, "auto_probe", "findings", default=[]) or []
             if isinstance(findings, list) and findings:
                 return findings
-        except (ValueError):
+        except ValueError:
             pass
 
     # ── Priority 2: execute probes directly (traffic_first / legacy mode) ──
@@ -5110,7 +5110,7 @@ async def run_auto_probes_impl(
             }
             for f in results
         ]
-    except (AttributeError) as exc:
+    except AttributeError as exc:
         logger.debug(f"[_run_auto_probes] direct execution failed: {exc}")
         return []
 
@@ -5237,7 +5237,7 @@ def build_default_probe_recommendations_standalone(
     routing_result: dict,
     traffic_result: dict,
     correlation_analysis: dict,
-) -> list:
+):
     """Module-level helper mirroring ``ReportAgent.build_default_probe_recommendations``."""
     recs: list = []
 
@@ -5366,7 +5366,7 @@ def normalize_payload(data):
     return {"raw": str(data)}
 
 def render_fallback_html_for_agent(self, asn: str, start_time: str, end_time: str,
-                                    traffic_result, routing_result, reasoning_result) -> str:
+                                    traffic_result, routing_result, reasoning_result):
     """Deterministic HTML report used when the LLM call fails."""
     def fmt(obj):
         try:
@@ -5671,7 +5671,7 @@ def generate_report_html(
                 time_range=f"{start_time} to {end_time}",
             )
             evidence_chain = builder.to_dict(chain) or {}
-        except (ValueError) as _ec:
+        except ValueError as _ec:
             # Don't fail the whole report just because evidence_chain synthesis failed.
             evidence_chain = {
                 "verdict": "synthesis_error",
@@ -5707,7 +5707,7 @@ def generate_report_html(
                 ]
             except RuntimeError:
                 pass
-    except (AttributeError) as _ap_err:
+    except AttributeError as _ap_err:
         logger.debug(f"auto-probe skipped: {_ap_err}")
 
     # ── Victim AS inference fallback (P0) ──────────────────────────
@@ -5720,7 +5720,7 @@ def generate_report_html(
             threat_intel_result = try_threat_intel_fallback(
                 routing_result=routing_result or {}, asn=str(asn),
             )
-        except (AttributeError) as _te_err:
+        except AttributeError as _te_err:
             logger.debug(f"threat-intel fallback skipped: {_te_err}")
 
     # ── Data availability check (P0: prevent LLM from claiming "No BGP data") ─
@@ -5843,7 +5843,7 @@ def generate_report_html(
                         method="HEAD",
                     )
                     urllib.request.urlopen(req, timeout=5)
-                except (ValueError):
+                except ValueError:
                     pass  # Non-critical; just a keepalive attempt.
 
             import threading as _threading
@@ -6051,7 +6051,7 @@ def generate_report_html(
             _rpki_marker = '<div class="rpki-fallback-unavailable" data-status="not_attempted">RPKI/ROA validation: <strong>not attempted</strong>.</div>'
         if "</body>" in html:
             html = html.replace("</body>", _rpki_marker + "</body>", 1)
-    except (AttributeError) as _rpki_err:
+    except AttributeError as _rpki_err:
         logger.debug(f"_rpki_marker injection failed: {_rpki_err}")
 
     # Enforce required sections + minimum hypothesis-card count
@@ -6066,7 +6066,7 @@ def generate_report_html(
             payload=payload if isinstance(payload, dict) else None,
             correlation_analysis=_correlation_analysis,
         )
-    except (AttributeError) as _sec_err:
+    except AttributeError as _sec_err:
         logger.warning(f"_enforce_section_completeness failed: {_sec_err}")
 
     # Embed the traffic plot as a base64 image BEFORE </body>. The LLM often
@@ -6074,7 +6074,7 @@ def generate_report_html(
     if traffic_plot_base64:
         try:
             html = inject_traffic_plot(html, traffic_plot_base64)
-        except (AttributeError) as _ie:
+        except AttributeError as _ie:
             logger.debug(f"inject_traffic_plot failed: {_ie}")
     elif traffic_plot_path and Path(traffic_plot_path).exists():
         # If we have a path but no base64, derive the base64 right now so the
@@ -6083,7 +6083,7 @@ def generate_report_html(
             b64 = embed_file_as_base64(traffic_plot_path)
             if b64:
                 html = inject_traffic_plot(html, b64)
-        except (AttributeError) as _ie:
+        except AttributeError as _ie:
             logger.debug(f"traffic plot base64 derivation failed: {_ie}")
 
     # Post-process: substitute literal [field.path] citation markers that the
@@ -6112,7 +6112,7 @@ def generate_report_html(
             start_time=str(start_time) if start_time else "",
             end_time=str(end_time) if end_time else "",
         )
-    except (AttributeError) as _sf_err:
+    except AttributeError as _sf_err:
         logger.debug(f"_substitute_field_references failed: {_sf_err}")
 
     # Auto-close truncated documents so downstream viewers always see a
@@ -6220,7 +6220,7 @@ def generate_report_html(
             elapsed_s_real=round(_REPORT_GEN_ELAPSED.get("seconds", 0.0), 3),
         ):
             pass
-    except (AttributeError) as _exc:  # noqa: BLE001 — never fail the report
+    except AttributeError as _exc:  # noqa: BLE001 — never fail the report
         logger.debug(f"[tracing] stage save skipped: {_exc!r}")
     return str(path)
 
@@ -6233,7 +6233,7 @@ def render_fallback_html_for_standalone(
     routing_result: Optional[dict],
     reasoning_result: Optional[dict],
     output_dir: Optional[Path],
-) -> str:
+):
     """Deterministic HTML report for the standalone ``generate_report_html`` entry point."""
     from utils.logger import logger as _logger
 

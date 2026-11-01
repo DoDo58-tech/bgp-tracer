@@ -24,14 +24,14 @@ from detectors.evidence_chain_builder import (  # noqa: E402
 )
 
 
-def build_cross_origin_record(victim: str, origin: str) -> dict:
+def build_cross_origin_record(victim: str, origin: str):
     return {
         "origin_as": origin,
         "legitimate_origins": [victim],
     }
 
 
-def routing_with(records: list[dict], **extra) -> dict:
+def routing_with(records: list[dict], **extra):
     payload = {
         "target_asn": "64500",
         "origin_hijacked": records,
@@ -47,7 +47,7 @@ def routing_with(records: list[dict], **extra) -> dict:
     return payload
 
 
-def traffic_with(available: bool, drop: float = 0.0, anomalies: int = 0) -> dict:
+def traffic_with(available: bool, drop: float = 0.0, anomalies: int = 0):
     return {
         "data_available": available,
         "success": available,
@@ -59,7 +59,7 @@ def traffic_with(available: bool, drop: float = 0.0, anomalies: int = 0) -> dict
 
 
 @pytest.fixture
-def builder() -> EvidenceChainBuilder:
+def builder():
     return EvidenceChainBuilder()
 
 

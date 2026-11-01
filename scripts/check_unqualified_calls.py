@@ -30,7 +30,7 @@ ROOTS = ("agents", "detectors", "scripts", "tools", "llm", "data", "utils",
 BUILTINS = set(dir(builtins))
 
 
-def module_scope_names(tree: ast.Module) -> set[str]:
+def module_scope_names(tree: ast.Module):
     """Every name bound at module level, including inside try/if blocks."""
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -48,7 +48,7 @@ def module_scope_names(tree: ast.Module) -> set[str]:
     return names
 
 
-def inner_defs(tree: ast.Module) -> set[str]:
+def inner_defs(tree: ast.Module):
     """Names defined anywhere as a function or method (any depth)."""
     out: set[str] = set()
     for node in ast.walk(tree):
@@ -57,7 +57,7 @@ def inner_defs(tree: ast.Module) -> set[str]:
     return out
 
 
-def main() -> int:
+def main():
     files: list[Path] = []
     for root in ROOTS:
         p = PROJECT_ROOT / root

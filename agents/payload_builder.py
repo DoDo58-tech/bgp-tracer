@@ -183,10 +183,10 @@ def estimate_bytes(obj):
     """Coarse byte estimate for a JSON-serialisable object."""
     try:
         return len(json.dumps(obj, ensure_ascii=False, default=str))
-    except (ValueError):
+    except ValueError:
         try:
             return len(repr(obj))
-        except (ValueError):
+        except ValueError:
             return 0
 
 
@@ -206,7 +206,7 @@ def slim_generic(
     drop_keys: frozenset = _EVENT_DENY_KEYS,
     _depth: int = 0,
     _max_depth: int = 30,
-) -> Any:
+):
     """Recursive slim: drop deny-listed keys, truncate lists to ``max_list_items``,
     drop top-level keys past index 100 to prevent pathological inputs."""
     if _depth > _max_depth:
@@ -237,7 +237,7 @@ def slim_section(
     section: str,
     data: Any,
     max_list_items: Optional[int] = None,
-) -> Any:
+):
     """Section-aware slimming.
     
     Returns:
@@ -269,7 +269,7 @@ def slim_with_limits(
     _parent_key: str = "",
     _depth: int = 0,
     _max_depth: int = 30,
-) -> Any:
+):
     """Recursive slim that:
     1. Uses per-list-name max-item counts from ``list_limits``.
     2. Strips ``_EVENT_DENY_KEYS`` at every depth.
@@ -300,7 +300,7 @@ def slim_with_limits(
 
 # Hard byte cap
 
-def cap_payload(data: Any, max_bytes: int = PayloadBudget.REPORT) -> tuple[Any, dict]:
+def cap_payload(data: Any, max_bytes: int = PayloadBudget.REPORT):
     """Cap a (already-slimmed) payload to ``max_bytes`` bytes.
     
     Returns ``(capped_data, cap_meta)`` where ``cap_meta`` records:
@@ -360,7 +360,7 @@ def cap_payload(data: Any, max_bytes: int = PayloadBudget.REPORT) -> tuple[Any, 
     return current, info
 
 
-def halve_lists(obj: Any, counter: list[int] = None) -> tuple[Any, int]:
+def halve_lists(obj: Any, counter: list[int] = None):
     """Halve every list in the structure.  Returns (new_obj, n_lists_halved)."""
     if counter is None:
         counter = [0]
@@ -385,7 +385,7 @@ def build_payload(
     data: Any,
     max_bytes: int = PayloadBudget.REPORT,
     max_list_items: Optional[int] = None,
-) -> tuple[Any, dict]:
+):
     """Slim a section then cap it to ``max_bytes``.  Returns (payload, meta)."""
     pre_slim = estimate_bytes(data)
     slimmed = slim_section(section, data, max_list_items=max_list_items)
@@ -414,7 +414,7 @@ def record_llm_call(
     response: Any,
     *,
     prompt_text_override: Optional[str] = None,
-) -> None:
+):
     """Record an LLM call's actual token usage into TokenBudget."""
     try:
         from agents.token_budget import TokenBudget
@@ -422,7 +422,7 @@ def record_llm_call(
     except ImportError:
         # Module genuinely absent — caller opted out of budget tracking.
         return
-    except (AttributeError) as e:
+    except AttributeError as e:
         # Concrete error inside TokenBudget (bad run_id, init failure,
         logger.warning(
             "[record_llm_call] TokenBudget unavailable, skipping record: %s",
@@ -437,7 +437,7 @@ def record_llm_call(
         else:
             try:
                 prompt_text = json.dumps(prompt, ensure_ascii=False, default=str)
-            except (ValueError):
+            except ValueError:
                 prompt_text = str(prompt)
 
     # Extract real usage if available
@@ -447,7 +447,7 @@ def record_llm_call(
         if usage is not None:
             pt = getattr(usage, "prompt_tokens", 0) or 0
             ct = getattr(usage, "completion_tokens", 0) or 0
-    except (ValueError):
+    except ValueError:
         pass
 
     # Fall back to estimator if upstream didn't return usage
@@ -463,6 +463,6 @@ def to_json_for_prompt(obj, *, ensure_ascii=False, indent=2):
     """JSON-serialise a payload for inclusion in an LLM prompt."""
     try:
         return json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii, default=str)
-    except (AttributeError) as exc:
+    except AttributeError as exc:
         logger.warning(f"[PayloadBuilder] JSON serialise failed: {exc}; using repr")
         return repr(obj)

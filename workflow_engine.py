@@ -43,11 +43,12 @@ def paddle_explanation(verdict):
         return (
             "PADDLE committed %s: the %s control-plane channel was at "
             "%.3fx its same-clock baseline when the traffic trough fell, "
-            "%s seconds before it, and exceeded the placebo null by %.2fx."
+            "%s seconds before it, and an ordinary day was at least this "
+            "extreme with probability %.4f."
             % (verdict.direction, verdict.channel or "strongest",
                verdict.tau_control or 0.0,
                verdict.lag_seconds if verdict.lag_seconds is not None else 0.0,
-               verdict.exclusivity_ratio or 0.0)
+               verdict.exclusivity_probability or 0.0)
         )
     vetoes = ", ".join(
         "%s=%s" % (k, v) for k, v in (verdict.vetoes or {}).items())
@@ -82,7 +83,7 @@ def build_routing_state(prefix2as_file, prefixes, max_prefixes=200):
     try:
         from agents.coordination_utils import load_json
         table = load_json(prefix2as_file)
-    except (AttributeError) as exc:  # noqa: BLE001 - degrade, never crash the pipeline
+    except AttributeError as exc:  # noqa: BLE001 - degrade, never crash the pipeline
         logger.warning(f"[HCAF] routing_state: failed to load {prefix2as_file}: {exc}")
         return {}
     if not isinstance(table, dict):
@@ -352,7 +353,7 @@ class WorkflowEngine:
         # Hard cap on total workflow runtime to avoid the enhanced mode
         try:
             from config import WORKFLOW_TOTAL_TIMEOUT_S
-        except (ValueError):
+        except ValueError:
             WORKFLOW_TOTAL_TIMEOUT_S = 900.0
         workflow_timeout_s = float(
             os.environ.get("BGP_TRACER_WORKFLOW_TIMEOUT_S", WORKFLOW_TOTAL_TIMEOUT_S)
@@ -436,7 +437,7 @@ class WorkflowEngine:
                 if ckpt is not None and ckpt.enabled:
                     try:
                         ckpt.save(f"workflow_{prev_state.name.lower()}", snapshot_context(context))
-                    except (AttributeError) as e:
+                    except AttributeError as e:
                         logger.warning(f"[Checkpoint] Failed to save after {prev_state.name}: {e}")
 
             if timed_out and context.current_state != WorkflowState.COMPLETE:
@@ -449,7 +450,7 @@ class WorkflowEngine:
                     handler = self._state_handlers.get(context.current_state)
                     if handler is not None:
                         await handler(context)
-                except (AttributeError) as fb_exc:
+                except AttributeError as fb_exc:
                     logger.error(f"[Workflow] timeout-fallback failed: {fb_exc!r}")
 
             # Success
@@ -470,7 +471,7 @@ class WorkflowEngine:
             if ckpt is not None and ckpt.enabled:
                 try:
                     ckpt.save("workflow_state", snapshot_context(context))
-                except (AttributeError) as save_err:
+                except AttributeError as save_err:
                     logger.warning(f"[Checkpoint] Failed to save error state: {save_err}")
 
         finally:
@@ -485,7 +486,7 @@ class WorkflowEngine:
                 try:
                     from agents.token_budget import TokenBudget
                     TokenBudget.clear_instance(context.message_bus_run_id)
-                except (AttributeError) as _tb_err:
+                except AttributeError as _tb_err:
                     logger.debug(f"[Cleanup] TokenBudget.clear_instance failed: {_tb_err}")
 
             # ── Final checkpoint: save fully-completed context ──
@@ -493,7 +494,7 @@ class WorkflowEngine:
             if ckpt is not None and ckpt.enabled and context.current_state == WorkflowState.COMPLETE:
                 try:
                     ckpt.save("workflow_context", snapshot_context(context))
-                except (AttributeError) as e:
+                except AttributeError as e:
                     logger.warning(f"[Checkpoint] Failed to save final context: {e}")
 
         return context
@@ -587,7 +588,7 @@ class WorkflowEngine:
                 context.routing_analysis_detail = "full"
                 return WorkflowEvent.SCREENING_COMPLETE
 
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.error(f"Traffic screening failed: {e}")
             # On error, default to full analysis
             context.screening_result = {
@@ -943,7 +944,7 @@ class WorkflowEngine:
                         "confidence": float((falsification or {}).get("score", 0.5) or 0.0),
                         "derived_from": ["joint_evidence.falsification"],
                     })
-            except (AttributeError) as exc:  # noqa: BLE001
+            except AttributeError as exc:  # noqa: BLE001
                 logger.warning(f"[JointEvidence] failed to record alternatives: {exc}")
 
             # HCAF causal attribution (three innovation methods: MSCBD/CTPR/CIC)
@@ -976,7 +977,7 @@ class WorkflowEngine:
                             context, "hcaf", ran=False,
                             detail="attribution produced no result")
                         logger.info(f"[HCAF] causal attribution produced no result (status={context.hcaf_attribution_status})")
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"[HCAF] causal attribution failed in joint_evidence stage: {e}")
                 if context.hcaf_attribution_status not in ("ok",):
                     context.hcaf_attribution_status = "failed"
@@ -993,7 +994,7 @@ class WorkflowEngine:
                 "message": f"Joint evidence analysis skipped: {e}",
             })
             # Do not return here - HCAF must run outside joint_evidence
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.error(f"[JointEvidence] Error running joint evidence analysis: {e}")
             context.validation_notes.append({
                 "case": "joint_evidence",
@@ -1019,7 +1020,7 @@ class WorkflowEngine:
                 if context.hcaf_attribution_status not in ("ok",):
                     context.hcaf_attribution_status = "skipped"
                 logger.info(f"[HCAF] causal attribution produced no result (status={context.hcaf_attribution_status})")
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"[HCAF] causal attribution failed after joint_evidence: {e}")
             if context.hcaf_attribution_status not in ("ok",):
                 context.hcaf_attribution_status = "failed"
@@ -1232,7 +1233,7 @@ class WorkflowEngine:
                 causal_evidence=causal_evidence,
             )
             return result
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"causal analysis computation failed: {e}")
             return None
 
@@ -1581,7 +1582,8 @@ class WorkflowEngine:
         logger.info(
             f"[PADDLE] direction={direction_val} reason={verdict.reason} "
             f"vetoes={verdict.vetoes} channel={verdict.channel} "
-            f"lag={verdict.lag_seconds} ratio={verdict.exclusivity_ratio}"
+            f"lag={verdict.lag_seconds} "
+            f"p={verdict.exclusivity_probability}"
         )
 
         tau_traffic = (verdict.tau_response.isoformat()
@@ -1625,7 +1627,7 @@ class WorkflowEngine:
                 "mechanism": verdict.mechanism,
                 "channel": verdict.channel,
                 "effect": verdict.effect,
-                "exclusivity_ratio": verdict.exclusivity_ratio,
+                "exclusivity_probability": verdict.exclusivity_probability,
                 "baseline_displacement": verdict.baseline_displacement,
                 "tests": verdict.tests,
             },
@@ -1674,11 +1676,11 @@ class WorkflowEngine:
             await self.record_rejected_verdicts(context, builder, chain.verdict)
             await self.record_arbitration(context, arb)
             return chain_dict
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"evidence chain build failed: {e}")
             return None
 
-    def extract_agent_judgement(self, context) -> dict:
+    def extract_agent_judgement(self, context):
         """Pull the reasoning agent's structured proposal out of the run.
 
         The reasoning agent classifies the incident and scores its own
@@ -1718,7 +1720,7 @@ class WorkflowEngine:
             "alternative_types": classification.get("alternative_types") or [],
         }
 
-    async def record_arbitration(self, context, arbitration: dict) -> None:
+    async def record_arbitration(self, context, arbitration: dict):
         """Write the rule/agent arbitration onto the blackboard."""
         if not arbitration:
             return
@@ -1737,7 +1739,7 @@ class WorkflowEngine:
                 ),
             })
 
-    async def record_rejected_verdicts(self, context, builder, chosen_verdict: str) -> None:
+    async def record_rejected_verdicts(self, context, builder, chosen_verdict: str):
         """Write the rejected verdict classes to the board as alternatives."""
         try:
             rejected = builder.enumerate_rejected_verdicts(
@@ -1760,7 +1762,7 @@ class WorkflowEngine:
                     "confidence": 1.0,
                     "derived_from": ["evidence_chain.verdict"],
                 })
-        except (AttributeError) as exc:  # noqa: BLE001
+        except AttributeError as exc:  # noqa: BLE001
             logger.warning(f"[Workflow] failed to record rejected verdicts: {exc}")
 
     # ── Skip-reasoning policy ─────────────────────────────────────────────
@@ -1991,7 +1993,7 @@ class WorkflowEngine:
                         "uncertainty": list(claim.get("uncertainty") or []),
                         "derived_from": list(claim.get("derived_from") or []),
                     })
-                except (AttributeError) as exc:  # noqa: BLE001
+                except AttributeError as exc:  # noqa: BLE001
                     logger.warning(f"[Workflow] failed to promote hypothesis to claim: {exc}")
 
             # Persist the board onto the context. Without this the local
@@ -2026,7 +2028,7 @@ class WorkflowEngine:
         # ── Record the missing / degraded inputs as first-class records ──
         try:
             await self.record_evidence_gaps(context, quality_score)
-        except (AttributeError) as exc:  # noqa: BLE001
+        except AttributeError as exc:  # noqa: BLE001
             logger.warning(f"[Validation] failed to record evidence gaps: {exc}")
 
         # Victim traffic is evidence for the final report, so collect it
@@ -2045,13 +2047,13 @@ class WorkflowEngine:
         # must be produced so operators can distinguish it from a pipeline error.
         return WorkflowEvent.VALIDATION_PASSED
 
-    async def record_evidence_gaps(self, context, quality_score: float) -> None:
+    async def record_evidence_gaps(self, context, quality_score: float):
         """Write the missing / degraded inputs to the board as typed gaps."""
         bb = context.get_blackboard()
         traffic = context.traffic_result or {}
         routing = context.routing_result or {}
 
-        def unavailable(result: dict) -> str:
+        def unavailable(result: dict):
             if not result:
                 return "missing"
             if result.get("data_available") is False:
@@ -2209,14 +2211,14 @@ class WorkflowEngine:
                         run_traffic_agent, asn=vas, start_time=start, end_time=end
                     )
                     return vas, result if isinstance(result, dict) else {"success": False}
-                except (ValueError) as exc:
+                except ValueError as exc:
                     return vas, {"success": False, "data_available": False, "error": str(exc)}
 
             pairs = await asyncio.gather(*(fetch(vas) for vas in victim_asns))
             results = dict(pairs)
             await bb.write("routing", "victim_traffic_results", results)
             logger.info(f"[workflow] Fetched victim traffic for {len(results)} ASes")
-        except (AttributeError) as exc:
+        except AttributeError as exc:
             logger.warning(f"[workflow] Victim traffic fetch failed: {exc}")
     
     async def handle_data_enrichment(self, context):
@@ -2304,7 +2306,7 @@ class WorkflowEngine:
                         f"[workflow] Threat intel: {threat_intel_result.get('threat_level', 'N/A')} "
                         f"(risk_score={threat_intel_result.get('risk_score', 'N/A')})"
                     )
-                except (AttributeError) as exc:
+                except AttributeError as exc:
                     logger.warning(f"[workflow] Threat intel lookup failed: {exc}")
 
         # Propagate ThreatIntel to blackboard
@@ -2413,7 +2415,7 @@ class WorkflowEngine:
                 )
                 context.report_path = path
                 log.info(f"Report saved: {path}")
-            except (AttributeError) as e:
+            except AttributeError as e:
                 log.warning(f"Failed to save report: {e}")
 
         context.final_result = context.final_result or {}
@@ -2443,7 +2445,7 @@ class WorkflowEngine:
             # so the caller can use it as the final report.
             try:
                 legacy_html = await bb.read("report", "html") or ""
-            except (ValueError):
+            except ValueError:
                 legacy_html = ""
             if legacy_html:
                 return legacy_html
@@ -2475,7 +2477,7 @@ class WorkflowEngine:
                 log.info("[workflow] Deterministic fallback HTML generated "
                          f"({len(fallback_html)} chars)")
                 return fallback_html
-        except (AttributeError) as fb_err:
+        except AttributeError as fb_err:
             log.error(f"[workflow] Deterministic fallback also failed: {fb_err!r}")
 
         # If fallback also fails AND REPORT_REQUIRE_LLM is set, raise so
@@ -2659,7 +2661,7 @@ def parse_timestamp_value(ts):
                 continue
     try:
         return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
-    except (ValueError):
+    except ValueError:
         return None
 
 
@@ -2695,7 +2697,7 @@ def extract_anomaly_windows(anomalies, buffer_hours = 2):
             "end": (cur_end + timedelta(hours=buffer_hours)).strftime("%Y-%m-%d %H:%M"),
         })
         return windows
-    except (ValueError):
+    except ValueError:
         return []
 
 

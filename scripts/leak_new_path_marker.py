@@ -47,14 +47,14 @@ OUT_PATH = PROJECT_ROOT / "results" / "eval" / "leak_new_path_marker.json"
 CLASSES = ("outage", "route_leak", "origin_hijack_victim")
 
 
-def load_events() -> list[dict]:
+def load_events():
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     from component_ablation_gt import load_gt
 
     return load_gt()
 
 
-def collect_asns(blob) -> set:
+def collect_asns(blob):
     found = set()
     if isinstance(blob, str):
         for tok in blob.replace(",", " ").split():
@@ -70,7 +70,7 @@ def collect_asns(blob) -> set:
     return found
 
 
-def event_path_asns(routing: dict) -> set:
+def event_path_asns(routing: dict):
     """AS numbers on the victim's announced paths in the event window."""
     found = set()
     for rec in routing.get("origin_hijacked") or []:
@@ -84,7 +84,7 @@ def event_path_asns(routing: dict) -> set:
     return found
 
 
-def baseline_path_asns(outage: dict) -> set:
+def baseline_path_asns(outage: dict):
     """AS numbers on the victim's paths in the baseline window.
 
     The baseline record set is not stored per path in the cache, so the
@@ -102,7 +102,7 @@ def baseline_path_asns(outage: dict) -> set:
     return found
 
 
-def main() -> int:
+def main():
     import csv
 
     events = {e["event_id"]: e for e in load_events()}

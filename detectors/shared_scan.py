@@ -69,7 +69,7 @@ class SharedUpdateScan:
     _rows_read: int = field(default=0, init=False)
     _chunks_outside_event: int = field(default=0, init=False)
 
-    def requested(self) -> set:
+    def requested(self):
         if not self.detectors:
             return set()
         if "all" in self.detectors:
@@ -77,14 +77,14 @@ class SharedUpdateScan:
         return set(self.detectors)
 
     @property
-    def scan_start(self) -> datetime:
+    def scan_start(self):
         """The beginning of the range that has to be read."""
         if self.baseline_start and self.baseline_start < self.start:
             return self.baseline_start
         return self.start
 
     # ── setup ──────────────────────────────────────────────────────────
-    def setup(self, requested: set) -> None:
+    def setup(self, requested: set):
         if "hijack" in requested:
             self._hijack_prepared = self.prepare_hijack()
         if "leak" in requested:
@@ -179,7 +179,7 @@ class SharedUpdateScan:
                     prefix_to_as = merge_prefix2as_with_ipv6(
                         prefix_to_as, ipv6_prefixes, asn
                     )
-        except (AttributeError) as exc:
+        except AttributeError as exc:
             logger.warning(f"[shared-scan] IPv6 overlay skipped: {exc}")
 
         try:
@@ -188,7 +188,7 @@ class SharedUpdateScan:
             rpki_data = rpki_loader.fetch_roa_data(self.start)
             if rpki_data:
                 prefix_to_as = merge_roa_with_prefix2as(prefix_to_as, rpki_data)
-        except (AttributeError) as exc:
+        except AttributeError as exc:
             logger.warning(f"[shared-scan] RPKI ROA overlay skipped: {exc}")
 
         return prefix_to_as, as_relationships_data
@@ -213,7 +213,7 @@ class SharedUpdateScan:
         }
 
     @staticmethod
-    def asn_int(asn) -> int:
+    def asn_int(asn):
         try:
             text = str(asn).strip()
             if text.upper().startswith("AS"):
@@ -234,7 +234,7 @@ class SharedUpdateScan:
         )
 
     @staticmethod
-    def chunk_is_in_event(chunk: pl.DataFrame, start: datetime, end: datetime) -> bool:
+    def chunk_is_in_event(chunk: pl.DataFrame, start: datetime, end: datetime):
         """True when the chunk overlaps the event window.
 
         The outage detector needs the baseline, so it gets every chunk;
@@ -249,7 +249,7 @@ class SharedUpdateScan:
             return True
         return not (hi < start or lo > end)
 
-    def consume(self, chunk: pl.DataFrame, requested: set, in_event: bool) -> None:
+    def consume(self, chunk: pl.DataFrame, requested: set, in_event: bool):
         if not in_event:
             # Baseline chunk: only the outage detector has any use for it.
             if "outage" in requested:
@@ -278,7 +278,7 @@ class SharedUpdateScan:
                 extractor.consume(chunk)
 
     # ── public entry point ─────────────────────────────────────────────
-    def run(self) -> dict:
+    def run(self):
         """Execute the scan and return one result per detector."""
         requested = self.requested()
         if not requested:

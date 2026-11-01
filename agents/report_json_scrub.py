@@ -14,7 +14,7 @@ _JSON_KEY_PLACEHOLDER_RE = re.compile(r"\[(?P<key>[^\[\]:\s]+)\]")
 
 
 def scrub_json_key_placeholders(html: str, asn: str = "",
-                                  start_time: str = "", end_time: str = "") -> str:
+                                  start_time: str = "", end_time: str = ""):
     """Substitute well-known JSON-key placeholders with their actual values."""
     if not html:
         return html

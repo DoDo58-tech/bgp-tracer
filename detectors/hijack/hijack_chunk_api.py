@@ -38,7 +38,7 @@ def prepare(
     as_relationships_data: Optional[dict] = None,
     skip_forge: bool = True,
     prefixes_by_as: Optional[Dict[str, Sequence[str]]] = None,
-) -> dict:
+):
     """Resolve everything the per-chunk worker needs.
 
     Returns the params dict that :func:`consume_chunk` forwards to the
@@ -97,7 +97,7 @@ def prepare(
 def consume_chunk(
     df_chunk: pl.DataFrame,
     prepared: dict,
-) -> List[dict]:
+):
     """Score one chunk of announcements.  Returns the alerts it produced."""
     from detectors.hijack.hijack_detector import process_chunk_worker
 
@@ -140,7 +140,7 @@ def consume_chunk(
         return []
 
 
-def finalize(prepared: dict, chunk_alerts: Sequence[dict]) -> dict:
+def finalize(prepared: dict, chunk_alerts: Sequence[dict]):
     """Fold the per-chunk alerts into the per-AS result.
 
     The alerts have to be folded in chronological order so that the

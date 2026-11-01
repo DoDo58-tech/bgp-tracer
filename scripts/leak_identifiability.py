@@ -37,14 +37,14 @@ OUT_PATH = PROJECT_ROOT / "results" / "eval" / "leak_identifiability.json"
 CLASSES = ("outage", "route_leak", "origin_hijack_victim")
 
 
-def load_events() -> list[dict]:
+def load_events():
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     from component_ablation_gt import load_gt
 
     return load_gt()
 
 
-def leak_record_shape(routing: dict) -> dict:
+def leak_record_shape(routing: dict):
     """The shape of the leak detector's own output."""
     leaks = routing.get("route_leaks") or []
     shape = {
@@ -64,7 +64,7 @@ def leak_record_shape(routing: dict) -> dict:
     return shape
 
 
-def origin_profile(routing: dict, victim: str) -> dict:
+def origin_profile(routing: dict, victim: str):
     """How are the victim's prefixes announced?
 
     ``own``        the victim announces them (correct origin).
@@ -93,7 +93,7 @@ def origin_profile(routing: dict, victim: str) -> dict:
     return profile
 
 
-def main() -> int:
+def main():
     events = {e["event_id"]: e for e in load_events()}
     rows = []
 

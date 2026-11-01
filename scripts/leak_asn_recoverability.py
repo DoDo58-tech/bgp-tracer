@@ -41,12 +41,12 @@ OUT_PATH = PROJECT_ROOT / "results" / "eval" / "leak_asn_recoverability.json"
 CLASSES = ("outage", "route_leak", "origin_hijack_victim")
 
 
-def load_gt_rows() -> list[dict]:
+def load_gt_rows():
     with open(GT_CSV, newline="") as fh:
         return list(csv.DictReader(fh))
 
 
-def collect_asns(blob) -> set:
+def collect_asns(blob):
     """Every AS number that appears anywhere in a record."""
     found = set()
     if isinstance(blob, str):
@@ -64,7 +64,7 @@ def collect_asns(blob) -> set:
     return found
 
 
-def main() -> int:
+def main():
     gt_rows = {r["event_id"]: r for r in load_gt_rows()}
     events = {e["event_id"]: e for e in load_events()}
 
@@ -141,7 +141,7 @@ def main() -> int:
     return 0
 
 
-def load_events() -> list[dict]:
+def load_events():
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
     from component_ablation_gt import load_gt
 

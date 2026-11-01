@@ -31,7 +31,7 @@ ISO_FORMATS = (
 )
 
 
-def parse_iso(s) -> datetime:
+def parse_iso(s):
     """Parse a time string in any of the supported formats.
 
     Raises ``ValueError`` when the string matches none of them.
@@ -54,7 +54,7 @@ def parse_iso(s) -> datetime:
         ) from exc
 
 
-def parse_iso_utc(s) -> datetime | None:
+def parse_iso_utc(s):
     """Parse a UTC time string, returning ``None`` when it does not parse."""
     if not s:
         return None

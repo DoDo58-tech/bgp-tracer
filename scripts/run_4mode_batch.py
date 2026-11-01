@@ -67,7 +67,7 @@ def read_budget_used():
                 except ValueError:
                     pass
         return used
-    except (ValueError):
+    except ValueError:
         return 0
 
 
@@ -93,7 +93,7 @@ def budget_window_oldest_ts():
                 except ValueError:
                     pass
         return oldest
-    except (ValueError):
+    except ValueError:
         return 0.0
 
 
@@ -187,7 +187,7 @@ def strip_asn(asn):
     return s
 
 
-def load_events(csv_path: Path) -> list[dict]:
+def load_events(csv_path: Path):
     rows: list[dict] = []
     with open(csv_path) as f:
         reader = csv.DictReader(f)
@@ -221,7 +221,7 @@ def find_latest_html(asn, since_ts):
     return None
 
 
-def resolve_target_asn(event: dict) -> tuple[str, str]:
+def resolve_target_asn(event: dict):
     """Pick the AS to analyse, and say which field it came from.
     
     Returns (asn_digits, source_field)."""

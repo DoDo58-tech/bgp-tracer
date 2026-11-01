@@ -31,7 +31,7 @@ BGPVIEW_THREAT_URL = "https://api.bgpview.io/threat/threat_feeds"
 GRIP_BASE = "https://api.grip.inetintel.cc.gatech.edu"
 
 
-async def check_spamhaus_drop() -> dict[str, Any]:
+async def check_spamhaus_drop():
     """Check if a prefix/IP is in Spamhaus DROP/EDROP block lists."""
     drop_prefixes: list[str] = []
     edrop_prefixes: list[str] = []
@@ -74,7 +74,7 @@ async def check_spamhaus_drop() -> dict[str, Any]:
     }
 
 
-async def check_cins_list() -> tuple[list[str], bool]:
+async def check_cins_list():
     """Check if an AS is on the CINS Army List."""
     bad_asns: list[str] = []
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -94,7 +94,7 @@ async def check_cins_list() -> tuple[list[str], bool]:
     return bad_asns[:20], len(bad_asns) > 0
 
 
-async def check_bgpview_threat_feeds() -> dict[str, Any]:
+async def check_bgpview_threat_feeds():
     """Fetch all BGPView threat feeds (Spamhaus, CINS, etc.)."""
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
@@ -114,7 +114,7 @@ async def check_bgpview_threat_feeds() -> dict[str, Any]:
     return {}
 
 
-async def query_cymru_bogon(asn_or_prefix_str: str) -> dict[str, Any]:
+async def query_cymru_bogon(asn_or_prefix_str: str):
     """Query Team Cymru WHOIS for bogon/AS info.
     Command: whois -h whois.cymru.com " -v <AS_or_IP>"
     Returns: AS info, prefix, country, BGPlay data availability."""
@@ -150,7 +150,7 @@ async def query_cymru_bogon(asn_or_prefix_str: str) -> dict[str, Any]:
 
 async def check_grip_incidents(
     asn_or_prefix: str, timeframe_days: int = 365
-) -> dict[str, Any]:
+):
     """Query GRIP (Georgia Tech) for documented BGP incidents involving this AS/prefix."""
     params = {
         "startdate": f"{(datetime.now() - timedelta(days=timeframe_days)).strftime('%Y-%m-%d')}",
@@ -192,7 +192,7 @@ async def check_grip_incidents(
     return {"total_events": 0, "relevant_events": [], "relevant_count": 0}
 
 
-async def threat_intel_lookup(tool_input: dict, session) -> dict[str, Any]:
+async def threat_intel_lookup(tool_input: dict, session):
     """Unified threat intelligence lookup for an AS or prefix.
     
     Returns:

@@ -315,11 +315,11 @@ def fingerprints_equivalent(existing, incoming):
         return existing_sig == incoming_sig
     try:
         return fingerprint_section_data(existing) == fingerprint_section_data(incoming)
-    except (ValueError):
+    except ValueError:
         return existing == incoming
 
 
-def is_content_destroyed(original, slimmed) -> bool:
+def is_content_destroyed(original, slimmed):
     """True when slimming emptied a payload that had content."""
     if isinstance(original, dict):
         if not original:
@@ -332,13 +332,13 @@ def is_content_destroyed(original, slimmed) -> bool:
     return False
 
 
-def section_keep_keys() -> dict:
+def section_keep_keys():
     """Map each payload profile to the set of top-level keys it allows."""
     try:
         from agents.payload_builder import (
             _TRAFFIC_KEEP, _ROUTING_KEEP, _CORRELATION_KEEP, _REASONING_KEEP,
         )
-    except (ValueError):  # pragma: no cover - defensive
+    except ValueError:  # pragma: no cover - defensive
         return {}
     return {
         "traffic": set(_TRAFFIC_KEEP),
@@ -469,7 +469,7 @@ class Blackboard:
                     f"(profile={profile})"
                 )
             return slimmed
-        except (ValueError):
+        except ValueError:
             return value
 
     def maybe_slim_section(self, section, data):
@@ -649,7 +649,7 @@ class Blackboard:
         payload.setdefault("timestamp", datetime.now().isoformat())
         return payload
 
-    def record_surface_off(self) -> bool:
+    def record_surface_off(self):
         """True when the typed record surface is ablated for this run.
         
         When it is off, record writes are silently dropped: the pipeline
@@ -708,7 +708,7 @@ class Blackboard:
             self._sections["evidence"].setdefault("gaps", []).append(payload)
         return payload
 
-    async def merge_evidence(self, data: dict, *, _writer: str = "") -> dict:
+    async def merge_evidence(self, data: dict, *, _writer: str = ""):
         """Merge typed record lists into the evidence section.
         
         Returns the number of records actually appended per list."""

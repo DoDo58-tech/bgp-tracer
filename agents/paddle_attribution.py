@@ -2,85 +2,37 @@
 
 The directional causal estimator, and the only one in this codebase.
 
-It replaces the correlation-shaped estimators it supersedes because
-each of those answers a question that is not the question asked.  A
-Granger statistic asks whether one series is *predictive* of another.
-A transfer entropy asks how much the *uncertainty* of one series is
-reduced by the other.  A Pearson correlation asks whether two series
-*co-vary*.  None of these is a causal claim, and all three are
-symmetric, so none of them can even express the asymmetry that a BGP
-incident has: the control plane moved, and the data plane answered.
+The question it answers is physical: when the data plane deviated, had
+the control plane already deviated, and by more than it does at this
+hour on an ordinary day?
 
-PADDLE answers the physical question directly.
+Pairing is the whole idea.  The control plane's rate series is sparse
+and bursty, so a change-point search puts its change point wherever
+the burst is -- often hours from the incident.  The data plane's
+trough is sharp and well located, so the anchor comes from there and
+the measurement is taken on the noisy side.
 
-**The question.**  When the data plane deviated, had the control plane
-already deviated, and did it deviate *more than it does at this hour on
-an ordinary day*?  That is a question about a *pair* of observations
-at one moment, not about two sequences.
+The counterfactual has to be the same clock: the same slots on the
+previous days, for the same channel, by the same instrument.  A
+bootstrap of the event window against itself would make the null
+depend on the anomaly being tested, and a long-run average would
+measure the time of day rather than the incident.
 
-**Why pairing is the whole idea.**  A change-point search on the
-control plane and a change-point search on the data plane, followed by
-a comparison of their positions, is fragile in a way that is not
-about statistics.  The control plane's rate series is *sparse and
-bursty*: it is quiet for hours and then it emits in a burst.  A
-segmentation of such a series puts its change point wherever the
-burst is, which is often hours away from the incident that the burst
-is a consequence of.  The data plane's deviation, by contrast, has a
-well-defined location -- the trough -- because the trough is the
-moment the traffic stopped.
+Three vetoes decide the outcome:
 
-So the *anchor* is taken from the side whose event is sharp, and the
-*measurement* is taken on the side whose series is noisy.  The control
-plane is then asked: at the data plane's trough, how far from normal
-was this network's routing behaviour?  That question is answerable
-even when the control plane's own series has no crisp onset.
+V1 precedence -- the control plane deviated at or before the trough,
+within a bounded propagation time.
+V2 exclusivity -- the deviation beats what the same channel shows at
+placebo troughs drawn from the same-clock baseline.
+V3 scope and congruence -- the routing edge is about the entity the
+traffic measures, and the two movements point the same way.  A
+withdrawal is never read as a reaction, because a failure and a
+traffic drop share a common cause.
 
-**The counterfactual, and why it has to be the same clock.**  "How
-far from normal" requires a counterfactual: what would this network's
-routing behaviour have been at this moment if nothing had happened.
-The counterfactual used here is the **same clock slots on the previous
-days**, for the same channel, measured by the same instrument.  It is
-not a bootstrap of the event window against itself, because that would
-make the null depend on the very anomaly being tested.  And it is not
-a long-run average, because a network announces more at 14:30 than at
-03:00 whatever happened -- a long-run average measures the time of day,
-not the incident.
-
-**The three vetoes.**
-
-V1 *Precedence* -- the control plane must have deviated **at or before**
-    the data plane's trough, within a physically bounded propagation
-    time.  A routing change reaches the data plane in seconds to
-    minutes; a deviation that appears hours later is not an answer to
-    it.
-
-V2 *Exclusivity* -- the control plane's deviation at the trough must
-    exceed what the same channel shows at **placebo troughs** drawn
-    from the same-clock baseline.  The null is the instrument's own
-    behaviour on the same quantity at the same hour on ordinary days.
-    This is what makes the claim a claim about *this incident* rather
-    than about a busy afternoon.
-
-V3 *Scope and congruence* -- the routing edge must be about the
-    entity the traffic series measures, and the two movements must
-    point the same way.  A withdrawal is what a *failure* looks like
-    and a traffic drop shares a common cause with it; treating it as a
-    *reaction* would assert a direction the evidence does not support,
-    so a withdrawal is never read as reaction-compatible.
-
-**Why there is no vote.**  The four channels are not scored and
-combined.  Each is a *separate physical hypothesis* about what happened
--- the network went quiet, the origin changed, the path changed -- and
-the estimator reports which one, if any, survives.  Combining them
-into a score would let a strong signal in one channel paper over the
-absence of the signal in the other, and the resulting number would
-mean nothing.
-
-**What the estimator never does.**  It never computes a dependence
-statistic between the two series, never resamples one series against
-the other, and never emits a direction without a named mechanism and a
-measured lag.  When the evidence does not support a direction it
-abstains, and it says which veto stopped it.
+The channels are not scored and combined.  Each is a separate physical
+hypothesis, and the estimator reports which one, if any, survives.
+When the evidence does not support a direction it abstains and says
+which veto stopped it.
 """
 from __future__ import annotations
 
@@ -190,7 +142,7 @@ PADDLE_PROTOCOL: Dict[str, Any] = {
 }
 
 
-def protocol_hash(cfg: Optional[Dict[str, Any]] = None) -> str:
+def protocol_hash(cfg: Optional[Dict[str, Any]] = None):
     """Short stable identifier of a protocol, printed into every artefact."""
     data = cfg if cfg is not None else PADDLE_PROTOCOL
     payload = json.dumps({k: data[k] for k in sorted(data)}, sort_keys=True,
@@ -227,10 +179,10 @@ class CausalVerdict:
     protocol: Dict[str, Any] = field(default_factory=dict)
 
     @property
-    def committed(self) -> bool:
+    def committed(self):
         return self.direction in (R2T, T2R)
 
-    def as_dict(self, include_protocol: bool = True) -> Dict[str, Any]:
+    def as_dict(self, include_protocol: bool = True):
         out: Dict[str, Any] = {
             "direction": self.direction,
             "reason": self.reason,
@@ -263,7 +215,7 @@ class CausalVerdict:
 # ── The data plane's deviation ─────────────────────────────────────────
 
 
-def as_float_value(value: Any) -> Optional[float]:
+def as_float_value(value: Any):
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
@@ -281,43 +233,25 @@ def as_float_value(value: Any) -> Optional[float]:
 _PLACEHOLDER_MEAN = 0.001
 
 
-def is_placeholder_mean(value: float) -> bool:
+def is_placeholder_mean(value: float):
     """Whether ``value`` is the sentinel baseline rather than a measurement."""
     return abs(value - _PLACEHOLDER_MEAN) < 1e-12
 
 
-def traffic_deviation(point: Dict[str, Any]) -> Optional[float]:
+def traffic_deviation(point: Dict[str, Any]):
     """The signed deviation of one traffic observation from its baseline.
 
-    The deviation is reconstructed from the measured value and the
-    historical mean it was compared against, so the **sign** is the
-    sign of the physical departure: negative means the measured
-    quantity fell, which for a traffic series is the impact of an
-    incident.
+    The sign is the sign of the physical departure: negative means the
+    measured quantity fell, which for a traffic series is the impact of
+    an incident.
 
-    Two representation defects make this reconstruction necessary, and
-    both are properties of the detector's *output*, not of the
-    estimator.
-
-    **The stored ``z_score`` carries the magnitude alone.**  An outage
-    that took a network's traffic down by 99.6% appears with a
-    *positive* ``z_score``, because the detector records the size of the
-    departure and the direction separately.  Reading the sign off that
-    field would read every outage as a surge.
-
-    **The ``mean`` field of the serialised event stream used to be a
-    placeholder.**  ``correlation_analyzer`` wrote ``0.001`` whenever
-    the detector had not put a baseline on the anomaly, so a consumer
-    that compared the value against it saw deviations of hundreds of
-    standard deviations, with the sign inverted for every outage.  The
-    placeholder is therefore *not* accepted as a baseline here: a mean
-    of ``0.001`` is refused unless the observation also carries a real
-    baseline, and the field is only trusted when it is present in the
-    anomaly record itself.
-
-    A negative deviation means the measured quantity fell.  For a
-    traffic series the quantity is a request or throughput count, so a
-    fall is the impact of an incident.
+    Two defects in the detector's output make the reconstruction
+    necessary.  The stored ``z_score`` carries the magnitude alone --
+    an outage that took traffic down by 99.6% appears with a *positive*
+    z-score -- so its sign cannot be read.  And the ``mean`` field used
+    to be a ``0.001`` placeholder whenever the detector had not put a
+    baseline on the anomaly, which a consumer would read as a deviation
+    of hundreds of standard deviations.
     """
     raw = point.get("raw_event")
     raw = raw if isinstance(raw, dict) else {}
@@ -366,7 +300,7 @@ def find_trough(
     *,
     search_from: Optional[datetime] = None,
     search_to: Optional[datetime] = None,
-) -> Optional[Tuple[datetime, float]]:
+):
     """The sharpest downward deviation of the data plane.
 
     The impact of a routing incident on the data plane is a *fall* in
@@ -396,7 +330,7 @@ def find_trough(
 # ── The control plane's deviation, paired with the trough ─────────────
 
 
-def slot_index(stamps: Sequence[datetime], stamp: datetime) -> Optional[int]:
+def slot_index(stamps: Sequence[datetime], stamp: datetime):
     """The index of the slot that contains ``stamp``."""
     if not stamps:
         return None
@@ -413,7 +347,7 @@ def control_displacement(
     trough: datetime,
     *,
     half_width_slots: int = 3,
-) -> Optional[Dict[str, Any]]:
+):
     """The control plane's departure from normal at the data plane's trough.
 
     The measurement is a **paired difference-in-differences**:
@@ -486,35 +420,20 @@ def placebo_displacements(
     channel: str,
     *,
     half_width_slots: int = 3,
-) -> List[float]:
+):
     """The null distribution of the displacement, measured on ordinary days.
 
     The placebo is the *same measurement* applied to a day that is known
-    to be ordinary.  For each anchor in the baseline period, the
-    displacement is computed the same way it is computed for the
-    incident -- the channel's rate in the slots around the anchor,
-    against the same clock slots on the days before that anchor.
+    to be ordinary: for each anchor in the baseline period, the channel's
+    rate around the anchor against the same clock slots on the days
+    before it.  Both the incident and the placebo are therefore paired
+    differences against their own counterfactual, so the ratio between
+    them is meaningful.
 
-    This is what makes the null honest.  The alternative -- comparing
-    the incident's window with the baseline's overall mean -- would put
-    the two quantities on different scales, because a rolling mean over
-    ``w`` slots has expectation ``w`` times a mean per slot.  Here both
-    the incident and the placebo are *paired differences against their
-    own counterfactual*, so they are the same statistic and the ratio
-    between them is meaningful.
-
-    The null is therefore the instrument's own behaviour on the same
-    quantity, at the same hour, on days without the incident.
-
-    The ratios are returned **signed**, because a silence and a surge
-    do not share a scale.  A channel's rate cannot fall below zero, so
-    the deepest silence any ordinary day reaches is a ratio of zero --
-    a deviation of one.  A surge has no such ceiling, and an ordinary
-    day that happens to contain a re-announcement burst reaches a ratio
-    of hundreds.  Comparing a silence against that surge distribution
-    would compare the smallest possible deviation with the largest
-    possible one, and no outage could ever be exclusive.  The caller
-    separates the two directions and compares each against its own.
+    The ratios are returned **signed**, because a silence and a surge do
+    not share a scale.  A channel's rate cannot fall below zero, so the
+    deepest silence any ordinary day reaches is a ratio of zero, while a
+    re-announcement burst reaches a ratio of hundreds.
     """
     baseline = control.baseline_buckets()
     if not baseline:
@@ -548,27 +467,13 @@ def placebo_displacements(
                                     for s in stamps[lo:hi + 1]]))
         if expected <= 0:
             continue
-        # A placebo whose counterfactual is **incomplete** is not a
-        # measurement of ordinary behaviour, and it must not enter the
-        # null.
-        #
-        # The clock positions near the *start* of the baseline period have
-        # fewer days behind them, and the positions after the last
-        # baseline day have none at all.  Such a window's "expected" is
-        # an average over a shorter period, and it is systematically too
-        # small: the measured deviation against it is enormous -- six or
-        # seven times normal -- which would make the null so wide that no
-        # incident could ever pass it.
-        #
-        # A window that also straddles the end of the baseline period
-        # has the same defect, because part of it lies in the future
-        # relative to the anchor.
-        #
-        # Both are excluded by requiring every clock position in the
-        # window to have at least one preceding day to measure it
-        # against.  The null is then built only from placebos that are
-        # measured the same way the incident is measured, which is the
-        # whole point of a placebo.
+        # A placebo whose counterfactual is incomplete is not a measurement
+        # of ordinary behaviour, and it must not enter the null.  The clock
+        # positions near the start of the baseline period have fewer days
+        # behind them, and the positions after the last baseline day have
+        # none at all.  Such a window's "expected" is systematically too
+        # small, which would make the null so wide that no incident could
+        # ever pass it.
         positions = {s.strftime("%H:%M") for s in stamps[lo:hi + 1]}
         if not positions:
             continue
@@ -590,16 +495,15 @@ def placebo_displacements(
     return out
 
 
-def placebo_null(ratios: Sequence[float], quantile: float) -> float:
+def placebo_null(ratios: Sequence[float], quantile: float):
     """The displacement an ordinary day reaches at the given quantile.
 
-    The null is a quantile rather than the maximum.  The maximum is
-    the least stable statistic of a sample: it estimates the extreme
-    order statistic from a single draw, so one ordinary day that
-    happened to contain a re-announcement burst raises the null by an
-    order of magnitude, and no incident can ever beat it.  A quantile
-    asks the same operational question -- "is this more than an
-    ordinary day does?" -- while ignoring the few placebos that are
+    The null is a quantile rather than the maximum.  The maximum is the
+    least stable statistic of a sample: it estimates the extreme order
+    statistic from a single draw, so one ordinary day that happened to
+    contain a re-announcement burst raises the null by an order of
+    magnitude and no incident can ever beat it.  A quantile asks the same
+    operational question while ignoring the few placebos that are
     ordinary only by luck.
 
     The quantile is only meaningful once there are enough placebos to
@@ -617,35 +521,25 @@ def placebo_null(ratios: Sequence[float], quantile: float) -> float:
 
 def directional_null(ratio: float,
                      placebos: Sequence[float],
-                     quantile: float) -> Dict[str, Any]:
+                     quantile: float):
     """The null for a displacement, taken from the same direction.
 
-    A silence and a surge are not two sizes of the same thing.  The
-    rate of a channel cannot fall below zero, so the deepest silence
-    an ordinary day can reach is a ratio of zero; a surge has no
-    ceiling at all.  One unsigned null therefore compares the smallest
-    possible deviation against the largest possible one, and nothing
-    that goes quiet can ever beat it.
-
-    So the placebos are split by direction, and the incident is
-    compared against the distribution of its own kind: a silence has
-    to be deeper than an ordinary day's silence, a surge larger than an
-    ordinary day's surge.
+    A silence and a surge are not two sizes of the same thing.  A
+    channel's rate cannot fall below zero, so the deepest silence an
+    ordinary day reaches is a ratio of zero, while a surge has no
+    ceiling.  One unsigned null would compare the smallest possible
+    deviation against the largest possible one, and nothing that goes
+    quiet could ever beat it.  So the placebos are split by direction
+    and the incident is compared against the distribution of its own
+    kind.
 
     The comparison is a **tail probability**, not a ratio against a
     quantile.  The quantity being compared is a *boundary*: a channel
     that falls silent reaches a ratio of exactly zero, and an ordinary
     day that happens to fall silent reaches a ratio very near zero but
-    not exactly zero.  No quantile of the ordinary days can express
-    "no ordinary day reached this", because the incident is off the
-    scale of the distribution rather than far along it.  The
-    probability that an ordinary day is *at least* this extreme says
-    exactly what the exclusivity test asks, and it stays meaningful
-    when the distribution is bounded.
-
-    The reported ``null`` is the quantile of the matching direction,
-    so the size of the null can still be read alongside the
-    probability.
+    not exactly zero.  No quantile can express "no ordinary day
+    reached this", because the incident is off the scale of the
+    distribution rather than far along it.
     """
     silences = [abs(1.0 - r) for r in placebos if r < 1.0]
     surges = [abs(1.0 - r) for r in placebos if r > 1.0]
@@ -682,7 +576,7 @@ def earliest_deviation(
     *,
     threshold: float,
     max_lag_seconds: float,
-) -> Optional[datetime]:
+):
     """The first moment the control plane deviated, at or before the trough.
 
     The search runs backwards from the trough, because the trough is
@@ -734,7 +628,7 @@ def attribute(
     series_scope: Optional[Sequence[str]] = None,
     impact_window: Optional[Tuple[datetime, datetime]] = None,
     protocol: Optional[Dict[str, Any]] = None,
-) -> CausalVerdict:
+):
     """Return the direction that survives the vetoes, or an abstention.
 
     ``control`` is the routing side as a control-plane rate series and
@@ -754,7 +648,7 @@ def attribute(
     )
 
     def stop(reason: str, vetoes: Dict[str, str],
-             tests: Optional[Dict[str, Any]] = None) -> CausalVerdict:
+             tests: Optional[Dict[str, Any]] = None):
         verdict.reason = reason
         verdict.vetoes = vetoes
         if tests:

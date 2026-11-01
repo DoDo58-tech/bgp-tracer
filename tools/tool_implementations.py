@@ -68,7 +68,7 @@ class APICache:
         """Clear all cache entries."""
         self._cache.clear()
 
-    def stats(self) -> Dict[str, int]:
+    def stats(self):
         """Get cache statistics."""
         return {"hits": self._hits, "misses": self._misses, "size": len(self._cache)}
 
@@ -228,7 +228,7 @@ async def analyze_traffic(tool_input, session):
                 start_time=start,
                 end_time=end,
             )
-        except (ValueError) as e:
+        except ValueError as e:
             result = {"success": False, "error": str(e)}
         results[str(asn)] = result
 
@@ -318,7 +318,7 @@ async def analyze_routing(tool_input, session):
                 "outage_analysis": pre.get("outage", {}),
             }
             return result
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.debug(f"[routing_tool] precomputed check failed: {e}; falling through to live detection")
 
     try:
@@ -339,7 +339,7 @@ async def analyze_routing(tool_input, session):
             skip_outage=(effective_detail == "light"),
             skip_hijack_streaming=(effective_detail == "light"),
         )
-    except (ValueError) as e:
+    except ValueError as e:
         result = {"success": False, "error": str(e)}
 
     def ev(ev):
@@ -815,7 +815,7 @@ async def reason_and_classify(tool_input, session):
     if isinstance(traffic, str):
         try:
             traffic = json.loads(traffic)
-        except (ValueError):
+        except ValueError:
             traffic = {}
     if not traffic:
         raw = ev.get("analyze_traffic", {})
@@ -841,7 +841,7 @@ async def reason_and_classify(tool_input, session):
     if isinstance(routing_raw, str):
         try:
             routing_raw = json.loads(routing_raw)
-        except (ValueError):
+        except ValueError:
             routing_raw = {}
     routing = routing_raw.get("result", {}) if isinstance(routing_raw, dict) else (routing_raw if isinstance(routing_raw, dict) else {})
 
@@ -856,7 +856,7 @@ async def reason_and_classify(tool_input, session):
     elif isinstance(asn_info, str):
         try:
             asn_info = json.loads(asn_info)
-        except (ValueError):
+        except ValueError:
             asn_info = {}
 
     # ── Auto-discover victim ASes from routing result and query their traffic ─────
@@ -923,7 +923,7 @@ async def reason_and_classify(tool_input, session):
                 if prefix_result.get("success"):
                     prefix_traffic_results = prefix_result.get("results", {})
                 logger.info(f"[reason_and_classify] Prefix traffic analysis complete")
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"[reason_and_classify] Prefix traffic analysis failed: {e}")
 
     # ── Compute quantitative correlation score (P1: compute_traffic_routing_correlation_score) ─
@@ -938,7 +938,7 @@ async def reason_and_classify(tool_input, session):
             }
             correlation_score_result = await compute_traffic_routing_correlation_score(corr_input, session)
             logger.info(f"[reason_and_classify] Correlation score: {correlation_score_result.get('total_score', 'N/A')}")
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"[reason_and_classify] Correlation score computation failed: {e}")
 
     # ── Analyze AS-path structural changes (P1: analyze_as_path_delta) ───────────
@@ -952,7 +952,7 @@ async def reason_and_classify(tool_input, session):
             }
             as_path_delta_result = await analyze_as_path_delta(path_input, session)
             logger.info(f"[reason_and_classify] AS-path delta: {as_path_delta_result.get('overall_verdict', {}).get('level', 'N/A')}")
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"[reason_and_classify] AS-path delta analysis failed: {e}")
 
     # ── Analyze AS relationships and blast radius (P2: analyze_as_relationships) ───
@@ -983,7 +983,7 @@ async def reason_and_classify(tool_input, session):
                 as_relationships_result = await analyze_as_relationships(rel_input, session)
                 logger.info(f"[reason_and_classify] AS relationships: "
                            f"{as_relationships_result.get('relationship', {}).get('attacker_to_victim', 'N/A')}")
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"[reason_and_classify] AS relationships analysis failed: {e}")
 
     # ── Probe prefix reachability (P2: probe_prefix_reachability) ───────────────
@@ -1012,7 +1012,7 @@ async def reason_and_classify(tool_input, session):
                 probe_result = await probe_prefix_reachability(probe_input, session)
                 logger.info(f"[reason_and_classify] Probe reachability: "
                            f"{probe_result.get('synthesis', {}).get('overall_verdict', 'N/A')}")
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"[reason_and_classify] Prefix reachability probe failed: {e}")
 
     # ── Validate ROA status (P3: validate_roa_status) ─────────────────────────
@@ -1027,7 +1027,7 @@ async def reason_and_classify(tool_input, session):
             roa_validation_result = await validate_roa_status(roa_input, session)
             logger.info(f"[reason_and_classify] ROA validation: "
                        f"{roa_validation_result.get('summary', {}).get('risk_level', 'N/A')}")
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"[reason_and_classify] ROA validation failed: {e}")
 
     # ── Threat intel lookup for attacker AS (P3: lookup_as_threat_intel) ──────
@@ -1056,7 +1056,7 @@ async def reason_and_classify(tool_input, session):
                 logger.info(f"[reason_and_classify] Threat intel: "
                            f"{threat_intel_result.get('threat_level', 'N/A')} "
                            f"(risk_score={threat_intel_result.get('risk_score', 'N/A')})")
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"[reason_and_classify] Threat intel lookup failed: {e}")
 
     llm, _ = setup_llm_settings(
@@ -1221,7 +1221,7 @@ Return ONLY valid JSON:
             "causal_evidence": tool_input.get("causal_evidence", {}),
             "observation": obs,
         }
-    except (ValueError) as e:
+    except ValueError as e:
         return {"success": False, "error": str(e), "observation": f"LLM reasoning failed: {e}"}
 
 
@@ -1248,7 +1248,7 @@ def parse_json(raw_text):
             snippet = _safe_extract(raw)
             if snippet is not None:
                 return json.loads(snippet)
-        except (ValueError):
+        except ValueError:
             return {}
         return {}
 
@@ -1295,7 +1295,7 @@ def inject_traffic_plot_into_file(html_path, traffic_plot_base64):
         else:
             html = html + section
         p.write_text(html, encoding="utf-8")
-    except (ValueError):
+    except ValueError:
         pass
 
 async def generate_report(tool_input, session):
@@ -1339,7 +1339,7 @@ async def generate_report(tool_input, session):
         try:
             from agents.traffic_agent import to_canonical_severity
             traffic["max_severity"] = to_canonical_severity(traffic.get("anomalies") or [])
-        except (ValueError):
+        except ValueError:
             pass
 
     # Extract plot_path from traffic results (search multiple possible locations)
@@ -1391,7 +1391,7 @@ async def generate_report(tool_input, session):
         if p.exists():
             try:
                 traffic_plot_base64 = _b64.b64encode(p.read_bytes()).decode("utf-8")
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"[report_tool] Failed to embed plot {traffic_plot_path}: {e}")
 
     # ── Resolve routing_result ───────────────────────────────────────────────
@@ -1572,7 +1572,7 @@ async def generate_report(tool_input, session):
             "classification": classification,
             "observation": obs,
         }
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"[report_tool] Failed: {e}")
         import traceback
         logger.error(traceback.format_exc())
@@ -1586,7 +1586,7 @@ async def analyze_prefix_traffic(tool_input, session):
     if isinstance(prefixes, str):
         try:
             prefixes = json.loads(prefixes)
-        except (ValueError):
+        except ValueError:
             prefixes = [prefixes]
 
     hijacker_asn = str(tool_input.get("hijacker_asn", ""))
@@ -1599,7 +1599,7 @@ async def analyze_prefix_traffic(tool_input, session):
     if isinstance(routing, str):
         try:
             routing = json.loads(routing)
-        except (ValueError):
+        except ValueError:
             routing = {}
 
     # Auto-extract prefixes + attacker/victim from routing result if not provided
@@ -1620,11 +1620,11 @@ async def analyze_prefix_traffic(tool_input, session):
     # Parse times. Bug fix 2026-09-13 (BUG-R61): the original double
     try:
         start_dt = parse_dt(start)
-    except (ValueError):
+    except ValueError:
         start_dt = None
     try:
         end_dt = parse_dt(end)
-    except (ValueError):
+    except ValueError:
         end_dt = None
 
     # Normal baseline: 2 hours before hijack window
@@ -1657,7 +1657,7 @@ async def analyze_prefix_traffic(tool_input, session):
     def in_window(ts_str, w_start, w_end):
         try:
             ts = parse_dt(ts_str)
-        except (ValueError):
+        except ValueError:
             return False
         if w_start and ts < w_start:
             return False
@@ -1673,11 +1673,11 @@ async def analyze_prefix_traffic(tool_input, session):
 
     try:
         _all_start_dt = parse_dt(all_start) if all_start else None
-    except (ValueError):
+    except ValueError:
         _all_start_dt = None
     try:
         _all_end_dt = parse_dt(all_end) if all_end else None
-    except (ValueError):
+    except ValueError:
         _all_end_dt = None
 
     processed = 0
@@ -1931,7 +1931,7 @@ Return ONLY valid JSON:
             "classification": result,
             "observation": obs,
         }
-    except (ValueError) as e:
+    except ValueError as e:
         return {"success": False, "error": str(e),
                 "observation": f"Classification failed: {e}"}
 
@@ -2175,7 +2175,7 @@ async def compute_traffic_routing_correlation_score(tool_input, session):
 
 def extract_avg_delta_hours(
     anomalies: list[dict], routing_window: dict | None
-) -> float | None:
+):
     """Compute average |ΔT| in hours between anomalies and routing window center."""
     if not anomalies or not routing_window:
         return None
@@ -2191,12 +2191,12 @@ def extract_avg_delta_hours(
                 else parse_dt(str(ts_str), "%Y-%m-%d %H:%M:%S")
             deltas.append(abs((ts - rw_center).total_seconds() / 3600))
         return round(sum(deltas) / len(deltas), 2) if deltas else None
-    except (ValueError):
+    except ValueError:
         return None
 
 
 def resolve_result(tool_input: dict, key: str, ev: dict,
-                    ev_keys: list, nested_keys: list) -> dict:
+                    ev_keys: list, nested_keys: list):
     """Resolve a result dict from tool_input or session evidence."""
     # Direct pass
     val = tool_input.get(key, {})
@@ -2234,7 +2234,7 @@ def extract_routing_window(routing):
                     except Exception:
                         try:
                             start_dt = parse_dt(start)
-                        except (ValueError):
+                        except ValueError:
                             start_dt = None
                     if start_dt:
                         try:
@@ -2242,7 +2242,7 @@ def extract_routing_window(routing):
                         except Exception:
                             try:
                                 end_dt = parse_dt(last_ts)
-                            except (ValueError):
+                            except ValueError:
                                 end_dt = start_dt
                         if end_dt:
                             return {"start": start_dt, "end": end_dt}
@@ -2269,7 +2269,7 @@ async def analyze_as_path_delta(tool_input, session):
     if isinstance(routing, str):
         try:
             routing = json.loads(routing)
-        except (ValueError):
+        except ValueError:
             routing = {}
     ev = getattr(session, "evidence", {}) or {}
     if not routing:
@@ -2290,11 +2290,11 @@ async def analyze_as_path_delta(tool_input, session):
     # Parse times. Bug fix 2026-09-13 (BUG-R61): the original double
     try:
         start_dt = parse_dt(start)
-    except (ValueError):
+    except ValueError:
         start_dt = None
     try:
         end_dt = parse_dt(end)
-    except (ValueError):
+    except ValueError:
         end_dt = None
 
     # Normal baseline window
@@ -2373,7 +2373,7 @@ async def analyze_as_path_delta(tool_input, session):
 
 
 async def do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
-                               tool_input: dict) -> dict:
+                               tool_input: dict):
     """
  Perform traceroute for recent events to verify current routing path.
  Only proceeds if the event is recent (ended within 24h).
@@ -2477,7 +2477,7 @@ async def do_traceroute_probe(routing: dict, end_dt: Optional[datetime],
 def compute_path_metrics(entries: list, start_dt: Optional[datetime],
                           end_dt: Optional[datetime],
                           normal_start_str: Optional[str],
-                          normal_end_str: Optional[str]) -> dict:
+                          normal_end_str: Optional[str]):
     """Compute AS-path length, structural change, and AS appearance metrics."""
     def parse_as_path(raw):
         if not raw:
@@ -2492,7 +2492,7 @@ def compute_path_metrics(entries: list, start_dt: Optional[datetime],
         except Exception:
             try:
                 ts = parse_dt(ts_str)
-            except (ValueError):
+            except ValueError:
                 return False
         if w_start and ts < w_start:
             return False
@@ -2505,12 +2505,12 @@ def compute_path_metrics(entries: list, start_dt: Optional[datetime],
     if normal_start_str:
         try:
             normal_start_dt = parse_dt(normal_start_str)
-        except (ValueError):
+        except ValueError:
             pass
     if normal_end_str:
         try:
             normal_end_dt = parse_dt(normal_end_str)
-        except (ValueError):
+        except ValueError:
             pass
 
     hijack_paths = []
@@ -2680,7 +2680,7 @@ async def analyze_as_relationships(tool_input, session):
     from data.asrel_loader import process_asrel
     try:
         lookup_time = parse_dt(start) if start else datetime(2025, 1, 1)
-    except (ValueError):
+    except ValueError:
         lookup_time = datetime(2025, 1, 1)
     asrel_file = process_asrel(lookup_time)
     asrel = load_asrel_json(asrel_file)
@@ -2742,7 +2742,7 @@ def load_asrel_json(filepath_str):
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
         return None
-    except (ValueError):
+    except ValueError:
         return None
 
 
@@ -2768,7 +2768,7 @@ def query_as_relationship(asrel, as1, as2):
 
 
 def infer_relationship_from_path(routing: dict, attacker_asn: str,
-                                  victim_asn: str) -> str:
+                                  victim_asn: str):
     """Infer attacker-victim relationship from AS-path structure."""
     if not routing:
         return "unknown"
@@ -2815,7 +2815,7 @@ def infer_relationship_from_path(routing: dict, attacker_asn: str,
 
 
 def estimate_blast_radius(asrel: dict, attacker_asn: str,
-                           victim_asn: str, relationship: str) -> dict:
+                           victim_asn: str, relationship: str):
     """Estimate the blast radius of the hijack based on AS relationship."""
     providers = asrel.get("providers", {})
     peers = asrel.get("peers", {})
@@ -2855,7 +2855,7 @@ def estimate_blast_radius(asrel: dict, attacker_asn: str,
 
 def estimate_financial_impact(relationship: str, attacker_asn: str,
                                 victim_asn: str, victim_country: str,
-                                blast_radius: dict) -> dict:
+                                blast_radius: dict):
     """Rough financial impact estimation based on relationship and blast radius."""
     country_risk = {
         "US": 1.0, "CN": 0.9, "DE": 0.85, "JP": 0.85, "GB": 0.8,
@@ -2877,7 +2877,7 @@ def estimate_financial_impact(relationship: str, attacker_asn: str,
 
 
 def relationship_plausibility(relationship: str, attacker_asn: str,
-                               victim_asn: str) -> dict:
+                               victim_asn: str):
     """Assess how plausible the hijack is, given the relationship."""
     if relationship == "provider":
         return {"level": "HIGH",
@@ -2913,7 +2913,7 @@ async def probe_prefix_reachability(tool_input, session):
     if isinstance(prefixes, str):
         try:
             prefixes = json.loads(prefixes)
-        except (ValueError):
+        except ValueError:
             prefixes = [prefixes]
 
     start = tool_input.get("start_time", "")
@@ -2950,7 +2950,7 @@ async def probe_prefix_reachability(tool_input, session):
     except Exception:
         try:
             end_dt = parse_dt(end)
-        except (ValueError):
+        except ValueError:
             end_dt = None
 
     now = datetime.now()
@@ -3025,7 +3025,7 @@ async def live_traceroute_probe(prefix, attacker_asn, victim_asn):
                     break
             except (FileNotFoundError, subprocess.TimeoutExpired):
                 continue
-            except (ValueError):
+            except ValueError:
                 continue
 
         hop_ips = []
@@ -3051,7 +3051,7 @@ async def live_traceroute_probe(prefix, attacker_asn, victim_asn):
 
 
 async def historical_prefix_probe(prefix: str, start: str, end: str,
-                                   attacker_asn: str, victim_asn: str) -> dict:
+                                   attacker_asn: str, victim_asn: str):
     """Probe a prefix for historical events using RIPE RIS + BGPView + Looking Glass."""
     import requests
 
@@ -3153,7 +3153,7 @@ async def historical_prefix_probe(prefix: str, start: str, end: str,
 
 def historical_verdict(attacker_present: bool, victim_present: bool,
                        current_origins: set, attacker_asn: str,
-                       victim_asn: str) -> str:
+                       victim_asn: str):
     """Determine verdict from historical probe results."""
     if attacker_present and not victim_present:
         return "ATTACKER_CURRENTLY_ANNOUNCING: hijack may still be active"
@@ -3167,7 +3167,7 @@ def historical_verdict(attacker_present: bool, victim_present: bool,
 
 
 def synthesize_probe_results(results: dict, attacker_asn: str,
-                               victim_asn: str) -> dict:
+                               victim_asn: str):
     """Synthesize per-prefix probe results into overall verdict."""
     total = len(results)
     if total == 0:
@@ -3263,7 +3263,7 @@ async def validate_roa_status(tool_input, session):
 
     try:
         roa_data, roa_source = await fetch_cloudflare_roa()
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.warning(f"[roa_validation] Cloudflare ROA fetch failed: {e}")
 
     # ── Validate each announcement ────────────────────────────────────────────
@@ -3585,7 +3585,7 @@ async def bgpview_contacts_impl(asn_id):
 
 
 def extract_historical_hijacks(routing: dict, attacker_asn: str,
-                                victim_asn: str) -> list:
+                                victim_asn: str):
     """Extract historical hijack events for this attacker from routing result."""
     if not routing:
         return []
@@ -3624,7 +3624,7 @@ def extract_historical_hijacks(routing: dict, attacker_asn: str,
 def compute_attacker_risk_score(asn: str, bgpview_info: dict,
                                  bgpview_prefixes: dict,
                                  bgpview_neighbors: dict,
-                                 historical_events: list) -> int:
+                                 historical_events: list):
     """Compute a 0-100 risk score for the attacker AS."""
     score = 0
 

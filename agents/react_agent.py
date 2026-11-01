@@ -69,7 +69,7 @@ AVAILABLE_TOOLS = {
 _SHARED_EVIDENCE: Dict[str, Dict[str, Any]] = {}
 
 
-def shared_evidence(session_id) -> Dict[str, Any]:
+def shared_evidence(session_id):
     """Get or create the per-run shared evidence bucket."""
     if session_id not in _SHARED_EVIDENCE:
         _SHARED_EVIDENCE[session_id] = {}
@@ -81,11 +81,11 @@ def clear_shared_evidence(session_id):
     _SHARED_EVIDENCE.pop(session_id, None)
 
 
-def finalize_run(result: "ReactResult") -> "ReactResult":
+def finalize_run(result: "ReactResult"):
     """Release per-run resources once a React run is done."""
     try:
         clear_shared_evidence(getattr(result, "run_id", "") or "")
-    except (ValueError):
+    except ValueError:
         # Cleanup must never fail a finished run.
         pass
     return result
@@ -253,7 +253,7 @@ class ReactAgent:
                 self._blackboard = _BB()
                 # Flag is set once the run context is written below.
                 self._blackboard_seeded = False
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"[ReactAgent] Blackboard init failed: {e}; "
                                f"debate will fall back to dict-based evidence.")
                 self._blackboard = None
@@ -265,7 +265,7 @@ class ReactAgent:
         start_time: str,
         end_time: str,
         user_input: Optional[str] = None,
-    ) -> ReactResult:
+    ):
         """Run the React agent to analyze the given AS and time window.
         
         Returns:
@@ -301,7 +301,7 @@ class ReactAgent:
                 # Mark the blackboard as seeded so any post-run debug
                 # logging can confirm the BUG-R98 fix took effect.
                 self._blackboard_seeded = True
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.debug(f"[ReactAgent] bb config seed at run start failed: {e}")
 
         # ── Pre-inject pre-computed evidence (annotation_package) ────────────
@@ -412,7 +412,7 @@ class ReactAgent:
                         self._supervisor_enrichment_done = True
                         # Supervisor enrichment ran before Answer return
                         logger.info("[ReAct] Supervisor enrichment complete before Answer return")
-                    except (AttributeError) as e:
+                    except AttributeError as e:
                         logger.warning(f"[ReAct] Supervisor enrichment in Answer path failed: {e}")
 
                 # Generate HTML report even when LLM directly outputs Answer
@@ -431,7 +431,7 @@ class ReactAgent:
                             logger.info(f"[ReAct] Auto-generated verified LLM report: {report_path}")
                         elif report_result.get("success"):
                             logger.error("[ReAct] Auto-generated report failed HTML acceptance checks")
-                    except (AttributeError) as e:
+                    except AttributeError as e:
                         logger.error(f"[ReAct] Auto report generation failed: {e}")
                 
                 return finalize_run(ReactResult(
@@ -566,7 +566,7 @@ class ReactAgent:
                                 self.trace.append(new_entry)
                                 entry = new_entry
                                 continue
-                        except (AttributeError) as retry_err:
+                        except AttributeError as retry_err:
                             logger.error(
                                 f"[ReAct][Round {self._round}] Retry think failed: {retry_err}"
                             )
@@ -589,7 +589,7 @@ class ReactAgent:
                 result = await self.execute_tool("generate_report", inp)
                 if result.get("success"):
                     logger.info(f"[ReAct] Forced report generated: {result.get('report_path', '')}")
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.error(f"[ReAct] Forced report generation failed: {e}")
 
         return finalize_run(ReactResult(
@@ -652,7 +652,7 @@ class ReactAgent:
         if self.streaming_callback and content:
             try:
                 self.streaming_callback(content)
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.warning(f"Streaming callback error: {e}")
 
     def get_system_prompt(self):
@@ -706,7 +706,7 @@ class ReactAgent:
         start_time: str,
         end_time: str,
         user_input: Optional[str] = None,
-    ) -> str:
+    ):
         """Build the initial context for React analysis."""
         context = f"""## Analysis Request
 
@@ -729,7 +729,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
 """
         return context
 
-    def parse_response(self, response) -> Dict[str, Any]:
+    def parse_response(self, response):
         """Parse LLM response into thought, action, and input."""
         result = {
             "type": "unknown",
@@ -787,7 +787,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
 
         return result
 
-    async def execute_tool(self, tool_name, tool_input: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute_tool(self, tool_name, tool_input: Dict[str, Any]):
         """Execute a tool by name and given input."""
         # Shared evidence dict so tools can pass data to each other (e.g.
         runContext = {
@@ -889,7 +889,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                             "report_mode": "multi_agent_enhanced",
                             "observation": f"Enhanced report saved to: {multi_path}",
                         }
-                except (AttributeError) as e:
+                except AttributeError as e:
                     logger.warning(f"[ReactAgent] enhanced report path failed, "
                                    f"falling back: {e}")
 
@@ -909,11 +909,11 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 if self.enhanced and self._blackboard is not None:
                     try:
                         await self.sync_evidence_to_blackboard(tool_name, result)
-                    except (AttributeError) as e:
+                    except AttributeError as e:
                         logger.debug(f"[ReactAgent] blackboard sync failed: {e}")
 
                 return result
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.error(f"Tool {tool_name} failed: {e}")
                 return {"success": False, "error": str(e)}
         else:
@@ -986,7 +986,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
                 def safe(obj):
                     try:
                         return json.dumps(obj, ensure_ascii=False, default=str)[:200]
-                    except (AttributeError):
+                    except AttributeError:
                         return f"<unserialisable {type(obj).__name__}>"
                 # When count == 1 we would otherwise print the same item
                 # twice — emit a single-line form to save context tokens.
@@ -1002,7 +1002,7 @@ Begin by using query_as_info to understand the target AS, then proceed with anal
             elif key in ("results",):
                 try:
                     parts.append(f"Results: {json.dumps(value, ensure_ascii=False, default=str)[:2000]}")
-                except (AttributeError):
+                except AttributeError:
                     parts.append(f"Results: <unserialisable {type(value).__name__}>")
             elif key in ("message", "summary"):
                 parts.append(f"{key.capitalize()}: {str(value)[:1500]}")
@@ -1074,7 +1074,7 @@ Action Input: {json.dumps(entry.action_input, ensure_ascii=False)}
         entry: ReactTraceEntry,
         failed_action: str,
         result: Dict[str, Any],
-    ) -> str:
+    ):
         """Update context for a retry round after a tool returned success=False."""
         error_msg = result.get("error", "Unknown error")
         new_context = old_context
@@ -1103,7 +1103,7 @@ Current evidence already collected: {list(self._evidence.keys())}
         asn: str,
         traffic_result: dict,
         routing_result: dict,
-    ) -> str:
+    ):
         """Run InvestigationSupervisor after both traffic and routing analysis are complete."""
         from agents.investigation_supervisor import InvestigationSupervisor
 
@@ -1291,7 +1291,7 @@ def create_react_agent(
     max_rounds: int = DEFAULT_MAX_ROUNDS,
     max_retries: int = DEFAULT_MAX_RETRIES,
     streaming_callback: Optional[Callable[[str], None]] = None,
-) -> ReactAgent:
+):
     """Factory function to create a ReactAgent with LLM.
     
     Returns:

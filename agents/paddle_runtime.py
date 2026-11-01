@@ -58,7 +58,7 @@ _MECHANISM_BY_EVENT_TYPE = {
 
 def build_traffic_observations(
     traffic_timeline: Sequence[dict],
-) -> List[Dict[str, Any]]:
+):
     """The traffic side as timestamped, signed deviations.
 
     The traffic detector samples on the provider's interval, which is
@@ -70,10 +70,9 @@ def build_traffic_observations(
     artefact of the resampling.
 
     The magnitude is the **signed** deviation from the detector's own
-    historical baseline.  The sign matters and is recovered from the
-    measured value against the historical mean, because the cached
-    ``z_score`` field carries the magnitude alone; see
-    :func:`agents.paddle_attribution.traffic_deviation`.
+    historical baseline.  The sign is recovered from the measured value
+    against the historical mean, because the cached ``z_score`` field
+    carries the magnitude alone.
     """
     out: List[Dict[str, Any]] = []
     for point in traffic_timeline or []:
@@ -90,7 +89,7 @@ def build_traffic_observations(
 
 def impact_window(
     traffic_block: Optional[Dict[str, Any]],
-) -> Optional[Tuple[datetime, datetime]]:
+):
     """The window the traffic detector reported as the impact.
 
     The trough is searched inside this window, so that the anchor is the
@@ -148,7 +147,7 @@ def impact_window(
 
 def drop_in_window(anomalies: Sequence[dict],
                    start: datetime,
-                   end: datetime) -> float:
+                   end: datetime):
     """The largest fall from the baseline inside one window.
 
     The fall is read from the anomaly's own value and baseline, so it
@@ -177,7 +176,7 @@ def collect_scope(
     routing_timeline: Sequence[dict],
     traffic_timeline: Sequence[dict],
     routing_context: Optional[dict] = None,
-) -> Tuple[Optional[List[str]], Optional[List[str]]]:
+):
     """Return the affected and the observed entity sets for the scope veto.
 
     The routing side is the set of prefixes the routing edges are about;
@@ -229,7 +228,7 @@ def collect_scope(
 def collect_mechanism(
     routing_timeline: Sequence[dict],
     routing_context: Optional[dict] = None,
-) -> Optional[str]:
+):
     """Return the reaction-compatible mechanism of the routing edge.
 
     A traffic-to-routing claim asserts that an operator reacted to
@@ -255,7 +254,7 @@ def collect_mechanism(
     return None
 
 
-def own_channels_present(control: ControlPlaneSeries) -> bool:
+def own_channels_present(control: ControlPlaneSeries):
     """Whether the series carries the target's *own* announcement channel.
 
     The detector's cached feature series counts the target's
@@ -289,7 +288,7 @@ def run_paddle(
     protocol: Optional[Dict[str, Any]] = None,
     target_as: Optional[str] = None,
     archive_evidence: Optional[Dict[str, Any]] = None,
-) -> Tuple[CausalVerdict, ControlPlaneSeries, List[Dict[str, Any]]]:
+):
     """Run the PADDLE estimator over one window and return its verdict.
 
     The verdict carries the veto that failed and the statistic behind it,

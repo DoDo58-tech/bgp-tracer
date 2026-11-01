@@ -112,15 +112,15 @@ _ACTION_PATTERNS = [
 ]
 
 
-def read(path: str) -> str:
+def read(path: str):
     p = PROJECT_ROOT / path
     try:
         return p.read_text(errors="replace")
-    except (ValueError):  # noqa: BLE001
+    except ValueError:  # noqa: BLE001
         return ""
 
 
-def class_body(src: str, class_name: str) -> str:
+def class_body(src: str, class_name: str):
     """Extract the source of a class body via AST (line spans)."""
     try:
         tree = ast.parse(src)
@@ -135,7 +135,7 @@ def class_body(src: str, class_name: str) -> str:
     return src
 
 
-def static_probe(name: str, rel_path: str, class_name: str | None) -> dict:
+def static_probe(name: str, rel_path: str, class_name: str | None):
     src = read(rel_path)
     scope = class_body(src, class_name) if class_name else src
     # A class-level view misses module-level registries; include both.
@@ -194,7 +194,7 @@ def static_probe(name: str, rel_path: str, class_name: str | None) -> dict:
 # ── Coordination-surface probe ──────────────────────────────────────────────
 
 
-def coordination_probe() -> dict:
+def coordination_probe():
     """Check that the Evidence Blackboard is genuinely shared across stages."""
     wf = read("workflow_engine.py")
     core = read("agents/core.py")
@@ -230,11 +230,11 @@ def coordination_probe() -> dict:
 # ── Runtime probe ────────────────────────────────────────────────────────────
 
 
-def runtime_probe(trace_path: Path) -> dict | None:
+def runtime_probe(trace_path: Path):
     """Check a recorded ReAct trace for genuine loop behaviour."""
     try:
         d = json.loads(trace_path.read_text())
-    except (ValueError):  # noqa: BLE001
+    except ValueError:  # noqa: BLE001
         return None
     trace = d.get("trace") or d.get("react_result", {}).get("trace") or []
     if not isinstance(trace, list) or not trace:
@@ -268,7 +268,7 @@ def runtime_probe(trace_path: Path) -> dict | None:
 # ── Driver ───────────────────────────────────────────────────────────────────
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--trace",

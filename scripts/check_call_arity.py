@@ -40,7 +40,7 @@ def func_arity(node: ast.FunctionDef | ast.AsyncFunctionDef):
     return n_required, n_pos, has_vararg, kw_required
 
 
-def main() -> int:
+def main():
     files: list[Path] = []
     for root in ROOTS:
         p = PROJECT_ROOT / root

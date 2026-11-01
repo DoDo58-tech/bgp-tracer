@@ -135,7 +135,7 @@ class HypothesisAgent(Agent):
             from agents.payload_builder import slim_section
             traffic_slim = slim_section("traffic", traffic)
             routing_slim = slim_section("routing", routing)
-        except (ValueError):
+        except ValueError:
             traffic_slim = traffic
             routing_slim = routing
 
@@ -166,7 +166,7 @@ class HypothesisAgent(Agent):
             run_id = config.get("run_id", "")
             if run_id:
                 record_llm_call(run_id, "HypothesisAgent", prompt, response)
-        except (ValueError):
+        except ValueError:
             pass
 
         # Parse LLM output

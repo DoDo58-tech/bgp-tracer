@@ -28,7 +28,7 @@ ROOTS = ("agents", "detectors", "scripts", "tools", "llm", "data", "utils",
          "tests", "workflow_engine.py", "chief_agent.py", "config.py")
 
 
-def source_files() -> list[Path]:
+def source_files():
     out: list[Path] = []
     for root in ROOTS:
         p = ROOT / root
@@ -41,7 +41,7 @@ def source_files() -> list[Path]:
     return sorted(set(out))
 
 
-def parsed() -> dict[Path, ast.AST]:
+def parsed():
     trees: dict[Path, ast.AST] = {}
     for p in source_files():
         try:
@@ -51,8 +51,7 @@ def parsed() -> dict[Path, ast.AST]:
     return trees
 
 
-def class_members(trees: dict[Path, ast.AST]) -> tuple[dict[str, set[str]],
-                                                      dict[str, list[str]]]:
+def class_members(trees: dict[Path, ast.AST]):
     own: dict[str, set[str]] = {}
     bases: dict[str, list[str]] = {}
     for tree in trees.values():
@@ -81,7 +80,7 @@ def test_every_self_attribute_resolves():
     trees = parsed()
     own, bases = class_members(trees)
 
-    def resolve(cls: str, seen: set[str] | None = None) -> set[str]:
+    def resolve(cls: str, seen: set[str] | None = None):
         seen = seen or set()
         if cls in seen:
             return set()
@@ -214,7 +213,7 @@ def test_shared_time_parser_accepts_every_format_in_use():
         assert moment.year == 2025 and moment.month == 3 and moment.day == 1, sample
 
 
-def run_checker(name: str) -> subprocess.CompletedProcess:
+def run_checker(name: str):
     return subprocess.run(
         [sys.executable, str(ROOT / "scripts" / name)],
         capture_output=True, text=True, cwd=ROOT, timeout=300,

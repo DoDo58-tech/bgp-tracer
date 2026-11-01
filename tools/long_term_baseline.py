@@ -34,7 +34,7 @@ async def long_term_baseline(tool_input, session):
     try:
         start_dt = datetime.strptime(start[:10], "%Y-%m-%d") if start else datetime.now() - timedelta(days=7)
         end_dt = datetime.strptime(end[:10], "%Y-%m-%d") if end else datetime.now()
-    except (AttributeError):
+    except AttributeError:
         start_dt = datetime.now() - timedelta(days=7)
         end_dt = datetime.now()
 
@@ -154,7 +154,7 @@ async def long_term_baseline(tool_input, session):
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
-async def fetch_daily_traffic(asn, days=90) -> List[dict]:
+async def fetch_daily_traffic(asn, days=90):
     """
     Fetch daily traffic summary for an AS from Cloudflare Radar API.
     Returns list of {date, value} sorted oldest-first.
@@ -206,7 +206,7 @@ def compute_dow_pattern(daily_data: List[dict]):
             dt = datetime.strptime(d["date"], "%Y-%m-%d")
             dow = dt.weekday()
             dow_totals[dow].append(d["value"])
-        except (ValueError):
+        except ValueError:
             continue
 
     pattern = {}

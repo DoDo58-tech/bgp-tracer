@@ -26,13 +26,13 @@ from agents.llm_cache import (  # noqa: E402
 )
 
 
-def test_identical_requests_share_a_key() -> None:
+def test_identical_requests_share_a_key():
     a = cache_key("prompt text", model="m", temperature=0.1)
     b = cache_key("prompt text", model="m", temperature=0.1)
     assert a == b, "identical requests must share a key"
 
 
-def test_every_request_parameter_changes_the_key() -> None:
+def test_every_request_parameter_changes_the_key():
     base = cache_key("p", model="m", temperature=0.1, json_mode=False,
                      max_tokens=1024)
     variants = [
@@ -48,7 +48,7 @@ def test_every_request_parameter_changes_the_key() -> None:
         assert other != base, "a changed request parameter must change the key"
 
 
-def test_round_trip(tmp_path) -> None:
+def test_round_trip(tmp_path):
     directory = Path(tmp_path)
     directory.mkdir(parents=True, exist_ok=True)
     key = cache_key("round trip", model="m")
@@ -60,7 +60,7 @@ def test_round_trip(tmp_path) -> None:
     assert cache_get(key, directory) == "the answer"
 
 
-def test_stats_reflect_activity(tmp_path) -> None:
+def test_stats_reflect_activity(tmp_path):
     directory = Path(tmp_path)
     cache_reset_stats()
     key = cache_key("stat probe", model="m")
@@ -73,11 +73,11 @@ def test_stats_reflect_activity(tmp_path) -> None:
     assert stats["writes"] >= 1, stats
 
 
-def test_cache_is_off_by_default() -> None:
+def test_cache_is_off_by_default():
     assert cache_enabled() is False, "the cache must be opt-in"
 
 
-def test_json_payload_survives_the_store(tmp_path) -> None:
+def test_json_payload_survives_the_store(tmp_path):
     directory = Path(tmp_path)
     key = cache_key("json", model="m", json_mode=True)
     payload = {"cause": "route_leak", "confidence": 0.5}
@@ -86,7 +86,7 @@ def test_json_payload_survives_the_store(tmp_path) -> None:
     assert json.loads(text) == payload
 
 
-def main() -> int:
+def main():
     import tempfile
 
     tests = [

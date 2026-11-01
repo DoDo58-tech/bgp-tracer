@@ -44,12 +44,30 @@ from detectors.evidence_chain_builder import EvidenceChainBuilder  # noqa: E402
 
 EVAL = PROJECT_ROOT / "results" / "eval"
 QUICK_DIR = PROJECT_ROOT / "results" / "quick"
+STALE_DIR = QUICK_DIR / "stale"
 OUT_PATH = EVAL / "agent_contribution.json"
 
 CLASSES = ("outage", "route_leak", "origin_hijack_victim", "roa_misconfig")
 
 
-def normalize_cause(raw: str) -> str:
+def locate_cache(stored):
+    """The cache a stored reference points at, live or compacted away.
+
+    The compaction step moves a cache out of the live directory once it
+    has been superseded.  A reference written before that still names
+    the live path, so the file has to be looked for in the stale
+    directory as well.
+    """
+    path = Path(stored)
+    if path.is_file():
+        return path
+    candidate = STALE_DIR / path.name
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def normalize_cause(raw: str):
     text = str(raw or "").strip().lower().replace("-", " ")
     if not text:
         return ""
@@ -69,7 +87,7 @@ def normalize_cause(raw: str) -> str:
     return ""
 
 
-def measure(cache_path: Path, asn: str) -> dict:
+def measure(cache_path: Path, asn: str):
     """The physical quantities the arbitration reads."""
     quick = json.loads(cache_path.read_text())
     traffic = quick.get("traffic") or {}
@@ -99,7 +117,7 @@ def measure(cache_path: Path, asn: str) -> dict:
     }
 
 
-def agent_proposal(cache_path: Path) -> dict:
+def agent_proposal(cache_path: Path):
     """The agent's own free-text cause proposal."""
     from chief_agent import analyze_deep_from_quick
 
@@ -228,7 +246,7 @@ POLICIES = {
 }
 
 
-def score(rows, predict) -> dict:
+def score(rows, predict):
     per_class: dict = {}
     correct = 0
     for row in rows:
@@ -258,7 +276,7 @@ def score(rows, predict) -> dict:
     }
 
 
-def mcnemar(rows, predict_a, predict_b) -> dict:
+def mcnemar(rows, predict_a, predict_b):
     """Paired exact test between two policies on the same events."""
     from math import comb
 
@@ -284,7 +302,7 @@ def mcnemar(rows, predict_a, predict_b) -> dict:
     }
 
 
-def load_development() -> list[dict]:
+def load_development():
     """The 39-event corpus, with the physical quantities re-measured."""
     from component_ablation_gt import load_gt
 
@@ -322,7 +340,7 @@ def load_development() -> list[dict]:
     return rows
 
 
-def load_heldout() -> list[dict]:
+def load_heldout():
     """The 14 out-of-sample events."""
     path = EVAL / "heldout_validation.json"
     if not path.exists():
@@ -330,25 +348,28 @@ def load_heldout() -> list[dict]:
     data = json.loads(path.read_text())
     rows = []
     for event in data.get("events", []):
+        cache = locate_cache(event["cache"])
+        if cache is None:
+            continue
         row = {
             "event_id": event["event_id"],
             "gt_cause": event["gt_cause"],
             "asn": event["asn"],
-            "cache": event["cache"],
+            "cache": str(cache),
             "rule_cause": event["rule_cause"],
             "cross_origin": event["cross_origin"],
             "traffic_available": event["traffic_available"],
             "proposal": event["agent_cause"],
             "agent_confidence": event.get("agent_confidence"),
         }
-        veto = measure(Path(event["cache"]), event["asn"])
+        veto = measure(cache, event["asn"])
         row["veto"] = veto["veto"]
         row["withdrew_hard"] = veto["withdrew_hard"]
         rows.append(row)
     return rows
 
 
-def main() -> int:
+def main():
     dev = load_development()
     held = load_heldout()
 

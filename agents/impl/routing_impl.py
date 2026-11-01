@@ -86,7 +86,7 @@ def leak_from_shared(shared, asn, start_time, end_time):
             return analyze_leak_surface(asn, start_time, end_time, target_asns=[str(asn)])
         except TypeError:
             return analyze_leak_surface(asn, start_time, end_time)
-        except (AttributeError) as exc:
+        except AttributeError as exc:
             logger.error(f"Leak detector error: {exc}")
             return {"success": False, "route_leaks": [], "leak_count": 0}
 
@@ -212,7 +212,7 @@ Return JSON with these exact keys (use English only):
                 snippet = _extract_json_object(raw)
                 if snippet is not None:
                     return json.loads(snippet)
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.error(f"LLM routing analysis failed: {e}")
         return {"error": "LLM unavailable"}
 
@@ -401,7 +401,7 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
                     periodicity_confidence=periodicity_confidence,
                     timeseries=(shared.get("outage") or {}).get(str(asn)),
                 )
-            except (AttributeError) as e:
+            except AttributeError as e:
                 logger.error(f"Outage detector error: {e}")
                 outage_result = {"success": False, "is_outage_suspected": False, "outage_score": 0.0, "error": str(e)}
 
@@ -456,6 +456,6 @@ async def run_routing_agent_async(asn, start_time, end_time, use_llm=True,
             combined = await llm_agent.analyze_routing_with_llm(combined, asn, start_time, end_time)
 
         return combined
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Routing agent error: {e}")
         return {"success": False, "error": str(e), "asn": asn}

@@ -92,7 +92,7 @@ def read_prob(probfile):
                         if as1 > as2:
                             probs = [c2p, p2p, p2c]
                         prob[(min(as1, as2), max(as1, as2))] = probs
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error reading PathProb file {probfile}: {e}")
     
     logger.info(f"Loaded {len(prob)} AS relationship probabilities from {probfile}")
@@ -170,7 +170,7 @@ def detect_route_leaks_in_announcements_slow(
             else:
                 # Fallback: try to convert from dict/list
                 announcements_df = pd.DataFrame(announcements_df)
-        except (AttributeError) as e:
+        except AttributeError as e:
             logger.warning(f"Failed to convert DataFrame to pandas: {e}")
             return leaks
 
@@ -325,7 +325,7 @@ def detect_route_leaks_vectorized(
                 schema=["_a", "_b", "_p2c", "_c2p"],
                 orient="row",
             )
-        except (AttributeError) as exc:
+        except AttributeError as exc:
             logger.error(f"[leak_detector] failed to build link DataFrame: {exc}")
             return leaks
         # 3. Hash-join to fetch per-edge (p2c, c2p) tuples.
@@ -456,7 +456,7 @@ def analyze_leak_surface(
     try:
         start_dt = parse_time_window(start_time)
         end_dt = parse_time_window(end_time)
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Invalid time format for leak analysis: {e}")
         return wrap(DetectionType.LEAK, {
             "success": False,
@@ -657,7 +657,7 @@ def check_pathprob_integration():
             with open(pathprob_file, 'r') as f:
                 line_count = sum(1 for _ in f)
             print(f"   ✓ File is readable, contains {line_count:,} lines")
-        except (ValueError) as e:
+        except ValueError as e:
             print(f"   ✗ Error reading file: {e}")
     else:
         print("   ✗ pathprob.txt not found in any search location")
@@ -707,7 +707,7 @@ def extract_as_paths_from_bgp_data(start_time, end_time, output_dir, min_path_le
     try:
         start_dt = parse_time_window(start_time)
         end_dt = parse_time_window(end_time)
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Invalid time format: {e}")
         return None
 

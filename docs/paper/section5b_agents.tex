@@ -7,7 +7,7 @@ describes the layer that decides \emph{which evidence to gather}, records
 what it gathered, and keeps the pipeline alive when a component fails. We
 state its design, then measure what it is worth: the decision it produces
 relative to a monolithic alternative and to the pure-detector rules, on a
-39-event ground-truth corpus and on 14 events the corpus was never
+17-event ground-truth corpus and on 14 events the corpus was never
 developed against; its behaviour under injected component failures; and the
 auditability of its output.
 
@@ -86,7 +86,7 @@ latency and sixty-four times the tokens of asking the model directly
 baseline on identical Phase-1 evidence, over ten cached windows drawn
 equally from the five verdict classes. Latency and tokens are medians.
 The audit column is the number of operator questions about the verdict
-that the arm's output can answer, averaged over the 39-event corpus
+that the arm's output can answer, averaged over the 17-event corpus
 (\S\ref{sec:agent-explain}).}
 \label{tab:agent-ablation}
 \small
@@ -96,25 +96,24 @@ that the arm's output can answer, averaged over the 39-event corpus
 \textbf{Arm} & \textbf{Latency} & \textbf{Tokens} & \textbf{Artefact}
   & \textbf{Audit} \\
 \hline
-Monolithic     & $1.2$\,s   & $653$      & JSON verdict   & $1.7/6$ \\
-Agent pipeline & $46.6$\,s & $41{,}668$ & HTML + record & $5.6/6$ \\
+Monolithic     & $1.2$\,s   & $653$      & JSON verdict   & $1.4/6$ \\
+Agent pipeline & $46.6$\,s & $41{,}668$ & HTML + record & $5.5/6$ \\
 ReAct          & $168.0$\,s & $4{,}938$  & HTML + trace   & --- \\
 \hline
 \end{tabular}
 \end{table}
 
 On the ground-truth corpus the arms separate cleanly
-(Table~\ref{tab:agent-gt}). The monolithic one-shot LLM reaches $2/16$
-($0.13$); the full agent pipeline reaches $12/16$ ($0.75$); the
-pure-detector rules with no language model reach $10/16$ ($0.63$). The
+(Table~\ref{tab:agent-gt}). The monolithic one-shot LLM reaches $1/17$
+($0.06$); the full agent pipeline reaches $13/17$ ($0.76$); the
+pure-detector rules with no language model reach $11/17$ ($0.65$). The
 corpus is the one canonical dataset: every event in it has been
 independently verified to show a visible routing anomaly and a measured
 traffic impact that a control network did not share. It excludes one
 ASN/window pair that carries two conflicting cause labels (CANTV
-2024-08-01 is labelled both outage and route leak) and one event whose
-cache never regenerated; scoring both labels against a single cache
-would reward double-counting, so the exclusion is declared in the
-scorer rather than hidden.
+2024-08-01 is labelled both outage and route leak); scoring both labels
+against a single cache would reward double-counting, so the exclusion is
+declared in the scorer rather than hidden.
 
 \paragraph{How the arbitration was fixed.}
 An earlier version of this table read $19/39$ for both the agent and the
@@ -200,9 +199,9 @@ on the development corpus and the held-out events were scored once.}
 \textbf{Arm} & \textbf{Overall} & \textbf{Outage} & \textbf{Leak} & \textbf{Hijack}
   & \textbf{Held-out} \\
 \hline
-Monolithic LLM & $2/16$ ($0.13$) & $0/9$ & $0/3$ & $2/4$ & --- \\
-Full agent     & $12/16$ ($0.75$) & $8/9$ & $0/3$ & $4/4$ & $9/14$ \\
-Rules only     & $10/16$ ($0.63$) & $8/9$ & $0/3$ & $2/4$ & $6/14$ \\
+Monolithic LLM & $1/17$ ($0.06$) & $0/10$ & $0/3$ & $1/4$ & --- \\
+Full agent     & $13/17$ ($0.76$) & $9/10$ & $0/3$ & $4/4$ & $9/14$ \\
+Rules only     & $11/17$ ($0.65$) & $9/10$ & $0/3$ & $2/4$ & $6/14$ \\
 \hline
 \end{tabular}
 \end{table}
@@ -290,7 +289,7 @@ a step-by-step derivation of how the verdict arose.
 \begin{table}[t]
 \centering
 \caption{Answerability of the two arms' outputs on a six-question audit
-rubric, scored by the presence of typed records, over the full 39-event
+rubric, scored by the presence of typed records, over the full 17-event
 corpus. Q1 names a producing component; Q2 traces a quantity to a named
 field; Q3 attaches the window to the claim; Q4 records a rejected
 alternative; Q5 records a missing or degraded input; Q6 records a
@@ -303,8 +302,8 @@ step-by-step derivation.}
 \textbf{Arm} & \textbf{Q1} & \textbf{Q2} & \textbf{Q3} & \textbf{Q4}
   & \textbf{Q5} & \textbf{Q6} \\
 \hline
-Monolithic     & 1.00 & 0.05 & 0.28 & 0.00 & 0.36 & 0.00 \\
-Agent pipeline & 1.00 & 1.00 & 1.00 & 0.82 & 0.74 & 1.00 \\
+Monolithic     & 1.00 & 0.12 & 0.12 & 0.00 & 0.12 & 0.00 \\
+Agent pipeline & 1.00 & 1.00 & 1.00 & 0.94 & 0.53 & 1.00 \\
 \hline
 \end{tabular}
 \end{table}
@@ -314,12 +313,12 @@ name a verdict and often name a cause, but it cannot tie a number to the
 field it came from, it does not attach the window to its claim, and it has
 no derivation to offer because it made one call. The agent pipeline traces
 quantities to named fields, attaches the window to its claims, and carries
-an eleven-step derivation. The mean rubric score is $0.927$ for the agent
-pipeline against $0.282$ for the monolithic arm, a factor of three on a
+an eleven-step derivation. The mean rubric score is $0.912$ for the agent
+pipeline against $0.225$ for the monolithic arm, a factor of four on a
 scale where the monolithic arm can score at most one point per question by
 naming the right thing. The sharpest separation is Q4: the agent pipeline
 records a rejected alternative---a hypothesis it considered and discarded,
-with the reason---on $82\%$ of the corpus, against $0\%$ for the
+with the reason---on $94\%$ of the corpus, against $0\%$ for the
 monolithic arm, which has nowhere to put one. Q5 is the weaker column for
 the agent arm, and the reason is partly structural: a missing input is
 only visible to a stage that tried to fetch it, so the rate is bounded by
@@ -328,8 +327,8 @@ failure alone, because a degraded input that was successfully fetched
 must still be recognised as degraded. The route-leak detector saturates
 on most of this corpus, hitting its result cap while leaks remain, which
 makes the reported leak count a floor rather than a total; the pipeline
-records that as a degraded input with its consequence, so $74\%$ of the
-corpus carries a recorded missing or degraded input, against $36\%$ for
+records that as a degraded input with its consequence, so $53\%$ of the
+corpus carries a recorded missing or degraded input, against $12\%$ for
 the monolithic arm, which notices only when the degradation happens to be
 mentioned in free text. The honest reading is that the agent pipeline
 answers five of the six questions reliably and the sixth whenever the
@@ -344,8 +343,8 @@ Four independent component failures leave the verdict untouched and still
 produce a document containing the real measurements, because the decision
 is computed from the evidence chain and the document is rendered from it,
 which a single prompt does not have; and the output is a verdict plus the
-records that produced it, answering on average $5.6$ of six operator
-questions against $1.7$ for the monolithic arm.
+records that produced it, answering on average $5.5$ of six operator
+questions against $1.4$ for the monolithic arm.
 
 The component ablation and the constant-proposal control qualify both. The
 agent layer's measurable contribution on this corpus is \emph{narrower than

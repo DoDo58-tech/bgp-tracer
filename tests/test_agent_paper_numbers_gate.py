@@ -23,7 +23,7 @@ SCRIPT = PROJECT_ROOT / "scripts" / "check_agent_paper_numbers.py"
 PAPER = PROJECT_ROOT / "docs" / "paper"
 
 
-def run(tex: Path, paper_dir: Path | None = None) -> subprocess.CompletedProcess:
+def run(tex: Path, paper_dir: Path | None = None):
     env = dict(os.environ)
     if paper_dir is not None:
         env["BGP_TRACER_PAPER_DIR"] = str(paper_dir)
@@ -33,7 +33,7 @@ def run(tex: Path, paper_dir: Path | None = None) -> subprocess.CompletedProcess
     )
 
 
-def drifted_paper(tmp_path: Path, filename: str, mutate) -> Path:
+def drifted_paper(tmp_path: Path, filename: str, mutate):
     """Copy the paper, corrupt one file in the copy, return the copy."""
     paper = tmp_path / "paper"
     shutil.copytree(PAPER, paper)

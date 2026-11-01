@@ -76,7 +76,7 @@ def substitute_field_references(
     reasoning: dict,
     traffic_anomaly_window: Optional[dict] = None,
     extra: Optional[dict] = None,
-) -> str:
+):
     """Substitute literal [field.path] citation markers in LLM HTML output."""
     if not html:
         return html

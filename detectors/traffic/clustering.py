@@ -7,7 +7,7 @@ def parse_ts(ts_str):
         for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S+00:00", "%Y-%m-%d %H:%M:%S"):
             try:
                 return datetime.strptime(ts_str, fmt)
-            except (ValueError):
+            except ValueError:
                 continue
     return None
 

@@ -21,7 +21,7 @@ QUICK_DIR = PROJECT_ROOT / "results" / "quick"
 LOG_DIR = PROJECT_ROOT / "results" / "eval" / "regen_logs"
 
 
-def gt_columns(rows: list[dict]) -> tuple[str, str, str]:
+def gt_columns(rows: list[dict]):
     """The event_id, start, end and cause column names of a ground truth."""
     if not rows:
         raise ValueError("empty ground-truth file")
@@ -29,13 +29,13 @@ def gt_columns(rows: list[dict]) -> tuple[str, str, str]:
     return ("start_utc", "end_utc", "cause")
 
 
-def cache_name(asn: str, start: str, end: str) -> str:
+def cache_name(asn: str, start: str, end: str):
     safe_start = str(start).replace(" ", "_").replace(":", "")
     safe_end = str(end).replace(" ", "_").replace(":", "")
     return f"quick_{asn}_{safe_start}_{safe_end}.json"
 
 
-def load_events(only: str, gt_path: Path) -> list:
+def load_events(only: str, gt_path: Path):
     rows = list(csv.DictReader(gt_path.open()))
     start_col, end_col, cause_col = gt_columns(rows)
     events = []
@@ -67,14 +67,14 @@ def load_events(only: str, gt_path: Path) -> list:
     return events
 
 
-def already_fresh(event: dict, since_ts: float) -> bool:
+def already_fresh(event: dict, since_ts: float):
     path = QUICK_DIR / cache_name(event["asn"], event["start"], event["end"])
     if not path.exists():
         return False
     return path.stat().st_mtime >= since_ts
 
 
-def kill_process_tree(proc) -> None:
+def kill_process_tree(proc):
     """Terminate a child process and every process it spawned.
 
     The detector runs its own worker processes; signalling only the direct
@@ -105,7 +105,7 @@ def kill_process_tree(proc) -> None:
             continue
 
 
-def run_one(event: dict, timeout: int) -> dict:
+def run_one(event: dict, timeout: int):
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_path = LOG_DIR / f"{event['event_id']}.log"
     cmd = [
@@ -146,7 +146,7 @@ def run_one(event: dict, timeout: int) -> dict:
     }
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="", help="regenerate a single event_id")
     ap.add_argument("--timeout", type=int, default=1800)

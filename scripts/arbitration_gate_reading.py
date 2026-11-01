@@ -128,7 +128,7 @@ def score(rows, gate):
     }
 
 
-def main() -> int:
+def main():
     rows = build_rows()
     out = {"n": len(rows), "gates": {}}
     for name, gate in GATES.items():

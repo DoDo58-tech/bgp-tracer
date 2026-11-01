@@ -52,14 +52,14 @@ _FORMATS = (
 )
 
 
-def as_utc_naive(value: datetime) -> datetime:
+def as_utc_naive(value: datetime):
     """Return ``value`` as a naive UTC datetime."""
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def try_iso(text: str) -> Optional[datetime]:
+def try_iso(text: str):
     candidate = text.replace("Z", "+00:00")
     try:
         return datetime.fromisoformat(candidate)
@@ -67,7 +67,7 @@ def try_iso(text: str) -> Optional[datetime]:
         return None
 
 
-def parse_timestamp_strict(value: object) -> Optional[datetime]:
+def parse_timestamp_strict(value: object):
     """Parse a timestamp, or return ``None`` if it cannot be read.
 
     The function is strict about *not* guessing: an unreadable value is
@@ -101,7 +101,7 @@ def parse_timestamp_strict(value: object) -> Optional[datetime]:
     return None
 
 
-def parse_timestamp(value: object) -> Optional[datetime]:
+def parse_timestamp(value: object):
     """Parse the timestamp spellings that reach the engine.
 
     Kept as the public name because the rest of the pipeline already

@@ -177,6 +177,6 @@ class TrafficAgent(Agent):
             await self.bb.write("meta", "traffic_done", True)
             self.state = AgentState.DONE
             return TaskResult(success=True, data=result, agent=self.name)
-        except (AttributeError) as e:
+        except AttributeError as e:
             self.state = AgentState.ERROR
             return TaskResult(success=False, error=str(e), agent=self.name)

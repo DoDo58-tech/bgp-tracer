@@ -43,7 +43,7 @@ _DUPLICATE_EVENT_STREAMS = (
 )
 
 
-def incident_key(record: Any) -> tuple:
+def incident_key(record: Any):
     """Identity of the incident a record belongs to.
 
     Two records describe the same incident when they name the same prefix
@@ -72,7 +72,7 @@ def incident_key(record: Any) -> tuple:
     return (str(kind), str(prefix), str(origin))
 
 
-def collapse_records(records: list) -> tuple[list, int]:
+def collapse_records(records: list):
     """Reduce per-announcement records to one record per incident.
 
     Returns the collapsed list and the number of original records.
@@ -97,7 +97,7 @@ def collapse_records(records: list) -> tuple[list, int]:
     return list(seen.values()), len(records)
 
 
-def compact_routing_payload(routing: Any) -> Any:
+def compact_routing_payload(routing: Any):
     """Return a copy of the routing payload with the event lists collapsed."""
     if not isinstance(routing, dict):
         return routing
@@ -113,7 +113,7 @@ def compact_routing_payload(routing: Any) -> Any:
     return result
 
 
-def compact_correlation_payload(correlation: Any) -> Any:
+def compact_correlation_payload(correlation: Any):
     """Return a copy of the correlation block without the duplicated stream."""
     if not isinstance(correlation, dict):
         return correlation
@@ -133,7 +133,7 @@ def compact_correlation_payload(correlation: Any) -> Any:
     return result
 
 
-def compact_cache_payload(routing: Any, correlation: Any) -> tuple[Any, Any]:
+def compact_cache_payload(routing: Any, correlation: Any):
     """Compact both halves of a quick cache in one call."""
     return (compact_routing_payload(routing),
             compact_correlation_payload(correlation))

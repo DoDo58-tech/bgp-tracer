@@ -6,47 +6,41 @@
 |---|---|---|
 | [README.md](../README.md) | One-page project summary + quickstart | Everyone |
 | [CONTRIBUTING.md](../CONTRIBUTING.md) | How to contribute code | Contributors |
-| [CHANGELOG.md](../CHANGELOG.md) | Round-by-round change log | Maintainers |
 | [LICENSE](../LICENSE) | Apache 2.0 | Legal |
-| [BOTTLENECK_ROADMAP.md](BOTTLENECK_ROADMAP.md) | Current development priorities | Maintainers |
-| [REVIEW_SIGCOMM_GRADE_v2.md](REVIEW_SIGCOMM_GRADE_v2.md) | Self-review per top-tier conference | Reviewers |
-| [THREAT_MODEL.md](THREAT_MODEL.md) | Degraded-mode behaviour + risks | Reviewers |
-| [HCAF_CALIBRATION.md](HCAF_CALIBRATION.md) | HCAF voting rationale + ground truth | Reviewers |
-| [comprehensive_evaluation_report.md](comprehensive_evaluation_report.md) | Full audit from earlier passes | Reviewers |
+| [paper/](paper/main.tex) | The paper source (LaTeX) | Reviewers |
 
-## Reading order for new contributors
+## Reading order
 
-1. **README.md** — what the project does.
-2. **CHANGELOG.md** — what the latest round changed.
-3. **CONTRIBUTING.md** — how to add code.
-
-## Reading order for reviewers
-
-1. **REVIEW_SIGCOMM_GRADE_v2.md** — strengths, weaknesses,
-   prioritised recommendations.
-2. **THREAT_MODEL.md** — what fails when and how gracefully.
-3. **HCAF_CALIBRATION.md** — why the votes are weighted the way
-   they are.
-4. **BOTTLENECK_ROADMAP.md** — what's being addressed right now.
-5. **comprehensive_evaluation_report.md** — historical audit from
-   the round-10 evaluation.
+1. **README.md** — what the project does and how to run it.
+2. **CONTRIBUTING.md** — how to add code.
+3. **docs/paper/main.tex** — the method and its evaluation.
 
 ## Modules, by responsibility
 
 | Module | Responsibility |
 |---|---|
-| `chief_agent.py` | CLI entry + 4-mode orchestration + `--mode auto` two-phase |
-| `workflow_engine.py` | Agent orchestration, Blackboard, multi-agent debate |
-| `agents/report_agent.py` | LLM-driven HTML report (the big one) |
+| `chief_agent.py` | CLI entry + two-phase orchestration (`--mode quick\|deep\|auto`) |
+| `workflow_engine.py` | Agent orchestration, Blackboard, stage graph |
+| `agents/paddle_attribution.py` | PADDLE — the directional causal estimator |
+| `agents/paddle_runtime.py` | The production adapter around the estimator |
+| `agents/control_plane.py` | The control-plane representation the estimator reads |
+| `agents/control_plane_archive.py` | The same measurement, read from the update archive |
+| `agents/report_agent.py` | LLM-driven HTML report |
 | `agents/llm_reasoning.py` | ReAct reasoning with token accounting |
 | `agents/react_agent.py` | Think-Action-Observe loop |
 | `agents/reasoning_agent.py` | LLM reasoning summary |
 | `agents/hypothesis_manager.py` | Hypothesis test framework |
-| `agents/causal_attribution.py` | HCAF (MSBD / CTPR / CIC / Granger) |
+| `agents/ablation_switches.py` | The component-ablation switches, in one place |
 | `detectors/traffic/` | Traffic anomaly detector (DTW + z-score) |
-| `detectors/hijack/` | Origin + forged-prefix hijack detector |
-| `detectors/leak/` | Route-leak detector (PathProb integration) |
-| `detectors/outage/` | Outage detector |
+| `detectors/hijack/` | Origin + forged-prefix hijack detection |
+| `detectors/leak/` | Route-leak detection (PathProb integration) |
+| `detectors/outage/` | Outage detection |
 | `tools/` | Tool registry (`@register_tool` decorators) |
 | `llm/llm_factory.py` | Token-aware LLM client (OpenAI, DeepSeek, GLM) |
 
+## Ground truth
+
+`data_check/ground_truth_collection/final_ground_truth.csv` is the only
+evaluation corpus.  It is built and audited by
+`scripts/build_canonical_dataset.py`, and `data_check/gt_dataset.py` is the
+single place that names it.

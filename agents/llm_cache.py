@@ -57,7 +57,7 @@ _STATS_LOCK = threading.Lock()
 _STATS = {"hits": 0, "misses": 0, "writes": 0, "bytes_written": 0}
 
 
-def cache_enabled() -> bool:
+def cache_enabled():
     """True when response caching is switched on for this process."""
     return os.environ.get("BGP_TRACER_LLM_CACHE", "").strip().lower() in (
         "1", "true", "yes", "on",
@@ -72,7 +72,7 @@ def cache_key(
     json_mode: bool = False,
     max_tokens: Optional[int] = None,
     extra: Optional[dict] = None,
-) -> str:
+):
     """A stable key for one LLM request.
 
     The key covers everything that changes the response: the prompt
@@ -95,11 +95,11 @@ def cache_key(
     return hashlib.sha256(blob).hexdigest()
 
 
-def cache_file(cache_dir: Path) -> Path:
+def cache_file(cache_dir: Path):
     return cache_dir / "responses.jsonl"
 
 
-def cache_get(key: str, cache_dir: Optional[Path] = None) -> Optional[Any]:
+def cache_get(key: str, cache_dir: Optional[Path] = None):
     """Return the stored response text for ``key``, or None."""
     directory = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
     path = cache_file(directory)
@@ -135,7 +135,7 @@ def cache_put(
     *,
     model: str = "",
     agent: str = "",
-) -> None:
+):
     """Store a response text under ``key``."""
     directory = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
     directory.mkdir(parents=True, exist_ok=True)
@@ -160,7 +160,7 @@ def cache_put(
         _STATS["bytes_written"] += len(line)
 
 
-def cache_stats(cache_dir: Optional[Path] = None) -> dict:
+def cache_stats(cache_dir: Optional[Path] = None):
     """Counters describing this process's cache activity."""
     directory = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
     path = cache_file(directory)
@@ -185,7 +185,7 @@ def cache_stats(cache_dir: Optional[Path] = None) -> dict:
     }
 
 
-def cache_reset_stats() -> None:
+def cache_reset_stats():
     """Zero this process's counters."""
     with _STATS_LOCK:
         _STATS["hits"] = 0
@@ -200,11 +200,11 @@ class LLMResponseCache:
     def __init__(self, cache_dir: Optional[Path] = None):
         self.cache_dir = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str):
         return cache_get(key, self.cache_dir)
 
-    def put(self, key: str, text: str, *, model: str = "", agent: str = "") -> None:
+    def put(self, key: str, text: str, *, model: str = "", agent: str = ""):
         cache_put(key, text, self.cache_dir, model=model, agent=agent)
 
-    def stats(self) -> dict:
+    def stats(self):
         return cache_stats(self.cache_dir)

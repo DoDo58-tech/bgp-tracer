@@ -282,7 +282,7 @@ class ToolTriggerEngine:
         pattern: EvidencePattern,
         asn: str,
         context: dict,
-    ) -> list[TriggeredTool]:
+    ):
         """Return list of tools to execute, organized by batch."""
         triggered: list[TriggeredTool] = []
 
@@ -301,7 +301,7 @@ class ToolTriggerEngine:
 
         return triggered
 
-    def get_active_conditions(self, pattern: EvidencePattern) -> set[str]:
+    def get_active_conditions(self, pattern: EvidencePattern):
         """Derive active conditions from evidence pattern."""
         conditions: set[str] = set()
         if pattern.has_origin_hijack:
@@ -322,7 +322,7 @@ class ToolTriggerEngine:
             conditions.add("no_anomaly")
         return conditions
 
-    def matches_conditions(self, rule_conditions: list[str], active: set[str]) -> bool:
+    def matches_conditions(self, rule_conditions: list[str], active: set[str]):
         """Check if any rule condition matches active conditions (OR logic)."""
         if "always" in rule_conditions:
             return True
@@ -338,7 +338,7 @@ class ToolTriggerEngine:
         context: dict,
         pattern: EvidencePattern,
         rule: TriggerRule,
-    ) -> dict:
+    ):
         """Build tool params from base params + context."""
         params = dict(base_params)
         params.setdefault("asn", asn)
@@ -381,7 +381,7 @@ class ToolOrchestrator:
         self,
         triggered_tools: list[TriggeredTool],
         session,
-    ) -> list[TriggeredTool]:
+    ):
         """Execute all triggered tools, parallel within each batch."""
         if not triggered_tools:
             return []
@@ -412,7 +412,7 @@ class ToolOrchestrator:
                             else bool(getattr(result, "success", False))
                         )
                         logger.info(f"[supervisor]   ✅ {tool.rule.name} ({tool.rule.tool_name}): success={success_flag}")
-                    except (AttributeError) as e:
+                    except AttributeError as e:
                         tool.status = "failed"
                         tool.error = str(e)
                         tool.result = {"success": False, "error": str(e)}
@@ -420,7 +420,7 @@ class ToolOrchestrator:
 
             try:
                 await asyncio.gather(*[run_tool(t) for t in batch], return_exceptions=True)
-            except (AttributeError) as _gather_exc:
+            except AttributeError as _gather_exc:
                 logger.warning(f"[supervisor] Batch {batch_num}: gather raised {_gather_exc!r}; "
                                f"continuing with per-tool statuses")
             logger.info(f"[supervisor] Batch {batch_num}: completed")
@@ -448,14 +448,14 @@ class EvidenceEnricher:
         if hasattr(result, "get") and callable(getattr(result, "get", None)):
             try:
                 return result.get(key, default)
-            except (ValueError):
+            except ValueError:
                 pass
         if isinstance(result, dict):
             return result.get(key, default)
         return getattr(result, key, default)
 
     @staticmethod
-    def enrich(triggered_tools: list[TriggeredTool], original_context: dict) -> dict:
+    def enrich(triggered_tools: list[TriggeredTool], original_context: dict):
         """Build enriched evidence context from tool results."""
         enriched = dict(original_context)
         enrichment = {}
@@ -622,7 +622,7 @@ class InvestigationSupervisor:
         context: dict | None = None,
         session=None,
         skip_pattern: str | None = None,  # "no_anomaly" to skip enrichment
-    ) -> dict:
+    ):
         """Run the full enrichment pipeline.
         
         Returns:

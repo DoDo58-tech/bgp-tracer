@@ -91,7 +91,7 @@ _TRUE = ("1", "true", "yes", "on")
 ABLATION_CAMPAIGN_ENV_VAR = "BGP_TRACER_ABLATION_CAMPAIGN"
 
 
-def read_switch(name: str) -> bool:
+def read_switch(name: str):
     """Read one switch from the environment."""
     var = ABLATION_ENV_VARS.get(name)
     if not var:
@@ -99,7 +99,7 @@ def read_switch(name: str) -> bool:
     return os.environ.get(var, "0").strip().lower() in _TRUE
 
 
-def ablation_switches() -> Dict[str, bool]:
+def ablation_switches():
     """Return the current state of every ablation switch.
 
     Read fresh each call, so a switch flipped after import time (the
@@ -109,7 +109,7 @@ def ablation_switches() -> Dict[str, bool]:
     return {name: read_switch(name) for name in ABLATION_STAGES}
 
 
-def joint_evidence_disabled() -> bool:
+def joint_evidence_disabled():
     """True when the joint-evidence stage is switched off for this run.
 
     Any component that would otherwise *recompute* the joint evidence
@@ -119,7 +119,7 @@ def joint_evidence_disabled() -> bool:
     return read_switch("joint_evidence")
 
 
-def ablation_campaign_active() -> bool:
+def ablation_campaign_active():
     """True when the whole run belongs to an ablation campaign.
 
     This is the switch that suspends the skip-reasoning cost gate for
@@ -129,7 +129,7 @@ def ablation_campaign_active() -> bool:
     return os.environ.get(ABLATION_CAMPAIGN_ENV_VAR, "0").strip().lower() in _TRUE
 
 
-def reset_ablation_switches() -> None:
+def reset_ablation_switches():
     """Clear every switch in the environment.
 
     The harness runs the arms in one process, so a switch left set by
@@ -143,7 +143,7 @@ def reset_ablation_switches() -> None:
     os.environ.pop(ABLATION_CAMPAIGN_ENV_VAR, None)
 
 
-def active_stages(switches: Dict[str, bool] | None = None) -> Iterable[str]:
+def active_stages(switches: Dict[str, bool] | None = None):
     """The stages currently switched off."""
     state = switches if switches is not None else ablation_switches()
     return tuple(name for name in ABLATION_STAGES if state.get(name))

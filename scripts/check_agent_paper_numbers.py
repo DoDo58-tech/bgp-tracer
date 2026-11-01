@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EVAL = PROJECT_ROOT / "results" / "eval"
 
 
-def load(name: str) -> dict:
+def load(name: str):
     p = EVAL / name
     if not p.exists():
         raise SystemExit(f"FAIL: missing artefact {p}")
@@ -63,81 +63,81 @@ CHECKS = [
      "summary.report_agent_crash.verdict_stable_vs_control", "2"),
 
     # ── Table: agent-explain (per-question pass rates, 38-event corpus) ──
-    ("Monolithic     & 1.00 & 0.05 & 0.28 & 0.00 & 0.36 & 0.00",
-     "explainability_audit_corpus.json", "summary.monolithic.Q1_source", "1.0"),
-    ("Monolithic     & 1.00 & 0.05 & 0.28 & 0.00 & 0.36 & 0.00",
-     "explainability_audit_corpus.json", "summary.monolithic.Q2_quantity", "0.051"),
-    ("Monolithic     & 1.00 & 0.05 & 0.28 & 0.00 & 0.36 & 0.00",
-     "explainability_audit_corpus.json", "summary.monolithic.Q3_window", "0.282"),
-    ("Monolithic     & 1.00 & 0.05 & 0.28 & 0.00 & 0.36 & 0.00",
-     "explainability_audit_corpus.json", "summary.monolithic.Q4_alternative", "0.0"),
-    ("Monolithic     & 1.00 & 0.05 & 0.28 & 0.00 & 0.36 & 0.00",
-     "explainability_audit_corpus.json", "summary.monolithic.Q5_gap", "0.359"),
-    ("Monolithic     & 1.00 & 0.05 & 0.28 & 0.00 & 0.36 & 0.00",
-     "explainability_audit_corpus.json", "summary.monolithic.Q6_chain", "0.0"),
-    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.82 & 0.74 & 1.00",
-     "explainability_audit_corpus.json", "summary.agent.Q1_source", "1.0"),
-    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.82 & 0.74 & 1.00",
-     "explainability_audit_corpus.json", "summary.agent.Q2_quantity", "1.0"),
-    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.82 & 0.74 & 1.00",
-     "explainability_audit_corpus.json", "summary.agent.Q3_window", "1.0"),
-    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.82 & 0.74 & 1.00",
-     "explainability_audit_corpus.json", "summary.agent.Q4_alternative", "0.821"),
-    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.82 & 0.74 & 1.00",
-     "explainability_audit_corpus.json", "summary.agent.Q5_gap", "0.744"),
-    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.82 & 0.74 & 1.00",
-     "explainability_audit_corpus.json", "summary.agent.Q6_chain", "1.0"),
-    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.82 & 0.74 & 1.00",
-     "explainability_audit_corpus.json", "summary.agent.mean_score", "0.927"),
-    ("Monolithic     & 1.00 & 0.05 & 0.28 & 0.00 & 0.36 & 0.00",
-     "explainability_audit_corpus.json", "summary.monolithic.mean_score", "0.282"),
+    ("Monolithic     & 1.00 & 0.12 & 0.12 & 0.00 & 0.12 & 0.00",
+     "explainability_audit.json", "summary.monolithic.Q1_source", "1.0"),
+    ("Monolithic     & 1.00 & 0.12 & 0.12 & 0.00 & 0.12 & 0.00",
+     "explainability_audit.json", "summary.monolithic.Q2_quantity", "0.118"),
+    ("Monolithic     & 1.00 & 0.12 & 0.12 & 0.00 & 0.12 & 0.00",
+     "explainability_audit.json", "summary.monolithic.Q3_window", "0.118"),
+    ("Monolithic     & 1.00 & 0.12 & 0.12 & 0.00 & 0.12 & 0.00",
+     "explainability_audit.json", "summary.monolithic.Q4_alternative", "0.0"),
+    ("Monolithic     & 1.00 & 0.12 & 0.12 & 0.00 & 0.12 & 0.00",
+     "explainability_audit.json", "summary.monolithic.Q5_gap", "0.118"),
+    ("Monolithic     & 1.00 & 0.12 & 0.12 & 0.00 & 0.12 & 0.00",
+     "explainability_audit.json", "summary.monolithic.Q6_chain", "0.0"),
+    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.94 & 0.53 & 1.00",
+     "explainability_audit.json", "summary.agent.Q1_source", "1.0"),
+    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.94 & 0.53 & 1.00",
+     "explainability_audit.json", "summary.agent.Q2_quantity", "1.0"),
+    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.94 & 0.53 & 1.00",
+     "explainability_audit.json", "summary.agent.Q3_window", "1.0"),
+    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.94 & 0.53 & 1.00",
+     "explainability_audit.json", "summary.agent.Q4_alternative", "0.941"),
+    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.94 & 0.53 & 1.00",
+     "explainability_audit.json", "summary.agent.Q5_gap", "0.529"),
+    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.94 & 0.53 & 1.00",
+     "explainability_audit.json", "summary.agent.Q6_chain", "1.0"),
+    ("Agent pipeline & 1.00 & 1.00 & 1.00 & 0.94 & 0.53 & 1.00",
+     "explainability_audit.json", "summary.agent.mean_score", "0.912"),
+    ("Monolithic     & 1.00 & 0.12 & 0.12 & 0.00 & 0.12 & 0.00",
+     "explainability_audit.json", "summary.monolithic.mean_score", "0.225"),
 
     # ── the audit column of Table agent-ablation, and the prose that quotes
     #    the same rubric score in "of six" form ──
-    ("Agent pipeline & $46.6$\\,s & $41{,}668$ & HTML + record & $5.6/6$",
-     "explainability_audit_corpus.json", "summary.agent.mean_score", "0.927"),
-    ("Monolithic     & $1.2$\\,s   & $653$      & JSON verdict   & $1.7/6$",
-     "explainability_audit_corpus.json", "summary.monolithic.mean_score", "0.282"),
-    ("answering on average $5.6$ of six operator",
-     "explainability_audit_corpus.json", "summary.agent.mean_score", "0.927"),
-    ("questions against $1.7$ for the monolithic arm.",
-     "explainability_audit_corpus.json", "summary.monolithic.mean_score", "0.282"),
+    ("Agent pipeline & $46.6$\\,s & $41{,}668$ & HTML + record & $5.5/6$",
+     "explainability_audit.json", "summary.agent.mean_score", "0.912"),
+    ("Monolithic     & $1.2$\\,s   & $653$      & JSON verdict   & $1.4/6$",
+     "explainability_audit.json", "summary.monolithic.mean_score", "0.225"),
+    ("answering on average $5.5$ of six operator",
+     "explainability_audit.json", "summary.agent.mean_score", "0.912"),
+    ("questions against $1.4$ for the monolithic arm.",
+     "explainability_audit.json", "summary.monolithic.mean_score", "0.225"),
 
     # ── the runtime trace that confirms the ReAct loop ──
     ("six rounds", "react_trace_sample.json", "rounds", "6"),
 
     # ── Table: agent-gt (cause accuracy on the 39-event corpus) ──
-    ("Monolithic LLM & $2/16$ ($0.13$) & $0/9$ & $0/3$ & $2/4$",
-     "gt_baseline_monolithic.json", "summary.cause_accuracy_evaluable.correct", "2"),
-    ("Monolithic LLM & $2/16$ ($0.13$) & $0/9$ & $0/3$ & $2/4$",
-     "gt_baseline_monolithic.json", "summary.cause_accuracy_evaluable.n", "16"),
-    ("Monolithic LLM & $2/16$ ($0.13$) & $0/9$ & $0/3$ & $2/4$",
+    ("Monolithic LLM & $1/17$ ($0.06$) & $0/10$ & $0/3$ & $1/4$",
+     "gt_baseline_monolithic.json", "summary.cause_accuracy_evaluable.correct", "1"),
+    ("Monolithic LLM & $1/17$ ($0.06$) & $0/10$ & $0/3$ & $1/4$",
+     "gt_baseline_monolithic.json", "summary.cause_accuracy_evaluable.n", "17"),
+    ("Monolithic LLM & $1/17$ ($0.06$) & $0/10$ & $0/3$ & $1/4$",
      "gt_baseline_monolithic.json",
      "summary.per_cause.outage.correct", "0"),
-    ("Monolithic LLM & $2/16$ ($0.13$) & $0/9$ & $0/3$ & $2/4$",
+    ("Monolithic LLM & $1/17$ ($0.06$) & $0/10$ & $0/3$ & $1/4$",
      "gt_baseline_monolithic.json", "summary.per_cause.route_leak.correct", "0"),
-    ("Monolithic LLM & $2/16$ ($0.13$) & $0/9$ & $0/3$ & $2/4$",
+    ("Monolithic LLM & $1/17$ ($0.06$) & $0/10$ & $0/3$ & $1/4$",
      "gt_baseline_monolithic.json",
-     "summary.per_cause.origin_hijack_victim.correct", "2"),
-    ("Full agent     & $12/16$ ($0.75$) & $8/9$ & $0/3$ & $4/4$",
-     "gt_agent_full.json", "summary.cause_accuracy_evaluable.correct", "12"),
-    ("Full agent     & $12/16$ ($0.75$) & $8/9$ & $0/3$ & $4/4$",
-     "gt_agent_full.json", "summary.cause_accuracy_evaluable.n", "16"),
-    ("Full agent     & $12/16$ ($0.75$) & $8/9$ & $0/3$ & $4/4$",
-     "gt_agent_full.json", "summary.per_cause.outage.correct", "8"),
-    ("Full agent     & $12/16$ ($0.75$) & $8/9$ & $0/3$ & $4/4$",
+     "summary.per_cause.origin_hijack_victim.correct", "1"),
+    ("Full agent     & $13/17$ ($0.76$) & $9/10$ & $0/3$ & $4/4$",
+     "gt_agent_full.json", "summary.cause_accuracy_evaluable.correct", "13"),
+    ("Full agent     & $13/17$ ($0.76$) & $9/10$ & $0/3$ & $4/4$",
+     "gt_agent_full.json", "summary.cause_accuracy_evaluable.n", "17"),
+    ("Full agent     & $13/17$ ($0.76$) & $9/10$ & $0/3$ & $4/4$",
+     "gt_agent_full.json", "summary.per_cause.outage.correct", "9"),
+    ("Full agent     & $13/17$ ($0.76$) & $9/10$ & $0/3$ & $4/4$",
      "gt_agent_full.json", "summary.per_cause.route_leak.correct", "0"),
-    ("Full agent     & $12/16$ ($0.75$) & $8/9$ & $0/3$ & $4/4$",
+    ("Full agent     & $13/17$ ($0.76$) & $9/10$ & $0/3$ & $4/4$",
      "gt_agent_full.json", "summary.per_cause.origin_hijack_victim.correct", "4"),
-    ("Rules only     & $10/16$ ($0.63$) & $8/9$ & $0/3$ & $2/4$",
-     "gt_rule_only.json", "summary.cause_accuracy_evaluable.correct", "10"),
-    ("Rules only     & $10/16$ ($0.63$) & $8/9$ & $0/3$ & $2/4$",
-     "gt_rule_only.json", "summary.cause_accuracy_evaluable.n", "16"),
-    ("Rules only     & $10/16$ ($0.63$) & $8/9$ & $0/3$ & $2/4$",
-     "gt_rule_only.json", "summary.per_cause.outage.correct", "8"),
-    ("Rules only     & $10/16$ ($0.63$) & $8/9$ & $0/3$ & $2/4$",
+    ("Rules only     & $11/17$ ($0.65$) & $9/10$ & $0/3$ & $2/4$",
+     "gt_rule_only.json", "summary.cause_accuracy_evaluable.correct", "11"),
+    ("Rules only     & $11/17$ ($0.65$) & $9/10$ & $0/3$ & $2/4$",
+     "gt_rule_only.json", "summary.cause_accuracy_evaluable.n", "17"),
+    ("Rules only     & $11/17$ ($0.65$) & $9/10$ & $0/3$ & $2/4$",
+     "gt_rule_only.json", "summary.per_cause.outage.correct", "9"),
+    ("Rules only     & $11/17$ ($0.65$) & $9/10$ & $0/3$ & $2/4$",
      "gt_rule_only.json", "summary.per_cause.route_leak.correct", "0"),
-    ("Rules only     & $10/16$ ($0.63$) & $8/9$ & $0/3$ & $2/4$",
+    ("Rules only     & $11/17$ ($0.65$) & $9/10$ & $0/3$ & $2/4$",
      "gt_rule_only.json", "summary.per_cause.origin_hijack_victim.correct", "2"),
 
 ]
@@ -203,7 +203,7 @@ APPENDIX_CHECKS = [
 
 
 
-def main() -> int:
+def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tex", default=str(
         PROJECT_ROOT / "docs" / "paper" / "section5b_agents.tex"))
@@ -290,8 +290,8 @@ def main() -> int:
     # the paper printing a stale product, so the multiplication is checked
     # against the artefact directly.
     try:
-        summary = load("explainability_audit_corpus.json")["summary"]
-        for arm, label in (("agent", "5.6"), ("monolithic", "1.7")):
+        summary = load("explainability_audit.json")["summary"]
+        for arm, label in (("agent", "5.5"), ("monolithic", "1.4")):
             derived = 6.0 * float(summary[arm]["mean_score"])
             printed = float(label)
             if abs(derived - printed) > 0.06:

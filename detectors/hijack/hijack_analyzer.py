@@ -27,7 +27,7 @@ class StreamingAnomalyAggregator:
                 try:
                     dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                     time_key = int(dt.timestamp() // self._time_window_seconds) * self._time_window_seconds
-                except (ValueError):
+                except ValueError:
                     time_key = 0
 
                 key = f"{atype}|{prefix}|{time_key}"
@@ -52,7 +52,7 @@ class StreamingAnomalyAggregator:
                 elif g['count'] >= 2:
                     g['confidence'] = 'medium'
 
-            except (ValueError):
+            except ValueError:
                 continue
 
         # Allow GC to reclaim the chunk list immediately
@@ -110,7 +110,7 @@ def save_alert_messages(target_as, start_time, end_time,
         logger.info(f"Saved {alert_data['alerts']['total_alerts']} hijack alerts to {alert_file}")
         return str(alert_file)
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error saving alert messages: {e}")
         return ""
 
@@ -132,6 +132,6 @@ def assess_alert_severity(alerts):
         else:
             return "low"
 
-    except (AttributeError) as e:
+    except AttributeError as e:
         logger.error(f"Error assessing alert severity: {e}")
         return "unknown"
