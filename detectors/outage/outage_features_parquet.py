@@ -172,8 +172,14 @@ class ParquetOutageFeatureExtractor:
 
         self._rows_seen += df.height
 
+        # A chunk whose rows all carry no AS path gives polars a
+        # null-typed column, and the string operations need a string.
+        df = df.with_columns(
+            pl.col("as_path").cast(pl.String, strict=False).fill_null("")
+        )
+
         tokens = clean_tokens(df.get_column("as_path"))
-        peer_as = df.get_column("peer_as").fill_null("")
+        peer_as = df.get_column("peer_as").cast(pl.String, strict=False).fill_null("")
 
         # Remember which prefixes the target originates, so a later
         # withdrawal of the same prefix can be attributed to it.  This has

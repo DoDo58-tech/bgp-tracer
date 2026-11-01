@@ -30,22 +30,10 @@ from datetime import timedelta
 from typing import Optional
 from llm.prompt import get_reasoning_laws
 from agents.routing_agent import run_routing_agent_async
+from utils.helpers import naive_utc
 
 # Lazy initialization for OUTAGE_DETECTOR to avoid import issues
 _OUTAGE_DETECTOR = None
-
-
-def naive_utc(ts):
-    """Return *ts* as a naive UTC datetime.
-
-    The routing layer writes naive timestamps and the traffic layer writes
-    UTC-aware ones, so the two cannot be subtracted until they are put in
-    the same frame.  The project converts to UTC and drops the offset
-    everywhere else, and this does the same.
-    """
-    if ts.tzinfo is not None:
-        return ts.astimezone(timezone.utc).replace(tzinfo=None)
-    return ts
 
 
 def get_outage_detector():

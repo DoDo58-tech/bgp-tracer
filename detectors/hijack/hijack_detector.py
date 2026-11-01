@@ -310,6 +310,12 @@ def process_chunk_worker(args):
     if announcements.is_empty():
         return []
 
+    # A chunk whose announcements all carry no AS path gives polars a
+    # null-typed column, and the string operations below need a string.
+    announcements = announcements.with_columns(
+        pl.col("as-path").cast(pl.String, strict=False).fill_null("")
+    )
+
     # The AS path is kept as it arrived.  An earlier version of this
     # function removed repeated hops before scoring it, which silently
     # changed the origin: an AS that prepends itself to its own path

@@ -92,7 +92,7 @@ def test_gate_fails_on_a_drifted_ablation_number(tmp_path):
     paper = drifted_paper(
         tmp_path, "appendix.tex",
         lambda t: t.replace(
-            "Multi-round reasoning & $0.470$",
+            "Multi-round reasoning & $0.647$",
             "Multi-round reasoning & $0.999$",
         ),
     )

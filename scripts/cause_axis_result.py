@@ -1,4 +1,4 @@
-"""The cause-axis result on the 39-event corpus, with its statistics.
+"""The cause-axis result on the canonical corpus, with its statistics.
 
 This is the script that produces the numbers the paper's agent section
 reports.  It reads the two arms' ground-truth runs, scores the metric
@@ -115,8 +115,8 @@ def metric_family(rows: dict, predict):
 
 
 def main():
-    agent = load("gt_agent_full_v2")
-    rules = load("gt_rule_only_v2")
+    agent = load("gt_agent_full")
+    rules = load("gt_rule_only")
 
     agent_pred = lambda r: r.get("cause")
     rule_pred = lambda r: r.get("cause")

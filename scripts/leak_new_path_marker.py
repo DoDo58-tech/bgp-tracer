@@ -147,7 +147,7 @@ def main():
         }
 
     # The leak-vs-rest permutation test on the marker.
-    from leak_identifiability_verdict import permutation_p
+    from leak_stats import permutation_p
 
     pos = [1.0 if r["new_in_event"] else 0.0 for r in rows if r["gt_cause"] == "route_leak"]
     neg = [1.0 if r["new_in_event"] else 0.0 for r in rows if r["gt_cause"] != "route_leak"]

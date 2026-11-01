@@ -229,6 +229,12 @@ def main():
     args = ap.parse_args()
 
     heldout = json.loads(HELDOUT_PATH.read_text())
+    canonical = set(
+        json.loads((EVAL / "canonical_event_ids.json").read_text())["event_ids"]
+    )
+    # A held-out event that also sits in the development corpus is not
+    # held out, so it is dropped here rather than trusted to a list.
+    heldout = [e for e in heldout if e["event_id"] not in canonical]
     if args.limit:
         heldout = heldout[: args.limit]
 

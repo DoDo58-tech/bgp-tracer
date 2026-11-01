@@ -22,7 +22,6 @@ Writes results/eval/victim_in_path.json.
 from __future__ import annotations
 
 import json
-import random
 import sys
 from pathlib import Path
 
@@ -72,25 +71,9 @@ def analyse(routing: dict, victim: str):
 
 
 def permutation_p(positives, negatives, seed=SEED, trials=5000):
-    from leak_identifiability_verdict import auc
+    from leak_stats import permutation_p as perm
 
-    if not positives or not negatives:
-        return {"auc": 0.5, "p_value": 1.0, "significant_at_0.05": False}
-    observed = auc(positives, negatives)
-    pool = list(positives) + list(negatives)
-    n_pos = len(positives)
-    rng = random.Random(seed)
-    count = 0
-    for _ in range(trials):
-        rng.shuffle(pool)
-        a = auc(pool[:n_pos], pool[n_pos:])
-        if abs(a - 0.5) >= abs(observed - 0.5):
-            count += 1
-    return {
-        "auc": round(observed, 4),
-        "p_value": round(count / trials, 4),
-        "significant_at_0.05": (count / trials) < 0.05,
-    }
+    return perm(positives, negatives, seed=seed, trials=trials)
 
 
 def main():

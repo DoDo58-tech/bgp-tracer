@@ -137,10 +137,10 @@ it in front of a deterministic gate?
 We answered it by replacing the agent's proposal with a fixed label and
 re-scoring (\texttt{scripts/agent\_contribution.py}). On the development
 corpus the constant-proposal control reaches the same $12/16$ as the
-agent's own proposal. On the 14 held-out events, which were absent from the
+agent's own proposal. On the 13 held-out events, which were absent from the
 corpus the cause rule was developed against and were scored once with the
 gate the development corpus selected, the agent-proposal gate reaches
-$9/14$ while the constant-proposal control reaches $10/14$. The difference
+$8/13$ while the constant-proposal control reaches $9/13$. The difference
 is one event and the paired exact test gives $p=1.0$.
 
 The reason is visible in the per-event table: the agent's proposal is
@@ -152,40 +152,45 @@ requirement does not bite, the agent agrees with the rule.
 \paragraph{Where the corpus itself is the limit.}
 \label{sec:eval-agent-leak-limit}
 
-Eight of the ten route-leak events are physically indistinguishable from
-hijack in the cached telemetry. The leak detector fires on every event in
-the corpus, saturating at its $5000$-record truncation limit on $11$ of
-$17$ outage events, $8$ of $10$ leak events and $5$ of $12$ hijack
-events, so its output carries no information about which class the event
-belongs to. We tested the plausible discriminators directly, with a
-permutation test on each (\texttt{scripts/leak\_identifiability\_verdict.py}): the
-withdrawal ratio, the traffic-drop magnitude, the announcement retention,
-the withdrawal rate, the leak probability, the origin-versus-path change
-features, and the victim's presence in the announced path. None separates
-the class at the $0.05$ level. The single exception is the presence of the
-leaking ASN in the routing block (AUC $0.88$, $p<0.001$), which fires on
-$8$ of $10$ leak events against $0$ of $17$ outage events---but it
-requires the ground truth to supply the leaking ASN, so it cannot be used
-by a classifier that has to find the leak itself. The corpus's leak labels
-therefore rest on external reporting, not on a routing signature, and we
-report leak recall separately rather than tuning a threshold to hide it.
+The three route-leak events in the corpus are physically
+indistinguishable from hijack in the cached telemetry. The leak detector
+fires on $16$ of the $17$ events, so its output carries little
+information about which class the event belongs to; where it does
+saturate at its $5000$-record truncation limit, it does so on $3$ of $10$
+outage events, $2$ of $3$ leak events and $0$ of $4$ hijack events.
+We tested the plausible discriminators directly, with a permutation test
+on each (\texttt{scripts/leak\_identifiability\_verdict.py},
+\texttt{scripts/leak\_new\_path\_marker.py},
+\texttt{scripts/victim\_in\_path.py}): the withdrawal ratio, the
+traffic-drop magnitude, the announcement retention, the withdrawal rate,
+the leak probability, the origin-versus-path change features, and the
+victim's presence in the announced path. None separates the class at
+the $0.05$ level. The strongest candidate is the presence of the
+leaking ASN on the victim's paths during the event but not during the
+baseline (AUC $0.80$, $p=0.068$), which fires on $2$ of $3$ leak events
+against $1$ of $10$ outage events and $0$ of $4$ hijack events---but it
+is not significant, it requires the ground truth to supply the leaking
+ASN, and it cannot be used by a classifier that has to find the leak
+itself. The corpus's leak labels therefore rest on external reporting,
+not on a routing signature, and we report leak recall separately rather
+than tuning a threshold to hide it.
 
-The per-class split is instructive. The rules are stronger on outage
-($12/17$ against the agent's $9/17$), where the withdrawal and traffic
-signature is decisive. The agent is stronger on origin hijack ($12/12$
-against the rules' $7/12$), where the rules' default answer is a detector
-fallback rather than a measurement. The arbitration takes each where it is
-strong, which is why the combination beats either alone. Of the $9$ events
-on which the two arms still disagree, the agent is right on $6$ and the
-rules on $3$; McNemar's exact two-sided test gives $p=0.51$ and the
-bootstrap interval on the accuracy difference is $[-0.08,\,+0.23]$, so at
-$n=39$ the aggregate delta is suggestive rather than significant. The
-per-class movement is the defensible claim: origin-hijack recall goes from
-$0.58$ to $1.00$ while every other class is held or improved.
+The per-class split is instructive. The two arms tie on outage
+($9/10$ each), where the withdrawal and traffic signature is decisive.
+The agent is stronger on origin hijack ($4/4$ against the rules' $2/4$),
+where the rules' default answer is a detector fallback rather than a
+measurement. The arbitration takes each where it is strong, which is why
+the combination beats either alone. Of the $2$ events on which the two
+arms disagree, the agent is right on both and the rules on none; McNemar's
+exact two-sided test gives $p=0.50$ and the bootstrap interval on the
+accuracy difference is $[0.00,\,+0.29]$, so at $n=17$ the aggregate delta
+is suggestive rather than significant. The per-class movement is the
+defensible claim: origin-hijack recall goes from $0.50$ to $1.00$ while
+every other class is held.
 
 \begin{table}[t]
 \centering
-\caption{Cause accuracy on the canonical verified corpus and on 14
+\caption{Cause accuracy on the canonical verified corpus and on 13
 held-out events absent from it. All arms run on identical cached detector
 evidence through structural cache resolution (no oracle selection); the
 conflicting-label window (AS8048 2024-08-01) is excluded from every arm.
@@ -200,8 +205,8 @@ on the development corpus and the held-out events were scored once.}
   & \textbf{Held-out} \\
 \hline
 Monolithic LLM & $1/17$ ($0.06$) & $0/10$ & $0/3$ & $1/4$ & --- \\
-Full agent     & $13/17$ ($0.76$) & $9/10$ & $0/3$ & $4/4$ & $9/14$ \\
-Rules only     & $11/17$ ($0.65$) & $9/10$ & $0/3$ & $2/4$ & $6/14$ \\
+Full agent     & $13/17$ ($0.76$) & $9/10$ & $0/3$ & $4/4$ & $8/13$ \\
+Rules only     & $11/17$ ($0.65$) & $9/10$ & $0/3$ & $2/4$ & $5/13$ \\
 \hline
 \end{tabular}
 \end{table}
@@ -349,13 +354,13 @@ questions against $1.4$ for the monolithic arm.
 The component ablation and the constant-proposal control qualify both. The
 agent layer's measurable contribution on this corpus is \emph{narrower than
 its architecture}: the stage that carries the decision is the multi-round
-reasoner, whose removal costs $0.094$ in accuracy with a paired confidence
+reasoner, whose removal costs $0.118$ in accuracy with a paired confidence
 interval entirely below zero (Appendix~\ref{app:agent-ablation}); the
 proposal itself is consulted on a small minority of events, and a fixed
 label in place of the proposal reproduces the accuracy. We state this
 because the alternative is to imply a breadth of contribution the data do
 not show. The remaining question is why not use the cheaper rules arm
-($19/39$ against $22/39$): its output is only as useful as the threshold
+($11/17$ against $13/17$): its output is only as useful as the threshold
 it was given, and a threshold is exactly what an operator cannot audit.
 The agent layer costs more because it keeps the evidence instead of
 summarising it, and the value of keeping it appears only when something

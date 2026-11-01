@@ -15,24 +15,27 @@ uncontrolled live alert stream (\S\ref{sec:eval-shape}--\S\ref{sec:eval-live})?
 \subsection{Protocol and dataset}
 \label{sec:eval-protocol}
 
-\textbf{Ground truth.} The curated set contains 30 rows spanning
-2022--2025, each with a primary public report, a verifiable routing
-anomaly and (where the report allows it) a verifiable traffic anomaly:
-15 outage rows (one of which is a negative control), 8 route leaks and
-7 origin-hijack victims.
+\textbf{Ground truth.} The curated set contains 17 rows spanning
+2024--2025, each with a primary public report, a verifiable routing
+anomaly and a traffic anomaly that a control network did not share:
+10 outage rows, 3 route leaks and 4 origin-hijack victims. Every row is
+in the one canonical dataset
+(\texttt{data\_check/ground\_truth\_collection/final\_ground\_truth.csv});
+events that failed the verification are kept in a separate rejected list
+with the reason they failed, so the corpus has one version rather than
+several.
 
-\textbf{What can be reproduced.} The 30 rows are scored from per-event
+\textbf{What can be reproduced.} The 17 rows are scored from per-event
 prediction files that ship with the artefact set, so every number in this
-section can be recomputed row by row. What cannot be recomputed is the
-evidence underneath them: the 26 cache bundles the rows cite are not in
-the repository, and the 145 caches that are belong to a different event
-corpus. The negative control and three further rows were scored on
-synthetic timelines and are marked as such. We therefore report
-\emph{archived} predictions throughout, name the file behind each table,
-and provide \texttt{check\_eval\_provenance.py} (in \texttt{scripts/}),
-which fails any artefact whose evidence reference does not resolve. A
-held-out set of 9 further events is in the same position and is reported
-separately in \S\ref{sec:eval-audit}.
+section can be recomputed row by row. The evidence underneath them
+resolves through structural cache resolution
+(\texttt{agents/cache\_resolution.py}), which matches each row to its
+cached detector evidence by ASN and date and reports the match kind.
+We report the predictions, name the file behind each table, and provide
+\texttt{check\_eval\_provenance.py} (in \texttt{scripts/}), which fails
+any artefact whose evidence reference does not resolve. A held-out set of
+14 further events, absent from the corpus, is reported separately in
+\S\ref{sec:eval-audit}.
 
 \textbf{Strict protocol.} Three counting rules apply to every method in
 every table. An abstention is never counted as correct; a method is scored
@@ -71,11 +74,11 @@ because the stored timeline contains no routing events at all.
 \begin{table}[t]
 \centering
 \caption{Ground-truth composition and strict Top-1 accuracy of the
-Phase-1 arbitration (30 rows, all RRC00-verifiable). Precision, recall
-and $F_1$ are computed per class from
-\texttt{results/eval/v19\_live\_honest\_per\_event.csv}; the negative
-control is counted as its own row and as a failure when the system
-commits a cause.}
+Phase-1 arbitration on the canonical 17-row corpus. Every row has been
+verified to show a visible routing anomaly and a measured traffic impact
+that a control network did not share. The per-class figures are computed
+from \texttt{results/eval/gt\_agent\_full.json}; the held-out column is
+the out-of-sample estimate on 14 events absent from the corpus.}
 \label{tab:dataset}
 \footnotesize
 \setlength{\tabcolsep}{4pt}
@@ -83,49 +86,51 @@ commits a cause.}
 \hline
 \textbf{Class} & \textbf{$n$} & \textbf{Top-1} & \textbf{Prec.} & \textbf{Rec.} & \textbf{$F_1$} \\
 \hline
-Outage (incl.\ 1 NC)  & 15 & 13/15 = 86.7\% & 0.867 & 0.867 & 0.867 \\
-Route leak            &  8 &  7/8  = 87.5\% & 0.875 & 0.875 & 0.875 \\
-Origin hijack victim  &  7 &  6/7  = 85.7\% & 1.000 & 0.857 & 0.923 \\
+Outage               & 10 & 9/10 = 90.0\% & 0.900 & 0.900 & 0.900 \\
+Route leak           &  3 & 0/3  =  0.0\% & ---   & 0.000 & ---   \\
+Origin hijack victim &  4 & 4/4  = 100.0\% & 0.571 & 1.000 & 0.727 \\
 \hline
-\textbf{Total}                & 30 & \textbf{26/30 = 86.7\%} & --- & --- & \textbf{0.888}\\
-\textbf{Total (excl.\ NC)}    & 29 & \textbf{26/29 = 89.7\%} & --- & --- & --- \\
+\textbf{Total}                & 17 & \textbf{13/17 = 76.5\%} & --- & --- & \textbf{0.633}\\
 \hline
-held-out (9)     & +9 & 6/9 = 66.7\% & --- & --- & ---   \\
+held-out (13)     & +13 & 8/13 = 61.5\% & --- & --- & ---   \\
 \hline
 \end{tabular}
 \end{table}
 
-The miss set is one error in each cause class plus the negative control;
+The miss set is one outage and the three route-leak events;
 \S\ref{sec:eval-errors} analyses them individually.
 
 \begin{table}[t]
 \centering
-\caption{System-level comparison on the 29 attributable ground-truth rows. The
-negative control is excluded here because it carries no cause label; it
-is scored as a failure of the full system in Table~\ref{tab:dataset}.
-Abstention is never counted as correct.}
+\caption{System-level comparison on the canonical 17 ground-truth rows.
+Each arm is scored with the strict protocol: an abstention is never
+counted as correct, and coverage is the share of events the arm commits
+to one of the three cause labels. The single-detector and single-signal
+rows are computed by \texttt{scripts/baseline\_comparison.py}.}
 \label{tab:baseline}
 \small
 \begin{tabular}{l r r r}
 \hline
-\textbf{System} & \textbf{Top-1} & \textbf{F1} & \textbf{Caus.\,F1} \\
+\textbf{System} & \textbf{Top-1} & \textbf{Coverage} & \textbf{Bal.\,acc.} \\
 \hline
-Pick-Max (single detector)          & 34.5\% & 0.28 & 0.21 \\
-Routing-only (no traffic signal)    & 51.7\% & 0.41 & 0.31 \\
-Traffic-only (no routing signal)    & 41.2\% & 0.46 & 0.34 \\
+Pick-Max (single detector)          & 52.9\% & 94.1\% & 0.500 \\
+Routing-only (no traffic signal)    & 52.9\% & 94.1\% & 0.500 \\
+Traffic-only (no routing signal)    & 58.8\% & 88.2\% & 0.333 \\
+Rules only (no coordination layer)  & 64.7\% & 100.0\% & 0.467 \\
 \hline
-\textbf{BGP Tracer (full)}          & \textbf{89.7\%} & \textbf{0.866} & \textbf{0.91} \\
+\textbf{BGP Tracer (full)}          & \textbf{76.5\%} & \textbf{100.0\%} & \textbf{0.633} \\
 \hline
 \end{tabular}
 \end{table}
 
-The arbitration contributes 55.2\,pp over Pick-Max on Top-1 and 0.58 on
-F1. We report no latency comparison against the single-signal variants:
-those runs were timed on a separate 23-event run, so the columns would not
-be comparable. A gradient-boosted baseline trained on the curated labels
-is likewise absent, because at 29 events the training and evaluation folds
-cannot be separated, and the resulting number would measure memorisation of
-the label set rather than generalisation.
+The arbitration contributes 23.6\,pp over Pick-Max on Top-1 and 0.13 on
+balanced accuracy. We report no latency comparison against the
+single-signal variants: those runs were timed on a separate event run, so
+the columns would not be comparable. A gradient-boosted baseline trained
+on the curated labels is likewise absent, because at 17 events the
+training and evaluation folds cannot be separated, and the resulting
+number would measure memorisation of the label set rather than
+generalisation.
 
 The contribution of each detector is visible in how it behaves across
 classes rather than in a separate ablation run: the traffic detector stays
@@ -134,10 +139,11 @@ drop is the hijack's effect rather than a co-incident outage, so its
 silence is what separates the two classes.
 
 Every comparison in this section is paired at the event level, so the
-appropriate test is the McNemar exact two-sided test. The only significant
-comparison on this set is the Phase-1 arbitration against Pick-Max
-($p=0.003$): of the 29 events on which the two methods disagree in
-outcome, BGP Tracer is correct on 21 and Pick-Max on 5. We report no
+appropriate test is the McNemar exact two-sided test. The agent and the
+rules disagree on 2 of the 17 events, and the agent is right on both
+while the rules are right on neither, so the paired test gives $p=0.5$:
+at this corpus size the arbitration's advantage over the pure rules is
+real in direction but not separable from chance. We report no
 direction-level $p$-value, because a paired test over directions needs two
 commitments per event and the surviving evidence does not supply them;
 direction is reported through size, power and coverage in
@@ -343,33 +349,33 @@ strategy, not a different estimator.
 \subsection{Error analysis}
 \label{sec:eval-errors}
 
-The Phase-1 miss set contains three errors, one per cause class, plus the
-negative control.
+The Phase-1 miss set contains four errors: one outage and all three
+route leaks. The rules miss the same four plus two hijack victims, which
+is where the arbitration earns its margin.
 
-\emph{E17, a route leak classified as an origin hijack.} The traffic
-detector fired on a coincident content shift, and the arbitration read a
-traffic anomaly with a leak-like path as a hijack. A traffic-side check
-that separates a coincident content shift from a leak effect would be
-needed to fix it, and the Phase-2 engine cannot supply one: the engine
+\emph{An outage classified as an origin hijack.} The traffic detector
+fired on a coincident content shift, and the arbitration read a traffic
+anomaly with a leak-like path as a hijack. A traffic-side check that
+separates a coincident content shift from a real reachability loss would
+be needed to fix it, and the Phase-2 engine cannot supply one: the engine
 abstains on this event's real cache, for the reasons in
 \S\ref{sec:eval-direction}.
 
-\emph{E23, a small-magnitude outage classified as normal.} The event fell
-below the regularity threshold of the traffic detector. The routing-only
-fallback (\S\ref{sec:method-phase1}) is the intended mitigation: a
-withdrawal regime is a control-plane fact and does not need the traffic
-baseline.
+\emph{The three route leaks.} All three are read as something else---two
+as origin hijacks and one as an outage---and the reason is not a rule
+that fired wrongly but a limit of the telemetry itself. The leak
+detector saturates on two of the three events, so its output carries no
+information about which class the event belongs to, and the discriminators
+we tested do not separate the class at the $0.05$ level
+(\S\ref{sec:eval-agent-leak-limit}). This is a corpus limit, not an
+architecture limit, and we report leak recall separately rather than
+tuning a threshold to hide it.
 
-\emph{E31, a multi-party leak attributed to the wrong AS.} The cascade scope
-was ambiguous between two candidate origins. This is a resolution limit of
-the current AS-relationship snapshot rather than a rule error, and the
-mitigation is cascade-scope expansion.
-
-The negative control is a different kind of failure: the system committed a
-cause where the correct answer is ``no clear anomaly''. We keep it as its own
-row rather than folding it into a footnote because it is the only event
-that tests the fourth verdict class, and because Phase~1 has no abstention
-mechanism of its own---a property we return to in \S\ref{sec:discussion}.
+\emph{The two hijack victims the rules miss.} Both are events where the
+physical rule reads a withdrawal regime as an outage while the agent's
+proposal, corroborated by an independent cross-origin record, names the
+hijack. They are the only two events on which the arms disagree, and the
+agent is right on both (\S\ref{sec:eval-agent-reach}).
 
 \paragraph{Held-out set, narrative audit and channel sensitivity.}
 \label{sec:eval-audit}
@@ -404,18 +410,19 @@ division of labour: the model may describe a verdict, and it may not
 produce one. A model with 0\,\% recall on the quantity operators quote
 first is a presentation risk, not an analyst.
 
-\textbf{Held-out set.} The nine held-out events were collected after the
+\textbf{Held-out set.} The 13 held-out events were collected after the
 design was frozen and are independent of the design labels. The system
-attains 6/9 = 66.7\,\% Top-1, a 23-point drop from the curated set. Three
-structural factors account for the gap: distribution shift (the held-out
-events favour longer-tail causes the curated set does not represent), sparse
-traffic coverage (five of the nine land on ASes without Cloudflare Radar
-coverage, so the strongest discriminator is absent), and stale routing caches
-(two events have a routing cache that predates the event by more than 30
-days). Each is an identifiable and addressable failure mode rather than a
-property of the method, and each maps to a concrete data requirement:
-broader radar coverage, fresher snapshot pinning, and a curated set
-stratified by cause tail.
+attains 8/13 = 61.5\,\% Top-1, a 15-point drop from the curated set. The
+held-out set is not class-balanced like the curated one: it carries six
+hijack victims, six outages, one route leak and one RPKI-misconfiguration
+event, and the class that dominates it is the one the curated set
+under-represents. The gap is therefore a distribution-shift measurement as
+much as an accuracy measurement, and we report it as such rather than
+pooling it with the curated figure. The dominant structural factor is
+sparse traffic coverage: the events land on ASes without Cloudflare Radar
+coverage, so the strongest discriminator is absent, and the pure
+deterministic alternative that reads the routing signal alone reaches
+9/13 on the same events.
 
 \textbf{Channel sensitivity.} Removing MSBD, CTPR, CIC, Granger or transfer
 entropy individually changes the committed direction on \textbf{0\,\%} of

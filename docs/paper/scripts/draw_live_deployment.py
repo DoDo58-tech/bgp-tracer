@@ -11,11 +11,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 
-# Real v17 numbers (from v20 audit + FINAL_RESULTS)
-months = ["v17\n30 ev.", "honest-21\n(3 det)", "honest-21\n(−NC)"]
-top1   = [86.7, 85.7, 90.0]
-n      = [30,   21,   20]
-miss   = [4,    3,    2]
+# The canonical corpus, from results/eval/gt_agent_full.json
+months = ["canonical\n17 ev.", "held-out\n13 ev.", "rules only\n17 ev."]
+top1   = [76.5, 61.5, 64.7]
+n      = [17,   13,   17]
+miss   = [4,    5,    6]
 
 fig, ax = plt.subplots(figsize=(7.5, 3.5), dpi=200)
 x = np.arange(len(months))

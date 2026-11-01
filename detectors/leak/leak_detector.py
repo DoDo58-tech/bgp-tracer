@@ -78,6 +78,12 @@ def find_pathprob_file(pathprob_file = None):
     return None
 
 
+#: The built directed-link frame, keyed by the id of the probability
+#: table it was built from.  The table is kept in the entry so the key
+#: cannot be recycled onto a different table.
+DIRECTED_LINK_CACHE = {}
+
+
 def read_prob(probfile):
     prob = {}
     try:
@@ -213,6 +219,49 @@ def detect_route_leaks_in_announcements_slow(
     return leaks
 
 
+def directed_links(asrelprob):
+    """The directed AS-link table, built once per probability table.
+
+    The PathProb table is keyed by unordered pairs, so every link has to
+    be expanded into both directions before it can be joined against a
+    path's edges.  The expansion is a million rows, and a shared scan
+    scores one chunk after another with the same table, so the result is
+    cached.
+
+    The cache keeps the probability table alive next to the built frame,
+    so the key cannot be recycled onto a different table.
+    """
+    key = id(asrelprob)
+    entry = DIRECTED_LINK_CACHE.get(key)
+    if entry is not None and entry[0] is asrelprob:
+        return entry[1]
+
+    link_records = []
+    for k, v in asrelprob.items():
+        if not isinstance(k, tuple) or len(k) != 2:
+            continue
+        try:
+            a, b = int(k[0]), int(k[1])
+        except (TypeError, ValueError):
+            continue
+        p2c, _, c2p = float(v[0]), float(v[1]), float(v[2])
+        link_records.append((a, b, p2c, c2p))
+        link_records.append((b, a, c2p, p2c))
+
+    try:
+        link_df = pl.DataFrame(
+            link_records,
+            schema=["_a", "_b", "_p2c", "_c2p"],
+            orient="row",
+        )
+    except (AttributeError, TypeError, ValueError) as exc:
+        logger.error(f"[leak_detector] failed to build link DataFrame: {exc}")
+        return None
+
+    DIRECTED_LINK_CACHE[key] = (asrelprob, link_df)
+    return link_df
+
+
 def detect_route_leaks_vectorized(
     announcements_df,
     asrelprob,
@@ -279,17 +328,13 @@ def detect_route_leaks_vectorized(
         # so the table has to be expanded into both directed orientations
         # before the join; otherwise the provider and customer roles are
         # swapped on every descending hop.
-        link_records = []
-        for k, v in asrelprob.items():
-            if not isinstance(k, tuple) or len(k) != 2:
-                continue
-            try:
-                a, b = int(k[0]), int(k[1])
-            except (TypeError, ValueError):
-                continue
-            p2c, _, c2p = float(v[0]), float(v[1]), float(v[2])
-            link_records.append((a, b, p2c, c2p))
-            link_records.append((b, a, c2p, p2c))
+        #
+        # The expansion is cached per probability table: it costs a
+        # million rows to build, and a shared scan calls this function
+        # once per chunk with the same table.
+        link_df = directed_links(asrelprob)
+        if link_df is None:
+            return leaks
 
         # ── Optimization 2026-09-17: replace per-row map_elements with
         df = df.with_row_index(name="_path_id")
@@ -318,17 +363,7 @@ def detect_route_leaks_vectorized(
             ])
             .filter(pl.col("_from_i").is_not_null() & pl.col("_to_i").is_not_null())
         )
-        # 2. Convert the directed link table to a Polars DataFrame for the join.
-        try:
-            link_df = pl.DataFrame(
-                link_records,
-                schema=["_a", "_b", "_p2c", "_c2p"],
-                orient="row",
-            )
-        except AttributeError as exc:
-            logger.error(f"[leak_detector] failed to build link DataFrame: {exc}")
-            return leaks
-        # 3. Hash-join to fetch per-edge (p2c, c2p) tuples.
+        # 2. Hash-join to fetch per-edge (p2c, c2p) tuples.
         joined = edges.join(link_df, on=["_a", "_b"], how="left")
         # 4. Compute leak probability per path.  The c2p term refers to the
         # *previous edge of the same path*, so the shift has to be windowed

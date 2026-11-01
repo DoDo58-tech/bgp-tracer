@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-BGP Tracer — real system vs real baselines (v17 30-event ground-truth).
+BGP Tracer — real system vs real baselines (canonical 17-event ground-truth).
 Output: figs/fig_baseline_compare.pdf
 """
 import matplotlib.pyplot as plt
@@ -11,13 +11,13 @@ systems = [
     "Pick-Max\n(single detector)",
     "Routing-only\n(no traffic signal)",
     "Traffic-only\n(no routing signal)",
-    "ML-oracle\n(gradient-boosted, LOO)",
+    "Rules only\n(no coordination)",
     "BGP Tracer\n(full system)",
 ]
-# Real numbers from v20 audit + final_results.md
-top1    = [34.5, 51.7, 41.2, 73.3, 89.7]
-f1      = [0.28, 0.41, 0.46, 0.71, 0.866]
-causal  = [0.21, 0.31, 0.34, 0.55, 0.91]   # qualitative; BGP Tracer is the 100% on real
+# From results/eval/baseline_comparison.json
+top1    = [52.9, 52.9, 58.8, 64.7, 76.5]
+f1      = [0.50, 0.50, 0.33, 0.47, 0.63]
+causal  = [0.50, 0.50, 0.33, 0.47, 0.63]
 minutes = [0.6,   1.8,  2.1,  3.4,  0.9]   # wall-clock per event
 
 fig, axes = plt.subplots(1, 4, figsize=(12, 3.6), dpi=200)

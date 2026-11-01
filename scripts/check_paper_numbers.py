@@ -70,6 +70,8 @@ def main():
     expl = load("explainability_audit.json")["summary"]
     ablation = load("component_ablation_summary.json")["summary"]
     heldout = load("heldout_validation.json")["arms"]
+    baselines = load("baseline_comparison.json")["arms"]
+    subsets = load("robustness_subsets.json")["subsets"]
 
     tests: list[tuple[str, str]] = [
         # ── the direction test ──
@@ -141,6 +143,26 @@ def main():
          f"{ablation['full']['accuracy_across_runs']['mean']:.3f}"),
         ("ablation, no reasoning",
          f"{ablation['no_reasoning']['accuracy_across_runs']['mean']:.3f}"),
+
+        # ── the system-level comparison ──
+        ("pick-max top-1",
+         percent(baselines["pick_max"]["top1"])),
+        ("routing-only top-1",
+         percent(baselines["routing_only"]["top1"])),
+        ("traffic-only top-1",
+         percent(baselines["traffic_only"]["top1"])),
+        ("balanced accuracy, agent",
+         f"{baselines['agent_full']['balanced_accuracy']:.3f}"),
+        ("balanced accuracy, rules",
+         f"{baselines['rule_only']['balanced_accuracy']:.3f}"),
+        ("robustness, all events",
+         percent(subsets["all"]["accuracy"])),
+        ("robustness, with traffic",
+         percent(subsets["with_traffic"]["accuracy"])),
+        ("robustness, withdrawal storm",
+         percent(subsets["withdrawal_storm"]["accuracy"])),
+        ("robustness, hijack dominant",
+         percent(subsets["hijack_dominant"]["accuracy"])),
     ]
 
     missing = []

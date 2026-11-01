@@ -40,8 +40,8 @@ paragraph, and it is the report the evidence supports.
 \textbf{Construct.} The ground-truth labels are curated from published
 accounts, and curation favours incidents that were reported. This
 inflates the share of high-severity, clearly-caused events, which is
-consistent with the gap between the curated set (89.7\,\%) and the
-held-out set (66.7\,\%).
+consistent with the gap between the curated set (76.5\,\%) and the
+held-out set (61.5\,\%).
 
 \textbf{Internal.} The label-leak audit removed \texttt{event\_type}
 from three detectors and changed their outputs; every number in this
@@ -55,7 +55,7 @@ non-empty buckets to test than the live path supplies, which is the
 opposite direction from the abstention result, and \S\ref{sec:eval-shape}
 quantifies it on a window where both shapes are available.
 
-\textbf{External.} Thirty curated events and thirty-nine agent-corpus
+\textbf{External.} Thirty curated events and seventeen agent-corpus
 events are small evaluations, and the selective accuracy of the
 directional layer rests on very few
 commitments. We report counts rather than a rate so that a reader can
@@ -64,7 +64,7 @@ The leak class is a third limitation: the corpus cannot separate leaks
 from outages on physical grounds, so the leak row of
 Table~\ref{tab:agent-gt} is a statement about the collection rather than
 about the method. The agent-level comparison is also under-powered: at
-$n=39$ the $22$ against $19$ gap between the agent pipeline and the rules
+$n=17$ the $13$ against $11$ gap between the agent pipeline and the rules
 arm is suggestive rather than significant on its own, and we do not claim
 it is; the per-class movement it produces is the defensible claim.
 

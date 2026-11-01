@@ -273,7 +273,7 @@ def fig_alert_flood():
 
 def fig_robustness():
     subsets = ["All events","With traffic","Withdrawal storm","Hijack-dominant"]
-    acc = [89.7,90.0,85.7,71.4]; ns = [29,20,21,7]
+    acc = [76.5,75.0,100.0,60.0]; ns = [17,16,8,10]
     fig, ax = plt.subplots(figsize=(6.0,3.0))
     bars = ax.bar(range(len(acc)), acc, color=[BLUE,BLUE,AMBER,RED], edgecolor="white")
     for b,v,n in zip(bars,acc,ns):

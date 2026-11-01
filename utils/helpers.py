@@ -1,7 +1,21 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+
+def naive_utc(ts):
+    """Return *ts* as a naive UTC datetime.
+
+    The update stream is stored as naive UTC while the traffic side and
+    the API layer use UTC-aware timestamps, so the two cannot be
+    compared until they are put in the same frame.
+    """
+    if ts is None:
+        return None
+    if ts.tzinfo is not None:
+        return ts.astimezone(timezone.utc).replace(tzinfo=None)
+    return ts
 
 
 def make_json_safe(value, _seen=None):

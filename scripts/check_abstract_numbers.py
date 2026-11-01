@@ -84,12 +84,12 @@ CHECKS = [
      "aea_coverage_caches.json", "coverage_summary.n_two_series", "27"),
 
     # ── introduction: the agent layer's accuracy claim ──
-    ("section1_intro.tex", "$0.56$ against $0.10$",
+    ("section1_intro.tex", "$0.76$ against $0.06$",
      "component_ablation_summary.json", "headline.full.accuracy",
-     "0.5641"),
-    ("section1_intro.tex", "$0.56$ against $0.10$",
+     "0.7647"),
+    ("section1_intro.tex", "$0.76$ against $0.06$",
      "component_ablation_summary.json", "headline.monolithic.accuracy",
-     "0.1026"),
+     "0.0588"),
 ]
 
 

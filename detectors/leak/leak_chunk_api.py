@@ -18,7 +18,6 @@ detector produces.
 """
 from __future__ import annotations
 
-import gc
 from typing import Iterable, List, Optional, Sequence
 
 import polars as pl
@@ -62,6 +61,12 @@ def filter_target_announcements(
     )
     if announcements.is_empty():
         return announcements, announcements, 0, 0
+
+    # A chunk whose announcements all carry no AS path gives polars a
+    # null-typed column, and the string operations below need a string.
+    announcements = announcements.with_columns(
+        pl.col("as-path").cast(pl.String, strict=False).fill_null("")
+    )
 
     total_announcements = len(announcements)
     filtered_ann = announcements
@@ -124,11 +129,8 @@ def consume_chunk(
         df_chunk, target_asns
     )
     del df_chunk
-    gc.collect()
 
     if filtered_ann.is_empty():
-        del announcements, filtered_ann
-        gc.collect()
         return {
             "total_announcements": total,
             "filtered_announcements": filtered,
@@ -138,7 +140,6 @@ def consume_chunk(
 
     leaks = detect_route_leaks_vectorized(filtered_ann, asrelprob, threshold, max_leaks=0)
     del announcements, filtered_ann
-    gc.collect()
 
     return {
         "total_announcements": total,

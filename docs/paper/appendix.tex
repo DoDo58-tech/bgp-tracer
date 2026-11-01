@@ -110,22 +110,20 @@ Table~\ref{tab:dataset}.
 
 \begin{table}[!htbp]
 \centering
-\caption{Row-normalised attribution confusion matrix over the 30
-ground-truth rows.  Entries are counts, with the row share in
-parentheses; correct attributions are bold.  No row commits the
-negative control, so that column is omitted.}
+\caption{Row-normalised attribution confusion matrix over the 17
+canonical ground-truth rows.  Entries are counts, with the row share in
+parentheses; correct attributions are bold.}
 \label{tab:confusion}
 \small
 \begin{tabular}{@{}l r r r r@{}}
 \hline
 \textbf{Ground truth} & \textbf{Outage} & \textbf{Leak} & \textbf{Hijack} & \textbf{$n$} \\
 \hline
-Outage (excl.\ NC) & \textbf{13} (93\%) & 1 (7\%)             & 0                 & 14 \\
-Route leak         & 1 (12\%)         & \textbf{7} (88\%)   & 0                 &  8 \\
-Origin hijack      & 0                & 1 (14\%)            & \textbf{6} (86\%)  &  7 \\
-Negative control   & 0                & 1 (100\%)           & 0                 &  1 \\
+Outage               & \textbf{9} (90\%)  & 0                 & 1 (10\%)           & 10 \\
+Route leak           & 1 (33\%)          & 0                 & 2 (67\%)           &  3 \\
+Origin hijack        & 0                 & 0                 & \textbf{4} (100\%) &  4 \\
 \hline
-\textbf{Total}     & 14               & 10                  & 6                 & 30 \\
+\textbf{Total}     & 10                & 0                 & 7                 & 17 \\
 \hline
 \end{tabular}
 \end{table}
@@ -152,21 +150,21 @@ outage dispersed). Released as
 
 A.10 Hard-case accuracy subsets.
 The table behind the regime discussion in the error analysis. The
-subsets overlap, so the event counts do not sum to 29.
+subsets overlap, so the event counts do not sum to 17.
 
 \begin{table}[!htbp]
   \caption{Strict Top-1 accuracy on overlapping hard-case subsets.
-  Subsets overlap, so the event counts do not sum to 29.}
+  Subsets overlap, so the event counts do not sum to 17.}
   \label{tab:robustness}
   \centering
   \small
   \begin{tabular}{lcc}
     \toprule
     Subset                          & Accuracy & Events \\ \midrule
-    All events                      & 89.7\%   & 29    \\
-    With a traffic signal           & 90.0\%   & 20    \\
-    Withdrawal-storm regime         & 85.7\%   & 21    \\
-    Hijack-dominant regime          & 71.4\%   & 7     \\ \bottomrule
+    All events                      & 76.5\%   & 17    \\
+    With a traffic signal           & 75.0\%   & 16    \\
+    Withdrawal-storm regime         & 100.0\%  & 8     \\
+    Hijack-dominant regime          & 60.0\%   & 10    \\ \bottomrule
   \end{tabular}
 \end{table}
 
@@ -256,18 +254,17 @@ bootstrap interval is over the three paired differences.
 
 Table~\ref{tab:agent-component} is not a flattering table, and we present
 it as measured. One stage moves the decision decisively: disabling
-multi-round reasoning costs $0.094$ in accuracy, the paired difference is
+multi-round reasoning costs $0.118$ in accuracy, the paired difference is
 negative in all three repeats, and its 95\,\% bootstrap interval
-($[-0.128,-0.077]$) lies entirely below zero and far outside the noise
-floor. Two stages move it slightly and not significantly: the Evidence
-Blackboard ($-0.017$) and HCAF attribution ($-0.009$), whose intervals
-both include zero. The remaining three---joint evidence generation,
-hypothesis generation, and external enrichment---produce exactly the full
-pipeline's answers in all three repeats, so we do not claim they are
-load-bearing: at $n=39$ a small delta is not distinguishable from noise
-whatever sign it carries. No arm scores \emph{higher} than the full
-pipeline; where a component cannot be separated from the pipeline on this
-corpus, the pipeline's cost is not buying a different label.
+($[-0.118,-0.118]$) lies entirely below zero and far outside the noise
+floor. The other five---joint evidence generation, HCAF causal
+attribution, hypothesis generation, the Evidence Blackboard, and external
+enrichment---produce exactly the full pipeline's answers in all three
+repeats, so we do not claim they are load-bearing: at $n=17$ a small
+delta is not distinguishable from noise whatever sign it carries. No arm
+scores \emph{higher} than the full pipeline; where a component cannot be
+separated from the pipeline on this corpus, the pipeline's cost is not
+buying a different label.
 
 Scoring counts a resolved event whose pipeline run failed as a wrong
 answer rather than dropping it, so an arm cannot improve its accuracy by
@@ -299,13 +296,13 @@ noise floor a delta has to beat.}
 \textbf{Ablated stage} & \textbf{Accuracy} & \textbf{Delta} & \textbf{95\,CI}
   & \textbf{Spread} \\
 \hline
-None (full pipeline)  & $0.564$ & ---      & ---            & $0.000$ \\
-Joint evidence        & $0.564$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
-HCAF attribution      & $0.556$ & $-0.009$ & $[-0.026,+0.000]$ & $0.015$ \\
-Hypothesis generation & $0.564$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
-Multi-round reasoning & $0.470$ & $-0.094$ & $[-0.128,-0.077]$ & $0.030$ \\
-Evidence Blackboard   & $0.547$ & $-0.017$ & $[-0.026,+0.000]$ & $0.015$ \\
-External enrichment   & $0.564$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
+None (full pipeline)  & $0.765$ & ---      & ---            & $0.000$ \\
+Joint evidence        & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
+HCAF attribution      & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
+Hypothesis generation & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
+Multi-round reasoning & $0.647$ & $-0.118$ & $[-0.118,-0.118]$ & $0.000$ \\
+Evidence Blackboard   & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
+External enrichment   & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
 \hline
 \end{tabular}
 \end{table}

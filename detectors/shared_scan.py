@@ -32,6 +32,7 @@ from typing import Dict, List, Optional, Sequence
 import polars as pl
 
 from utils.logger import logger
+from utils.helpers import naive_utc
 
 
 @dataclass
@@ -79,7 +80,7 @@ class SharedUpdateScan:
     @property
     def scan_start(self):
         """The beginning of the range that has to be read."""
-        if self.baseline_start and self.baseline_start < self.start:
+        if self.baseline_start and naive_utc(self.baseline_start) < naive_utc(self.start):
             return self.baseline_start
         return self.start
 
@@ -247,7 +248,10 @@ class SharedUpdateScan:
         hi = ts.max()
         if lo is None or hi is None:
             return True
-        return not (hi < start or lo > end)
+        # The parquet holds naive UTC, the event window may be aware.
+        lo = naive_utc(lo)
+        hi = naive_utc(hi)
+        return not (hi < naive_utc(start) or lo > naive_utc(end))
 
     def consume(self, chunk: pl.DataFrame, requested: set, in_event: bool):
         if not in_event:

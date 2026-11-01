@@ -519,11 +519,21 @@ def iter_window_chunks(
                 df = df.filter(pl.col("announce") == "A")
 
         # Re-confirm window: only emit rows within the current 5-min bucket.
+        #
+        # The parquet stores naive UTC timestamps, so the bounds have to be
+        # naive too.  Aware bounds against a naive column are a schema
+        # error in polars, not a comparison that happens to work.
         if "ts" in df.columns:
             ts_lo = cur
             ts_hi = cur + timedelta(minutes=5)
+            dtype = df.schema["ts"]
+            if getattr(dtype, "time_zone", None) is None:
+                ts_lo = ts_lo.replace(tzinfo=None)
+                ts_hi = ts_hi.replace(tzinfo=None)
+            else:
+                ts_lo = ts_lo.replace(tzinfo=timezone.utc)
+                ts_hi = ts_hi.replace(tzinfo=timezone.utc)
             try:
-                before = len(df)
                 df = df.filter(
                     (pl.col("ts") >= ts_lo) & (pl.col("ts") < ts_hi)
                 )
