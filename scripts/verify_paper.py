@@ -12,6 +12,8 @@ checks a different slice of that surface:
   cell.
 * ``check_eval_provenance.py``   -- that every evidence reference behind
   the evaluation tables resolves to a file that is present.
+* ``audit_single_estimator.py``  -- that exactly one causal estimator
+  ships, with no vote over several and no fallback to a second.
 * ``paper_length_budget.py``     -- that the compiled paper fits the
   submission's page limits.
 
@@ -47,6 +49,8 @@ GATES = [
       "results/eval/gt_agent_full.json",
       "results/eval/gt_rule_only.json",
       "results/eval/gt_baseline_monolithic.json"]),
+    ("single causal estimator",
+     [sys.executable, str(SCRIPTS / "audit_single_estimator.py")]),
 ]
 
 
