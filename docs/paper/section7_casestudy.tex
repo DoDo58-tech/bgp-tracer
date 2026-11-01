@@ -85,8 +85,9 @@ stamped 14:54:29 (\S\ref{sec:eval-shape}), so the routing side collapses
 to a single spike. (b) What Phase~2 sees of the same window on its own
 five-minute grid: one routing point at bucket 90 and the synthesized
 traffic record at bucket 0, with the other 89 buckets empty and floored
-at $\varepsilon$. Neither series has an interior, so no onset interval
-can be formed and V1 refuses with \texttt{onset\_unresolved}. The figure
+at $\varepsilon$. Neither series has an interior, so the control plane
+has no sustained deviation to pair with the trough and V1 refuses with
+\texttt{inadmissible\_precedence}. The figure
 reproduces what the artefact contains; it is not a depiction of the
 incident's traffic impact.}
 \label{fig:case}
@@ -115,9 +116,9 @@ CSS returns $p = 1.0$ rather than attribute a traffic pre/post shift of
 $0.11\sigma$; transfer entropy estimates $0.03$\,nats in the $R\to T$
 direction against a shuffle null of $0.061\pm0.004$ ($p = 1.0$). The
 engine does not reach either statistic: with one non-filler point per
-side there is no onset to place on an interval, so V1 returns
+side there is no sustained deviation to pair with the trough, so V1 returns
 \texttt{inadmissible\_precedence} with sub-verdict
-\texttt{onset\_unresolved}.
+\texttt{inadmissible\_precedence}.
 
 It is worth being explicit about why that abstention is the right output
 rather than a missed opportunity. The ground truth for this event contains

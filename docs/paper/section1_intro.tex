@@ -142,15 +142,15 @@ by normal traffic variability.
 \paragraph{S3 --- Admissibility-based directional attribution
 (Addresses C3).}
 BGP Tracer reads the direction of an effect from the order of two onsets
-rather than from the size of two contrasts. Each series is segmented
-independently, the onset of the selected change is reported as an
-\emph{interval} rather than a point, and a direction is committed only
-when four vetoes pass: the onset intervals are disjoint and ordered
-(precedence); the selected model beats a no-change model with a
-significant split statistic (persistence); the response does not move
-this much on its own against placebo onsets (exclusivity); and the
-observation covers the affected entities (provenance), with a mirror
-check that a reversion is answered by a reversion (propagation). The
+rather than from the size of two contrasts. The data plane's trough onset
+anchors the measurement, the control plane is compared at that moment
+against the same clock slots on the preceding days, and a direction is
+committed only
+when four vetoes pass: the control plane has already moved, within a
+bounded propagation time (precedence); its displacement beats what an
+ordinary day at the same hour shows (exclusivity); the
+observation covers the affected entities (provenance), and the two
+movements point the same way (congruence). The
 conjunction is logical, so no weight, prior or floor binds the
 conditions, and every refusal returns the veto that failed together with
 the statistic behind it. Granger prediction, transfer entropy and
@@ -188,10 +188,13 @@ irregular ASes while reducing false alarms from ordinary temporal
 variation.
 
 \item \textbf{An admissibility-based directional attribution method.} We
-report each onset as an interval rather than a point, order the two
-edges only when those intervals are disjoint, and admit a direction only
-if four vetoes pass: precedence, persistence, exclusivity against
-placebo onsets, and provenance and mirror checks. Each refusal returns
+anchor the measurement on the data plane's trough onset, compare the
+control plane against the same clock slots on the preceding days, order
+the two edges only when the control plane has already moved, and admit a
+direction only
+if four vetoes pass: precedence, exclusivity against
+the same-clock placebo null, provenance, and directional congruence. Each
+refusal returns
 the veto that failed together with the statistic behind it, the size and
 power of the component tests are measured separately on planted
 mechanisms, and the method abstains when the available data cannot

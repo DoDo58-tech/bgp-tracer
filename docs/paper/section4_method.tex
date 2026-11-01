@@ -5,7 +5,7 @@
 This section specifies what the system computes, in the order the pipeline
 computes it: the shared time grid (\S\ref{sec:method-grid}), the Phase-1
 detectors and their disambiguation rules (\S\ref{sec:method-phase1}), the
-segmentation and onset objects Phase~2 orders (\S\ref{sec:method-est}), the
+the paired displacement that Phase~2 measures (\S\ref{sec:method-est}), the
 four conditions that make its answer admissible (\S\ref{sec:method-vetoes}),
 and the vocabulary in which the procedure refuses
 (\S\ref{sec:method-gate}). The separation that matters is between a
@@ -97,41 +97,90 @@ estimate the effect of routing on traffic. We test the conditions under
 which a directional claim is admissible at all, and refuse when any of
 them fails.
 
-\begin{definition}[Segmentation, onset interval, effect]
-\label{def:segmentation}
-For a series $x$ of length $K$ and minimum segment length
-$m=\max(2,\lceil 0.1K\rceil)$, the \emph{segmentation} $\hat\sigma(x)$ is
-the piecewise-constant model with $0$, $1$ or $2$ changes whose BIC score
-$K\log(\mathrm{SSE}/K)+k\log K$ is smallest over all admissible split
-positions, with $k=2,4,6$ for $0,1,2$ changes. The \emph{onset interval}
-of $\hat\sigma(x)$ is the set of split positions whose SSE is within one
-BIC unit of the optimum: an extra free parameter costs $\log K$ in SSE, so
-every onset within that budget is equally admissible. The \emph{effect} of
-an onset $\tau$ with horizon $h$ on a response series $y$ is the
-interrupted-time-series contrast
+The estimator is \textsc{paddle}: \emph{Paired Displacement,
+Difference-in-differences, with Ledger Evidence}. It is the only causal
+estimator in the system, and the rest of this section specifies it.
+
+\paragraph{The anchor is the data plane's trough.} The two sides are not
+symmetric, and the estimator does not pretend that they are. A routing
+change is sparse and bursty: a change-point search on the control plane
+places its change point wherever the burst is, often hours away from the
+incident, and the resulting lag becomes a property of the burst rather
+than of the propagation. The traffic series is different: an impact is a
+fall, and a fall has a well-located onset. So the trough $\tau_T$ of the
+data plane supplies the anchor, and the control plane is measured
+\emph{at} that moment.
+
+\begin{definition}[Trough onset]
+\label{def:trough}
+Let $d_T(j)$ be the signed relative deviation of the $j$-th traffic
+observation from its own baseline, so that $d_T(j)<0$ means a fall. The
+\emph{trough onset} $\tau_T$ is the first observation of a run of
+$r=2$ consecutive deviations below the floor
 \[
-e(\tau,y)=\frac{1}{h}\sum_{j=0}^{h-1}\bigl(y_{\tau+j}-\hat y_{\tau+j}\bigr),
+-\max\bigl(1.5\,\mathrm{median}_j|d_T(j)|,\;0.02\bigr).
 \]
-where $\hat y$ extrapolates the pre-onset trend (a least-squares line, or
-the pre-onset mean if that trend is degenerate) across the horizon.
 \end{definition}
 
-Two edges whose onset intervals overlap cannot be ordered, however their
-point estimates fall; that is the whole content of the precedence veto.
-The effect is not the only quantity measured. For $B$ placebo onsets drawn
-from the same series before the cause, each evaluated with the same horizon
-and the same estimator, the $p$-value is
-$p=\bigl(1+\#\{|e_b|\ge|e|\}\bigr)/(B+1)$, with the add-one correction
-because an empirical $p$ of exactly zero is not an attainable probability
-at any finite $B$~\cite{phipson-2010-permutation}. This is a test of
-\emph{exclusivity}: the response must move at the cause's onset more than
-it moves at onsets that carry no routing anomaly. Because precedence has
-already fixed the direction, it is a single test, so $\alpha=0.05$ is the
-family-wise level rather than a per-comparison level. The number of
-placebos is reported with every verdict: the smallest attainable $p$ is
-$1/(B+1)$, so a window that supplies six placebos can reject at
-$\alpha=0.05$ only barely, and one that supplies none cannot reject at
-all.
+The onset is the first observation of the run, not its deepest point. An
+impact holds the measured quantity down for a while, and the deepest
+observation of such a plateau is wherever the noise happened to reach its
+lowest---which can be hours after the cause. Anchoring on it made the lag
+between the two edges a property of the noise, and let two edges that
+moved \emph{together} be ordered at all.
+
+\paragraph{The measurement is a paired difference-in-differences.} At the
+anchor, the control plane's treatment arm is its rate in the slots around
+$\tau_T$; the counterfactual arm is the same clock slots on the previous
+days, for the same channel, measured by the same instrument. Both arms
+are summarised by their \emph{median}, never their mean: BGP announcement
+counts are heavy-tailed, and in an outage the one enormous slot is the
+last burst before the silence, so a mean reads the outage as a
+hundredfold surge and the congruence test then refuses an outage whose
+whole signature is the opposite. The displacement is reported as a
+multiple of the counterfactual, so one means normal, zero means silence,
+and three means a threefold surge.
+
+\begin{definition}[Paired displacement]
+\label{def:displacement}
+For channel $c$, let $O_c$ be the median of $c$'s rate in the
+$\pm 3$ slots around $\tau_T$, and let $E_c$ be the median of the
+same-clock counterfactual over those slots on the preceding days. The
+\emph{paired displacement} is
+\[
+d_c=\frac{O_c}{E_c},\qquad |d_c-1|\ \text{the displacement from normal}.
+\]
+\end{definition}
+
+\paragraph{The null is an ordinary day, at the same clock.} For each
+anchor in the baseline period, the same measurement is applied to a day
+known to be ordinary, giving a placebo distribution of $d_c$. The
+comparison is a \emph{tail probability} rather than a ratio against a
+quantile, because the two are not on the same scale: a channel's rate
+cannot fall below zero, so the deepest silence an ordinary day reaches is
+a ratio of exactly zero, while a surge has no ceiling. The placebos are
+therefore split by direction and the incident is compared against the
+distribution of its own kind,
+\[
+p=\frac{1+\#\{b:\ |d_b-1|\ge|d_c-1|,\ \mathrm{sign}(d_b-1)=\mathrm{sign}(d_c-1)\}}{1+\#\{b:\ \mathrm{sign}(d_b-1)=\mathrm{sign}(d_c-1)\}} .
+\]
+This is the test of \emph{exclusivity}: the control plane must deviate
+more at the trough than it does at this hour on an ordinary day. The
+number of placebos is reported with every verdict, because the smallest
+attainable $p$ is $1/(B+1)$: a window that supplies six placebos can
+reject at $\alpha=0.05$ only barely, and one that supplies none cannot
+reject at all.
+
+\paragraph{Silence is a measurement, and absence is not.} A channel whose
+event-window series is flat at zero is normally read as "the control
+plane did not move". For an outage that reading is backwards: the target
+stops announcing its own routes, so the channel is silent \emph{precisely
+when the incident happened}, and the same clock slots on the preceding
+days carry a non-zero rate. A channel the instrument never carried is
+zero everywhere, baseline included, and there is nothing to compare it
+against; that one was not measured at all. The two are distinguished by
+an explicit flag on the series, so that an outage can claim its silence
+while an unmeasured channel cannot invent one.
 
 \subsection{The four vetoes}
 \label{sec:method-vetoes}
@@ -157,43 +206,36 @@ refutation.}
 \hline
 \textbf{Veto} & \textbf{Null} & \textbf{Refuted when} & \textbf{Reason} \\
 \hline
-V1a precedence & the two edges are simultaneous & the onset intervals
-  (Def.~\ref{def:segmentation}) are disjoint and one precedes the other &
-  \texttt{inadmissible\_precedence} \\
-V1b persistence & the edge is a fluctuation & the selected model has no
-  change, or $|t|<2$ at the selected onset &
-  \texttt{no\_routing\_edge}, \texttt{no\_traffic\_edge} \\
+V1 precedence & the two edges are simultaneous & the control plane has
+  no sustained deviation at or before $\tau_T$ within $5400$\,s &
+  \texttt{inadmissible\_precedence}, \texttt{lag\_out\_of\_range} \\
 V2 exclusivity & the response moves this much on its own & placebo
   $p\ge\alpha$ & \texttt{not\_exclusive} \\
 V3 provenance & the observation cannot see the affected entity & the
   affected and the observed entity sets are disjoint &
   \texttt{provenance\_disjoint} \\
-V4 mirror & the response is a level shift, not a propagation & the cause
-  reverts and the response does not, or the reverse, beyond $K/12$
-  buckets & \texttt{mirror\_contradicted} \\
+V4 congruence & the two movements disagree & the control plane's sign
+  and the traffic's sign oppose each other &
+  \texttt{mirror\_contradicted} \\
 \hline
 \end{tabular}
 \end{table}
 
-\paragraph{Precedence (V1a).} The direction is read from the onset
-intervals, never from the size of the effect. The
-alternative---commit to the direction with the larger contrast---is the
-natural heuristic and it is wrong for the case that matters most: when a
-third event drives both series, the later edge often carries the larger
-effect, so magnitude names the response as the cause. Requiring disjoint
-intervals is what keeps a simultaneous pair from being ordered at all.
+\paragraph{Precedence (V1).} The direction is read from the onset, never
+from the size of the effect. The alternative---commit to the direction
+with the larger contrast---is the natural heuristic and it is wrong for
+the case that matters most: when a third event drives both series, the
+later edge often carries the larger effect, so magnitude names the
+response as the cause. A deviation counts only when it \emph{persists}:
+the onset is the first slot of a run of three consecutive deviating
+slots. A simultaneous shock then has its onset at the shock and the two
+edges cannot be ordered.
 
-\paragraph{Persistence (V1b).} The onset must come from a model that beat
-$m=0$ under the BIC criterion, and the Welch $t$ at the selected split
-must reach $2$. The $t$ is a floor against selection artefacts: model
-selection can prefer a split inside a series that has no edge, and the
-statistic is evaluated at the selected split rather than searched again.
-
-\paragraph{Exclusivity (V2).} The placebo comparison above. It is the only
-place where a level enters, and it is the one test that can reject a true
-effect when the response is volatile at the right frequency on its
-own---which is why \S\ref{sec:eval-protocol} measures its size under no
-effect instead of assuming it.
+\paragraph{Exclusivity (V2).} The placebo comparison above, together with
+two absolute floors: the displacement must exceed $0.20$ in relative
+units and $0.25$ as a multiple of the same-clock baseline rate. Without
+the floors a channel that barely moves in both the incident and the
+placebo could pass on a large ratio alone.
 
 \paragraph{Provenance (V3).} A response can only be observed in a series
 that covers the affected entities: if the routing edge concerns one prefix
@@ -203,21 +245,23 @@ and it \emph{suspends} when either side is unknown. Unknown scope is
 missing metadata, not a failed test, and the verdict records the
 suspension so that it counts as neither a commit nor a refutation.
 
-\paragraph{Mirror (V4).} An anomaly that reverts must take its consequence
-with it. If the routing edge is a pulse---withdrawal and
-re-announcement---while the traffic series shifts level permanently, the
-two are not a propagation pair whatever their timing. The rule lets the
-response trail the cause by at most $K/12$ buckets and fails the pair when
-the gap is larger; absent reversion on both sides is recorded as
-\emph{unobservable} rather than as a pass.
+\paragraph{Conguence (V4).} The two movements must point the same way. A
+routing \emph{surge} alongside a traffic \emph{collapse} is not the same
+phenomenon, and reading the surge as the cause of the collapse would be
+reading the consequence backwards. A routing silence alongside a traffic
+collapse is the signature of an outage, and the two agree.
 
 A fifth guard applies to $T\to R$ claims only. That direction asserts
 that an operator reacted to observed load, so the routing change must be a
-mechanism an operator can produce in response---a withdrawal, an
-announcement or a path change. An origin change is a fault or a hijack and
-is never a reaction, and an unannotated mechanism yields
-\texttt{mechanism\_unknown}. The asymmetry is deliberate: an $R\to T$ claim
-needs no such guard, because traffic does not choose to re-route.
+mechanism an operator can produce in response---an announcement or a path
+change. A withdrawal is deliberately excluded: a withdrawal is what a
+failure looks like in the control plane, and a failure and a traffic
+drop share a common cause, so reading the withdrawal as a \emph{reaction}
+to the drop would assert a direction the evidence does not support. An
+origin change is a fault or a hijack and is never a reaction, and an
+unannotated mechanism yields \texttt{mechanism\_unknown}. The asymmetry is
+deliberate: an $R\to T$ claim needs no such guard, because traffic does
+not choose to re-route.
 
 \paragraph{What is deliberately absent.} There is no posterior over
 hypotheses and no channel weighting. A posterior would need a prior over
@@ -225,30 +269,31 @@ causes and per-channel likelihoods, and two count series identify neither;
 the resulting number would encode a preference over failure modes and
 present it as a probability. Four tests whose size and power can be
 measured separately (\S\ref{sec:eval-direction}) are preferable to one
-number whose calibration cannot be checked.
+number whose calibration cannot be checked. The channels are likewise not
+scored and combined: each is a separate physical hypothesis, and the
+estimator reports which one, if any, survives.
 
 \subsection{Refusal semantics}
 \label{sec:method-gate}
 
 A refusal is a verdict. Every path returns a reason from a closed
 vocabulary, and the artefact records the quantities that produced it: the
-two onset intervals, their lag, the placebo $p$ and its count, the horizon,
-the size of the shared scope, and the two reversion offsets. The vocabulary
+trough, the control plane's displacement, the placebo $p$ and its count,
+the lag, the size of the shared scope, and the two signs. The vocabulary
 exists so that a new code path cannot ship without a name an operator can
 read, and so that abstention rates decompose by cause instead of collapsing
 into one number that mixes them.
 
 Two distinctions are load-bearing. First, \emph{structural} refusals
-(\texttt{series\_too\_short}, \texttt{pre\_period\_too\_short},
-\texttt{post\_window\_too\_short}) say that the window cannot support the
-test, while \emph{substantive} refusals
+(\texttt{series\_too\_short}, \texttt{no\_response\_trough}) say that the
+window cannot support the test, while \emph{substantive} refusals
 (\texttt{not\_exclusive}, \texttt{provenance\_disjoint},
 \texttt{mirror\_contradicted}, \texttt{inadmissible\_precedence}) say that
 the test ran and the claim failed. Only the second group is evidence
 against a causal link, and \S\ref{sec:eval-direction} reports them apart for
-that reason. Second, suspension is not failure: an unknown scope or an
-unobservable reversion is recorded as such, so missing metadata can be
-neither laundered into a refutation nor counted as a pass.
+that reason. Second, suspension is not failure: an unknown scope is
+recorded as such, so missing metadata can be neither laundered into a
+refutation nor counted as a pass.
 
 The ground-truth cause label is \emph{not} an input. Deriving a prior from
 \texttt{event\_type} would be label leakage---the expected direction is a
@@ -260,38 +305,40 @@ annotation the $T\to R$ guard requires.
 \begin{figure}[t]
 \centering
 \fbox{\parbox{0.94\linewidth}{\small
-\textbf{Procedure} Admissible edge attribution (AEA).
+\textbf{Procedure} Paired displacement, difference-in-differences, with
+ledger evidence (\textsc{paddle}).
 \\[3pt]
-\textbf{input} routing log $\mathcal{R}$, traffic log $\mathcal{T}$,
-window $W$ \\
+\textbf{input} control-plane rate series $\mathcal{C}$, traffic
+observations $\mathcal{T}$, mechanism $m$, scopes $S_R,S_T$ \\
 \textbf{output} order $\in\{R\to T,\,T\to R,\,\bot\}$ with a reason
 \\[3pt]
-1.\ \ $(x^R,x^T)\leftarrow$ bucket both logs jointly on the shared
-grid (Def.~\ref{def:grid}) \\
-2.\ \ \textbf{for each} series \textbf{do} select the segmentation
-      (Def.~\ref{def:segmentation}); \textbf{if} no change \textbf{return}
-      $(\bot,\ \texttt{no\_routing\_edge})$ or
-      $(\bot,\ \texttt{no\_traffic\_edge})$ \\
-3.\ \ $[\tau_{\mathrm{lo}},\tau_{\mathrm{hi}}]\leftarrow$ onset interval
-      under the selected segmentation \\
-4.\ \ \textbf{if} the intervals overlap \textbf{then return}
-      $(\bot,\ \texttt{inadmissible\_precedence})$ \\
-5.\ \ $c,o\leftarrow$ earlier, later edge;\quad $e\leftarrow$ effect at
-      $\tau_c$ with the matched horizon \\
-6.\ \ $p\leftarrow$ placebo permutation at $\tau_c$;\quad
-      \textbf{if} $p\ge\alpha$ \textbf{then return}
-      $(\bot,\ \texttt{not\_exclusive})$ \\
-7.\ \ \textbf{if} both scopes known and disjoint \textbf{then return}
-      $(\bot,\ \texttt{provenance\_disjoint})$ \\
-8.\ \ \textbf{if} both edges revert and
-      $|\mathrm{rec}_c-\mathrm{rec}_o|>K/12$ \textbf{then return}
-      $(\bot,\ \texttt{mirror\_contradicted})$ \\
-9.\ \ \textbf{if} $c$ is traffic and the mechanism is not a withdrawal,
-      an announcement or a path change \textbf{then return}
-      $(\bot,\ \texttt{reactive\_incompatible})$ \\
-10.\ \ \textbf{return} $\bigl(\mathrm{order}(c,o),\ \tau_c,\ p\bigr)$
+1.\ $\tau_T\leftarrow$ trough onset of $\mathcal{T}$ (Def.~\ref{def:trough});
+   \textbf{if} none \textbf{then return}
+   $(\bot,\ \texttt{no\_response\_trough})$ \\
+2.\ \textbf{for each} channel $c$ \textbf{do} $d_c\leftarrow$ paired
+   displacement at $\tau_T$ (Def.~\ref{def:displacement}); $p_c\leftarrow$
+   directional placebo tail probability \\
+3.\ \ \textbf{if} no channel passes both displacement floors and
+   $p_c\le\alpha$ \textbf{then return}
+   $(\bot,\ \texttt{no\_control\_plane\_edge})$ or
+   $(\bot,\ \texttt{not\_exclusive})$ \\
+4.\ $\tau_c\leftarrow$ first sustained deviation of $c$ at or before
+   $\tau_T$ within $5400$\,s; \textbf{if} none \textbf{then return}
+   $(\bot,\ \texttt{inadmissible\_precedence})$ \\
+5.\ \ $c\leftarrow$ the channel with the smallest $p_c$; \quad
+   $\ell\leftarrow\tau_T-\tau_c$ \\
+6.\ \ \textbf{if} $\ell<0$ \textbf{then} $c\leftarrow$ traffic, and
+   \textbf{if} $m$ is not reaction-compatible \textbf{then return}
+   $(\bot,\ \texttt{reactive\_incompatible})$ \\
+7.\ \ \textbf{if} $|\ell|>5400$\,\,s \textbf{then return}
+   $(\bot,\ \texttt{lag\_out\_of\_range})$ \\
+8.\ \ \textbf{if} both scopes known and disjoint \textbf{then return}
+   $(\bot,\ \texttt{provenance\_disjoint})$ \\
+9.\ \ \textbf{if} the two signs oppose \textbf{then return}
+   $(\bot,\ \texttt{mirror\_contradicted})$ \\
+10.\ \ \textbf{return} $\bigl(\mathrm{order}(c),\ \tau_c,\ p_c\bigr)$
 }}
-\caption{The attribution procedure. Steps 4 and 6--9 are the places
+\caption{The attribution procedure. Steps 3--9 are the places
 where the algorithm refuses; each returns a machine-readable reason
 together with the statistic that produced it. No step returns a
 low-confidence guess.}

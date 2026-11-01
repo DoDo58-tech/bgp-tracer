@@ -26,6 +26,7 @@ from agents.paddle_attribution import (
     T2R,
     UNKNOWN,
     attribute,
+    find_trough,
     protocol_hash,
     traffic_deviation,
 )
@@ -113,8 +114,14 @@ _FEATURE = {
 }
 
 
-def make_response(*, tau: int = 60, level: float = 10.0, after: float = 1.0):
-    """A data plane that is normal until ``tau`` and then falls."""
+def make_response(*, tau: int = 75, level: float = 10.0, after: float = 1.0):
+    """A data plane that is normal until ``tau`` and then falls.
+
+    The default is deliberately *later* than the control plane's own
+    change, because a routing change is followed by the traffic
+    responding to it.  A pair that moved together has no direction to
+    claim, and the precedence veto is expected to refuse it.
+    """
     out = []
     for i in range(N):
         stamp = ORIGIN + timedelta(seconds=STEP * i)
@@ -291,6 +298,84 @@ def test_an_unmeasured_channel_is_not_a_silent_one():
     v = attribute(control, make_response())
     assert v.direction == UNKNOWN
     assert v.reason == "control_plane_flat"
+
+
+def test_the_trough_is_the_onset_of_the_deepest_fall():
+    """A noise wobble must not steal the anchor from a real drop.
+
+    A series that wobbles crosses the fall floor often.  Taking the
+    first crossing anchors the measurement on whichever excursion came
+    first, which for a real drop is usually not the drop -- and the
+    estimator then measures the control plane at the wrong moment and
+    abstains on an event it could have claimed.  The deepest sustained
+    run wins, and its onset is the anchor.
+    """
+    rng = random.Random(11)
+    points = []
+    for i in range(N):
+        stamp = ORIGIN + timedelta(seconds=STEP * i)
+        value = 10.0
+        if i >= 90:
+            value = 5.0
+        # A wobble before the real drop: two shallow observations that
+        # cross the floor.
+        if i in (30, 31):
+            value = 8.4
+        value *= 1.0 + rng.uniform(-0.01, 0.01)
+        points.append({
+            "timestamp": stamp,
+            "raw_event": {"current_value": value, "historical_mean": 10.0},
+        })
+
+    trough = find_trough(points)
+    assert trough is not None
+    index = int((trough[0] - ORIGIN).total_seconds() // STEP)
+    assert index == 90, index
+
+
+def test_the_counterfactual_agrees_with_a_full_scan():
+    """The indexed counterfactual must equal the scan it replaced.
+
+    The placebo null calls the counterfactual once per anchor, so it
+    was rewritten to read a prefix sum rather than to scan every
+    baseline bucket.  The two have to agree exactly, or the null would
+    depend on which path produced it.
+    """
+    buckets = {}
+    baseline_stamps = []
+    for day in range(1, 8):
+        origin = ORIGIN - timedelta(days=day)
+        for i in range(N):
+            stamp = origin + timedelta(seconds=STEP * i)
+            baseline_stamps.append(stamp)
+            buckets[stamp] = {"own_announcement_count": 10.0 + day * i}
+
+    series = ControlPlaneSeries(
+        stamps=[ORIGIN + timedelta(seconds=STEP * i) for i in range(N)],
+        channels={"own_volume": [10.0] * N},
+        baseline_stamps=baseline_stamps,
+        baseline_bucket_map=buckets,
+        measured_channels=["own_volume"],
+    )
+
+    for anchor in (10, 40, 90):
+        lo = max(0, anchor - 3)
+        hi = min(N - 1, anchor + 3)
+        start = series.stamps[lo]
+        end = series.stamps[hi]
+        indexed = series.counterfactual("own_volume", start, end)
+
+        scanned = {}
+        for stamp, entry in buckets.items():
+            age = (start - stamp).total_seconds()
+            if 0 < age <= 7 * 86400:
+                scanned.setdefault(stamp.strftime("%H:%M"), []).append(
+                    entry["own_announcement_count"])
+
+        for key, value in indexed.items():
+            values = scanned[key]
+            assert value == pytest.approx(
+                sum(values) / len(values)), key
 
 
 def test_planted_outage_commits_routing_to_traffic():

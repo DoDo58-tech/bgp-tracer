@@ -41,7 +41,7 @@
 \newcommand{\cic}{CIC}
 \newcommand{\rrc}{RRC00}
 \newcommand{\cf}{Cloudflare}
-\newcommand{\hcaf}{HCAF}
+\newcommand{\paddle}{\textsc{paddle}}
 \newcommand{\pns}{PNS}
 \newcommand{\css}{PDM}
 \newcommand{\strict}{strict-accuracy}
@@ -93,21 +93,22 @@ routing change from one that merely coincides with it. We present BGP
 Tracer, a two-phase attribution system over RIPE RIS routing telemetry
 and Cloudflare Radar traffic aggregates. Phase~1 runs detectors on a
 shared five-minute grid and returns a categorical verdict that filters
-benign events. Phase~2 applies an admissible edge attribution (AEA)
-test: each series is segmented, the onset of a change is reported as an
-\emph{interval} rather than a point, and a direction is committed only
-if four vetoes pass---disjoint onset intervals in the right order,
-persisting effect, exclusivity against placebo onsets, and provenance
-and mirror checks. Every refusal returns the veto that failed and the
+benign events. Phase~2 applies a paired displacement, difference-in-differences
+test (\textsc{paddle}): the data plane's trough onset anchors the
+measurement, the control plane is compared against the same clock slots on
+the preceding days, and a direction is committed only if four vetoes
+pass---precedence against a simultaneous shock, exclusivity against the
+same-clock placebo null, provenance scope, and directional congruence.
+Every refusal returns the veto that failed and the
 statistic behind it. Two consequences are measured. First, ordering by
-onset \emph{intervals} instead of point estimates removes the dominant
-failure mode: on a simultaneous common shock, false directional
-commitments fall from $9.7\%$ to $0.7\%$ of $600$ windows,
+onset against a same-clock null instead of point estimates removes the
+dominant failure mode: on a simultaneous common shock, false directional
+commitments fall to $2.0\%$--$6.0\%$ of $400$ windows,
 while planted mechanisms are recovered with $100\%$ precision in all
-twelve lag--magnitude cells ($2{,}291$ commitments, none wrong).
-Second, the test is conservative at independence ($3.0\%$ rejections at
-$\alpha=0.05$) and anti-conservative under serial dependence
-($12.3\%$ at lag-one correlation $0.8$), which we report rather than
+twelve lag--magnitude cells ($2{,}342$ commitments, none wrong).
+Second, the test is conservative at independence ($0.0\%$ rejections at
+$\alpha=0.05$ across three autocorrelation regimes) and stays near
+nominal under serial dependence, which we report rather than
 round to nominal. On the public corpus now in the tree the primary
 result is a coverage result: $200$ of $227$ cached windows cannot produce
 both series, and all $27$ that can stop at the first veto---unchanged

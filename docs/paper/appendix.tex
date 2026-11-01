@@ -26,39 +26,40 @@ A.3 Abstention analysis.  A refusal is a verdict, and every refusal
 carries the veto that produced it together with the statistic behind it,
 so abstentions are auditable rather than silent
 (\S\ref{sec:method-vetoes}). The reasons form a closed vocabulary:
-\texttt{inadmissible\_precedence}, with the sub-verdicts
-\texttt{onset\_unresolved} and \texttt{overlapping\_onsets}, for a
-precedence that the onset intervals do not settle (V1);
-\texttt{not\_exclusive} when a placebo onset reproduces the effect as
-well as the candidate does (V2); \texttt{provenance\_disjoint} when the
+\texttt{inadmissible\_precedence} when the control plane has no
+sustained deviation at or before the trough (V1);
+\texttt{not\_exclusive} when an ordinary day at the same clock
+reproduces the displacement as
+well as the incident does (V2); \texttt{provenance\_disjoint} when the
 two evidence sets do not share the affected prefix (V3, which suspends
 rather than fails when the entity sets are unknown, so missing metadata
 cannot become a refutation); and \texttt{mirror\_contradicted} when the
-reverse-direction mirror of the effect is the stronger one (V4). A
+two movements point in opposite directions (V4). A
 dependency that runs the wrong way in time returns
-\texttt{reactive\_incompatible}. Each record holds the two onset
-intervals, their lag, the placebo $p$ and its count, the horizon, the
-size of the shared scope and the two reversion offsets, which is what
+\texttt{reactive\_incompatible}. Each record holds the trough, the
+control plane's displacement, the placebo $p$ and its count, the lag,
+the size of the shared scope and the two signs, which is what
 makes the coverage table of \S\ref{sec:eval-direction} interpretable one
 window at a time.
 
 A.4 Placebo resolution and the size of the test.\label{app:aea-size}
-The V2 null is an exact
-permutation test with the add-one correction, so its smallest attainable
-$p$-value at $B$ placebo anchors is $1/(B+1)$. At $\alpha=0.05$ a window
-must therefore supply at least $19$ anchors before it can reject at all;
-the engine requires $20$. Two consequences follow, and both are visible
-in the measurements. First, a window whose pre-onset period cannot supply
-$20$ matched-horizon anchors can never commit, whatever its effect size,
-so the resolution of the placebo null is a property of the window and not
-only of the rule. Second, the size of the test degrades under serial
-dependence, because the placebo spread is computed on a correlated series
-whose onsets are not exchangeable: over 400 windows per level the test
-rejects $3.0\%$ of the time at $\rho=0$, $7.0\%$ at $\rho=0.5$, and
-$12.3\%$ at $\rho=0.8$, against a nominal $5\%$. The
-horizon itself is derived from the pre-onset capacity of the window rather
-than fixed in advance, so that every placebo uses exactly the horizon under
-test.
+The V2 null is an empirical tail probability with the add-one correction,
+so its smallest attainable $p$-value at $B$ matched placebos is $1/(B+1)$.
+At $\alpha=0.05$ a window must therefore supply at least $19$ placebos of
+the same direction before it can reject at all; the estimator requires
+$20$. A window whose baseline cannot supply that many can never commit,
+whatever its effect size, so the resolution of the placebo null is a
+property of the window and not only of the rule.
+
+The null is built from the same clock positions on the preceding days, so
+a channel that wobbles on an ordinary day has already spent that wobble
+against the null. This is why the size of the test is small rather than
+nominal: over 400 windows per level the estimator commits $0.0\%$ of the
+time at $\rho=0$, $0.0\%$ at $\rho=0.5$ and $0.0\%$ at $\rho=0.8$,
+against a nominal $5\%$. We report the number rather than the nominal
+level. A directional test that is very unlikely to commit without
+evidence trades coverage for specificity, and the coverage this costs on
+real windows is the subject of Table~\ref{tab:aea-coverage}.
 
 A.5 Cache schema.  One JSON artefact per event, named by the AS of
 interest and the event window, written atomically and carrying the
@@ -239,7 +240,7 @@ The degradation measurement asks whether the pipeline survives a failure.
 The question this entry asks is different: of the six coordination
 stages, which ones actually change the decision? We ablate each one in
 turn through the engine's own stage switches---joint evidence generation,
-HCAF causal attribution, hypothesis generation, multi-round reasoning, the
+PADDLE causal attribution, hypothesis generation, multi-round reasoning, the
 Evidence Blackboard, and external enrichment---and re-run the identical
 17-event corpus with the identical caches and scorer. Each arm disables
 exactly one stage, so the delta against the full pipeline is attributable
@@ -257,7 +258,7 @@ it as measured. One stage moves the decision decisively: disabling
 multi-round reasoning costs $0.118$ in accuracy, the paired difference is
 negative in all three repeats, and its 95\,\% bootstrap interval
 ($[-0.118,-0.118]$) lies entirely below zero and far outside the noise
-floor. The other five---joint evidence generation, HCAF causal
+floor. The other five---joint evidence generation, PADDLE causal
 attribution, hypothesis generation, the Evidence Blackboard, and external
 enrichment---produce exactly the full pipeline's answers in all three
 repeats, so we do not claim they are load-bearing: at $n=17$ a small
@@ -298,7 +299,7 @@ noise floor a delta has to beat.}
 \hline
 None (full pipeline)  & $0.765$ & ---      & ---            & $0.000$ \\
 Joint evidence        & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
-HCAF attribution      & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
+PADDLE attribution      & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
 Hypothesis generation & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\
 Multi-round reasoning & $0.647$ & $-0.118$ & $[-0.118,-0.118]$ & $0.000$ \\
 Evidence Blackboard   & $0.765$ & $+0.000$ & $[+0.000,+0.000]$ & $0.000$ \\

@@ -33,6 +33,7 @@ rather than of the network the method was pointed at.
 """
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -135,10 +136,53 @@ class ControlPlaneSeries:
     #: own counterfactual would invent a silence out of a missing
     #: measurement.
     measured_channels: List[str] = field(default_factory=list)
+    #: The baseline buckets indexed by clock position and sorted by
+    #: time.  The counterfactual is "the same clock position on the
+    #: days before this one", so this index turns a scan over every
+    #: baseline bucket into a lookup over the handful that share a
+    #: position.  It is built on first use and then reused.
+    position_index: Dict[str, List[Tuple[datetime, float]]] = field(
+        default_factory=dict, repr=False)
+    #: Per clock position, the sorted stamps and the prefix sums of the
+    #: values at them.  The counterfactual at a position is the mean of
+    #: the values in a half-open time range, and a prefix sum answers
+    #: that without touching the values at all.
+    position_stats: Dict[str, Dict[str, Tuple[List[datetime], List[float]]]] = field(
+        default_factory=dict, repr=False)
+    #: The clock key of every slot, computed once.  The key is a pure
+    #: function of the wall-clock time, so it never has to be
+    #: recomputed, and the placebo null asks for it once per slot per
+    #: channel otherwise.
+    slot_key_list: List[str] = field(default_factory=list, repr=False)
+    #: The clock key of every bucket, event and baseline alike, looked
+    #: up by its stamp.  The placebo null asks for the key of the same
+    #: handful of slots thousands of times, and formatting a timestamp
+    #: is not free.
+    clock_key_cache: Dict[datetime, str] = field(default_factory=dict,
+                                                  repr=False)
 
     def baseline_buckets(self):
         """The baseline period's buckets, keyed by stamp."""
         return dict(self.baseline_bucket_map)
+
+    def slot_keys(self):
+        """The clock key of every slot, in order.
+
+        The key is a pure function of the wall-clock time, so it is
+        computed once and reused.
+        """
+        if not self.slot_key_list:
+            self.slot_key_list = [stamp.strftime("%H:%M")
+                                  for stamp in self.stamps]
+        return self.slot_key_list
+
+    def clock_key(self, stamp: datetime) -> str:
+        """The clock position of a stamp, as ``HH:MM``."""
+        key = self.clock_key_cache.get(stamp)
+        if key is None:
+            key = stamp.strftime("%H:%M")
+            self.clock_key_cache[stamp] = key
+        return key
 
     def is_measured(self, name: str) -> bool:
         """Whether the instrument recorded this channel at all."""
@@ -147,6 +191,121 @@ class ControlPlaneSeries:
         # A series that does not say which channels it carries is
         # treated as carrying the ones it has data for.
         return bool(self.channel(name))
+
+    def clock_index(self, channel: str):
+        """The baseline buckets of one channel, by clock position.
+
+        Each position holds ``(stamp, value)`` pairs in time order, so
+        the counterfactual at a position is the mean of the entries
+        that lie within the horizon before the window opened.
+        """
+        cached = self.position_index.get(channel)
+        if cached is not None:
+            return cached
+        index: Dict[str, List[Tuple[datetime, float]]] = {}
+        for stamp, entry in self.baseline_bucket_map.items():
+            if not isinstance(entry, dict):
+                continue
+            value = feature_value(entry, _CHANNEL_FEATURES[channel])
+            if value is None:
+                continue
+            index.setdefault(self.clock_key(stamp), []).append(
+                (stamp, float(value)))
+        for entries in index.values():
+            entries.sort(key=lambda pair: pair[0])
+        self.position_index[channel] = index
+        return index
+
+    def counterfactual(self, channel: str, window_start: datetime,
+                       window_end: datetime, *, days: int = BASELINE_DAYS):
+        """The channel's rate at each clock position, on earlier days.
+
+        This is the same counterfactual
+        :func:`same_clock_baseline` computes, reached through the
+        clock-position index instead of a scan over every baseline
+        bucket.  The placebo null evaluates it once per anchor, so the
+        difference between a scan and a lookup is the difference
+        between a quadratic and a linear pass.
+        The mean over the eligible days is taken from a prefix sum, so
+        the cost of one lookup does not grow with the number of days
+        behind the window.
+        """
+        slot_keys: List[str] = []
+        moment = window_start.replace(second=0, microsecond=0)
+        step = timedelta(seconds=GRID_SECONDS)
+        while moment <= window_end:
+            slot_keys.append(self.clock_key(moment))
+            moment += step
+
+        index = self.clock_index(channel)
+        stats = self.position_stats.get(channel)
+        if stats is None:
+            stats = {}
+            for key, entries in index.items():
+                stamps = [stamp for stamp, _ in entries]
+                prefix = [0.0]
+                for _, value in entries:
+                    prefix.append(prefix[-1] + value)
+                stats[key] = (stamps, prefix)
+            self.position_stats[channel] = stats
+
+        horizon = days * 86400.0
+        out: Dict[str, float] = {}
+        for key in slot_keys:
+            entry = stats.get(key)
+            if entry is None:
+                out[key] = 0.0
+                continue
+            stamps, prefix = entry
+            # The eligible days are those in ``[window_start - horizon,
+            # window_start)``, which is a contiguous slice of the
+            # position's own time-ordered entries.
+            lo = bisect_left(stamps, window_start)
+            hi = bisect_left(stamps, window_start - timedelta(seconds=horizon))
+            count = lo - hi
+            if count <= 0:
+                out[key] = 0.0
+                continue
+            total = prefix[lo] - prefix[hi]
+            out[key] = float(total / count)
+        return out
+
+    def position_table(self, channel: str):
+        """The per-position time index and prefix sums of one channel.
+
+        Each position holds its stamps in time order and the prefix sums
+        of the values at them, so the mean over a time range is a
+        subtraction of two prefix sums.
+        """
+        stats = self.position_stats.get(channel)
+        if stats is not None:
+            return stats
+        stats = {}
+        for key, entries in self.clock_index(channel).items():
+            stamps = [stamp for stamp, _ in entries]
+            prefix = [0.0]
+            for _, value in entries:
+                prefix.append(prefix[-1] + value)
+            stats[key] = (stamps, prefix)
+        self.position_stats[channel] = stats
+        return stats
+
+    def days_before(self, channel: str, position: str, window_start: datetime,
+                    *, days: int = BASELINE_DAYS):
+        """How many ordinary days at ``position`` lie before the window.
+
+        The counterfactual's eligibility rule is "the same clock slot on
+        the days before this one", so this is the count that decides
+        whether a placebo's counterfactual is complete.
+        """
+        entry = self.position_table(channel).get(position)
+        if entry is None:
+            return 0
+        stamps, _ = entry
+        horizon = days * 86400.0
+        lo = bisect_left(stamps, window_start)
+        hi = bisect_left(stamps, window_start - timedelta(seconds=horizon))
+        return max(0, lo - hi)
 
     @property
     def n_buckets(self):

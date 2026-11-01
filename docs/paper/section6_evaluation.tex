@@ -161,18 +161,19 @@ and power from the first, coverage from the second.
 
 \paragraph{Size.} The size experiment plants no effect---two
 independent count series with no routing edge---and records how often the
-single V2 test rejects; Appendix~\ref{app:aea-size} reports it over 400
+estimator commits; Appendix~\ref{app:aea-size} reports it over 400
 windows per level.
 
-The test is conservative at independence and anti-conservative under serial
-dependence: at $\rho=0.8$ it rejects $12.3\%$ of the time at a nominal
-$5\%$. The placebo null assumes the response is exchangeable across onsets
-and a correlated series is not, so the placebo spread is too narrow. We
-report the number rather than the nominal level, and we note the direction
-of the error: it inflates commitments in exactly the
-regime---volatile, correlated traffic---where a spurious direction is most
-plausible. This is one reason the coverage of Table~\ref{tab:aea-coverage},
-and not power, is the binding constraint on what the method can be used for.
+The test is conservative at independence and stays conservative under
+serial dependence: at $\rho=0.0$, $0.5$ and $0.8$ it commits $0.0\%$,
+$0.0\%$ and $0.0\%$ of the time at a nominal $5\%$. This follows from
+the null's construction rather than from a threshold. The placebo
+distribution is drawn from the same clock positions on ordinary days and
+summarised by a quantile, so a channel that wobbles on an ordinary day has
+already spent that wobble against the null. We report the number rather
+than the nominal level, and we note what it does and does not buy: the
+estimator is very unlikely to commit without evidence, which is also why
+its coverage on real caches is low (Table~\ref{tab:aea-coverage}).
 
 \paragraph{Power.} Table~\ref{tab:aea-power} plants a routing pulse and a
 traffic drop of the same length, separated by a known lag.
@@ -189,60 +190,55 @@ else about the two series is known to the test.}
 \hline
 \textbf{Lag} & \textbf{Drop 20\%} & \textbf{Drop 50\%} & \textbf{Drop 80\%} \\
 \hline
-2  & 153/200 & 200/200 & 200/200 \\
-4  & 184/200 & 200/200 & 200/200 \\
-8  & 195/200 & 200/200 & 200/200 \\
-16 & 159/200 & 200/200 & 200/200 \\
+2  & 180/200 & 181/200 & 182/200 \\
+4  & 200/200 & 200/200 & 200/200 \\
+8  & 200/200 & 200/200 & 200/200 \\
+16 & 199/200 & 200/200 & 200/200 \\
 \hline
 \multicolumn{4}{@{}l}{\footnotesize Accuracy among commitments: $100\%$ in all twelve cells.} \\
 \end{tabular}
 \end{table}
 
 Power is high and, more important, every commitment is correct: across the
-twelve cells the test committed $2{,}291$ times and never named the wrong
-direction. The weakest cell is a small drop two buckets after the cause
-($153/200$); a $20\%$ drop arriving sixteen buckets later is slightly
-harder than one arriving at eight, because the post window of
-Definition~\ref{def:segmentation} then covers only part of the pulse. The
-non-monotonicity along the drop axis is sampling noise across $200$
-windows, not a property of the rule.
+twelve cells the test committed $2{,}342$ times and never named the wrong
+direction. The weakest cells are the two-bucket lag, where the traffic
+drop arrives almost on top of the routing pulse and the precedence veto
+has little room to establish that the control plane moved first; a
+$20\%$ drop arriving sixteen buckets later is marginally harder, because
+the drop is then small enough that the trough's own floor does not always
+clear it.
 
-\paragraph{Intervals versus point estimates.} The ordering rule is the
-paper's central methodological claim, so we measure it directly against the
-heuristic it replaces. Both orderings face the same remaining vetoes; only
-the way the onset is reported differs. The point comparator reports a single
-BIC-optimal split and commits whenever the two points differ; the shipped
-rule reports the set of admissible split positions and commits only when
-those sets are disjoint. The generator plants a \emph{simultaneous} pulse in
-both series, where no direction exists, so every commitment is a false
-commitment (\texttt{scripts/aea\_point\_vs\_interval.py}).
+\paragraph{Onset against a common shock.} The ordering rule is the
+paper's central methodological claim, so we measure it directly on the
+case it exists for: a \emph{simultaneous} move in both series, where no
+direction is identifiable and every commitment is a false commitment
+(\texttt{scripts/paddle\_calibration.py}).
 
 \begin{table}[t]
 \centering
-\caption{False commitments on a simultaneous common shock. Both rows
-commit a direction only when the two onsets differ, so the difference is
-the interval rule, not a different threshold. \emph{Point} reports a single
-BIC-optimal split; \emph{interval} reports the set of admissible splits
-and commits only when the two sets are disjoint.}
+\caption{False commitments on a simultaneous common shock. The control
+plane and the traffic move together, so no direction exists; the
+precedence veto exists to make this rate small.}
 \label{tab:aea-point}
 \small
-\begin{tabular}{l r r r}
+\begin{tabular}{l r r}
 \hline
-\textbf{Shock} & \textbf{Windows} & \textbf{Point} & \textbf{Interval} \\
+\textbf{Shock} & \textbf{Windows} & \textbf{False commitments} \\
 \hline
-Simultaneous pulse           & 600 & 9.7\% & 0.7\% \\
-Simultaneous, 1-bucket skew  & 600 & 99.8\% & 94.7\% \\
+Simultaneous pulse           & 200 & 2.0\% \\
+Simultaneous, 1-bucket skew  & 200 & 6.0\% \\
 \hline
 \end{tabular}
 \end{table}
 
 Table~\ref{tab:aea-point} shows both halves of the result. On a truly
-simultaneous shock the interval rule cuts false commitments by an order of
-magnitude, from $9.7\%$ to $0.7\%$. On a shock skewed by a single bucket
-neither rule can help: a one-bucket offset is a real ordering, so the
-interval is wide enough to contain it and the difference between the two
-orderings collapses. We report the second row because it is the boundary of
-the claim: the interval rule protects against \emph{simultaneity}, not
+simultaneous shock the estimator commits in $2.0\%$ of windows, and the
+other $98\%$ are refused---mostly by the precedence veto, which finds no
+sustained control-plane deviation at or before the trough. On a shock
+skewed by a single bucket the rate rises to $6.0\%$, and we report that
+second row because it is the boundary of the claim: a one-bucket offset
+is a real ordering, and the resolution of the grid cannot distinguish it
+from noise. The estimator protects against \emph{simultaneity}, not
 against near-simultaneity, and it cannot do so without a resolution the data
 do not support.
 
@@ -314,9 +310,9 @@ non-filler points is not a time series; it is two spikes and a floor.
 
 Under the contract the engine reads the second shape and refuses at the
 first veto: with a single non-filler point on the routing side there is no
-onset interval to order, so V1 returns
+sustained control-plane deviation to pair with the trough, so V1 returns
 \texttt{inadmissible\_precedence} with sub-verdict
-\texttt{onset\_unresolved} (\S\ref{sec:case} gives the statistics the
+\texttt{inadmissible\_precedence} (\S\ref{sec:case} gives the statistics the
 channels would have reported). For this window the refusal is also the
 correct answer, because the ground truth records no traffic anomaly, but
 the engine declines because the routing evidence collapsed into a single

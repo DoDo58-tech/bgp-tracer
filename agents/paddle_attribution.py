@@ -49,7 +49,6 @@ from agents.control_plane import (
     CONTROL_PLANE_CHANNELS,
     GRID_SECONDS,
     ControlPlaneSeries,
-    same_clock_baseline,
 )
 
 R2T = "routing_to_traffic"
@@ -300,17 +299,35 @@ def find_trough(
     *,
     search_from: Optional[datetime] = None,
     search_to: Optional[datetime] = None,
+    run_points: int = 2,
 ):
-    """The sharpest downward deviation of the data plane.
+    """The onset of the data plane's fall.
 
     The impact of a routing incident on the data plane is a *fall* in
-    the measured quantity, so the trough -- the most negative
-    deviation -- is the moment the incident happened.  The search is
-    bounded by the impact window the traffic detector reported, so the
-    trough is the one belonging to *this* event rather than the worst
-    deviation of the whole record.
+    the measured quantity, so the trough is the moment the incident
+    happened.  The search is bounded by the impact window the traffic
+    detector reported, so the trough is the one belonging to *this*
+    event rather than the worst deviation of the whole record.
+
+    The trough is the **onset** of the fall, not its deepest point.
+    An impact holds the measured quantity down for a while, and the
+    deepest observation of such a plateau is wherever the noise
+    happened to reach its lowest, which can be hours after the cause.
+    Anchoring on it made the lag between the two edges a property of
+    the noise, and two edges that moved *together* could be ordered by
+    it.  The onset is the first observation of a run of falling
+    observations, which is where the cause has to have been.
+
+    The run that is chosen is the **deepest** one, not the first.  A
+    series that wobbles crosses the floor often, and taking the first
+    crossing anchors the measurement on whichever noise excursion
+    happened to come first---which for a real drop is usually not the
+    drop.  Choosing the deepest run and reporting its onset keeps both
+    properties at once: the anchor is the onset of the event rather
+    than of the noise, and a transient wobble cannot displace a
+    sustained fall.
     """
-    best: Optional[Tuple[datetime, float]] = None
+    entries: List[Tuple[datetime, float]] = []
     for point in points:
         stamp = point.get("timestamp")
         if not isinstance(stamp, datetime):
@@ -322,8 +339,46 @@ def find_trough(
         deviation = traffic_deviation(point)
         if deviation is None:
             continue
-        if best is None or deviation < best[1]:
-            best = (stamp, deviation)
+        entries.append((stamp, deviation))
+    if not entries:
+        return None
+
+    entries.sort(key=lambda item: item[0])
+
+    # The floor below which an observation counts as a fall.  It is
+    # relative to the series' own scale, so that "fell" means "fell by
+    # more than the series normally moves", and it is also bounded from
+    # below, so that a series whose movements are all large does not
+    # make its own fall too small to be seen.
+    magnitude = float(np.median([abs(dev) for _, dev in entries])) or 0.0
+    floor = -max(1.5 * magnitude, 0.02)
+
+    # Every run of consecutive observations below the floor, with the
+    # run's own depth and its first observation.
+    runs: List[Tuple[float, int]] = []
+    start = None
+    for index, (_, deviation) in enumerate(entries):
+        if deviation < floor:
+            if start is None:
+                start = index
+        else:
+            if start is not None and index - start >= run_points:
+                runs.append((min(entries[i][1] for i in range(start, index)),
+                             start))
+            start = None
+    if start is not None and len(entries) - start >= run_points:
+        runs.append((min(entries[i][1] for i in range(start, len(entries))),
+                     start))
+
+    if runs:
+        # The deepest run wins; a tie goes to the earlier one, so the
+        # answer is stable.
+        depth, start = min(runs, key=lambda item: (item[0], item[1]))
+        return entries[start]
+
+    # Nothing fell persistently.  The deepest observation is then the
+    # best available answer, and it is reported as such.
+    best = min(entries, key=lambda item: item[1])
     return best
 
 
@@ -413,18 +468,17 @@ def control_displacement(
     values = control.channel(channel)
     if len(values) != len(stamps):
         return None
-    observed = float(np.median(values[lo:hi + 1]))
+    observed = median_of(values[lo:hi + 1])
 
     # The counterfactual: the same clock slots on the previous days.
     window_start = stamps[lo]
     window_end = stamps[hi]
-    baseline_map = same_clock_baseline(
-        control.baseline_buckets(), channel, window_start, window_end)
+    baseline_map = control.counterfactual(channel, window_start, window_end)
     # The counterfactual is summarised the same way as the treatment
     # arm.  Pairing two different statistics would compare a median with
     # a mean, and the ratio would not mean anything.
-    expected = (float(np.median([baseline_map.get(s.strftime("%H:%M"), 0.0)
-                                 for s in stamps[lo:hi + 1]]))
+    expected = (median_of([baseline_map.get(control.clock_key(s), 0.0)
+                           for s in stamps[lo:hi + 1]])
                 if stamps else 0.0)
 
     if expected <= 0:
@@ -440,6 +494,22 @@ def control_displacement(
         "delta": round(observed - expected, 4),
         "slots": [lo, hi],
     }
+
+
+def median_of(values: Sequence[float]) -> float:
+    """The median of a short sequence.
+
+    The windows this estimator compares are a handful of slots long, so
+    numpy's dispatch overhead costs more than the computation itself.
+    Sorting the list and taking its middle is the same statistic.
+    """
+    if not values:
+        return 0.0
+    ordered = sorted(float(v) for v in values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
 
 
 def placebo_displacements(
@@ -473,25 +543,27 @@ def placebo_displacements(
     if len(values) != len(stamps):
         return []
 
-    out: List[float] = []
-    # The baseline's buckets indexed by clock position, so the coverage of
-    # a window's positions is a lookup rather than a scan.
-    by_position: Dict[str, List[datetime]] = {}
-    for stamp in baseline:
-        by_position.setdefault(stamp.strftime("%H:%M"), []).append(stamp)
+    # The clock positions of the baseline slots are fixed, so they are
+    # written once rather than recomputed for every anchor.
+    position_of = [control.clock_key(stamp) for stamp in stamps]
 
+    # The counterfactual at each clock position depends on the anchor's
+    # own time, because it is built from the days *before* that anchor.
+    # The table is therefore built once per anchor, but each entry reads
+    # only the days already behind the anchor rather than rescanning the
+    # whole baseline, which is what made this loop quadratic.
+    out: List[float] = []
     for index in range(half_width_slots, len(stamps) - half_width_slots):
         lo = index - half_width_slots
         hi = index + half_width_slots
-        observed = float(np.median(values[lo:hi + 1]))
+        observed = median_of(values[lo:hi + 1])
         window_start = stamps[lo]
         window_end = stamps[hi]
         # The counterfactual for this placebo: the same clock slots on
         # the days *before* this anchor's day.
-        baseline_map = same_clock_baseline(
-            baseline, channel, window_start, window_end)
-        expected = float(np.median([baseline_map.get(s.strftime("%H:%M"), 0.0)
-                                    for s in stamps[lo:hi + 1]]))
+        baseline_map = control.counterfactual(channel, window_start, window_end)
+        expected = median_of([baseline_map.get(position_of[i], 0.0)
+                              for i in range(lo, hi + 1)])
         if expected <= 0:
             continue
         # A placebo whose counterfactual is incomplete is not a measurement
@@ -501,19 +573,13 @@ def placebo_displacements(
         # none at all.  Such a window's "expected" is systematically too
         # small, which would make the null so wide that no incident could
         # ever pass it.
-        positions = {s.strftime("%H:%M") for s in stamps[lo:hi + 1]}
-        if not positions:
-            continue
         complete = True
-        for position in positions:
+        for i in range(lo, hi + 1):
+            position = position_of[i]
             if baseline_map.get(position, 0.0) <= 0:
                 complete = False
                 break
-            days = sum(
-                1 for stamp in by_position.get(position, ())
-                if 0 < (window_start - stamp).total_seconds() <= BASELINE_DAYS * 86400
-            )
-            if days < 1:
+            if control.days_before(channel, position, window_start) < 1:
                 complete = False
                 break
         if not complete:
@@ -603,6 +669,7 @@ def earliest_deviation(
     *,
     threshold: float,
     max_lag_seconds: float,
+    run_slots: int = 3,
 ):
     """The first moment the control plane deviated, at or before the trough.
 
@@ -611,6 +678,19 @@ def earliest_deviation(
     uncertain one.  A control plane that was already deviating for
     hours would make the claim weak, so the search is bounded by the
     propagation time.
+
+    A deviation counts only when it **persists**.  The first slot that
+    happens to cross the threshold is not an onset: a network whose
+    rate wobbles crosses and recrosses the threshold constantly, and
+    taking the first crossing would place the onset at the earliest
+    wobble in the window.  Then every pair would be ordered, including
+    a pair whose two sides moved *together*, and the precedence veto
+    would stop discriminating between a cause and a common shock.
+
+    So the onset is the first slot of a run of at least ``run_slots``
+    consecutive deviating slots.  A simultaneous shock then has its
+    onset at the shock, not before it, and the two edges cannot be
+    ordered.
     """
     stamps = control.stamps
     index = slot_index(stamps, trough)
@@ -620,16 +700,15 @@ def earliest_deviation(
     if len(values) != len(stamps):
         return None
 
-    baseline_map = same_clock_baseline(
-        control.baseline_buckets(), channel,
-        stamps[max(0, index - 3)], stamps[index])
+    baseline_map = control.counterfactual(
+        channel, stamps[max(0, index - 3)], stamps[index])
     if not baseline_map:
         return None
     level = float(np.mean(list(baseline_map.values())))
     if level <= 0:
         return None
 
-    earliest: Optional[datetime] = None
+    deviating = [False] * len(stamps)
     for i in range(index, -1, -1):
         stamp = stamps[i]
         if (trough - stamp).total_seconds() > max_lag_seconds:
@@ -638,9 +717,19 @@ def earliest_deviation(
         if expected <= 0:
             continue
         deviation = abs(values[i] / expected - 1.0)
-        if deviation >= threshold:
-            earliest = stamp
-    return earliest
+        deviating[i] = deviation >= threshold
+
+    run = 0
+    for i in range(index, -1, -1):
+        if (trough - stamps[i]).total_seconds() > max_lag_seconds:
+            break
+        run = run + 1 if deviating[i] else 0
+        if run >= run_slots:
+            # The run ends at the slot under inspection and reaches
+            # ``run_slots`` slots into the past, so its onset is
+            # ``run_slots - 1`` slots earlier.
+            return stamps[i - run_slots + 1] if i - run_slots + 1 >= 0 else stamps[i]
+    return None
 
 
 # ── The estimator ──────────────────────────────────────────────────────

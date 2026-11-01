@@ -20,7 +20,8 @@ path.
 are read by four parallel detectors and placed on a shared five-minute
 grid; Phase~1 arbitrates the resulting evidence into a five-class verdict
 and writes it to a shared evidence cache. Phase~2 reads that cache to
-estimate causal direction by ordering two onset intervals, commits only
+estimate causal direction by a paired displacement against a same-clock
+null, commits only
 when four vetoes pass, and records the veto that failed when it
 abstains. An agent coordination layer supplies the audit trail and falls
 back to deterministic rendering when a component fails, without changing
@@ -58,11 +59,12 @@ between a complete verdict and a partial verdict produced when a
 detector or data source is unavailable.
 
 \emph{Phase~2} performs deeper evidence attribution on the cached
-observations. It segments each series on the shared grid, reports each
-onset as an interval of placements the data cannot distinguish, and
-orders the two edges only when those intervals are disjoint. A direction
-is committed only if four vetoes pass---precedence, persistence,
-exclusivity against placebo onsets, and provenance plus mirror checks
+observations. It anchors the measurement on the data plane's trough
+onset, measures the control plane's displacement at that moment against
+the same clock slots on the preceding days, and orders the two edges only
+when the control plane has already moved. A direction
+is committed only if four vetoes pass---precedence, exclusivity against
+the same-clock placebo null, provenance, and directional congruence
 (\S\ref{sec:method-vetoes})---and a refusal returns the veto that failed
 with the statistic behind it. It does not overwrite the Phase-1
 correlation verdict; the two outputs describe different levels of

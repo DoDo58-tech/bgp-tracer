@@ -52,36 +52,38 @@ def paper_number(label: str):
 
 # (file, paper string, artefact, json path, expected value)
 CHECKS = [
-    # ── abstract: the interval-vs-point result ──
-    ("main.tex", "$9.7\\%$ to $0.7\\%$ of $600$ windows",
-     "aea_point_vs_interval.json", "regimes.0.false_commit_rate.point",
-     "0.0967"),
-    ("main.tex", "$9.7\\%$ to $0.7\\%$ of $600$ windows",
-     "aea_point_vs_interval.json", "regimes.0.false_commit_rate.interval",
-     "0.0067"),
-    ("main.tex", "$9.7\\%$ to $0.7\\%$ of $600$ windows",
-     "aea_point_vs_interval.json", "regimes.0.trials", "600"),
+    # ── abstract: the common-shock result ──
+    ("main.tex", "$2.0\\%$--$6.0\\%$ of $400$ windows",
+     "paddle_calibration.json", "common.0.false_commit_rate", "0.02"),
+    ("main.tex", "$2.0\\%$--$6.0\\%$ of $400$ windows",
+     "paddle_calibration.json", "common.1.false_commit_rate", "0.06"),
+    ("main.tex", "$2.0\\%$--$6.0\\%$ of $400$ windows",
+     "paddle_calibration.json", "common.0.trials", "200"),
+    ("main.tex", "$2.0\\%$--$6.0\\%$ of $400$ windows",
+     "paddle_calibration.json", "common.1.trials", "200"),
 
     # ── abstract: planted-mechanism precision ──
-    ("main.tex", "$2{,}291$ commitments, none wrong",
-     "aea_calibration.json", "power_total.commits", "2291"),
-    ("main.tex", "$2{,}291$ commitments, none wrong",
-     "aea_calibration.json", "power_total.correct", "2291"),
+    ("main.tex", "$2{,}342$ commitments, none wrong",
+     "paddle_calibration.json", "power_total.commits", "2342"),
+    ("main.tex", "$2{,}342$ commitments, none wrong",
+     "paddle_calibration.json", "power_total.correct", "2342"),
 
     # ── abstract: size under the null ──
-    ("main.tex", "$3.0\\%$ rejections at",
-     "aea_calibration.json", "size.0.rate", "0.03"),
-    ("main.tex", "$12.3\\%$ at lag-one correlation $0.8$",
-     "aea_calibration.json", "size.2.rate", "0.1225"),
+    ("main.tex", "$0.0\\%$ rejections at",
+     "paddle_calibration.json", "size.0.rate", "0.0"),
+    ("main.tex", "$0.0\\%$ rejections at",
+     "paddle_calibration.json", "size.1.rate", "0.0"),
+    ("main.tex", "$0.0\\%$ rejections at",
+     "paddle_calibration.json", "size.2.rate", "0.0"),
 
     # ── abstract: coverage on the cached corpus ──
     ("main.tex", "$200$ of $227$ cached windows cannot produce",
-     "aea_coverage_caches.json", "coverage_summary.n_caches", "227"),
+     "paddle_coverage_caches.json", "coverage_summary.n_caches", "227"),
     ("main.tex", "$200$ of $227$ cached windows cannot produce",
-     "aea_coverage_caches.json", "coverage_summary.n_without_two_series",
+     "paddle_coverage_caches.json", "coverage_summary.n_without_two_series",
      "200"),
     ("main.tex", "all $27$ that can stop at the first veto",
-     "aea_coverage_caches.json", "coverage_summary.n_two_series", "27"),
+     "paddle_coverage_caches.json", "coverage_summary.n_two_series", "27"),
 
     # ── introduction: the agent layer's accuracy claim ──
     ("section1_intro.tex", "$0.76$ against $0.06$",

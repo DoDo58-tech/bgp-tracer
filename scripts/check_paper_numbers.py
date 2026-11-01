@@ -61,9 +61,8 @@ def main():
     paper = normalise(" ".join(
         p.read_text() for p in sorted(PAPER.glob("*.tex"))))
 
-    cal = load("aea_calibration.json")
-    pvi = load("aea_point_vs_interval.json")
-    cov = load("aea_coverage_caches.json")["coverage_summary"]
+    cal = load("paddle_calibration.json")
+    cov = load("paddle_coverage_caches.json")["coverage_summary"]
     agent = load("gt_agent_full.json")["summary"]
     rules = load("gt_rule_only.json")["summary"]
     mono = load("gt_baseline_monolithic.json")["summary"]
@@ -80,10 +79,10 @@ def main():
         ("size, rho=0.8", percent(cal["size"][2]["rate"])),
         ("planted commitments", f"{cal['power_total']['commits']:,}"),
         ("planted cells", str(cal["power_total"]["cells"])),
-        ("point false-commit rate",
-         percent(pvi["regimes"][0]["false_commit_rate"]["point"])),
-        ("interval false-commit rate",
-         percent(pvi["regimes"][0]["false_commit_rate"]["interval"])),
+        ("simultaneous-shock false-commit rate",
+         percent(cal["common"][0]["false_commit_rate"])),
+        ("one-bucket-skew false-commit rate",
+         percent(cal["common"][1]["false_commit_rate"])),
         ("cached windows", str(cov["n_caches"])),
         ("two-series windows", str(cov["n_two_series"])),
         ("windows without two series", str(cov["n_without_two_series"])),
