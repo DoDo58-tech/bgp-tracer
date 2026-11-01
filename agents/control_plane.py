@@ -123,10 +123,30 @@ class ControlPlaneSeries:
     #: like a rename that has not finished.
     baseline_bucket_map: Dict[datetime, Dict[str, Any]] = field(
         default_factory=dict, repr=False)
+    #: The channels the instrument actually recorded.  A channel that is
+    #: absent from this set was never measured, which is a different
+    #: thing from a channel that was measured and found to be silent.
+    #:
+    #: The distinction decides an outage.  A target that stops
+    #: announcing its own routes has a channel that is flat at zero
+    #: during the incident and alive on ordinary days; that silence is
+    #: the observation.  But a channel the instrument never carried is
+    #: zero everywhere, baseline included, and comparing it with its
+    #: own counterfactual would invent a silence out of a missing
+    #: measurement.
+    measured_channels: List[str] = field(default_factory=list)
 
     def baseline_buckets(self):
         """The baseline period's buckets, keyed by stamp."""
         return dict(self.baseline_bucket_map)
+
+    def is_measured(self, name: str) -> bool:
+        """Whether the instrument recorded this channel at all."""
+        if self.measured_channels:
+            return name in self.measured_channels
+        # A series that does not say which channels it carries is
+        # treated as carrying the ones it has data for.
+        return bool(self.channel(name))
 
     @property
     def n_buckets(self):
@@ -247,11 +267,16 @@ def fill_grid(
 
     Every slot on the grid gets a value for every channel.  A slot with
     no observed bucket gets zero: the network said nothing in it.
+
+    The channels that the source buckets actually carried are returned
+    alongside the grid, because a channel the source never mentioned was
+    not measured -- it is not a channel that measured zero.
     """
     out: Dict[str, List[float]] = {ch: [0.0] * len(stamps) for ch in channels}
     if not stamps:
-        return out
+        return out, []
     origin = stamps[0]
+    carried = set()
     for stamp, entry in buckets.items():
         offset = (stamp - origin).total_seconds()
         index = int(offset // GRID_SECONDS)
@@ -259,9 +284,11 @@ def fill_grid(
             continue
         for ch in channels:
             value = feature_value(entry, _CHANNEL_FEATURES[ch])
+            if value is not None:
+                carried.add(ch)
             if value:
                 out[ch][index] = value
-    return out
+    return out, [ch for ch in channels if ch in carried]
 
 
 def grid_stamps(buckets: Dict[datetime, Dict[str, Any]],
@@ -376,7 +403,7 @@ def build_control_plane_series(
             lo, hi = min(inside), max(inside)
 
     stamps = grid_stamps(event_buckets, lo, hi)
-    channels = fill_grid(event_buckets, CONTROL_PLANE_CHANNELS, stamps)
+    channels, measured = fill_grid(event_buckets, CONTROL_PLANE_CHANNELS, stamps)
 
     base_stamps: List[datetime] = []
     base_channels: Dict[str, List[float]] = {}
@@ -384,8 +411,9 @@ def build_control_plane_series(
         base_lo = min(base_buckets)
         base_hi = max(base_buckets)
         base_stamps = grid_stamps(base_buckets, base_lo, base_hi)
-        base_channels = fill_grid(base_buckets, CONTROL_PLANE_CHANNELS,
-                                  base_stamps)
+        base_channels, base_measured = fill_grid(
+            base_buckets, CONTROL_PLANE_CHANNELS, base_stamps)
+        measured = [ch for ch in measured if ch in base_measured]
 
     return ControlPlaneSeries(
         stamps=stamps,
@@ -395,6 +423,7 @@ def build_control_plane_series(
         baseline_level=baseline_level(base_channels),
         bucket_seconds=float(GRID_SECONDS),
         baseline_bucket_map=base_buckets,
+        measured_channels=measured,
     )
 
 

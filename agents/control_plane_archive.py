@@ -260,11 +260,34 @@ def to_control_plane_series(evidence: ControlPlaneEvidence):
     # days *and* the event window.  The estimator's counterfactual is
     # built from the slots that precede the window, so the map has to
     # span both.
+    #
+    # The archive's raw counts record only the slots in which the target
+    # said something, so the map has to be *filled in* before it can
+    # serve as a counterfactual.  A clock position with no entry is not
+    # an unknown rate; it is a slot in which the target said nothing,
+    # and the counterfactual at that position is the average over the
+    # days on which it also said nothing.  Read sparsely, the
+    # counterfactual collapses to zero at most positions, the ratio
+    # becomes undefined, and a window that was perfectly measurable
+    # reads as unmeasured.
     bucket_map: Dict[datetime, Dict[str, float]] = {}
+    measured_stamps = set()
     for channel, raw in (evidence.raw_counts or {}).items():
         for stamp_text, value in raw.items():
             stamp = datetime.fromisoformat(stamp_text)
             bucket_map.setdefault(stamp, {})[channel] = float(value)
+            measured_stamps.add(stamp)
+
+    # The slots the archive covered: every five-minute position from the
+    # earliest measurement to the end of the event window.
+    if measured_stamps:
+        origin = min(measured_stamps)
+        step = timedelta(seconds=CONTROL_GRID_SECONDS)
+        stamp = origin
+        while stamp <= max(max(measured_stamps), stamps[-1] if stamps else origin):
+            bucket_map.setdefault(stamp, {})
+            stamp += step
+
     for stamp in stamps:
         bucket_map.setdefault(stamp, {})
 
@@ -280,6 +303,11 @@ def to_control_plane_series(evidence: ControlPlaneEvidence):
         baseline_level=level,
         bucket_seconds=float(CONTROL_GRID_SECONDS),
         baseline_bucket_map=bucket_map,
+        # The archive counts every one of these channels directly from
+        # the update stream, so all of them were measured even when the
+        # target said nothing at all.  A silent channel is an
+        # observation, not an absence.
+        measured_channels=list(evidence.channels),
     )
 
 

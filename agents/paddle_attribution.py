@@ -330,6 +330,33 @@ def find_trough(
 # ── The control plane's deviation, paired with the trough ─────────────
 
 
+def silent_against_live_baseline(control: ControlPlaneSeries, channel: str):
+    """Whether the channel is silent while ordinary days were not.
+
+    A constant event-window series is normally read as "the control plane
+    did not move".  For an outage that reading is backwards: the target
+    stops announcing its own routes, so the channel is *flat at zero*
+    precisely when the incident happened, and the same clock slots on
+    the preceding days carry a non-zero rate.  The silence is the
+    measurement.
+
+    So the question is not "is the series flat" but "is it flat against
+    a live baseline".  A channel the instrument never carried is zero
+    everywhere, baseline included, and there is nothing to compare it
+    against; that one was not measured at all.
+    """
+    if not control.is_measured(channel):
+        return False
+    values = control.channel(channel)
+    if len(values) < 2 or float(np.ptp(values)) >= 1e-9:
+        return False
+    if max(values) > 0:
+        # Flat, but not at zero: the level simply did not change.
+        return False
+    baseline = control.baseline_channel(channel)
+    return any(v > 0 for v in baseline)
+
+
 def slot_index(stamps: Sequence[datetime], stamp: datetime):
     """The index of the slot that contains ``stamp``."""
     if not stamps:
@@ -700,7 +727,14 @@ def attribute(
 
     for channel in CONTROL_PLANE_CHANNELS:
         raw = control.channel(channel)
-        if len(raw) < 2 or float(np.ptp(raw)) < 1e-9:
+        if len(raw) < 2:
+            channel_report[channel] = {"status": "flat"}
+            continue
+        if float(np.ptp(raw)) < 1e-9 and not silent_against_live_baseline(control, channel):
+            # A flat channel is only uninteresting when the baseline was
+            # flat too.  A channel that says nothing during the event
+            # while the same clock slots on ordinary days carry a rate
+            # is *silent*, and silence is what an outage looks like.
             channel_report[channel] = {"status": "flat"}
             continue
         displacement = control_displacement(control, channel, trough_stamp)
@@ -913,5 +947,6 @@ __all__ = [
     "find_trough",
     "placebo_displacements",
     "protocol_hash",
+    "silent_against_live_baseline",
     "traffic_deviation",
 ]

@@ -268,8 +268,19 @@ def own_channels_present(control: ControlPlaneSeries):
     A series without the own-announcement channel can therefore never
     support the claim the estimator is trying to make, and saying so is
     more honest than measuring the wrong thing.
+
+    The channel counts as present when the instrument recorded it, not
+    when the event window carries a non-zero count.  An outage's
+    signature is that the target says nothing at all, so an event
+    window of zeros is the observation, not the absence of one.  A
+    channel the instrument never carried is the absence the caller has
+    to know about.
     """
     for channel in ("own_volume", "own_withdrawal"):
+        if not control.is_measured(channel):
+            continue
+        if any(v > 0 for v in control.baseline_channel(channel)):
+            return True
         values = control.channel(channel)
         if values and any(values):
             return True

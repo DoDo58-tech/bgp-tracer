@@ -96,6 +96,10 @@ def make_control(
         baseline=baseline_channels,
         baseline_stamps=baseline_stamps,
         baseline_bucket_map=buckets,
+        # Only the channel under test is instrumented.  The others are
+        # carried at zero because the fixture does not measure them, and
+        # an unmeasured channel must not be read as a silent one.
+        measured_channels=[channel],
     )
 
 
@@ -253,6 +257,38 @@ def test_flat_response_abstains():
 def test_flat_control_plane_abstains():
     """No control-plane movement, no claim -- however clean the traffic."""
     v = attribute(make_control(after=10.0), make_response())
+    assert v.direction == UNKNOWN
+    assert v.reason == "control_plane_flat"
+
+
+def test_a_silent_control_plane_commits():
+    """An outage's control-plane signature is silence, not flatness.
+
+    The target stops announcing its own routes, so the channel is flat
+    at zero during the incident while ordinary days carry a rate.  A
+    rule that discards a constant channel as "no observation" throws
+    away the one measurement an outage produces, and the claim it
+    supports with it.
+    """
+    control = make_control(after=0.0)
+    v = attribute(control, make_response())
+    assert v.reason == "committed", v.as_dict()
+    assert v.direction == R2T
+    assert v.channel == "own_volume"
+    assert v.tau_control == pytest.approx(0.0, abs=1e-6)
+
+
+def test_an_unmeasured_channel_is_not_a_silent_one():
+    """A channel the instrument never carried is not a silent channel.
+
+    The fixture instruments one channel.  The others are zero because
+    nothing measured them, which is a different thing from measuring
+    zero.  Reading the unmeasured ones as silence would let the
+    estimator claim a cause from a channel that does not exist.
+    """
+    control = make_control(after=10.0)
+    assert "own_withdrawal" not in control.measured_channels
+    v = attribute(control, make_response())
     assert v.direction == UNKNOWN
     assert v.reason == "control_plane_flat"
 
