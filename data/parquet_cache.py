@@ -131,7 +131,9 @@ def write_meta(parquet, source):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }, indent=2)
     try:
-        tmp = mp.with_suffix(mp.suffix + ".tmp")
+        # The temporary name carries the pid, so two builders writing the
+        # same window's metadata cannot clobber each other's file.
+        tmp = mp.with_suffix(f"{mp.suffix}.{os.getpid()}.tmp")
         tmp.write_text(payload, encoding="utf-8")
         os.replace(tmp, mp)
     except OSError as exc:
@@ -140,7 +142,7 @@ def write_meta(parquet, source):
         logger.debug(f"[parquet_cache] failed to persist meta for {parquet}: {exc!r}")
         # Clean up partial tmp file if any.
         try:
-            tmp = mp.with_suffix(mp.suffix + ".tmp")
+            tmp = mp.with_suffix(f"{mp.suffix}.{os.getpid()}.tmp")
             if tmp.exists():
                 tmp.unlink()
         except OSError:
@@ -249,7 +251,7 @@ def ensure_parquet(src_path):
     if df.is_empty():
         df = pl.DataFrame(schema={c: pl.Utf8 for c in _COLUMNS} | {"ts": pl.Datetime})
 
-    tmp = parquet.with_suffix(".parquet.tmp")
+    tmp = parquet.with_suffix(f".parquet.{os.getpid()}.tmp")
     df.write_parquet(tmp, compression="zstd", compression_level=3)
     tmp.replace(parquet)
     write_meta(parquet, src_path)
