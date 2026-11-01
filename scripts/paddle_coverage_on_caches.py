@@ -82,7 +82,13 @@ def measure(caches: List[Path], alpha: float | None = None) -> Dict[str, Any]:
             continue
 
         print(f"[{scored + 1}/{len(caches)}] {cache.name}", flush=True)
-        evidence = load_evidence(asn, lo, hi)
+        try:
+            evidence = load_evidence(asn, lo, hi)
+        except Exception as exc:  # noqa: BLE001
+            # A truncated archive is a data condition, not a reason to
+            # abandon the sweep.
+            reasons[f"archive_unreadable:{type(exc).__name__}"] += 1
+            continue
         outage = routing_block.get("outage_analysis") or routing_block.get("outage") or {}
         verdict, _, _ = run_paddle(
             routing_analysis=outage,
@@ -133,7 +139,7 @@ def cache_paths(root: Path):
     return sorted(out)
 
 
-def warm_parquet(caches: List[Path], workers: int = 3):
+def warm_parquet(caches: List[Path], workers: int = 8):
     """Build the parquet cache for every window the sweep needs.
 
     The archive scan reads the raw update files, and a file whose
@@ -142,11 +148,12 @@ def warm_parquet(caches: List[Path], workers: int = 3):
     exactly the ranges the sweep covers, and the scan then reads
     parquet.
 
-    The workers are few, because the decode is disk-heavy and the point
-    is to keep the machine responsive.
+    The workers are bounded, because the decode is disk-heavy and the
+    point is to keep the machine responsive.
     """
     from concurrent.futures import ThreadPoolExecutor
 
+    from agents.control_plane import BASELINE_DAYS
     from data.parquet_cache import PARQUET_DIR, parquet_version_matches
 
     stamps = set()
@@ -155,10 +162,20 @@ def warm_parquet(caches: List[Path], workers: int = 3):
             payload = json.loads(cache.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        # A cache with no traffic observation is never scored, so its
+        # windows need no parquet.  Warming them would cost hours of
+        # decoding for nothing.
+        if not traffic_timeline_of(unwrap(payload.get("traffic"))):
+            continue
         lo, hi = cache_window(payload)
         if lo is None:
             continue
-        moment = lo.replace(second=0, microsecond=0)
+        # The archive scan reaches back over the baseline days, because
+        # the counterfactual is built from the same clock slots on the
+        # preceding days.  A window whose baseline has no parquet is
+        # decoded at scan time, one file at a time.
+        moment = (lo - timedelta(days=BASELINE_DAYS)).replace(
+            second=0, microsecond=0)
         moment = moment.replace(minute=(moment.minute // 5) * 5)
         while moment <= hi:
             stamps.add(moment)
@@ -182,7 +199,14 @@ def warm_parquet(caches: List[Path], workers: int = 3):
         for source in (DECODED_DIR / f"updates.{text}.txt",
                        UPDATES_ROOT / f"updates.{text}.gz"):
             if source.exists() and source.stat().st_size > 0:
-                ensure_parquet(source)
+                try:
+                    ensure_parquet(source)
+                except Exception as exc:  # noqa: BLE001
+                    # A truncated archive is a data condition, not a
+                    # reason to abandon the sweep.  The scan reports
+                    # the window it could not read.
+                    print(f"parquet cache: {source.name} unreadable "
+                          f"({type(exc).__name__})", flush=True)
                 return
 
     with ThreadPoolExecutor(max_workers=workers) as pool:

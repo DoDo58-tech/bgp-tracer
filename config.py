@@ -73,8 +73,8 @@ USE_ES_FOR_CONN_FREQ = os.environ.get("USE_ES_FOR_CONN_FREQ", "false").lower() =
 
 # ── Workflow / ReAct engine ────────────────────────────────────────────────
 WORKFLOW_SKIP_WHEN_NO_ANOMALIES = os.environ.get("WORKFLOW_SKIP_WHEN_NO_ANOMALIES", "true").lower() == "true"
-WORKFLOW_MIN_HCAF_TIER = os.environ.get("WORKFLOW_MIN_HCAF_TIER", "C1").upper()
-WORKFLOW_MIN_HCAF_SCORE = float(os.environ.get("WORKFLOW_MIN_HCAF_SCORE", "0.5"))
+WORKFLOW_MIN_PADDLE_TIER = os.environ.get("WORKFLOW_MIN_PADDLE_TIER", "C1").upper()
+WORKFLOW_MIN_PADDLE_SCORE = float(os.environ.get("WORKFLOW_MIN_PADDLE_SCORE", "0.5"))
 WORKFLOW_TOTAL_TIMEOUT_S = float(os.environ.get("BGP_TRACER_WORKFLOW_TIMEOUT_S", "2400.0"))
 BUFFER_HOURS = float(os.environ.get("BUFFER_HOURS", "2.0"))
 
@@ -91,39 +91,12 @@ REPORT_REQUIRE_LLM = os.environ.get("REPORT_REQUIRE_LLM", "0").strip().lower() i
 REPORT_USE_DETERMINISTIC = os.environ.get("REPORT_USE_DETERMINISTIC", "1").strip().lower() in ("1", "true", "yes")
 REPORT_PAYLOAD_MAX_CHARS = int(os.environ.get("REPORT_PAYLOAD_MAX_CHARS", "30000"))
 
-# ── HCAF causal attribution thresholds ────────────────────────────────────
-# NOTE (2026-10-28): the per-channel HCAF_WEIGHTS_* / HCAF_MAJORITY_THRESHOLD
-# weighted-vote scheme was retired with the Granger decision channel. The
-# synthesis is now CSS-anchored Bayesian (see agents/css_engine.py).
-
-# Abstention floor for causal *direction*.
-# BUG (2026-10-05): when the three innovation methods all abstain (no
-# significant breakpoint, no cascade evidence, and CSS declining to commit)
-# the pipeline still emitted a concrete direction with confidence ~0.06. On the v13 ground
-# truth every such event had `routing_withdrawal_count == 0` and no routing
-# evidence at all, so the direction was pure noise — but it was reported as a
-# confident verdict. Ground-truth review precision sat at 0.552.
-# An "unknown" verdict is already accepted as non-error by the evaluation
-# harness, so abstaining on genuinely evidence-free input is strictly more
-# honest and strictly scores better. Raise the floor to force a direction only
-# when the evidence supports one.
-# DEPRECATED (2026-10-22): this floor was applied to the *blended display
-# score* (0.6*css_conf + 0.3*innovation + 0.1*TE, times a 0.7/0.95 causal
-# factor), which lives on a different scale from the quantity it was meant to
-# threshold.  It is kept only so old callers/imports keep working and MUST NOT
-# be used as a decision gate.  See HCAF_MIN_POSTERIOR below.
-HCAF_MIN_DIRECTION_CONFIDENCE = float(
-    os.environ.get("BGP_TRACER_HCAF_MIN_DIRECTION_CONF", "0.55")
-)
-
-# Abstention floor for causal *direction*, applied to the Bayesian posterior
-# mass of the dominant hypothesis (the quantity the synthesis actually
-# produces).  A direction is only committed when max(posterior) reaches this
-# value; the three-way posterior sums to 1, so 0.50 means "the dominant
-# hypothesis outweighs the other two combined".
-HCAF_MIN_POSTERIOR = float(
-    os.environ.get("BGP_TRACER_HCAF_MIN_POSTERIOR", "0.50")
-)
+# ── Causal attribution ─────────────────────────────────────────────────────
+# PADDLE decides the direction on its own evidence, so the engine carries
+# no confidence floor for it: the estimator abstains when the evidence
+# does not identify a direction, and every threshold it does apply lives
+# in `agents.paddle_attribution.PADDLE_PROTOCOL`, where it is hashed
+# into the protocol identifier that every artefact records.
 
 # ── Detector thresholds ────────────────────────────────────────────────────
 DEFAULT_LEAK_THRESHOLD = 0.4

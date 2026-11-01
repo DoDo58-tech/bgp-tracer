@@ -4,18 +4,18 @@ A two-phase analyzer that fuses control-plane routing telemetry (RIPE RIS /
 RouteViews BGPStream) and data-plane traffic dynamics (Cloudflare Radar)
 to attribute Internet anomalies (hijacks / leaks / outages).
 
-This is the implementation of **CSS** (Causal Sufficiency Score) inside
-the **HCAF** (Hybrid Causal Attribution Framework), and serves as the
+This is the implementation of **PADDLE** (Paired Displacement,
+Difference-in-differences, with Ledger Evidence), and serves as the
 artifact for our paper submission.
 
-> **Paper focus**: a *novel* causal-attribution method (CSS, based on
-> Pearl's do-calculus / Probability of Necessity and Sufficiency) for
-> joint traffic-routing correlation. CSS replaces the previous
-> weighted-vote scheme in HCAF. We benchmark against four traditional
-> baselines (Pearson lag, Granger causality, timestamp distance,
-> Transfer Entropy). See `agents/css_engine.py` for the core
-> implementation and `scripts/eval_hcaf_vs_baselines.py` for the
-> ablation driver.
+> **Paper focus**: a *novel* causal-attribution method for joint
+> traffic-routing correlation. PADDLE anchors on the data plane's
+> trough onset, measures the control plane's displacement there against
+> the same clock slots on the preceding days, and commits a direction
+> only when four vetoes pass --- precedence, exclusivity against the
+> same-clock placebo null, provenance scope, and directional congruence.
+> See `agents/paddle_attribution.py` for the estimator and
+> `agents/paddle_runtime.py` for the production adapter.
 
 ---
 
@@ -49,14 +49,10 @@ LLM); Phase 2 is the LLM-driven reasoning stage.
 │      ├─► CorrelationAnalyzer ── ΔT computation, hypothesis   │
 │      │     generation, timeline merging                       │
 │      │                                                       │
-│      ├─► CausalAttribution ─── HCAF (CSS + 5 evidence channels: │
-│      │     MSBD / CTPR / CIC / Granger / Transfer Entropy,      │
-│      │     Bayesian-synthesised — paper §5.2 primary)          │
-│      │                                                       │
-│      ├─► CausalBaselines ──── Pearson lag / Granger /        │
-│      │     timestamp distance / Transfer Entropy              │
-│      │     (paper §6 ablation, 4 baselines total)            │
-│      │                                                       │
+      ├─► PADDLE ──────────────── the only causal estimator  │
+      │     (paired displacement vs the same-clock null;       │
+      │      four vetoes — paper §4)                           │
+      │                                                       │
 │      └─► ReportAgent ──────── LLM HTML report                │
 │            results/html/llm_report_AS<n>_<timestamp>.html     │
 └──────────────────────────────────────────────────────────────┘
@@ -113,9 +109,10 @@ bgp_tracer/
 │   ├── traffic_agent.py          Cloudflare Radar traffic analysis
 │   ├── routing_agent.py          Hijack + leak + outage detection
 │   ├── correlation_analyzer.py   ΔT computation + hypothesis generation
-│   ├── causal_attribution.py     HCAF (Bayesian-synthesised CSS + 5 channels)
-│   ├── css_engine.py             CSS — Pearl PNS-based causal scorer (paper §5.2)
-│   ├── causal_baselines.py       4 baselines: Pearson / Granger / timestamp / TE
+│   ├── paddle_attribution.py     PADDLE — the causal estimator (paper §4)
+│   ├── paddle_runtime.py         PADDLE's production adapter
+│   ├── control_plane.py          The routing side as a rate series
+│   ├── control_plane_archive.py  The target's own announcements, from the archive
 │   ├── reasoning_agent.py        Cross-domain LLM reasoning
 │   ├── report_agent.py           LLM HTML report
 │   ├── react_agent.py            ReAct loop (legacy --mode react)
@@ -151,29 +148,31 @@ bgp_tracer/
 │
 ├── data_check/               ← Evaluation / ground-truth data
 │   └── ground_truth_collection/
-│       ├── final_balanced_dataset_v13.csv  ← canonical 29-event dataset
-│       ├── V13_DATASET_REPORT.md           ← dataset construction log
-│       ├── v13_rejected_events.csv         ← 169 rejected candidates
-│       └── HANDOFF.md                      ← data workflow guide
+│       ├── final_ground_truth.csv         ← canonical 17-event dataset
+│       ├── final_ground_truth_build.json  ← dataset construction log
+│       ├── final_ground_truth_rejected.csv
+│       └── seed_events.py
 │
 ├── scripts/                  ← Active batch runners
-│   ├── smoke_one.py             ← Phase-1 quick smoke test
 │   ├── run_4mode_batch.py       ← Batch runner for the two-phase pipeline
-│   ├── eval_hcaf_vs_baselines.py ← HCAF ablation vs baselines (paper §6)
-│   └── _archive_round29/        ← One-shot research scripts (archived)
+│   ├── eval_paddle_corpus.py    ← PADDLE on the canonical corpus (paper §6)
+│   ├── paddle_calibration.py    ← Size, power and common-shock calibration
+│   ├── paddle_coverage_on_caches.py ← Coverage over every cached window
+│   ├── component_ablation.py    ← Component ablation (paper appendix)
+│   ├── verify_paper.py          ← Runs every paper-number gate
+│   └── check_paper_numbers.py   ← Headline numbers vs the artefacts
 │
 ├── results/                  ← Runtime outputs (gitignored)
 │   ├── quick/                 Phase-1 JSON caches
 │   ├── html/                  Phase-2 LLM HTML reports
-│   └── eval/                  JSONL ablation outputs (HCAF vs baselines)
+│   └── eval/                  PADDLE corpus, calibration and ablation artefacts
 │
 └── logs/                     ← Runtime logs (bgp_tracer.log)
 ```
 
 The `agents/enhanced/` directory (multi-agent debate, online
 evaluation, reactive decisions) was **removed 2026-09-29** during
-paper-grade cleanup. See `docs/HCAF_CALIBRATION.md` §10 for the
-rationale.
+paper-grade cleanup.
 
 ---
 
@@ -206,111 +205,102 @@ bash scripts/launch_4mode_eval.sh
 # Output: results/html/llm_report_AS*.html
 ```
 
-### Paper §6 ablation: HCAF vs traditional baselines
+### Paper §6: PADDLE on the canonical corpus and its operating curve
 
 ```bash
-python scripts/eval_hcaf_vs_baselines.py \
-    --csv data_check/ground_truth_collection/final_balanced_dataset_v13.csv \
-    --quick-dir results/quick/ \
-    --out results/eval/hcaf_vs_baselines.jsonl
+# The estimator on every labelled event, through the production path.
+python scripts/eval_paddle_corpus.py
+
+# Size, power and common-shock behaviour on synthetic geometry.
+python scripts/paddle_calibration.py
+
+# Coverage over every cached window in the tree.
+python scripts/paddle_coverage_on_caches.py
 ```
 
-This reads every `results/quick/quick_AS<n>_*.json` produced by Phase 1,
-runs **HCAF (CSS+Bayesian)**, **CSS only**, and the four baselines on
-the routing and traffic timelines, and writes a JSONL record per event
-with each method's tier, direction, and confidence. The result feeds
-the §6 ablation table in the paper.
+`eval_paddle_corpus.py` calls the same `agents.paddle_runtime.run_paddle`
+the chief agent calls, so the measured coverage is the coverage the
+system actually has. `paddle_calibration.py` plants a routing pulse
+followed by a traffic drop at a known lag, and counts how often the
+estimator commits and how often the committed direction is right.
 
-#### Latest ablation numbers (real cache + synthetic mix)
+#### Latest operating characteristics
 
 ```
-Method              Correct  Total  Precision
-──────────────────────────────────────────────
-HCAF (CSS+B)             8     11     0.727
-CSS only                 8     11     0.727
-Pearson                  7     11     0.636
-Ts-Distance              6     11     0.545
-Transfer Entropy         2     11     0.182
-Granger                  0     11     0.000
+Size (no planted effect), 400 windows per autocorrelation level
+  rho=0.0   0.0% committed
+  rho=0.5   0.0% committed
+  rho=0.8   0.0% committed
+
+Power (planted routing pulse then traffic drop), 200 windows per cell
+  12 lag-drop cells, 2,342 commitments out of 2,400
+  100% of the commitments name the correct direction
+
+Common shock (both sides move together), 200 windows per level
+  simultaneous pulse          2.0% false commitments
+  simultaneous, 1-bucket skew 6.0% false commitments
 ```
 
-CSS achieves **72.7% precision on the v10 ground truth**, beating all
-four baselines. The Bayesian-synthesised HCAF (which combines CSS with
-the 5 evidence channels: MSBD, CTPR, CIC, Granger, Transfer Entropy)
-matches CSS alone, demonstrating that the synthesis step preserves
-the Pearl-anchored causal claim without degradation.
 
 ---
 
-## 5. CSS — Causal Sufficiency Score (paper §5.2)
+## 5. PADDLE — the causal estimator (paper §4)
 
-CSS is the paper's primary methodological contribution. It replaces
-the previous weighted-vote scheme in HCAF with a Pearl-do-calculus-
-based scoring framework:
+PADDLE is the only causal estimator in the codebase. It answers a
+physical question: when the data plane deviated, had the control plane
+already deviated, and by more than it does at this hour on an ordinary
+day?
 
-```
-CSS(R → T) = E[T | do(R=1)] − E[T | do(R=0)]   (Pearl PNS, 1999)
-CSS(T → R) = E[R | do(T=1)] − E[R | do(T=0)]
-```
-
-### Why not voting?
-
-The previous HCAF evaluated 4 sub-methods and summed their weighted
-strengths:
+### The shape of the method
 
 ```
-voting[d] += breakpoint.strength * 0.40
-voting[d] += path.strength      * 0.30
-voting[d] += cascade.strength   * 0.30
-voting[d] += granger.strength   * 0.15
+anchor    the data plane's trough onset (the first observation of the
+          deepest sustained fall)
+measure   the control plane's paired displacement at that moment:
+          its rate around the anchor against the same clock slots on
+          the preceding days, summarised by medians
+null      the same measurement applied to ordinary days, split by
+          direction, giving an empirical tail probability
+commit    only when all four vetoes pass
 ```
 
-A weighted sum is functionally a vote with continuous weights. It
-cannot:
-  * resolve direction conflicts (4 methods disagree → averaged)
-  * distinguish "weak correlation" from "weak evidence"
-  * provide a significance claim (no CI, no p-value)
+The four vetoes are tests, not scores, and the conjunction is logical:
+no weight, prior or floor binds them, and a refusal names the veto that
+produced it.
 
-### CSS pipeline
+| Veto | Question | Refusal |
+|-------|----------|---------|
+| V1 precedence | had the control plane already moved? | `inadmissible_precedence` |
+| V2 exclusivity | is this more than an ordinary day shows? | `not_exclusive` |
+| V3 provenance | do the two sides cover the same entities? | `provenance_disjoint` |
+| V4 congruence | do the two movements point the same way? | `mirror_contradicted` |
 
-1. **Breakpoint detection**: MSBD's largest-mean-shift point serves as
-   the **counterfactual intervention** (Pearl's `do()` operator).
-2. **PNS estimation**: split the timeline at the intervention, compute
-   `E[Y | post] − E[Y | pre]` for both directions. Bootstrap the
-   difference 500–2000 times to obtain a 95% CI and permutation p-value.
-3. **Temporal precedence constraint**: routing's intervention onset
-   must precede traffic's intervention onset for `R → T` to be
-   structurally plausible (Pearl: cause precedes effect).
-4. **Bayesian synthesis**: CSS sets the prior; the 5 evidence channels
-   contribute likelihood ratios. Channels disagreeing with the CSS
-   anchor are down-weighted to prevent heuristic methods from
-   overriding a Pearl-anchored direction.
+### Why no voting, and why no earlier methods
 
-### CSS evidence channels (5)
-
-| Channel | Role | LRs from |
-|---------|------|----------|
-| CSS (Pearl PNS) | **Anchor** (prior) | bootstrap CI |
-| MSBD breakpoint | counterfactual baseline | intervention idx |
-| CTPR path | sufficiency check (Pearl PN) | path strength |
-| CIC cascade | scope check | affected AS count |
-| Granger | linear-Gaussian likelihood | F-statistic |
-| Transfer Entropy | non-linear likelihood | TE confidence |
+The estimator that preceded PADDLE combined several sub-methods by
+summing their weighted strengths. A weighted sum is functionally a vote
+with continuous weights: it cannot resolve a direction conflict, it
+cannot distinguish weak correlation from weak evidence, and it cannot
+support a significance claim. PADDLE replaces all of that with a
+single paired measurement and a conjunction of vetoes, and the earlier
+methods --- Granger causality, transfer entropy, MSBD, CTPR, CIC and
+the weighted-vote scheme --- were removed from the tree in commit
+`06e0ffb`. The pre-cleanup state is preserved on the
+`origin/backup/pre-cleanup-20261031` branch.
 
 ### Public API
 
 ```python
-from agents.css_engine import css_score, bayesian_synthesize
+from agents.paddle_attribution import attribute
 
-result = css_score(routing_timeline, traffic_timeline, n_bootstrap=1000)
-print(f"direction = {result.direction}")     # routing_to_traffic | traffic_to_routing | unknown
-print(f"is_causal = {result.is_causal}")     # True iff CI excludes 0
-print(f"CI = [{result.ci_lower}, {result.ci_upper}]")
-print(f"p_value = {result.p_value}")
+verdict = attribute(control_series, traffic_observations)
+print(verdict.direction)     # routing_to_traffic | traffic_to_routing | unknown
+print(verdict.reason)        # committed | not_exclusive | ...
+print(verdict.as_dict())
 ```
 
-See `agents/css_engine.py` for the full implementation and
-`tests/test_css_engine.py` for the unit tests.
+See `agents/paddle_attribution.py` for the implementation and
+`tests/test_paddle_attribution.py` for the unit tests.
 
 ---
 
@@ -323,11 +313,11 @@ See `agents/css_engine.py` for the full implementation and
 | Change how reports are rendered            | `agents/report_agent.py` + `agents/hardened_pipeline.py` |
 | Adjust routing detection thresholds        | `detectors/{hijack,leak,outage}/`                       |
 | Change the two-phase pipeline              | `chief_agent.py` (analyze_quick / analyze_deep_from_quick) |
-| Modify the CSS scoring kernel              | `agents/css_engine.py` (Pearl PNS)                      |
-| Modify HCAF Bayesian synthesis             | `agents/css_engine.py:bayesian_synthesize`              |
-| Tune HCAF evidence-channel LRs             | `agents/causal_attribution.py:evaluate_convergence`     |
-| Add a new baseline method                  | `agents/causal_baselines.py` (register in BASELINES dict) |
-| Re-evaluate against ground truth           | `scripts/eval_hcaf_vs_baselines.py`                     |
+| Modify the causal estimator                 | `agents/paddle_attribution.py`                          |
+| Change the routing-side representation     | `agents/control_plane.py` + `agents/control_plane_archive.py` |
+| Re-evaluate against ground truth           | `scripts/eval_paddle_corpus.py`                         |
+| Re-measure size, power and common shocks   | `scripts/paddle_calibration.py`                         |
+| Check the paper's numbers against the data | `python scripts/verify_paper.py`                        |
 
 ---
 
@@ -350,16 +340,20 @@ SIGCOMM/IMC submission:
   (`WORKFLOW_TRACE_ENABLED`, `WORKFLOW_EVENT_DRIVEN_ENABLED`,
   `WORKFLOW_MAX_REACTIVE_DECISIONS`, `BGP_TRACER_HCAF_BASELINES_ENABLED`,
   `WORKFLOW_ANALYSIS_MODE`).
-- **Round 31** (2026-09-29): **CSS replaces weighted-vote in HCAF**.
-  Added `agents/css_engine.py` (Pearl PNS-based causal scorer with
-  bootstrap CI + permutation p-value). Rewrote
-  `evaluate_convergence` as Bayesian synthesis over 5 evidence
-  channels (CSS-anchored prior + MSBD/CTPR/CIC/Granger/TE LRs).
-  Added Transfer Entropy baseline
-  (`causal_baselines.transfer_entropy_baseline`). HCAF (CSS+Bayesian)
-  achieves **72.7% precision** on the v10 ground truth, matching CSS
-  alone and beating all four baselines (Pearson 63.6%, Ts-Distance
-  54.5%, Transfer Entropy 18.2%, Granger 0%).
+- **Round 32** (2026-10-31): **PADDLE replaces the multi-method
+  synthesis.** The earlier estimator combined MSBD, CTPR, CIC, Granger
+  and transfer entropy by summing weighted strengths; those modules were
+  removed in commit `06e0ffb` and the pre-cleanup state was preserved on
+  the `origin/backup/pre-cleanup-20261031` branch. PADDLE measures one
+  paired displacement against the same-clock null and admits a direction
+  only when four vetoes pass.
+- **Round 33** (2026-11-02): **The trough anchor is the onset of the
+  deepest sustained fall**, rather than the first observation that
+  crossed the fall floor. A noise wobble could previously steal the
+  anchor from a real drop, and the estimator then measured the control
+  plane at the wrong moment. Power over the twelve planted lag--drop
+  cells rose from 701 to 2,342 commitments out of 2,400, with every
+  commitment still correct.
 
 Active LoC reduced by ~1,000 lines after Round-30 cleanup. The two-phase
 quick→deep pipeline is the canonical operational path; the legacy
@@ -373,8 +367,8 @@ If you use this code, please cite our paper:
 
 ```bibtex
 @inproceedings{bgp_tracer_2026,
-  title     = {Joint Traffic-BGP Anomaly Attribution via Causal Sufficiency
-               Scoring},
+  title     = {Joint Traffic-BGP Anomaly Attribution via Paired
+               Displacement and a Same-Clock Null},
   author    = {Anonymous Authors},
   booktitle = {Proceedings of SIGCOMM / IMC},
   year      = {2026},

@@ -281,8 +281,8 @@ class WorkflowEngine:
     ):
         from config import (
             WORKFLOW_SKIP_WHEN_NO_ANOMALIES,
-            WORKFLOW_MIN_HCAF_TIER,
-            WORKFLOW_MIN_HCAF_SCORE,
+            WORKFLOW_MIN_PADDLE_TIER,
+            WORKFLOW_MIN_PADDLE_SCORE,
         )
         self.max_retries = max_retries
         self.parallel_execution = parallel_execution
@@ -292,8 +292,8 @@ class WorkflowEngine:
             if skip_unnecessary_analysis is None
             else skip_unnecessary_analysis
         )
-        self.min_hcaf_tier = WORKFLOW_MIN_HCAF_TIER
-        self.min_hcaf_score = WORKFLOW_MIN_HCAF_SCORE
+        self.min_paddle_tier = WORKFLOW_MIN_PADDLE_TIER
+        self.min_paddle_score = WORKFLOW_MIN_PADDLE_SCORE
 
         # ── Component ablation switches ────────────────────────────────────────
         # Read through the shared module so that every component which
@@ -1858,16 +1858,16 @@ class WorkflowEngine:
         )
 
         current_rank = self._TIER_ORDER.get(str(tier).upper(), 0)
-        min_rank = self._TIER_ORDER.get(self.min_hcaf_tier, 1)
+        min_rank = self._TIER_ORDER.get(self.min_paddle_tier, 1)
 
-        tier_ok = current_rank >= min_rank and score >= self.min_hcaf_score
+        tier_ok = current_rank >= min_rank and score >= self.min_paddle_score
         if tier_ok:
             context.validation_notes.append({
                 "case": "reasoning_not_skipped",
                 "severity": "info",
                 "message": (
                     f"HCAF tier={hcaf_tier}, joint_tier={tier}, score={score:.3f} "
-                    f">= min_tier={self.min_hcaf_tier}, min_score={self.min_hcaf_score:.3f}; "
+                    f">= min_tier={self.min_paddle_tier}, min_score={self.min_paddle_score:.3f}; "
                     "reasoning stage proceeds even without explicit anomalies."
                 ),
             })
@@ -1878,7 +1878,7 @@ class WorkflowEngine:
             "severity": "info",
             "message": (
                 f"Skipped reasoning: anomalies=False, joint_tier={tier}, score={score:.3f} "
-                f"(< min_tier={self.min_hcaf_tier} or < min_score={self.min_hcaf_score:.3f})."
+                f"(< min_tier={self.min_paddle_tier} or < min_score={self.min_paddle_score:.3f})."
             ),
         })
         return True
