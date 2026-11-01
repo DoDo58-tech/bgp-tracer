@@ -112,13 +112,11 @@ five-minute bucketing) or 120 (a 30-second grid, capped), with exactly
 two non-filler buckets in either case: the routing spike at one end, the
 synthesized traffic record at the other---a point placed at the midpoint
 of a 33-hour traffic window, 7.5 hours from the only routing evidence.
-CSS returns $p = 1.0$ rather than attribute a traffic pre/post shift of
-$0.11\sigma$; transfer entropy estimates $0.03$\,nats in the $R\to T$
-direction against a shuffle null of $0.061\pm0.004$ ($p = 1.0$). The
-engine does not reach either statistic: with one non-filler point per
-side there is no sustained deviation to pair with the trough, so V1 returns
-\texttt{inadmissible\_precedence} with sub-verdict
-\texttt{inadmissible\_precedence}.
+The estimator does not reach its measurement: with one non-filler point
+per side there is no sustained deviation to pair with the trough, so V1
+returns \texttt{inadmissible\_precedence}, and the direction is never
+displaced from the traffic fall by the routing spike seven and a half hours
+away.
 
 It is worth being explicit about why that abstention is the right output
 rather than a missed opportunity. The ground truth for this event contains

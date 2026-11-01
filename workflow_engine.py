@@ -84,7 +84,7 @@ def build_routing_state(prefix2as_file, prefixes, max_prefixes=200):
         from agents.coordination_utils import load_json
         table = load_json(prefix2as_file)
     except AttributeError as exc:  # noqa: BLE001 - degrade, never crash the pipeline
-        logger.warning(f"[HCAF] routing_state: failed to load {prefix2as_file}: {exc}")
+        logger.warning(f"[PADDLE] routing_state: failed to load {prefix2as_file}: {exc}")
         return {}
     if not isinstance(table, dict):
         return {}
@@ -215,9 +215,9 @@ class WorkflowContext:
     # audited for single-variability after the fact instead of the
     # property being taken on trust.
     stage_execution: dict = field(default_factory=dict)
-    # ── HCAF causal attribution result (three innovation methods: MSCBD/CTPR/CIC)─────────────
-    hcaf_attribution: dict = None
-    hcaf_attribution_status: str = "skipped"  # "ok" / "skipped" / "failed"
+    # ── PADDLE causal attribution result ────────────────────────────────
+    paddle_attribution: dict = None
+    paddle_attribution_status: str = "skipped"  # "ok" / "skipped" / "failed"
     buffer_hours: float = 2.0
     # ── Enhanced multi-agent fields ──────────────────────────────────────────
     enhanced: bool = False              # enable enhanced multi-agent mode
@@ -947,42 +947,42 @@ class WorkflowEngine:
             except AttributeError as exc:  # noqa: BLE001
                 logger.warning(f"[JointEvidence] failed to record alternatives: {exc}")
 
-            # HCAF causal attribution (three innovation methods: MSCBD/CTPR/CIC)
+            # PADDLE causal attribution
             try:
-                if self.ablate.get("hcaf"):
-                    logger.info("[HCAF] ablated — skipping causal attribution")
-                    context.hcaf_attribution = {}
-                    context.hcaf_attribution_status = "ablated"
+                if self.ablate.get("paddle"):
+                    logger.info("[PADDLE] ablated — skipping causal attribution")
+                    context.paddle_attribution = {}
+                    context.paddle_attribution_status = "ablated"
                     self.record_stage_execution(
-                        context, "hcaf", ran=False,
-                        detail="ablated by BGP_TRACER_ABLATE_HCAF")
+                        context, "paddle", ran=False,
+                        detail="ablated by BGP_TRACER_ABLATE_PADDLE")
                 else:
-                    hcaf_result = self.compute_hcaf_attribution(context)
-                    if hcaf_result:
-                        context.hcaf_attribution = hcaf_result
-                        context.hcaf_attribution_status = "ok"
+                    paddle_result = self.compute_paddle_attribution(context)
+                    if paddle_result:
+                        context.paddle_attribution = paddle_result
+                        context.paddle_attribution_status = "ok"
                         self.record_stage_execution(
-                            context, "hcaf", ran=True,
-                            detail=f"direction={hcaf_result.get('direction')}")
+                            context, "paddle", ran=True,
+                            detail=f"direction={paddle_result.get('direction')}")
                         logger.info(
-                            f"[HCAF] direction_val={hcaf_result['direction']}, "
-                            f"strength_val={hcaf_result['strength']}, "
-                            f"confidence={hcaf_result['confidence']:.0%}, "
-                            f"convergence={hcaf_result['convergence']:.0%}"
+                            f"[PADDLE] direction_val={paddle_result['direction']}, "
+                            f"strength_val={paddle_result['strength']}, "
+                            f"confidence={paddle_result['confidence']:.0%}, "
+                            f"convergence={paddle_result['convergence']:.0%}"
                         )
                     else:
-                        if context.hcaf_attribution_status not in ("ok",):
-                            context.hcaf_attribution_status = "skipped"
+                        if context.paddle_attribution_status not in ("ok",):
+                            context.paddle_attribution_status = "skipped"
                         self.record_stage_execution(
-                            context, "hcaf", ran=False,
+                            context, "paddle", ran=False,
                             detail="attribution produced no result")
-                        logger.info(f"[HCAF] causal attribution produced no result (status={context.hcaf_attribution_status})")
+                        logger.info(f"[PADDLE] causal attribution produced no result (status={context.paddle_attribution_status})")
             except AttributeError as e:
-                logger.warning(f"[HCAF] causal attribution failed in joint_evidence stage: {e}")
-                if context.hcaf_attribution_status not in ("ok",):
-                    context.hcaf_attribution_status = "failed"
+                logger.warning(f"[PADDLE] causal attribution failed in joint_evidence stage: {e}")
+                if context.paddle_attribution_status not in ("ok",):
+                    context.paddle_attribution_status = "failed"
 
-            # Event-driven HCAF publish removed 2026-09-29 (enhanced mode deleted).
+            # Event-driven PADDLE publish removed 2026-09-29 (enhanced mode deleted).
 
             return WorkflowEvent.JOINT_EVIDENCE_COMPLETE
 
@@ -993,7 +993,7 @@ class WorkflowEngine:
                 "severity": "warning",
                 "message": f"Joint evidence analysis skipped: {e}",
             })
-            # Do not return here - HCAF must run outside joint_evidence
+            # Do not return here - PADDLE must run outside joint_evidence
         except AttributeError as e:
             logger.error(f"[JointEvidence] Error running joint evidence analysis: {e}")
             context.validation_notes.append({
@@ -1001,29 +1001,29 @@ class WorkflowEngine:
                 "severity": "error",
                 "message": f"Joint evidence analysis failed: {e}",
             })
-            # Do not return here - HCAF must run outside joint_evidence
+            # Do not return here - PADDLE must run outside joint_evidence
 
-        # HCAF causal attribution (three innovation methods: MSCBD/CTPR/CIC)
+        # PADDLE causal attribution
         # Independent of joint_evidence so it still runs when joint_evidence fails
         try:
-            hcaf_result = self.compute_hcaf_attribution(context)
-            if hcaf_result:
-                context.hcaf_attribution = hcaf_result
-                context.hcaf_attribution_status = "ok"
+            paddle_result = self.compute_paddle_attribution(context)
+            if paddle_result:
+                context.paddle_attribution = paddle_result
+                context.paddle_attribution_status = "ok"
                 logger.info(
-                    f"[HCAF] direction_val={hcaf_result['direction']}, "
-                    f"strength_val={hcaf_result['strength']}, "
-                    f"confidence={hcaf_result['confidence']:.0%}, "
-                    f"convergence={hcaf_result['convergence']:.0%}"
+                    f"[PADDLE] direction_val={paddle_result['direction']}, "
+                    f"strength_val={paddle_result['strength']}, "
+                    f"confidence={paddle_result['confidence']:.0%}, "
+                    f"convergence={paddle_result['convergence']:.0%}"
                 )
             else:
-                if context.hcaf_attribution_status not in ("ok",):
-                    context.hcaf_attribution_status = "skipped"
-                logger.info(f"[HCAF] causal attribution produced no result (status={context.hcaf_attribution_status})")
+                if context.paddle_attribution_status not in ("ok",):
+                    context.paddle_attribution_status = "skipped"
+                logger.info(f"[PADDLE] causal attribution produced no result (status={context.paddle_attribution_status})")
         except AttributeError as e:
-            logger.warning(f"[HCAF] causal attribution failed after joint_evidence: {e}")
-            if context.hcaf_attribution_status not in ("ok",):
-                context.hcaf_attribution_status = "failed"
+            logger.warning(f"[PADDLE] causal attribution failed after joint_evidence: {e}")
+            if context.paddle_attribution_status not in ("ok",):
+                context.paddle_attribution_status = "failed"
 
         return WorkflowEvent.JOINT_EVIDENCE_COMPLETE
     
@@ -1237,8 +1237,8 @@ class WorkflowEngine:
             logger.warning(f"causal analysis computation failed: {e}")
             return None
 
-    def build_hcaf_timelines(self, routing_result, traffic_result):
-        """Convert routing_result / traffic_result into the timeline/context shape HCAF expects."""
+    def build_paddle_timelines(self, routing_result, traffic_result):
+        """Convert routing_result / traffic_result into the timeline/context shape PADDLE expects."""
         routing_timeline = []
         if routing_result:
             # annotation_package uses { "hijack": { "origin_hijacked": [...] } };
@@ -1317,7 +1317,7 @@ class WorkflowEngine:
                 })
             # Fallback: when no anomalies but traffic drop is significant (peak_trough_drop_pct > 30%
             # or percent_change < -15%), synthesize a minimal timeline from expanded_boundaries /
-            # expanded_windows so HCAF / JointEvidence still receive *some* traffic signal.
+            # expanded_windows so PADDLE / JointEvidence still receive *some* traffic signal.
             if not traffic_timeline:
                 pct = traffic_result.get("percent_change") or 0.0
                 peak_drop = traffic_result.get("peak_trough_drop_pct") or 0.0
@@ -1342,7 +1342,7 @@ class WorkflowEngine:
                                 break
                     if synthesized:
                         logger.info(
-                            f"[HCAF] Synthesized {synthesized} traffic timeline points "
+                            f"[PADDLE] Synthesized {synthesized} traffic timeline points "
                             f"from expanded_windows (peak_drop={peak_drop:.1f}%, pct_change={pct:.1f}%)"
                         )
                 # Last resort: if still empty but percent_change is significant, fabricate a single
@@ -1358,7 +1358,7 @@ class WorkflowEngine:
                             "raw_event": {"synthesized": True, "reason": "pct_change_significant"},
                         })
                         logger.info(
-                            f"[HCAF] Synthesized 1 traffic timeline point from "
+                            f"[PADDLE] Synthesized 1 traffic timeline point from "
                             f"expanded_boundaries (pct_change={pct:.1f}%)"
                         )
             traffic_timeline.sort(key=lambda x: x.get("timestamp") or "")
@@ -1491,13 +1491,13 @@ class WorkflowEngine:
                 prefix2as_file, sorted(affected_prefixes),
             )
             logger.info(
-                f"[HCAF] routing_state: {len(topology_context['routing_state'])} ASes "
+                f"[PADDLE] routing_state: {len(topology_context['routing_state'])} ASes "
                 f"originate {len(affected_prefixes)} affected prefix(es)"
             )
 
         return routing_timeline, traffic_timeline, routing_context, traffic_context, topology_context
 
-    def compute_hcaf_attribution(self, context):
+    def compute_paddle_attribution(self, context):
         """Attribute the direction of a routing/traffic pair with PADDLE.
 
         PADDLE -- Paired Displacement, Difference-in-differences, with
@@ -1516,28 +1516,28 @@ class WorkflowEngine:
         traffic_result = context.traffic_result
 
         if not routing_result or not traffic_result:
-            logger.info("[HCAF] missing routing_result or traffic_result; skipping causal attribution")
-            context.hcaf_attribution_status = "skipped"
+            logger.info("[PADDLE] missing routing_result or traffic_result; skipping causal attribution")
+            context.paddle_attribution_status = "skipped"
             return None
 
         try:
             from agents.paddle_runtime import run_paddle
         except ImportError as e:
-            logger.warning(f"[HCAF] paddle_runtime_import_failed: {e}")
-            context.hcaf_attribution_status = "failed"
+            logger.warning(f"[PADDLE] paddle_runtime_import_failed: {e}")
+            context.paddle_attribution_status = "failed"
             return None
 
-        routing_timeline, traffic_timeline, routing_context, traffic_context, topology_context = self.build_hcaf_timelines(routing_result, traffic_result)
+        routing_timeline, traffic_timeline, routing_context, traffic_context, topology_context = self.build_paddle_timelines(routing_result, traffic_result)
 
         # Only skip when BOTH timelines are empty. Traffic-only or routing-only
         # events still provide partial evidence that the LLM report can reason about.
         if not routing_timeline and not traffic_timeline:
-            logger.info(f"[HCAF] insufficient_timeline_data: routing={len(routing_timeline)}, traffic={len(traffic_timeline)}; skipping")
-            context.hcaf_attribution_status = "skipped"
+            logger.info(f"[PADDLE] insufficient_timeline_data: routing={len(routing_timeline)}, traffic={len(traffic_timeline)}; skipping")
+            context.paddle_attribution_status = "skipped"
             return None
 
         if not routing_timeline:
-            logger.info(f"[HCAF] routing timeline empty; continuing with traffic data only ({len(traffic_timeline)} points)")
+            logger.info(f"[PADDLE] routing timeline empty; continuing with traffic data only ({len(traffic_timeline)} points)")
         elif not traffic_timeline:
             # Note: the log wording "traffic timeline is empty" was once misread as traffic data being empty.
             # It actually means traffic_result['anomalies'] is empty (detector miss),
@@ -1548,7 +1548,7 @@ class WorkflowEngine:
             if isinstance(pct, (int, float)) or isinstance(peak_drop, (int, float)):
                 extra = f" (note: traffic_result exists, percent_change={pct}%, peak_trough_drop={peak_drop}% - anomaly detection produced no anomaly, but the drop data is still usable as context)"
             logger.info(
-                f"[HCAF] traffic_timeline(anomalies) empty; continuing with routing data only ({len(routing_timeline)} points){extra}"
+                f"[PADDLE] traffic_timeline(anomalies) empty; continuing with routing data only ({len(routing_timeline)} points){extra}"
             )
 
         target_as_val = int(context.asn) if str(context.asn).isdigit() else None
@@ -1574,8 +1574,8 @@ class WorkflowEngine:
                 window_end=window_end,
             )
         except (AttributeError, TypeError, ValueError) as e:
-            logger.warning(f"[HCAF] paddle_call_failed: {e}")
-            context.hcaf_attribution_status = "failed"
+            logger.warning(f"[PADDLE] paddle_call_failed: {e}")
+            context.paddle_attribution_status = "failed"
             return None
 
         direction_val = verdict.direction if verdict.committed else "unknown"
@@ -1823,7 +1823,7 @@ class WorkflowEngine:
 
         # Any active ablation suspends the cost gate.  This is broader
         # than the joint-evidence case on purpose: the gate reads the
-        # joint tier and the HCAF score, and *any* ablation arm must
+        # joint tier and the PADDLE score, and *any* ablation arm must
         # run the stages it did not disable, whatever the tier happens
         # to be.
         #
@@ -1851,9 +1851,9 @@ class WorkflowEngine:
 
         tier = getattr(context, "joint_tier", None) or "INSUFFICIENT"
         score = float(getattr(context, "joint_score", 0.0) or 0.0)
-        hcaf_tier = (
-            (context.hcaf_attribution or {}).get("tier", "INSUFFICIENT")
-            if isinstance(context.hcaf_attribution, dict)
+        paddle_tier = (
+            (context.paddle_attribution or {}).get("tier", "INSUFFICIENT")
+            if isinstance(context.paddle_attribution, dict)
             else "INSUFFICIENT"
         )
 
@@ -1866,7 +1866,7 @@ class WorkflowEngine:
                 "case": "reasoning_not_skipped",
                 "severity": "info",
                 "message": (
-                    f"HCAF tier={hcaf_tier}, joint_tier={tier}, score={score:.3f} "
+                    f"PADDLE tier={paddle_tier}, joint_tier={tier}, score={score:.3f} "
                     f">= min_tier={self.min_paddle_tier}, min_score={self.min_paddle_score:.3f}; "
                     "reasoning stage proceeds even without explicit anomalies."
                 ),
@@ -2181,7 +2181,7 @@ class WorkflowEngine:
         # A falsification card that found no alternative explanation is not
         # a gap; but a *failed* causal attribution is, because it removes
         # the directional reading of the evidence.
-        if getattr(context, "hcaf_attribution_status", "") == "failed":
+        if getattr(context, "paddle_attribution_status", "") == "failed":
             await bb.add_gap({
                 "source": "WorkflowEngine",
                 "kind": "causal_attribution_unavailable",
@@ -2189,7 +2189,7 @@ class WorkflowEngine:
                 "severity": "degraded",
                 "impact": "The direction of causation between routing and traffic is not established.",
                 "confidence": 1.0,
-                "derived_from": ["hcaf_attribution_status"],
+                "derived_from": ["paddle_attribution_status"],
             })
 
     async def fetch_victim_traffic(self, context, bb):
@@ -2342,8 +2342,8 @@ class WorkflowEngine:
         await bb.write("validation", "joint_score", getattr(context, "joint_score", 0.0) or 0.0)
         await bb.write("validation", "joint_evidence_cards", getattr(context, "joint_evidence_cards", []) or [])
         await bb.write("validation", "joint_rationale", getattr(context, "joint_rationale", "") or "")
-        await bb.write("validation", "hcaf_attribution", context.hcaf_attribution or {})
-        await bb.write("validation", "hcaf_attribution_status", context.hcaf_attribution_status or "skipped")
+        await bb.write("validation", "paddle_attribution", context.paddle_attribution or {})
+        await bb.write("validation", "paddle_attribution_status", context.paddle_attribution_status or "skipped")
         await bb.write("evidence", "chain", context.evidence_chain or {})
         await bb.write("evidence", "validation_notes", context.validation_notes)
 

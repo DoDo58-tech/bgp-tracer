@@ -338,7 +338,7 @@ SIGCOMM/IMC submission:
   `scripts/_archive_round29/`.
 - **Round 30** (2026-09-29): Removed 5 orphaned config keys
   (`WORKFLOW_TRACE_ENABLED`, `WORKFLOW_EVENT_DRIVEN_ENABLED`,
-  `WORKFLOW_MAX_REACTIVE_DECISIONS`, `BGP_TRACER_HCAF_BASELINES_ENABLED`,
+  `WORKFLOW_MAX_REACTIVE_DECISIONS`, `BGP_TRACER_ABLATE_PADDLE`,
   `WORKFLOW_ANALYSIS_MODE`).
 - **Round 32** (2026-10-31): **PADDLE replaces the multi-method
   synthesis.** The earlier estimator combined MSBD, CTPR, CIC, Granger

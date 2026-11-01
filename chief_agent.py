@@ -366,8 +366,8 @@ class ChiefExpertAgent:
             report_generated = valid_llm_html_report(report_path)
             partial_success = bool(result.success) and report_generated
 
-            # react mode: process HCAF causal attribution
-            hcaf_attribution, hcaf_status = self.post_react_hcaf(result)
+            # react mode: process PADDLE causal attribution
+            paddle_attribution, paddle_status = self.post_react_paddle(result)
 
             return {
                 "success": partial_success,
@@ -416,9 +416,9 @@ class ChiefExpertAgent:
                 "token_count": extract_react_token_count(result, _tok_before),
                 "execution_time_minutes": elapsed / 60.0,
                 "execution_time_seconds": elapsed,
-                # HCAF attribution result (added when fixing Bug #6)
-                "hcaf_attribution": hcaf_attribution,
-                "hcaf_attribution_status": hcaf_status,
+                # PADDLE attribution result
+                "paddle_attribution": paddle_attribution,
+                "paddle_attribution_status": paddle_status,
                 "elapsed_seconds": elapsed,
                 "error": result.error if not result.success else None,
                 "event_start_time": event_start.isoformat(),
@@ -434,7 +434,7 @@ class ChiefExpertAgent:
                 asn, start_time, end_time, user_input, t0, event_start
             )
 
-    def post_react_hcaf(self, react_result):
+    def post_react_paddle(self, react_result):
         """Post-React PADDLE directional attribution.
 
         Returns (attribution_dict, status_string). Never returns None.
@@ -455,7 +455,7 @@ class ChiefExpertAgent:
         try:
             from agents.paddle_runtime import run_paddle
         except ImportError:
-            logger.debug("[HCAF] paddle_runtime not available; skipping post-react attribution")
+            logger.debug("[PADDLE] paddle_runtime not available; skipping post-react attribution")
             return {}, "skipped_no_engine"
 
         try:
@@ -565,7 +565,7 @@ class ChiefExpertAgent:
             return attribution, "ok"
 
         except AttributeError as e:
-            logger.warning(f"[HCAF post-react] failed: {e}")
+            logger.warning(f"[PADDLE post-react] failed: {e}")
             return {}, "failed"
 
     # ── Workflow Engine Mode ─────────────────────────────────────────────────
@@ -694,8 +694,8 @@ class ChiefExpertAgent:
             "diagnosis_result": context.diagnosis_result or {},
             "verification_result": context.verification_result or {},
             "experiment_metrics": context.experiment_metrics or {},
-            "hcaf_attribution": context.hcaf_attribution or {},
-            "hcaf_attribution_status": context.hcaf_attribution_status or "skipped",
+            "paddle_attribution": context.paddle_attribution or {},
+            "paddle_attribution_status": context.paddle_attribution_status or "skipped",
             "causal_analysis": getattr(context, "causal_analysis", None) or {},
             "evidence_chain": getattr(context, "evidence_chain", None) or {},
             "joint_tier": getattr(context, "joint_tier", "") or "",
@@ -715,7 +715,7 @@ class ChiefExpertAgent:
                 "challenges": context.contradictions,
                 "alternatives": getattr(context, "evidence_alternatives", []) or [],
                 "gaps": getattr(context, "evidence_gaps", []) or [],
-                "causal_attribution": context.hcaf_attribution or {},
+                "causal_attribution": context.paddle_attribution or {},
             },
             "analysis_report": context.final_result or {},
             "report_result": context.final_result or {},
@@ -1151,7 +1151,7 @@ class ChiefExpertAgent:
         start_time,
         end_time,
         org_info,
-        hcaf_attribution = None,
+        paddle_attribution = None,
     ):
         """Generate final analysis report."""
         # Prefer the routing_result / traffic_result passed in directly from the agent
@@ -1162,13 +1162,13 @@ class ChiefExpertAgent:
         traffic_data = traffic_result if traffic_result else evidence.get("traffic_data", {})
         routing_data = routing_result if routing_result else evidence.get("routing_data", {})
 
-        # Prefer the HCAF argument; otherwise take it from reasoning_result (workflow mode already filled it)
-        hcaf = hcaf_attribution
-        if not hcaf and isinstance(reasoning_result, dict):
-            hcaf = reasoning_result.get("hcaf_attribution")
+        # Prefer the PADDLE argument; otherwise take it from reasoning_result (workflow mode already filled it)
+        paddle = paddle_attribution
+        if not paddle and isinstance(reasoning_result, dict):
+            paddle = reasoning_result.get("paddle_attribution")
 
-        # BUG-FIX 2026-10-01: direct call mode never invokes HCAF (it's a
-        if not hcaf and isinstance(routing_data, dict) and isinstance(traffic_data, dict):
+        # BUG-FIX 2026-10-01: direct call mode never invokes PADDLE (it's a
+        if not paddle and isinstance(routing_data, dict) and isinstance(traffic_data, dict):
             try:
                 from workflow_engine import WorkflowEngine, WorkflowContext
                 we = WorkflowEngine()
@@ -1176,16 +1176,16 @@ class ChiefExpertAgent:
                     asn=str(asn), start_time=start_time, end_time=end_time,
                     routing_result=routing_data, traffic_result=traffic_data,
                 )
-                hcaf_inline = we.compute_hcaf_attribution(ctx)
-                if hcaf_inline:
-                    hcaf = hcaf_inline
+                paddle_inline = we.compute_paddle_attribution(ctx)
+                if paddle_inline:
+                    paddle = paddle_inline
                     logger.info(
-                        f"[_generate_report] Direct-mode HCAF computed: "
-                        f"direction={hcaf.get('direction')}, "
-                        f"confidence={hcaf.get('confidence', 0):.0%}"
+                        f"[_generate_report] Direct-mode PADDLE computed: "
+                        f"direction={paddle.get('direction')}, "
+                        f"confidence={paddle.get('confidence', 0):.0%}"
                     )
-            except AttributeError as _hcaf_err:
-                logger.warning(f"[_generate_report] Direct-mode HCAF failed: {_hcaf_err}")
+            except AttributeError as _paddle_err:
+                logger.warning(f"[_generate_report] Direct-mode PADDLE failed: {_paddle_err}")
 
         # Debug logging
         logger.info(f"[_generate_report] Using traffic_data: {list(traffic_data.keys()) if isinstance(traffic_data, dict) else type(traffic_data)}")
@@ -1193,7 +1193,7 @@ class ChiefExpertAgent:
         logger.info(f"[_generate_report] routing_data origin_hijacked count: {len(routing_data.get('origin_hijacked', [])) if isinstance(routing_data, dict) else 'N/A'}")
         logger.info(f"[_generate_report] traffic_data anomalies_detected: {traffic_data.get('anomalies_detected') if isinstance(traffic_data, dict) else 'N/A'}")
         logger.info(f"[_generate_report] traffic_data plot_path: {traffic_data.get('plot_path') if isinstance(traffic_data, dict) else 'N/A'}")
-        logger.info(f"[_generate_report] HCAF status_val: {'present' if hcaf else 'missing'}")
+        logger.info(f"[_generate_report] PADDLE status_val: {'present' if paddle else 'missing'}")
 
         # Extract plot_path for report embedding
         plot_path = traffic_data.get("plot_path") if isinstance(traffic_data, dict) else None
@@ -1209,7 +1209,7 @@ class ChiefExpertAgent:
             org_name=org_info.get("org_name") if org_info.get("success") else None,
             asn=asn,
             traffic_plot_path=plot_path,  # forward the plot path
-            hcaf_attribution=hcaf,
+            paddle_attribution=paddle,
         )
 
 # Entry Points

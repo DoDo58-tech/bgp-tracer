@@ -115,19 +115,31 @@ data plane supplies the anchor, and the control plane is measured
 \label{def:trough}
 Let $d_T(j)$ be the signed relative deviation of the $j$-th traffic
 observation from its own baseline, so that $d_T(j)<0$ means a fall. The
-\emph{trough onset} $\tau_T$ is the first observation of a run of
-$r=2$ consecutive deviations below the floor
+\emph{trough onset} $\tau_T$ is the first observation of the
+\emph{deepest} run of $r=2$ consecutive deviations below the floor
 \[
 -\max\bigl(1.5\,\mathrm{median}_j|d_T(j)|,\;0.02\bigr).
 \]
 \end{definition}
 
-The onset is the first observation of the run, not its deepest point. An
-impact holds the measured quantity down for a while, and the deepest
-observation of such a plateau is wherever the noise happened to reach its
-lowest---which can be hours after the cause. Anchoring on it made the lag
-between the two edges a property of the noise, and let two edges that
-moved \emph{together} be ordered at all.
+Two properties of this definition are load-bearing, and both were
+defects before they were made. The onset is the first observation of
+the run, not its deepest point: an impact holds the measured quantity
+down for a while, and the deepest observation of such a plateau is
+wherever the noise happened to reach its lowest---which can be hours
+after the cause. Anchoring on it made the lag between the two edges a
+property of the noise, and let two edges that moved \emph{together} be
+ordered at all.
+
+And the run that is chosen is the deepest one, not the first. A series
+that wobbles crosses the floor often, and taking the first crossing
+anchors the measurement on whichever excursion came first---which for
+a real drop is usually not the drop. Choosing the deepest run keeps
+both properties at once: the anchor is the onset of the event rather
+than of the noise, and a transient wobble cannot displace a sustained
+fall. On the planted mechanisms of \S\ref{sec:eval-direction}, making
+this change moved the power of the estimator from $701$ to $2{,}342$
+commitments out of $2{,}400$ windows.
 
 \paragraph{The measurement is a paired difference-in-differences.} At the
 anchor, the control plane's treatment arm is its rate in the slots around
@@ -269,9 +281,9 @@ causes and per-channel likelihoods, and two count series identify neither;
 the resulting number would encode a preference over failure modes and
 present it as a probability. Four tests whose size and power can be
 measured separately (\S\ref{sec:eval-direction}) are preferable to one
-number whose calibration cannot be checked. The channels are likewise not
-scored and combined: each is a separate physical hypothesis, and the
-estimator reports which one, if any, survives.
+number whose calibration cannot be checked. Nor are several statistics
+scored and combined: the direction comes from one measurement, and the
+estimator reports whether that measurement survives the four vetoes.
 
 \subsection{Refusal semantics}
 \label{sec:method-gate}

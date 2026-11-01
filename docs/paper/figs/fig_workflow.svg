@@ -130,68 +130,67 @@
 <rect x="24.0" y="664.0" width="1272.0" height="450.0" rx="11" fill="#F8F4FC" stroke="#C4AEDB" stroke-width="1.5" />
 <rect x="24.0" y="664.0" width="470.0" height="36.0" rx="11" fill="#4F2668" stroke="none" />
 <rect x="24.0" y="688.0" width="470.0" height="12.0" rx="0" fill="#4F2668" stroke="none" />
+<rect x="24.0" y="688.0" width="470.0" height="12.0" rx="0" fill="#4F2668" stroke="none" />
 <text x="42.0" y="690.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="22.00" fill="#FFFFFF" font-weight='bold' text-anchor="start">PHASE 2  ·  CAUSAL ATTRIBUTION</text>
-<text x="518.0" y="689.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="19.00" fill="#54627A" text-anchor="start">PNS-inspired  ·  abstains when the evidence does not justify a claim</text>
+<text x="518.0" y="689.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="19.00" fill="#54627A" text-anchor="start">one estimator  ·  abstains when the evidence does not justify a claim</text>
 <rect x="1130.9" y="672.0" width="151.1" height="23.0" rx="11.5" fill="#4F2668" stroke="none" />
-<text x="1206.4" y="688.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.00" fill="#FFFFFF" font-weight='bold' text-anchor="middle">S3  PNS + abstain</text>
+<text x="1206.4" y="688.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="15.00" fill="#FFFFFF" font-weight='bold' text-anchor="middle">S3  PADDLE</text>
 <rect x="25.5" y="710.5" width="396.0" height="190.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
-<rect x="24.0" y="708.0" width="396.0" height="190.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<rect x="24.0" y="708.0" width="396.0" height="190.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5"/>
 <path d="M 33.0 708.0 H 411.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
-<text x="40.0" y="738.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">CSS estimator</text>
-<text x="40.0" y="760.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">PNS-inspired</text>
-<text x="40.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">breakpoint = intervention</text>
-<text x="40.0" y="801.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">standardised pre/post</text>
-<text x="40.0" y="820.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">bootstrap CI · permutation p</text>
+<text x="40.0" y="738.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">PADDLE estimator</text>
+<text x="40.0" y="760.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">one estimator, no vote</text>
+<text x="40.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">anchor = traffic trough onset</text>
+<text x="40.0" y="801.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">paired difference-in-differences</text>
+<text x="40.0" y="820.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">same clock slots · prior 7 days</text>
 <rect x="40.0" y="852.0" width="364.0" height="36.0" rx="6" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.1" />
-<text x="222.0" y="876.0" font-family="'DejaVu Sans Mono','Liberation Mono',Consolas,monospace" font-size="12.00" fill="#4F2668" text-anchor="middle">CSS = E[Y | do(X=1)] − E[Y | do(X=0)]</text>
+<text x="222.0" y="875.0" font-family="'DejaVu Sans Mono','Liberation Mono',Consolas,monospace" font-size="12.00" fill="#4F2668" text-anchor="middle">d = median(O) / median(E)   ·   O = now, E = then</text>
 <rect x="445.5" y="710.5" width="396.0" height="190.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
-<rect x="444.0" y="708.0" width="396.0" height="190.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<rect x="444.0" y="708.0" width="396.0" height="190.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5"/>
 <path d="M 453.0 708.0 H 831.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
-<text x="460.0" y="738.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Evidence channels</text>
-<text x="460.0" y="760.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">each yields a likelihood</text>
+<text x="460.0" y="738.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">The measurement</text>
+<text x="460.0" y="760.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">control plane vs. the same clock</text>
+<path d="M 453.0 708.0 H 831.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
 <circle cx="464.0" cy="777.0" r="3.2" fill="#6B3A8F"/>
-<text x="474.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">CSS</text>
-<text x="824.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">PNS anchor</text>
+<text x="474.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">Trough onset</text>
+<text x="824.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">data plane falls</text>
 <circle cx="464.0" cy="795.0" r="3.2" fill="#6B3A8F"/>
-<text x="474.0" y="800.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">MSBD</text>
-<text x="824.0" y="800.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">multi-scale</text>
+<text x="474.0" y="800.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">Paired DiD</text>
+<text x="824.0" y="800.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">same slots, prior days</text>
 <circle cx="464.0" cy="813.0" r="3.2" fill="#6B3A8F"/>
-<text x="474.0" y="818.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">CTPR</text>
-<text x="824.0" y="818.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">path recon.</text>
+<text x="474.0" y="818.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">Median</text>
+<text x="824.0" y="818.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">heavy-tailed counts</text>
 <circle cx="464.0" cy="831.0" r="3.2" fill="#6B3A8F"/>
-<text x="474.0" y="836.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">CIC</text>
-<text x="824.0" y="836.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">cascade scope</text>
+<text x="474.0" y="836.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">Placebo null</text>
+<text x="824.0" y="836.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">ordinary days</text>
 <circle cx="464.0" cy="849.0" r="3.2" fill="#6B3A8F"/>
-<text x="474.0" y="854.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">Granger</text>
-<text x="824.0" y="854.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">prediction</text>
-<circle cx="464.0" cy="867.0" r="3.2" fill="#6B3A8F"/>
-<text x="474.0" y="872.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">Transfer entropy</text>
-<text x="824.0" y="872.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">surrogate null</text>
-<text x="642.0" y="891.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#6B3A8F" font-weight='bold' text-anchor="middle">channels vote by LR, not by score</text>
+<text x="474.0" y="854.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" font-weight='bold' text-anchor="start">Tail probability</text>
+<text x="824.0" y="854.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">direction-matched</text>
+<text x="642.0" y="891.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#6B3A8F" font-weight='bold' text-anchor="middle">the null is an ordinary day, at the same clock</text>
 <rect x="865.5" y="710.5" width="396.0" height="190.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
-<rect x="864.0" y="708.0" width="396.0" height="190.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<rect x="864.0" y="708.0" width="396.0" height="190.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5"/>
 <path d="M 873.0 708.0 H 1251.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
-<text x="880.0" y="738.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Synthesis</text>
-<text x="880.0" y="760.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">Bayesian, per-cluster</text>
-<text x="880.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#54627A" text-anchor="start">per-cluster geometric mean</text>
-<rect x="880.0" y="804.0" width="364.0" height="26.0" rx="6" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.1" />
-<text x="1062.0" y="822.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#4F2668" font-weight='bold' text-anchor="middle">R→T · T→R · abstain</text>
-<text x="880.0" y="844.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">L1</text>
-<text x="904.0" y="844.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">CI, p, lead test</text>
-<text x="1070.0" y="844.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">L2</text>
-<text x="1094.0" y="844.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">channel set</text>
-<text x="880.0" y="862.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">L3</text>
-<text x="904.0" y="862.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">max P ≥ 0.50</text>
-<text x="1070.0" y="862.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">L4</text>
-<text x="1094.0" y="862.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">scope only</text>
-<line x1="423.0" y1="803.0" x2="440.0" y2="803.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
-<line x1="843.0" y1="803.0" x2="860.0" y2="803.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
+<text x="880.0" y="738.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Four vetoes</text>
+<text x="880.0" y="760.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">a claim is admitted only if all pass</text>
+<path d="M 873.0 708.0 H 1251.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
+<text x="880.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">V1</text>
+<text x="916.0" y="782.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">precedence</text>
+<text x="880.0" y="800.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">V2</text>
+<text x="916.0" y="800.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">exclusivity</text>
+<text x="880.0" y="818.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">V3</text>
+<text x="916.0" y="818.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">provenance</text>
+<text x="880.0" y="836.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">V4</text>
+<text x="916.0" y="836.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">congruence</text>
+<rect x="880.0" y="856.0" width="364.0" height="26.0" rx="6" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.1" />
+<text x="1062.0" y="874.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="20.00" fill="#4F2668" font-weight='bold' text-anchor="middle">R→T · T→R · abstain</text>
+<text x="880.0" y="894.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" text-anchor="start">silence is a measurement; absence is not</text>
 <rect x="865.5" y="920.5" width="396.0" height="152.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
-<rect x="864.0" y="918.0" width="396.0" height="152.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<rect x="864.0" y="918.0" width="396.0" height="152.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5"/>
 <path d="M 873.0 918.0 H 1251.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
 <text x="880.0" y="948.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Agent coordination</text>
 <text x="880.0" y="970.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">S4 · typed records</text>
-<text x="880.0" y="994.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="13.25" fill="#4F2668" font-weight='bold' text-anchor="start">Evidence-driven</text>
+<path d="M 873.0 918.0 H 1251.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
+<text x="880.0" y="994.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">Evidence-driven</text>
 <text x="1244.0" y="994.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">reasoning agent</text>
 <text x="880.0" y="1013.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#4F2668" font-weight='bold' text-anchor="start">Autonomous</text>
 <text x="1244.0" y="1013.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">ReAct, 18 tools</text>
@@ -199,28 +198,26 @@
 <text x="1244.0" y="1032.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="end">traffic · routing · report</text>
 <text x="1062.0" y="1062.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#6B3A8F" font-weight='bold' text-anchor="middle">write-once · provenance · bounded</text>
 <rect x="445.5" y="920.5" width="396.0" height="152.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
-<rect x="444.0" y="918.0" width="396.0" height="152.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<rect x="444.0" y="918.0" width="396.0" height="152.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5"/>
 <path d="M 453.0 918.0 H 831.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
 <text x="460.0" y="948.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Degradation ladder</text>
 <text x="460.0" y="970.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">a failure ≠ a verdict</text>
-<circle cx="470.0" cy="990.0" r="8.5" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.2"/>
-<text x="470.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="middle">1</text>
-<text x="486.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">LLM narrative report</text>
-<circle cx="656.0" cy="990.0" r="8.5" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.2"/>
-<text x="656.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="middle">2</text>
-<text x="672.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">retry with backoff</text>
-<circle cx="470.0" cy="1016.0" r="8.5" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.2"/>
-<text x="470.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="middle">3</text>
-<text x="486.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">deterministic render</text>
-<circle cx="656.0" cy="1016.0" r="8.5" fill="#F1E8F8" stroke="#C4AEDB" stroke-width="1.2"/>
-<text x="656.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="middle">4</text>
-<text x="672.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#16202E" text-anchor="start">explicit abstention</text>
+<path d="M 453.0 918.0 H 831.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
+<text x="470.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="start">1</text>
+<text x="486.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">LLM narrative report</text>
+<text x="470.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="start">2</text>
+<text x="486.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">retry with backoff</text>
+<text x="656.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="start">3</text>
+<text x="672.0" y="996.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">deterministic render</text>
+<text x="656.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="12.00" fill="#4F2668" font-weight='bold' text-anchor="start">4</text>
+<text x="672.0" y="1022.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">explicit abstention</text>
 <text x="642.0" y="1062.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#6B3A8F" font-weight='bold' text-anchor="middle">verdict never changes — only richness</text>
 <rect x="25.5" y="920.5" width="396.0" height="152.0" rx="9" fill="#0B1A2C" stroke="none" opacity="0.05"/>
-<rect x="24.0" y="918.0" width="396.0" height="152.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5" />
+<rect x="24.0" y="918.0" width="396.0" height="152.0" rx="9" fill="#FFFFFF" stroke="#C4AEDB" stroke-width="1.5"/>
 <path d="M 33.0 918.0 H 411.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
 <text x="40.0" y="948.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="25.00" fill="#4F2668" font-weight='bold' text-anchor="start">Audit artefacts</text>
 <text x="40.0" y="970.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="18.00" fill="#54627A" text-anchor="start">what the operator gets</text>
+<path d="M 33.0 918.0 H 411.0" stroke="#6B3A8F" stroke-width="3.4" stroke-linecap="round"/>
 <circle cx="44.0" cy="987.0" r="3.2" fill="#6B3A8F"/>
 <text x="54.0" y="992.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">HTML report · decision trace</text>
 <circle cx="44.0" cy="1005.0" r="3.2" fill="#6B3A8F"/>
@@ -229,14 +226,12 @@
 <text x="54.0" y="1028.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">named gaps &amp; contradictions</text>
 <circle cx="44.0" cy="1041.0" r="3.2" fill="#6B3A8F"/>
 <text x="54.0" y="1046.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#54627A" text-anchor="start">replayable from the cache</text>
+<line x1="423.0" y1="803.0" x2="440.0" y2="803.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
+<line x1="843.0" y1="803.0" x2="860.0" y2="803.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
 <line x1="1062.0" y1="901.0" x2="1062.0" y2="914.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
 <line x1="440.0" y1="994.0" x2="423.0" y2="994.0" stroke="#6B3A8F" stroke-width="2.0" stroke-linecap="round" marker-end="url(#ah2)"/>
-<text x="44.0" y="1086.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8492A3" text-anchor="start">CIC reports cascade scope but never a direction — reporting one would assume the conclusion it is used to support.</text>
-<text x="44.0" y="1104.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8492A3" text-anchor="start">MSBD and CTPR re-read the same two series, so their agreement is not independent confirmation.</text>
-<line x1="222.0" y1="514.0" x2="222.0" y2="516.0" stroke="#8C5C0C" stroke-width="2.2" stroke-linecap="round" marker-end="url(#ahc)"/>
-<text x="236.0" y="516.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8C5C0C" text-anchor="start">writes evidence</text>
-<line x1="222.0" y1="656.0" x2="222.0" y2="658.0" stroke="#8C5C0C" stroke-width="2.2" stroke-linecap="round" marker-end="url(#ahc)"/>
-<text x="236.0" y="660.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8C5C0C" text-anchor="start">reads evidence</text>
+<text x="44.0" y="1086.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8492A3" text-anchor="start">The estimator is one. It is not a vote among channels, and it does not fall back to an older method when it abstains.</text>
+<text x="44.0" y="1104.0" font-family="Arial,'Liberation Sans',Helvetica,sans-serif" font-size="16.00" fill="#8492A3" text-anchor="start">A channel that was not instrumented is missing metadata; a channel that went silent during the incident is evidence.</text>
 <rect x="24.0" y="1128.0" width="1272.0" height="96.0" rx="11" fill="#F1F9F5" stroke="#A6D3C3" stroke-width="1.5" />
 <rect x="24.0" y="1128.0" width="330.0" height="36.0" rx="11" fill="#175F49" stroke="none" />
 <rect x="24.0" y="1152.0" width="330.0" height="12.0" rx="0" fill="#175F49" stroke="none" />

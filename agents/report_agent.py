@@ -541,7 +541,7 @@ def trim_to_size(data, max_bytes=_MAX_PAYLOAD_BYTES):
                 "law_analysis",
                 "retrieved_context",
                 "evidence_board",
-                "hcaf_attribution",
+                "paddle_attribution",
                 "calibration",
                 "bayesian_result",
                 "joint_evidence_cards",
@@ -1313,9 +1313,9 @@ class ReportAgent(Agent):
         joint_score = await safe_read(self.bb, "validation", "joint_score", default=0.0) or 0.0
         joint_evidence_cards = await safe_read(self.bb, "validation", "joint_evidence_cards", default=[]) or []
         joint_rationale = await safe_read(self.bb, "validation", "joint_rationale", default="") or ""
-        # ── HCAF （：MSCBD/CTPR/CIC）────────────────────
-        hcaf_attribution = await safe_read(self.bb, "validation", "hcaf_attribution", default={}) or {}
-        hcaf_status = await safe_read(self.bb, "validation", "hcaf_attribution_status", default="skipped") or "skipped"
+        # ── PADDLE causal attribution────────────────────
+        paddle_attribution = await safe_read(self.bb, "validation", "paddle_attribution", default={}) or {}
+        paddle_status = await safe_read(self.bb, "validation", "paddle_attribution_status", default="skipped") or "skipped"
         causal_analysis = (
             integrated_analysis.get("causal_analysis")
             if isinstance(integrated_analysis, dict) else None
@@ -1357,9 +1357,9 @@ class ReportAgent(Agent):
             "joint_score": round(float(joint_score), 3),
             "joint_evidence_cards": slim_payload(joint_evidence_cards, limit=5),
             "joint_rationale": joint_rationale,
-            # HCAF （：MSCBD/CTPR/CIC）
-            "hcaf_attribution": slim_payload(hcaf_attribution, limit=15) if hcaf_attribution else {},
-            "hcaf_attribution_status": hcaf_status,
+            # PADDLE causal attribution
+            "paddle_attribution": slim_payload(paddle_attribution, limit=15) if paddle_attribution else {},
+            "paddle_attribution_status": paddle_status,
         "causal_interpretation": {
             "status": "observational_association_only",
             "direction_is_temporal_evidence": True,
@@ -2720,7 +2720,7 @@ def normalize_traffic(traffic_result):
     }
 
 
-def normalize_correlation(correlation_analysis, hcaf_attribution=None):
+def normalize_correlation(correlation_analysis, paddle_attribution=None):
     """Return a flat view of the correlation analysis."""
     ca = correlation_analysis if isinstance(correlation_analysis, dict) else {}
     inner = ca.get("correlation") if isinstance(ca.get("correlation"), dict) else ca
@@ -2728,7 +2728,7 @@ def normalize_correlation(correlation_analysis, hcaf_attribution=None):
         inner = {}
     summary = ca.get("summary") if isinstance(ca.get("summary"), dict) else {}
     signals = inner.get("signals") if isinstance(inner.get("signals"), dict) else {}
-    hcaf_result = ca.get("hcaf_result") or ca.get("hcaf") or inner.get("hcaf_result") or inner.get("hcaf") or {}
+    paddle_result = ca.get("paddle_result") or ca.get("paddle") or inner.get("paddle_result") or inner.get("paddle") or {}
 
     def f(value, default=0.0):
         try:
@@ -2736,12 +2736,12 @@ def normalize_correlation(correlation_analysis, hcaf_attribution=None):
         except (TypeError, ValueError):
             return default
 
-    # hcaf_direction: check hcaf_attribution first (workflow-level), then
-    # hcaf_result (inside correlation_analysis), then inner.
-    hcaf_dir = (
-        (hcaf_attribution or {}).get("direction")
-        or hcaf_result.get("direction")
-        or hcaf_result.get("hcaf_direction")
+    # paddle_direction: check paddle_attribution first (workflow-level), then
+    # paddle_result (inside correlation_analysis), then inner.
+    paddle_dir = (
+        (paddle_attribution or {}).get("direction")
+        or paddle_result.get("direction")
+        or paddle_result.get("paddle_direction")
         or inner.get("direction")
         or ""
     )
@@ -2761,7 +2761,7 @@ def normalize_correlation(correlation_analysis, hcaf_attribution=None):
         "traffic_percent_change": f(signals.get("traffic_percent_change"), 0.0),
         "traffic_peak_trough_drop_pct": f(signals.get("traffic_peak_trough_drop_pct"), 0.0),
         "delta_ts": ca.get("delta_ts") or inner.get("delta_ts") or [],
-        "hcaf_direction": hcaf_dir,
+        "paddle_direction": paddle_dir,
     }
 
 
@@ -2771,7 +2771,7 @@ def compute_top_cause(
     correlation_norm: dict,
     *,
     target_as: str = "",
-    hcaf_direction: str = "",
+    paddle_direction: str = "",
 ):
     """Return the single most likely cause + per-cause confidence breakdown."""
     # BUG-R141 2026-09-29: the event lists in the LLM payload are truncated
@@ -2899,9 +2899,9 @@ def compute_top_cause(
     if outage_suspected:
         routing_alerts_total += 1
 
-    # HCAF direction constraint: suppress routing-type candidates when HCAF
-    _hcaf_rt = hcaf_direction in ("routing_to_traffic", "R_to_T")
-    _hcaf_tr = hcaf_direction in ("traffic_to_routing", "T_to_R")
+    # PADDLE direction constraint: suppress routing-type candidates when PADDLE
+    _paddle_rt = paddle_direction in ("routing_to_traffic", "R_to_T")
+    _paddle_tr = paddle_direction in ("traffic_to_routing", "T_to_R")
     _routing_signal_dominant = (
         origin_hijacked_n + origin_hijacking_n + forge_hijacked_n +
         forge_hijacking_n + leak_n
@@ -2910,8 +2910,8 @@ def compute_top_cause(
     # ── Build the ranked cause list ────────────────────────────────────
     candidates: list = []
 
-    # When HCAF says traffic→routing, any routing-type label is physically
-    if _hcaf_tr:
+    # When PADDLE says traffic→routing, any routing-type label is physically
+    if _paddle_tr:
         # Traffic→routing: routing-type candidates are suppressed entirely.
         # If traffic anomaly exists, route to outage or traffic_anomaly_only.
         if traffic_anomaly > 0 and drop_pct > 0:
@@ -2920,7 +2920,7 @@ def compute_top_cause(
                 "Network Outage (traffic drop precedes routing changes)",
                 min(0.99, 0.70 + min(0.10, drop_pct / 100.0)),
                 "Traffic dropped before or independently of any routing "
-                "changes. HCAF causal attribution found traffic→routing "
+                "changes. PADDLE causal attribution found traffic→routing "
                 "direction, indicating the traffic anomaly is the driver.",
             ))
         elif traffic_anomaly > 0:
@@ -2929,7 +2929,7 @@ def compute_top_cause(
                 "Traffic anomaly, routing quiet",
                 0.65,
                 "Traffic anomaly detected but routing changes are absent "
-                "or non-causal. HCAF confirms traffic→routing direction.",
+                "or non-causal. PADDLE confirms traffic→routing direction.",
             ))
         # Do NOT add routing-type candidates — they are physically impossible.
         candidates.sort(key=lambda c: -c[2])
@@ -2951,7 +2951,7 @@ def compute_top_cause(
             "supporting_metrics": supporting,
         }
 
-    # When HCAF says routing→traffic, traffic-only candidates are suppressed.
+    # When PADDLE says routing→traffic, traffic-only candidates are suppressed.
     symmetric_rpki_gap = (
         origin_hijacked_n >= 50 and origin_hijacking_n >= 50
         and max(origin_hijacked_n, origin_hijacking_n) <= 2 * min(origin_hijacked_n, origin_hijacking_n)
@@ -4120,7 +4120,7 @@ def inject_code_rendered_tables(
     traffic_norm = normalize_traffic(traffic_result)
     correlation_norm = normalize_correlation(
         (payload or {}).get("correlation_analysis") if isinstance(payload, dict) else None,
-        hcaf_attribution=((payload or {}).get("hcaf_attribution") if isinstance(payload, dict) else None),
+        paddle_attribution=((payload or {}).get("paddle_attribution") if isinstance(payload, dict) else None),
     )
     # Allow quick_verdict to come from payload.quick_verdict if provided
     quick_verdict = ""
@@ -4133,7 +4133,7 @@ def inject_code_rendered_tables(
     top_cause = compute_top_cause(
         routing_norm, traffic_norm, correlation_norm,
         target_as=str(asn or ""),
-        hcaf_direction=str(correlation_norm.get("hcaf_direction") or ""),
+        paddle_direction=str(correlation_norm.get("paddle_direction") or ""),
     )
 
     # ── 1) Strip LLM-emitted deterministic sections so we can re-render ─
@@ -5602,7 +5602,7 @@ def generate_report_html(
     joint_score=None,
     joint_evidence_cards=None,
     joint_rationale=None,
-    hcaf_attribution=None,
+    paddle_attribution=None,
 ):
     """Generate an LLM-driven HTML report from the assembled analysis inputs and save it to disk."""
     from utils.logger import logger
@@ -5785,7 +5785,7 @@ def generate_report_html(
                 "alternative-cause checks for maintenance, attack, and application failure",
             ],
         },
-        "hcaf_attribution": hcaf_attribution or {},
+        "paddle_attribution": paddle_attribution or {},
         "bayesian_result": bayesian_result,
         "calibration": calibration,
         "evidence_chain": evidence_chain,

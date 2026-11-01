@@ -195,7 +195,7 @@ for i, nm in enumerate(SUP_NAMES):
     sup_ys.append(y)
     add(rect(SUP_X, y, SUP_W, SUP_H, WHITE, NAVY_SOFT, 1.8, 8))
     add(text(SUP_X + SUP_W / 2, y + 27, nm, 8.5, 600, NAVY, "middle"))
-# convergence funnel into HCAF
+# the vetoes that gate the estimator
 hub_x = p2x + 546
 for y in sup_ys:
     add(path(f"M {SUP_X + SUP_W + 4} {y + SUP_H / 2} H {hub_x}", NAVY_SOFT, 1.6))
@@ -204,7 +204,7 @@ add(arrow(hub_x, sup_ys[-1] + SUP_H / 2, hub_x + 10, 296, "solid", NAVY, 2))
 add(path(f"M {hub_x + 6} 296 H {p2x + 578}", NAVY, 2))
 add(f'<polygon points="{p2x + 578},296 {p2x + 570},292.4 {p2x + 570},299.6" fill="{NAVY}"/>')
 
-# --- HCAF -------------------------------------------------------------------
+# --- the estimator -----------------------------------------------------------
 HC_X, HC_Y, HC_W, HC_H = p2x + 582, 248, 118, 112
 add(card(HC_X, HC_Y, HC_W, HC_H, "HCAF",
          ["Bayesian evidence", "synthesis", "CSS prior + channel", "likelihood ratios"],

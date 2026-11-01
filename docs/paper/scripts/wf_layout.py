@@ -256,7 +256,7 @@ def draw_phase2_head() -> None:
 
 
 def draw_phase2_channels() -> None:
-    """Five supporting evidence channels converging into the HCAF synthesis."""
+    """The PADDLE estimator and the four vetoes that gate it."""
     SUP_X, SUP_W, SUP_H = 2020.0, 208.0, 56
     add(text(SUP_X + SUP_W / 2, 252, "Five supporting evidence channels",
              F_MICRO + 1, 600, GRAY, "middle"))
@@ -268,7 +268,7 @@ def draw_phase2_channels() -> None:
         add(rect(SUP_X, y, SUP_W, SUP_H, WHITE, NAVY_SOFT, 1.8, 8))
         add(text(SUP_X + SUP_W / 2, y + 36, nm, F_BODY + 1, 600, NAVY, "middle"))
 
-    # --- convergence funnel into HCAF -----------------------------------------
+    # --- the vetoes that gate the estimator -----------------------------------
     HUB = SUP_X + SUP_W + 28.0
     for y in sup_ys:
         add(path(f"M {SUP_X + SUP_W} {y + SUP_H / 2} H {HUB}", NAVY_SOFT, 1.8))
@@ -278,7 +278,7 @@ def draw_phase2_channels() -> None:
     add(path(f"M {HUB} 482 H {HC_X}", NAVY, 2.2))
     add(f'<polygon points="{HC_X},482 {HC_X - 9},477 {HC_X - 9},487" fill="{NAVY}"/>')
 
-    # --- HCAF --------------------------------------------------------------------
+    # --- the estimator --------------------------------------------------------------
     HC_Y, HC_W, HC_H = 374, 210.0, 218
     add(card(HC_X, HC_Y, HC_W, HC_H, "HCAF",
              ["Bayesian evidence", "synthesis", "CSS prior + channel", "likelihood ratios"],

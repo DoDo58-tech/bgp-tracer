@@ -90,7 +90,7 @@ def test_paper_ablation_table_matches_the_summary():
     tex = (PROJECT_ROOT / "docs" / "paper" / "appendix.tex").read_text()
     labels = {
         "no_joint_evidence": "Joint evidence",
-        "no_hcaf": "HCAF attribution",
+        "no_paddle": "PADDLE attribution",
         "no_hypothesis": "Hypothesis generation",
         "no_reasoning": "Multi-round reasoning",
         "no_evidence_board": "Evidence Blackboard",

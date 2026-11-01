@@ -141,7 +141,7 @@ def fig_ablation():
     save(fig, "fig_ablation.pdf")
 
 def fig_causal_channels():
-    """Causal direction outcomes for the 7 HCAF components
+    """Causal direction outcomes for the estimator and its alternatives
     on the 29-event set. Reads causal_methods_v17.csv /
     detector_ablation data and decomposes into
     Correct / Abstain / Wrong buckets with 95% Wilson
@@ -193,7 +193,7 @@ def fig_calibration():
     ax.legend(loc="upper left", fontsize=8)
     save(fig, "fig_calibration.pdf")
 
-def fig_hcaf_decomp():
+def fig_paddle_decomp():
     labels = ["CSS significant\n(is\\_causal = True)","TE correct\n+ prior agree","Routing metadata\n(withdrawal / AS-path)","Domain prior alone"]
     sizes = [3,6,5,3]; total = sum(sizes)
     colors = [BLUE,GREEN,AMBER,PURPLE]
@@ -206,7 +206,7 @@ def fig_hcaf_decomp():
     ax.set_xlabel("Correct verdicts carried (out of 17 real-traffic events)")
     ax.set_title("HCAF correctness attribution: no single channel dominates\n(CSS alone resolves 18\\%; the Bayesian synthesis reaches 100\\%)")
     ax.invert_yaxis()
-    save(fig, "fig_hcaf_decomp.pdf")
+    save(fig, "fig_paddle_decomp.pdf")
 
 def fig_alert_flood():
     """Two-panel: per-source alarm share + actionable rate.
@@ -337,6 +337,6 @@ def fig_sensitivity():
 
 if __name__ == "__main__":
     fig_per_cause(); fig_confusion(); fig_detector_fire(); fig_ablation()
-    fig_causal_channels(); fig_calibration(); fig_hcaf_decomp()
+    fig_causal_channels(); fig_calibration(); fig_paddle_decomp()
     fig_alert_flood(); fig_robustness(); fig_sensitivity()
     print("\nall evaluation figures regenerated")

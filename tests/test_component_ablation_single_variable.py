@@ -35,7 +35,7 @@ class _FakeContext:
         self.anomalies_detected = False
         self.joint_tier = "INSUFFICIENT"
         self.joint_score = 0.0
-        self.hcaf_attribution = {}
+        self.paddle_attribution = {}
         self.validation_notes = []
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -216,7 +216,7 @@ def test_harness_flags_an_arm_that_dropped_a_second_stage():
         "stage_execution": {
             "joint_evidence": {"ran": False},
             "reasoning": {"ran": False},
-            "hcaf": {"ran": True},
+            "paddle": {"ran": True},
             "hypothesis": {"ran": True},
         },
     }]
@@ -236,7 +236,7 @@ def test_harness_accepts_a_clean_single_variable_arm():
         "stage_execution": {
             "joint_evidence": {"ran": False},
             "reasoning": {"ran": True},
-            "hcaf": {"ran": True},
+            "paddle": {"ran": True},
             "hypothesis": {"ran": True},
         },
     }]

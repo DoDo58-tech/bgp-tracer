@@ -161,7 +161,7 @@ and power from the first, coverage from the second.
 
 \paragraph{Size.} The size experiment plants no effect---two
 independent count series with no routing edge---and records how often the
-estimator commits; Appendix~\ref{app:aea-size} reports it over 400
+estimator commits; Appendix~\ref{app:paddle-size} reports it over 400
 windows per level.
 
 The test is conservative at independence and stays conservative under
@@ -173,9 +173,9 @@ summarised by a quantile, so a channel that wobbles on an ordinary day has
 already spent that wobble against the null. We report the number rather
 than the nominal level, and we note what it does and does not buy: the
 estimator is very unlikely to commit without evidence, which is also why
-its coverage on real caches is low (Table~\ref{tab:aea-coverage}).
+its coverage on real caches is low (Table~\ref{tab:paddle-coverage}).
 
-\paragraph{Power.} Table~\ref{tab:aea-power} plants a routing pulse and a
+\paragraph{Power.} Table~\ref{tab:paddle-power} plants a routing pulse and a
 traffic drop of the same length, separated by a known lag.
 
 \begin{table}[t]
@@ -184,7 +184,7 @@ traffic drop of the same length, separated by a known lag.
 committed, and the accuracy of those commitments. The planted mechanism
 is a routing pulse followed by a traffic drop at the stated lag; nothing
 else about the two series is known to the test.}
-\label{tab:aea-power}
+\label{tab:paddle-power}
 \small
 \begin{tabular}{l r r r}
 \hline
@@ -219,7 +219,7 @@ direction is identifiable and every commitment is a false commitment
 \caption{False commitments on a simultaneous common shock. The control
 plane and the traffic move together, so no direction exists; the
 precedence veto exists to make this rate small.}
-\label{tab:aea-point}
+\label{tab:paddle-point}
 \small
 \begin{tabular}{l r r}
 \hline
@@ -231,7 +231,7 @@ Simultaneous, 1-bucket skew  & 200 & 6.0\% \\
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:aea-point} shows both halves of the result. On a truly
+Table~\ref{tab:paddle-point} shows both halves of the result. On a truly
 simultaneous shock the estimator commits in $2.0\%$ of windows, and the
 other $98\%$ are refused---mostly by the precedence veto, which finds no
 sustained control-plane deviation at or before the trough. On a shock
@@ -242,7 +242,7 @@ from noise. The estimator protects against \emph{simultaneity}, not
 against near-simultaneity, and it cannot do so without a resolution the data
 do not support.
 
-\paragraph{Coverage on the corpus.} Table~\ref{tab:aea-coverage} applies the
+\paragraph{Coverage on the corpus.} Table~\ref{tab:paddle-coverage} applies the
 procedure to every cache in the tree.
 
 \begin{table}[t]
@@ -253,7 +253,7 @@ above it are the reasons a window cannot be scored at all, which is where
 the volume is. The final row reruns the measurement with $\alpha=0.99$, so
 that V2 can never reject, to test whether abstention is a threshold
 artefact.}
-\label{tab:aea-coverage}
+\label{tab:paddle-coverage}
 \footnotesize
 \begin{tabular}{l r}
 \hline
@@ -283,7 +283,7 @@ routing edge, six with no traffic edge, and one with overlapping onsets. A
 method that answered on these windows would be inventing the evidence, and
 relaxing a level would not change the answer. Both runs are recorded under
 protocol hash \texttt{541554a473d4} in
-\texttt{results/eval/aea\_coverage\_caches.json}, together with the veto
+\texttt{results/eval/paddle\_coverage\_caches.json}, together with the veto
 tally.
 
 \subsection{Input shape: the same window under two shapes}
@@ -420,19 +420,31 @@ coverage, so the strongest discriminator is absent, and the pure
 deterministic alternative that reads the routing signal alone reaches
 9/13 on the same events.
 
-\textbf{Channel sensitivity.} Removing MSBD, CTPR, CIC, Granger or transfer
-entropy individually changes the committed direction on \textbf{0\,\%} of
-events, whereas removing CSS changes it on 37.9\,\%. Neither number is a
-robustness statement about the channels. Zero flips means those five
-channels never vote independently: they read the same two series, and before
-the audit MSBD, CTPR and CIC also consumed the \texttt{event\_type} label,
-so they were five views of one signal rather than five pieces of evidence.
-The 37.9\,\% flip rate measures how much the earlier CSS-anchored prior
-contributed, not how much causal information the CSS statistic carries. Both
-observations motivated the uniform prior, the clustering and the
-geometric-mean pooling of \S\ref{sec:method-gate}, and they are the reason a
-channel-level ablation is reported here as a dependence diagnostic rather
-than as a robustness claim.
+\textbf{One estimator, and what its removal costs.} There is no channel
+ablation to report, because there is only one estimator: the direction is
+not assembled from several statistics, so there is no channel whose removal
+could be tested against the others. The component ablation in
+Appendix~\ref{app:agent-ablation} removes the coordination stages around it
+instead,
+and removing the estimator itself changes the Phase-1 cause accuracy by
+\textbf{0.000} on all 17 events, over three repeats.
+
+That zero is not evidence that the estimator is inert, and it is worth
+being precise about why. The estimator answers a different question from
+the one Phase-1 answers. Phase-1 assigns the cause class---outage, route
+leak, or origin hijack---from the detector outputs; the estimator decides
+whether the routing edge and the traffic edge are ordered, and in which
+direction. On this corpus the cause class is already determined by the
+detectors, so a direction that the estimator abstains on does not change
+which class the event belongs to. What the estimator does change is the
+directional claim attached to the verdict.
+
+The estimator's own operating characteristics are measured directly
+instead, on data where the answer is known by construction:
+\S\ref{sec:eval-direction} reports a false-commit rate of $0.0\,\%$ under
+independence and serial dependence, a power of $97.6\,\%$ over 12
+lag-and-drop cells with $100\,\%$ accuracy among commitments, and a
+$2.0\,\%$ false-commit rate on a simultaneous common shock.
 
 \subsection{Live deployment}
 \label{sec:eval-live}

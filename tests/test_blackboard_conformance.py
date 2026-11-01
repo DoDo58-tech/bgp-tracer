@@ -114,13 +114,13 @@ def test_slimming_does_not_empty_a_payload_with_unlisted_keys():
 
     Regression test: the traffic/validation/evidence profiles are keyed for
     whole-section payloads. Applying them to an individual key's value
-    replaced ``traffic.anomaly_window``, ``validation.hcaf_attribution``
+    replaced ``traffic.anomaly_window``, ``validation.paddle_attribution``
     and ``evidence.chain`` with empty dicts, erasing the analysis window,
     the causal attribution and the reasoning chain from the board.
     """
     async def run():
         bb = Blackboard()
-        await bb.write("validation", "hcaf_attribution", {
+        await bb.write("validation", "paddle_attribution", {
             "direction": "routing->traffic", "strength": 0.8, "confidence": 0.9,
         })
         await bb.write("evidence", "chain", {
@@ -131,13 +131,13 @@ def test_slimming_does_not_empty_a_payload_with_unlisted_keys():
             "start": "2026-01-01T00:00:00", "end": "2026-01-01T01:00:00",
         })
         return (
-            await bb.read("validation", "hcaf_attribution"),
+            await bb.read("validation", "paddle_attribution"),
             await bb.read("evidence", "chain"),
             await bb.read("traffic", "anomaly_window"),
         )
 
-    hcaf, chain, window = asyncio.run(run())
-    assert hcaf.get("direction") == "routing->traffic"
+    paddle, chain, window = asyncio.run(run())
+    assert paddle.get("direction") == "routing->traffic"
     assert chain.get("reasoning_steps") == ["step one", "step two"]
     assert window.get("start") == "2026-01-01T00:00:00"
 

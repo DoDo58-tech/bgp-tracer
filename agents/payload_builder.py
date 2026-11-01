@@ -121,7 +121,7 @@ _CORRELATION_KEEP = {
     "summary", "delta_ts", "delta_t_events", "delta_t_score",
     "temporal_alignment", "cross_validation",
     "hypotheses", "correlation_level", "correlation_confidence",
-    "joint_tier", "joint_score", "hcaf_attribution",
+    "joint_tier", "joint_score", "paddle_attribution",
     # Round-26: keep the inner correlation dict too — it carries
     "correlation",
 }
@@ -339,7 +339,7 @@ def cap_payload(data: Any, max_bytes: int = PayloadBudget.REPORT):
         "as_path_delta_result", "as_relationships_result",
         "probe_reachability_result", "law_analysis",
         "retrieved_context", "evidence_board",
-        "hcaf_attribution", "calibration", "bayesian_result",
+        "paddle_attribution", "calibration", "bayesian_result",
         "joint_evidence_cards", "auxiliary_enrichment",
         "probe_results", "structured_facts",
     )

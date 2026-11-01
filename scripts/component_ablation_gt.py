@@ -6,7 +6,7 @@ coordination layer carries that gain, and which parts are decoration.
 
 Each arm disables exactly one coordination stage via the
 ``BGP_TRACER_ABLATE_*`` switches the workflow engine already exposes
-(``joint_evidence``, ``hcaf``, ``hypothesis``, ``reasoning``,
+(``joint_evidence``, ``paddle``, ``hypothesis``, ``reasoning``,
 ``evidence_board``, ``enrichment``) and re-runs the identical event
 set.  Because only one switch changes at a time, the delta in cause
 accuracy against the full agent is attributable to that stage alone.

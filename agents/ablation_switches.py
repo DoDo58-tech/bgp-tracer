@@ -51,7 +51,7 @@ __all__ = [
 #: reports them.  Each name is also the key used by ``WorkflowEngine.ablate``.
 ABLATION_STAGES = (
     "joint_evidence",
-    "hcaf",
+    "paddle",
     "hypothesis",
     "reasoning",
     "evidence_board",
@@ -61,7 +61,7 @@ ABLATION_STAGES = (
 #: stage -> the environment variable that disables it.
 ABLATION_ENV_VARS: Dict[str, str] = {
     "joint_evidence": "BGP_TRACER_ABLATE_JOINT_EVIDENCE",
-    "hcaf": "BGP_TRACER_ABLATE_HCAF",
+    "paddle": "BGP_TRACER_ABLATE_PADDLE",
     "hypothesis": "BGP_TRACER_ABLATE_HYPOTHESIS",
     "reasoning": "BGP_TRACER_ABLATE_REASONING",
     "evidence_board": "BGP_TRACER_ABLATE_EVIDENCE_BOARD",

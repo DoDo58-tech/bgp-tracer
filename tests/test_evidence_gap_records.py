@@ -30,21 +30,21 @@ class FakeContext:
     """The slice of a WorkflowContext that gap recording reads."""
 
     def __init__(self, blackboard, traffic=None, routing=None,
-                 hcaf_status=""):
+                 paddle_status=""):
         self._bb = blackboard
         self.traffic_result = traffic or {}
         self.routing_result = routing or {}
-        self.hcaf_attribution_status = hcaf_status
+        self.paddle_attribution_status = paddle_status
 
     def get_blackboard(self):
         return self._bb
 
 
-async def record(routing=None, traffic=None, quality=1.0, hcaf_status=""):
+async def record(routing=None, traffic=None, quality=1.0, paddle_status=""):
     bb = Blackboard()
     engine = WorkflowEngine()
     ctx = FakeContext(bb, traffic=traffic, routing=routing,
-                      hcaf_status=hcaf_status)
+                      paddle_status=paddle_status)
     await engine.record_evidence_gaps(ctx, quality)
     board = await bb.read_evidence_board()
     gaps = board.get("gaps") or []
@@ -109,7 +109,7 @@ def test_cross_layer_mismatch_is_recorded():
 
 
 def test_failed_causal_attribution_is_recorded():
-    gaps = asyncio.run(record(hcaf_status="failed"))
+    gaps = asyncio.run(record(paddle_status="failed"))
     assert "causal_attribution_unavailable" in kinds(gaps)
 
 

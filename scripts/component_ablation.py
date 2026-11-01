@@ -20,7 +20,7 @@ OUT_PATH = PROJECT_ROOT / "results" / "eval" / "component_ablation.json"
 ARMS = {
     "full": {},
     "no_joint_evidence": {"BGP_TRACER_ABLATE_JOINT_EVIDENCE": "1"},
-    "no_hcaf": {"BGP_TRACER_ABLATE_HCAF": "1"},
+    "no_paddle": {"BGP_TRACER_ABLATE_PADDLE": "1"},
     "no_hypothesis": {"BGP_TRACER_ABLATE_HYPOTHESIS": "1"},
     "no_reasoning": {"BGP_TRACER_ABLATE_REASONING": "1"},
     "no_evidence_board": {"BGP_TRACER_ABLATE_EVIDENCE_BOARD": "1"},
@@ -112,7 +112,7 @@ def run_child(arm: str, env_overrides: dict, quick_path: Path):
     # Remove any inherited ablation switch so each arm is isolated.
     for var in (
         "BGP_TRACER_ABLATE_JOINT_EVIDENCE",
-        "BGP_TRACER_ABLATE_HCAF",
+        "BGP_TRACER_ABLATE_PADDLE",
         "BGP_TRACER_ABLATE_HYPOTHESIS",
         "BGP_TRACER_ABLATE_REASONING",
         "BGP_TRACER_ABLATE_EVIDENCE_BOARD",

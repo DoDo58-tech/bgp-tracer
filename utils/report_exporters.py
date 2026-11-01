@@ -117,7 +117,7 @@ def generate_comprehensive_report(
     probe_reachability_result: Dict[str, Any]=None,
     roa_validation_result: Dict[str, Any]=None,
     threat_intel_result: Dict[str, Any]=None,
-    hcaf_attribution: Dict[str, Any]=None,
+    paddle_attribution: Dict[str, Any]=None,
 ):
     """Generate BGP security HTML report — 100%% LLM-driven, no hardcoded content.
     
@@ -200,7 +200,7 @@ def generate_comprehensive_report(
             probe_reachability_result=probe_reachability_result or {},
             roa_validation_result=roa_validation_result or {},
             threat_intel_result=threat_intel_result or {},
-            hcaf_attribution=hcaf_attribution or {},
+            paddle_attribution=paddle_attribution or {},
             law_analysis=law_analysis,
             org_name=org_name,
             output_dir=output_dir,

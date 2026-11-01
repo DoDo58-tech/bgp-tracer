@@ -287,7 +287,7 @@ def prepare_routing_payload(result, partial_error=None):
         "routing_status": "anomaly" if (has_victim_anomaly or has_attacker_anomaly or leaks or has_outage) else "normal",
         "impact_scope": routing_scope(hijacked_alerts, leaks, outages),
         # Prefer the detector's calibrated confidence when present so the
-        # HCAF / report agents do not see a constant regardless of detector
+        # PADDLE / report agents do not see a constant regardless of detector
         # output. Fall back to a coarse 0.85 / 0.6 heuristic otherwise.
         "confidence": extract_routing_confidence(
             result,
