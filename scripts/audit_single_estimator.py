@@ -75,7 +75,7 @@ ALLOWED_CONTEXTS = {
 }
 
 SKIP_DIRS = {".git", "__pycache__", "results", "logs", ".venv",
-             "node_modules", "docs/paper/figs"}
+             "node_modules"}
 
 #: The archive the raw updates live in.  It is data, not code, and it is
 #: large; it is skipped by path rather than by name, because the
@@ -83,7 +83,7 @@ SKIP_DIRS = {".git", "__pycache__", "results", "logs", ".venv",
 ARCHIVE_DIR = ROOT / "data"
 
 TEXT_SUFFIXES = {".py", ".tex", ".md", ".bib", ".sh", ".cfg", ".toml",
-                 ".yaml", ".yml", ".json", ".txt"}
+                 ".yaml", ".yml", ".json", ".txt", ".svg"}
 
 
 def walk(root: Path) -> Iterable[Path]:
@@ -243,9 +243,10 @@ def audit() -> Tuple[List[dict], List[str]]:
             segment = " ".join(window[:call.end() + 40].split())
             report("fallback", rel(path), segment[:120])
 
-    # ── 4. the paper and the docs name only the shipped estimator ──────
+    # ── 4. the paper, the docs and the figures name only the shipped
+    #       estimator ─────────────────────────────────────────────────────
     for path in walk(ROOT):
-        if path.suffix not in {".tex", ".md", ".bib"}:
+        if path.suffix not in {".tex", ".md", ".bib", ".svg"}:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         allowed = ALLOWED_CONTEXTS.get(rel(path), set())
@@ -253,7 +254,6 @@ def audit() -> Tuple[List[dict], List[str]]:
             if label in allowed:
                 continue
             for hit in matches(pattern, text):
-                line = text.count("\n", 0, m.start()) + 1 if False else 0
                 report("documentation", rel(path), label)
 
     # ── 5. exactly one directional estimator is reachable ──────────────

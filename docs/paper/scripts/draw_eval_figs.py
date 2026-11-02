@@ -140,41 +140,6 @@ def fig_ablation():
     ax.set_title("Detector leave-one-out ablation\n(dropping any detector degrades; dropping all four is worst)")
     save(fig, "fig_ablation.pdf")
 
-def fig_causal_channels():
-    """Causal direction outcomes for the estimator and its alternatives
-    on the 29-event set. Reads causal_methods_v17.csv /
-    detector_ablation data and decomposes into
-    Correct / Abstain / Wrong buckets with 95% Wilson
-    CIs on the success rate.
-    """
-    # Source: per_event_v17.csv + llm_factual_consistency + ablations
-    methods = ["HCAF\n(composite)","Timestamp\ndistance","Transfer\nentropy",
-               "CSS alone","Pearson lag","Granger","PC cond.\nindep."]
-    correct = np.array([29, 10, 8, 6, 2, 0, 0])
-    abstain = np.array([ 0, 16, 13, 23, 27, 28, 29])
-    n = 29
-    wrong = n - correct - abstain
-    fig, ax = plt.subplots(figsize=(7.0, 3.3))
-    x = np.arange(len(methods)); w = 0.62
-    ax.bar(x, correct/n*100, w, label="Correct", color=GREEN)
-    ax.bar(x, abstain/n*100, w, bottom=correct/n*100, label="Abstain", color=AMBER)
-    ax.bar(x, wrong/n*100, w, bottom=(correct+abstain)/n*100, label="Wrong", color=RED)
-    # Wilson CI on each correct rate
-    ci_lo = np.array([wilson(int(c), n)[0]*100 for c in correct])
-    ci_hi = np.array([wilson(int(c), n)[1]*100 for c in correct])
-    ax.errorbar(x, correct/n*100, yerr=[correct/n*100-ci_lo, ci_hi-correct/n*100],
-                fmt="none", ecolor="#202124", capsize=3, linewidth=1)
-    for i in range(len(methods)):
-        if correct[i]:
-            ax.text(i, correct[i]/n*100/2, f"{correct[i]}/{n}",
-                    ha="center", va="center", fontsize=8, color="white", weight="bold")
-    ax.set_xticks(x); ax.set_xticklabels(methods, fontsize=8)
-    ax.set_ylim(0, 115); ax.set_ylabel("Share of events (\\%, 95\\% Wilson CI)")
-    ax.set_title("Causal-direction outcomes on the 29-event set\n"
-                 "(high accuracy alone is uninformative; only HCAF does both)")
-    ax.legend(loc="upper center", ncol=3, framealpha=0.95)
-    save(fig, "fig_causal_channels.pdf")
-
 def fig_calibration():
     # Five confidence bins over [0, 1].
     centres = np.array([0.10, 0.30, 0.50, 0.70, 0.90])
@@ -192,21 +157,6 @@ def fig_calibration():
     ax.set_title("Reliability diagram\n(ECE = 0.092, Brier = 0.118)")
     ax.legend(loc="upper left", fontsize=8)
     save(fig, "fig_calibration.pdf")
-
-def fig_paddle_decomp():
-    labels = ["CSS significant\n(is\\_causal = True)","TE correct\n+ prior agree","Routing metadata\n(withdrawal / AS-path)","Domain prior alone"]
-    sizes = [3,6,5,3]; total = sum(sizes)
-    colors = [BLUE,GREEN,AMBER,PURPLE]
-    fig, ax = plt.subplots(figsize=(6.4,3.2))
-    bars = ax.barh(labels, sizes, color=colors, height=0.6)
-    for b,s in zip(bars,sizes):
-        ax.text(s+0.15, b.get_y()+b.get_height()/2, f"{s}/{total}  ({s/total:.0%})",
-                va="center", fontsize=9, weight="bold")
-    ax.set_xlim(0,8.5)
-    ax.set_xlabel("Correct verdicts carried (out of 17 real-traffic events)")
-    ax.set_title("HCAF correctness attribution: no single channel dominates\n(CSS alone resolves 18\\%; the Bayesian synthesis reaches 100\\%)")
-    ax.invert_yaxis()
-    save(fig, "fig_paddle_decomp.pdf")
 
 def fig_alert_flood():
     """Two-panel: per-source alarm share + actionable rate.
@@ -283,60 +233,3 @@ def fig_robustness():
     ax.set_title("Accuracy across hard-case subsets\n(the hijack-dominant subset is the weakest, as expected)")
     save(fig, "fig_robustness.pdf")
 
-def fig_sensitivity():
-    """Two-panel: CSS prior sensitivity + threshold sweep.
-
-    Left: removing any single channel from HCAF causes
-    zero direction flips; only removing the CSS prior
-    causes 37.9% direction flips and a 3x L1 shift.
-    Right: strict-precision sweep across the abstention
-    threshold (data from sensitivity_v36.csv and
-    threshold_sensitivity_v11.csv).
-    """
-    import csv as _csv
-    from pathlib import Path
-    SENSDIR = Path("/data/bgp_tracer/results/eval")
-
-    # --- left panel: CSS prior sensitivity ---
-    sen = list(_csv.DictReader(open(SENSDIR / "sensitivity_v36.csv")))
-    labels = [r["variant"] for r in sen]
-    l1    = [float(r["avg_L1_shift"]) for r in sen]
-    flips = [float(r["direction_flip_rate_pct"]) for r in sen]
-
-    fig, (axL, axR) = plt.subplots(1, 2, figsize=(7.4, 3.0),
-                                   gridspec_kw={"width_ratios": [1, 1]})
-    x = np.arange(len(sen))
-    bars = axL.bar(x, l1, color=[GREEN if f == 0 else RED for f in flips],
-                   edgecolor="white", width=0.6)
-    for b, v, f in zip(bars, l1, flips):
-        axL.text(b.get_x() + b.get_width() / 2, v + 0.02,
-                 f"  flip={f:.0f}%", ha="left", fontsize=7.5, color="#202124")
-    axL.set_xticks(x)
-    axL.set_xticklabels(labels,
-                        fontsize=7.5, rotation=25, ha="right")
-    axL.set_ylabel("Avg L1 shift vs full system")
-    axL.set_title("Channel removal sensitivity\n"
-                  "(removing CSS prior is catastrophic; others are safe)")
-
-    # --- right panel: threshold sweep ---
-    # Use v36 (latest) threshold sensitivity; default τ=0.34
-    thr = list(_csv.DictReader(open(SENSDIR / "threshold_sensitivity_v36.csv")))
-    t  = [float(r["threshold"]) for r in thr]
-    sp = [float(r["strict_precision"]) for r in thr]
-    rp = [float(r["review_precision"]) for r in thr]
-    axR.plot(t, sp, "o-", color=GREEN, label="Strict precision")
-    axR.plot(t, rp, "s--", color=BLUE, label="Review precision")
-    axR.set_xlabel("Abstention threshold"); axR.set_ylabel("Precision (%)")
-    axR.set_title("Abstention threshold sweep\n(precision flat [0.3, 0.45]; default $\\tau=0.34$)")
-    axR.legend(fontsize=8); axR.set_ylim(0, 105)
-    axR.axvline(0.34, color=RED, linestyle=":", linewidth=1.2)
-    axR.text(0.345, 2, "default=0.34", fontsize=7.5, color=RED)
-
-    fig.tight_layout()
-    save(fig, "fig_sensitivity.pdf")
-
-if __name__ == "__main__":
-    fig_per_cause(); fig_confusion(); fig_detector_fire(); fig_ablation()
-    fig_causal_channels(); fig_calibration(); fig_paddle_decomp()
-    fig_alert_flood(); fig_robustness(); fig_sensitivity()
-    print("\nall evaluation figures regenerated")

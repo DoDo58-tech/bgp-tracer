@@ -99,7 +99,7 @@ add(card(p1x + 185, AG_Y, 170, AG_H, "Traffic Agent",
          ["Sudden / sustained anomalies", "Peak–trough excursion"],
          accent=AMBER, tint=WHITE, border=AMBER_SOFT, align="center", t_size=9.5))
 add(card(p1x + 185, AG_Y + 150, 170, AG_H, "Routing Agent",
-         ["MSBD · CTPR · CIC", "Outage · leak · hijack detectors"],
+         ["outage · leak · hijack", "withdrawal-rate detectors"],
          accent=AMBER, tint=WHITE, border=AMBER_SOFT, align="center", t_size=9.5))
 # parallel collection bracket
 add(path(f"M {p1x + 180} {AG_Y + AG_H / 2} H {p1x + 168} V {AG_Y + 150 + AG_H / 2} H {p1x + 180}",
@@ -169,26 +169,25 @@ add(card(CA_X, CA_Y, CA_W, CA_H, "Correlation", ["Timeline alignment", "ΔT + hy
 add(text(CA_X + CA_W / 2, CA_Y + 22, "Analyzer", 9.5, 600, NAVY, "middle"))
 add(arrow(CA_X + CA_W + 4, 296, p2x + 176, 296, "solid", SLATE, 2))
 
-# --- CSS anchor (prominent) -------------------------------------------------
+# --- the PADDLE measurement (prominent) --------------------------------------
 CSS_X, CSS_Y, CSS_W, CSS_H = p2x + 180, 200, 222, 196
 add(rect(CSS_X, CSS_Y, CSS_W, CSS_H, "#FFFFFF", NAVY, 3, 12))
-add(text(CSS_X + CSS_W / 2, CSS_Y + 32, "CSS Anchor", 13, 700, NAVY, "middle"))
-add(text(CSS_X + CSS_W / 2, CSS_Y + 52, "Pearl-PNS-anchored", 9, 500, GRAY, "middle"))
+add(text(CSS_X + CSS_W / 2, CSS_Y + 32, "PADDLE", 13, 700, NAVY, "middle"))
+add(text(CSS_X + CSS_W / 2, CSS_Y + 52, "paired difference-in-differences", 9, 500, GRAY, "middle"))
 add(rect(CSS_X + 16, CSS_Y + 64, CSS_W - 32, 42, NAVY_TINT, NAVY_SOFT, 1.4, 7))
-add(text(CSS_X + CSS_W / 2, CSS_Y + 84, "CSS(X→Y) = E[Y | do(X=1)] − E[Y | do(X=0)]",
+add(text(CSS_X + CSS_W / 2, CSS_Y + 84, "trough onset → control-plane rate vs prior days",
          7.6, 500, NAVY, "middle"))
-add(text(CSS_X + CSS_W / 2, CSS_Y + 122, "R→T / T→R · bootstrap 95% CI · permutation p",
+add(text(CSS_X + CSS_W / 2, CSS_Y + 122, "R→T / T→R · same-clock placebo null",
          7.8, 400, GRAY, "middle"))
-add(text(CSS_X + CSS_W / 2, CSS_Y + 150, "R→T / T→R", 8, 400, GRAY, "middle"))
-add(text(CSS_X + CSS_W / 2, CSS_Y + 150, "", 8, 400, GRAY, "middle"))
-add(text(CSS_X + CSS_W / 2, CSS_Y + 172, "Pearl-PNS-anchored prior on direction",
+add(text(CSS_X + CSS_W / 2, CSS_Y + 150, "tail probability", 8, 400, GRAY, "middle"))
+add(text(CSS_X + CSS_W / 2, CSS_Y + 172, "a single estimator, with no second path",
          7.8, 400, GRAY, "middle"))
 add(arrow(CSS_X + CSS_W + 4, 296, p2x + 428, 296, "solid", SLATE, 2))
 
-# --- five supporting evidence channels ---------------------------------------
+# --- the four vetoes that gate the estimator -----------------------------------
 SUP_X, SUP_W, SUP_H = p2x + 432, 96, 44
-add(text(SUP_X + SUP_W / 2, 190, "Five supporting evidence channels", 8, 600, GRAY, "middle"))
-SUP_NAMES = ["MSBD", "CTPR", "CIC", "Granger", "Transfer Entropy"]
+add(text(SUP_X + SUP_W / 2, 190, "Four vetoes", 8, 600, GRAY, "middle"))
+SUP_NAMES = ["V1 precedence", "V2 exclusivity", "V3 scope", "V4 congruence"]
 sup_ys = []
 for i, nm in enumerate(SUP_NAMES):
     y = 202 + i * (SUP_H + 8)
@@ -206,15 +205,15 @@ add(f'<polygon points="{p2x + 578},296 {p2x + 570},292.4 {p2x + 570},299.6" fill
 
 # --- the estimator -----------------------------------------------------------
 HC_X, HC_Y, HC_W, HC_H = p2x + 582, 248, 118, 112
-add(card(HC_X, HC_Y, HC_W, HC_H, "HCAF",
-         ["Bayesian evidence", "synthesis", "CSS prior + channel", "likelihood ratios"],
+add(card(HC_X, HC_Y, HC_W, HC_H, "PADDLE",
+         ["a single estimator", "no second path", "no fallback", "explicit abstention"],
          accent=NAVY, tint=WHITE, border=NAVY, align="center", t_size=10, b_size=7.6))
 add(arrow(HC_X + HC_W + 4, 304, p2x + 714, 304, "solid", SLATE, 2))
 
 # --- commit / abstain gate ---------------------------------------------------
 GT_X, GT_Y, GT_W, GT_H = p2x + 718, 196, 132, 74
 add(card(GT_X, GT_Y, GT_W, GT_H, "Commit / Abstain Gate",
-         ["CI excludes zero", "p < 0.05", "temporal precedence"],
+         ["four vetoes pass", "placebo p ≤ 0.05", "displacement floors"],
          accent=NAVY, tint=WHITE, border=NAVY, align="center", t_size=9, b_size=7.8))
 # fork
 FK_Y, FK_H = 292, 46

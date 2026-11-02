@@ -105,8 +105,16 @@ def meta_path_for(parquet):
 
 
 def source_fingerprint(path):
-    """Return a fingerprint that survives `touch` and unstable mtime ns."""
-    st = path.stat()
+    """Return a fingerprint that survives `touch` and unstable mtime ns.
+
+    The source may have been pruned since the cache was built, in which
+    case there is nothing to fingerprint and the cache's own size is
+    used instead.
+    """
+    try:
+        st = path.stat()
+    except OSError:
+        return "source_missing"
     return f"{st.st_size}:{st.st_ino}:{int(st.st_mtime)}"
 
 
@@ -120,14 +128,23 @@ def read_meta(parquet):
         return None
 
 
-def write_meta(parquet, source):
-    """Persist cache metadata atomically."""
+def write_meta(parquet, source, rows: Optional[int] = None):
+    """Persist cache metadata atomically.
+
+    The row count is recorded with it, so a later check can tell a
+    hollow cache from a real one without reading the file's data.
+    """
     mp = meta_path_for(parquet)
+    try:
+        size = parquet.stat().st_size
+    except OSError:
+        size = 0
     payload = json.dumps({
         "source": str(source),
         "fingerprint": source_fingerprint(source),
-        "parquet_size": parquet.stat().st_size,
+        "parquet_size": size,
         "schema_version": _PARQUET_SCHEMA_VERSION,
+        "rows": rows,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }, indent=2)
     try:
@@ -170,7 +187,20 @@ def parquet_is_hollow(parquet) -> bool:
     for it: an empty parquet and a parquet with a single row differ by
     about a kilobyte, and a window with one announcement is a real
     measurement.
+
+    The metadata carries the count when the cache was written by this
+    version of the builder, so the common case costs a metadata read
+    rather than a read of the data.  A cache without the count is read.
     """
+    try:
+        meta = read_meta(parquet)
+    except Exception:  # noqa: BLE001 - an unreadable cache is not usable
+        return True
+    if isinstance(meta, dict) and meta.get("rows") is not None:
+        try:
+            return int(meta["rows"]) == 0
+        except (TypeError, ValueError):
+            pass
     try:
         frame = pl.read_parquet(parquet, columns=["announce"])
     except Exception:  # noqa: BLE001 - an unreadable cache is not usable
@@ -294,7 +324,7 @@ def ensure_parquet(src_path):
     tmp = parquet.with_suffix(f".parquet.{os.getpid()}.tmp")
     df.write_parquet(tmp, compression="zstd", compression_level=3)
     tmp.replace(parquet)
-    write_meta(parquet, src_path)
+    write_meta(parquet, src_path, rows=df.height)
     return parquet
 
 

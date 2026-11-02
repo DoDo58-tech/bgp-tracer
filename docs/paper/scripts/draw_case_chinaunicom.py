@@ -44,7 +44,7 @@ fig, axes = plt.subplots(3, 1, figsize=(8.5, 6.5), dpi=200,
 # Routing
 ax = axes[0]
 ax.fill_between(t0, 0, routing, color="#D93025", alpha=0.7)
-ax.axvline(t0[breakpoint], color="#202124", ls="--", lw=1.0, label="MSBD breakpoint")
+ax.axvline(t0[breakpoint], color="#202124", ls="--", lw=1.0, label="withdrawal breakpoint")
 ax.set_ylabel("RRC00 announcements\n(per 5-min)", fontsize=9)
 ax.set_xlim(0, t0[-1])
 ax.set_ylim(0, max(routing)*1.15)

@@ -34,7 +34,8 @@ def test_gate_fails_on_a_drifted_abstract_number(tmp_path):
     """Corrupting a quoted number must fail the gate."""
     src = PROJECT_ROOT / "docs" / "paper" / "main.tex"
     text = src.read_text()
-    drifted = text.replace("$9.7\\%$ to $0.7\\%$", "$99.7\\%$ to $0.7\\%$")
+    drifted = text.replace("$121$ of $280$ cached windows",
+                            "$999$ of $280$ cached windows")
     assert drifted != text, "the paper no longer contains the expected string"
 
     bad = tmp_path / "main.tex"

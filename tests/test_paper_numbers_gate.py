@@ -37,8 +37,8 @@ def test_gate_reports_a_missing_number(tmp_path):
     shutil.copytree(PROJECT_ROOT / "docs" / "paper", paper)
     target = paper / "section6_evaluation.tex"
     text = target.read_text()
-    drifted = text.replace("Empty traffic buckets        & 37",
-                            "Empty traffic buckets        & 38")
+    drifted = text.replace("No traffic observations       & 121",
+                            "No traffic observations       & 122")
     assert drifted != text, "the paper no longer contains the expected string"
     target.write_text(drifted)
 

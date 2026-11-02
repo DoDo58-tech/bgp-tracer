@@ -250,7 +250,7 @@ procedure to every cache in the tree.
 \caption{Real-data coverage over the cached windows. ``Two series
 built'' counts windows that yield two non-empty bucket series; the rows
 above it are the reasons a window cannot be scored at all, which is where
-the volume is. The final row reruns the measurement with $\alpha=0.99$, so
+the volume is. The last row reruns the measurement with $\alpha=0.99$, so
 that V2 can never reject, to test whether abstention is a threshold
 artefact.}
 \label{tab:paddle-coverage}
@@ -259,32 +259,41 @@ artefact.}
 \hline
 \textbf{Outcome} & \textbf{Windows} \\
 \hline
-Empty routing buckets        & 116 \\
-No events inside the window  & 44 \\
-Empty traffic buckets        & 37 \\
-No declared window           &  3 \\
+No traffic observations       & 121 \\
+Control plane flat            &  59 \\
+Not exclusive                 &  30 \\
+Series too short              &  29 \\
+Response series flat          &  16 \\
+Mirror contradicted           &  11 \\
+No control-plane edge         &   9 \\
+Inadmissible precedence       &   2 \\
+No declared window            &   0 \\
 \addlinespace
-Two series built             & 27 \\
-\quad stopped at V1          & 27 \\
-\quad committed              &  0 \\
+Two series built             & 159 \\
+\quad stopped at first veto & 156 \\
 \addlinespace
-Committed at $\alpha=0.99$   &  0 \\
+Committed                     &   3 \\
+Committed at $\alpha=0.99$   &  18 \\
 \hline
 \end{tabular}
 \end{table}
 
-Two facts in that table locate the constraint. First, it sits upstream of
-the test: most windows cannot produce both series at all, because the cached
-aggregate holds no routing events in its buckets, so the test is never
-reached. Second, the zero is not a threshold artefact: with $\alpha=0.99$,
-which disables V2 entirely, the count is still zero, because every one of
-the windows that produced two series stops at V1, twenty of them with no
-routing edge, six with no traffic edge, and one with overlapping onsets. A
-method that answered on these windows would be inventing the evidence, and
-relaxing a level would not change the answer. Both runs are recorded under
-protocol hash \texttt{541554a473d4} in
-\texttt{results/eval/paddle\_coverage\_caches.json}, together with the veto
-tally.
+Two facts in that table locate the constraint. First, the largest single
+bucket is not a refusal at all: $121$ of the $280$ windows carry no traffic
+observation whatsoever, so the estimator is never reached on them. The next
+three buckets are refusals of a different kind---the control plane was flat,
+the displacement was not exclusive, or the series were too short---and
+between them they account for a further $118$ windows. Second, the
+commitments are not a threshold artefact in the direction that would favour
+the method: with $\alpha=0.99$, which disables V2, the count rises from $3$
+to $18$, and every one of the additional $15$ is a window whose displacement
+the placebo null could not separate from ordinary behaviour. The remaining
+$141$ windows still stop at the first veto, so relaxing the level buys
+commitments that the evidence does not earn. Both runs are recorded under
+protocol hash \texttt{d93fa6f1f720} in
+\texttt{results/eval/paddle\_coverage\_caches.json} and
+\texttt{results/eval/paddle\_coverage\_caches\_a099.json}, together with the
+veto tally.
 
 \subsection{Input shape: the same window under two shapes}
 \label{sec:eval-shape}

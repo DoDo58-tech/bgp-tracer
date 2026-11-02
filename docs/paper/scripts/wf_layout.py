@@ -157,7 +157,7 @@ def draw_phase1() -> None:
              accent=AMBER, border=AMBER_SOFT, t_size=F_CARD_T, b_size=F_BODY,
              sw=2.0, r=14, pad=14))
     add(card(AG_X, 528, AG_W, 212, "Routing Agent",
-             ["MSBD · CTPR · CIC", "Outage · leak · hijack detectors"],
+             ["outage · leak · hijack", "withdrawal-rate detectors"],
              accent=AMBER, border=AMBER_SOFT, t_size=F_CARD_T, b_size=F_BODY,
              sw=2.0, r=14, pad=14))
     # coarse screen fans out to the two agents
@@ -218,7 +218,7 @@ def draw_phase1() -> None:
 
 
 def draw_phase2_head() -> None:
-    """DEEP · PHASE 2 — panel frame, correlation analyzer, CSS anchor."""
+    """DEEP · PHASE 2 — panel frame, correlation analyzer, the PADDLE anchor."""
     add(rect(P2X, PANEL_Y, P2W, PANEL_B - PANEL_Y, NAVY_TINT, NAVY, 2.4, 22))
     add(text(P2_IN, 178, "DEEP · PHASE 2", F_HEAD, 700, NAVY))
     add(text(P2_IN, 216, "Causal Attribution — evidence before narrative",
@@ -233,34 +233,35 @@ def draw_phase2_head() -> None:
              sw=2.0, r=14, pad=14))
     add(arrow(CA_X + CA_W, 482, CA_X + CA_W + 26, 482, "solid", SLATE, 2.4, 10))
 
-    # --- CSS anchor: the prominent central block ------------------------------
+    # --- the PADDLE measurement: the prominent central block ----------------
     CSS_X, CSS_W = CA_X + CA_W + 40.0, 410.0
     CSS_Y, CSS_H = 262, 424
     add(rect(CSS_X, CSS_Y, CSS_W, CSS_H, WHITE, NAVY, 3.0, 18))
-    add(text(CSS_X + CSS_W / 2, CSS_Y + 54, "CSS Anchor", 36, 700, NAVY, "middle"))
-    add(text(CSS_X + CSS_W / 2, CSS_Y + 92, "Pearl-PNS-anchored", F_SUB, 500, GRAY,
-             "middle"))
+    add(text(CSS_X + CSS_W / 2, CSS_Y + 54, "PADDLE", 36, 700, NAVY, "middle"))
+    add(text(CSS_X + CSS_W / 2, CSS_Y + 92, "paired difference-in-differences",
+             F_SUB, 500, GRAY, "middle"))
     add(rect(CSS_X + 18, CSS_Y + 116, CSS_W - 36, 104, NAVY_TINT, NAVY_SOFT, 1.4, 10))
-    add(text(CSS_X + CSS_W / 2, CSS_Y + 154, "CSS(X→Y) = E[Y | do(X=1)]",
+    add(text(CSS_X + CSS_W / 2, CSS_Y + 154, "trough onset  →  control-plane rate",
              21, 500, NAVY, "middle"))
-    add(text(CSS_X + CSS_W / 2, CSS_Y + 190, "− E[Y | do(X=0)]", 21, 500, NAVY, "middle"))
+    add(text(CSS_X + CSS_W / 2, CSS_Y + 190, "vs same clock on prior days",
+             21, 500, NAVY, "middle"))
     add(text(CSS_X + CSS_W / 2, CSS_Y + 254, "R→T / T→R", F_BODY + 2, 400, GRAY,
              "middle"))
-    add(text(CSS_X + CSS_W / 2, CSS_Y + 294, "bootstrap 95% CI", F_BODY, 400, GRAY,
+    add(text(CSS_X + CSS_W / 2, CSS_Y + 294, "same-clock placebo null",
+             F_BODY, 400, GRAY, "middle"))
+    add(text(CSS_X + CSS_W / 2, CSS_Y + 328, "tail probability", F_BODY, 400, GRAY,
              "middle"))
-    add(text(CSS_X + CSS_W / 2, CSS_Y + 328, "permutation p", F_BODY, 400, GRAY,
-             "middle"))
-    add(text(CSS_X + CSS_W / 2, CSS_Y + 386, "Pearl-PNS-anchored prior on direction",
+    add(text(CSS_X + CSS_W / 2, CSS_Y + 386, "a single estimator, with no second path",
              F_MICRO, 400, GRAY, "middle"))
     add(arrow(CSS_X + CSS_W, 482, CSS_X + CSS_W + 26, 482, "solid", SLATE, 2.4, 10))
 
 
 def draw_phase2_channels() -> None:
-    """The PADDLE estimator and the four vetoes that gate it."""
+    """The four vetoes that gate the PADDLE estimator."""
     SUP_X, SUP_W, SUP_H = 2020.0, 208.0, 56
-    add(text(SUP_X + SUP_W / 2, 252, "Five supporting evidence channels",
+    add(text(SUP_X + SUP_W / 2, 252, "Four vetoes",
              F_MICRO + 1, 600, GRAY, "middle"))
-    SUP_NAMES = ["MSBD", "CTPR", "CIC", "Granger", "Transfer Entropy"]
+    SUP_NAMES = ["V1 precedence", "V2 exclusivity", "V3 scope", "V4 congruence"]
     sup_ys = []
     for i, nm in enumerate(SUP_NAMES):
         y = 272 + i * (SUP_H + 16)
@@ -280,8 +281,9 @@ def draw_phase2_channels() -> None:
 
     # --- the estimator --------------------------------------------------------------
     HC_Y, HC_W, HC_H = 374, 210.0, 218
-    add(card(HC_X, HC_Y, HC_W, HC_H, "HCAF",
-             ["Bayesian evidence", "synthesis", "CSS prior + channel", "likelihood ratios"],
+    add(card(HC_X, HC_Y, HC_W, HC_H, "PADDLE",
+             ["a single estimator", "no second path", "no fallback",
+              "explicit abstention"],
              accent=NAVY, border=NAVY, t_size=34, b_size=F_BODY, sw=2.8, r=14,
              pad=14))
     add(arrow(HC_X + HC_W, 484, P2_R - 330.0, 484, "solid", SLATE, 2.4, 10))
@@ -292,7 +294,8 @@ def draw_phase2_gate() -> None:
     GT_X = P2_R - 310.0
     GT_Y, GT_W, GT_H = 262, 310.0, 194
     add(card(GT_X, GT_Y, GT_W, GT_H, "Commit / Abstain Gate",
-             ["CI excludes zero", "p < 0.05", "temporal precedence"],
+             ["all four vetoes pass", "placebo tail p ≤ 0.05",
+              "displacement floors"],
              accent=NAVY, border=NAVY, t_size=F_CARD_T, b_size=F_BODY,
              sw=2.4, r=14, pad=14))
 
@@ -411,7 +414,7 @@ def draw_eval_strip() -> None:
 
     ITEMS = [
         ("Ground-truth event set", 400.0),
-        ("HCAF vs Pearson lag · Granger · timestamp distance · Transfer Entropy", 1080.0),
+        ("PADDLE vs agent, monolithic and rule-only arms", 1080.0),
         ("Ablation · robustness · significance", 640.0),
     ]
     x = EVAL_X + 36

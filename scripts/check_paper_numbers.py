@@ -86,14 +86,12 @@ def main():
         ("cached windows", str(cov["n_caches"])),
         ("two-series windows", str(cov["n_two_series"])),
         ("windows without two series", str(cov["n_without_two_series"])),
-        ("empty routing buckets",
-         f"Empty routing buckets & {cov['reasons']['empty_routing_buckets']}"),
-        ("empty traffic buckets",
-         f"Empty traffic buckets & {cov['reasons']['empty_traffic_buckets']}"),
-        ("no events in window",
-         f"No events inside the window & {cov['reasons']['no_events_in_window']}"),
+        ("no traffic observations",
+         f"No traffic observations & {cov['reasons']['no_traffic']}"),
         ("no declared window",
          f"No declared window & {cov['reasons']['no_window']}"),
+        ("committed",
+         f"Committed & {cov['n_committed']}"),
 
         # ── the agent layer ──
         ("agent correct",

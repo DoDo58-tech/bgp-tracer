@@ -48,6 +48,8 @@ from scripts.eval_paddle_corpus import (  # noqa: E402
 
 QUICK = ROOT / "results/quick"
 DEFAULT_OUT = ROOT / "results/eval/paddle_coverage_caches.json"
+#: The readiness of every window the sweep needs, kept between runs.
+READY_FLAGS_PATH = ROOT / "results/eval/parquet_ready_flags.json"
 
 
 def cache_window(cache: Dict[str, Any]):
@@ -271,12 +273,17 @@ def warm_parquet(caches: List[Path], workers: int = 8):
 
     # The readiness check reads one column of every candidate, so it is
     # spread over threads: the work is I/O and the interpreter's lock
-    # is not what it waits on.
+    # is not what it waits on.  The answer is kept, because the check
+    # costs more than the scan it is preparing for and the cache does
+    # not become less ready on its own.
     from concurrent.futures import ThreadPoolExecutor
 
     ordered = sorted(stamps)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        flags = list(pool.map(parquet_window_ready, ordered, chunksize=64))
+    flags = read_ready_flags(ordered)
+    if flags is None:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            flags = list(pool.map(parquet_window_ready, ordered, chunksize=64))
+        write_ready_flags(ordered, flags)
     todo = [s for s, ok in zip(ordered, flags) if not ok]
     if not todo:
         print(f"parquet cache: {len(stamps)} window(s) ready", flush=True)
@@ -312,6 +319,33 @@ def parquet_window_ready(stamp: datetime) -> bool:
     return not parquet_is_hollow(path)
 
 
+def read_ready_flags(stamps):
+    """The cached readiness of each window, or None when it is not cached."""
+    path = READY_FLAGS_PATH
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    stamps = [s.strftime("%Y%m%d.%H%M") for s in stamps]
+    cached = payload.get("flags") or {}
+    if payload.get("stamps") != stamps:
+        return None
+    return [bool(cached.get(s)) for s in stamps]
+
+
+def write_ready_flags(stamps, flags):
+    """Keep the readiness of each window for the next run."""
+    payload = {
+        "stamps": [s.strftime("%Y%m%d.%H%M") for s in stamps],
+        "flags": {s.strftime("%Y%m%d.%H%M"): bool(f)
+                  for s, f in zip(stamps, flags)},
+    }
+    READY_FLAGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    READY_FLAGS_PATH.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def build_parquet_window(stamp: datetime):
     """Build one window's parquet cache from whichever source is there."""
     from data.parquet_cache import DECODED_DIR, UPDATES_ROOT, ensure_parquet
@@ -339,9 +373,53 @@ def summary(run: Dict[str, Any], n_caches: int) -> Dict[str, Any]:
         "n_without_two_series": n_caches - n_two,
         "n_committed": n_commit,
         "n_stopped_at_first_veto": n_two - n_commit,
-        "reasons": run.get("reasons"),
-        "vetoes": run.get("vetoes"),
+        "reasons": tally(run.get("reasons")),
+        "vetoes": veto_tally(run.get("vetoes")),
     }
+
+
+#: Every outcome the sweep can report.  The tally carries all of them,
+#: so a reader can see which reasons never occurred rather than having
+#: to infer it from a missing key.
+REASON_TALLY = (
+    "no_traffic",
+    "no_window",
+    "unreadable_cache",
+    "control_plane_flat",
+    "series_too_short",
+    "response_series_flat",
+    "not_exclusive",
+    "no_control_plane_edge",
+    "inadmissible_precedence",
+    "mirror_contradicted",
+    "committed",
+)
+
+
+#: Every veto and every state it can be left in.  The tally carries all
+#: of them, so a veto that never ran is visible as a zero rather than
+#: being absent.
+VETO_TALLY = tuple(
+    f"{veto}:{state}"
+    for veto in ("V1", "V2", "V3", "V4")
+    for state in ("pass", "fail", "not_run", "suspend")
+)
+
+
+def tally(counts: Optional[Dict[str, Any]]) -> Dict[str, int]:
+    """A count for every known outcome, zero included."""
+    out = {name: 0 for name in REASON_TALLY}
+    for name, count in (counts or {}).items():
+        out[name] = int(count)
+    return out
+
+
+def veto_tally(counts: Optional[Dict[str, Any]]) -> Dict[str, int]:
+    """A count for every veto state, zero included."""
+    out = {name: 0 for name in VETO_TALLY}
+    for name, count in (counts or {}).items():
+        out[name] = int(count)
+    return out
 
 
 def main() -> int:

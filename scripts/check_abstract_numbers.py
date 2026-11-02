@@ -77,13 +77,18 @@ CHECKS = [
      "paddle_calibration.json", "size.2.rate", "0.0"),
 
     # ── abstract: coverage on the cached corpus ──
-    ("main.tex", "$200$ of $227$ cached windows cannot produce",
-     "paddle_coverage_caches.json", "coverage_summary.n_caches", "227"),
-    ("main.tex", "$200$ of $227$ cached windows cannot produce",
-     "paddle_coverage_caches.json", "coverage_summary.n_without_two_series",
-     "200"),
-    ("main.tex", "all $27$ that can stop at the first veto",
-     "paddle_coverage_caches.json", "coverage_summary.n_two_series", "27"),
+    ("main.tex", "$121$ of $280$ cached windows carry no",
+     "paddle_coverage_caches.json", "coverage_summary.n_caches", "280"),
+    ("main.tex", "$121$ of $280$ cached windows carry no",
+     "paddle_coverage_caches.json", "coverage_summary.reasons.no_traffic",
+     "121"),
+    ("main.tex", "of the $159$ that can be scored only $3$",
+     "paddle_coverage_caches.json", "coverage_summary.n_two_series", "159"),
+    ("main.tex", "of the $159$ that can be scored only $3$",
+     "paddle_coverage_caches.json", "coverage_summary.n_committed", "3"),
+    ("main.tex", "rising to $18$ when the exclusivity level is raised",
+     "paddle_coverage_caches_a099.json", "coverage_summary.n_committed",
+     "18"),
 
     # ── introduction: the agent layer's accuracy claim ──
     ("section1_intro.tex", "$0.76$ against $0.06$",
