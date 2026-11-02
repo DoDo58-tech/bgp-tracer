@@ -176,35 +176,60 @@ def collect_scope(
     routing_timeline: Sequence[dict],
     traffic_timeline: Sequence[dict],
     routing_context: Optional[dict] = None,
+    traffic_block: Optional[Dict[str, Any]] = None,
 ):
     """Return the affected and the observed entity sets for the scope veto.
 
-    The routing side is the set of prefixes the routing edges are about;
-    the traffic side is the set of prefixes the traffic series was built
-    over.  When either side is unknown the veto suspends rather than
-    fails, so a missing scope is never laundered into a refutation.
+    The two sides have to be measured on the same kind of entity before
+    they can be compared.  A routing edge is about a *prefix*, a traffic
+    series is measured on a *network*, and a prefix and a network are
+    not the same kind of thing: their intersection is empty however
+    the incident went, so the veto would never fire.
+
+    So each side is reduced to the entities an observation of the other
+    side could actually cover.  The routing edge contributes the
+    prefixes it touches and the networks those prefixes belong to --
+    the victim, the legitimate origin, the network that claimed the
+    route.  The traffic series contributes the network it measured, or
+    the prefix it measured.
+
+    A network that legitimately originates an affected prefix *is*
+    covered by that network's traffic series, so the two meet there.
+    When the routing edge belongs to a network the traffic series
+    never measured, the sets are disjoint and the veto fails.
+
+    When either side is unknown the veto suspends rather than fails, so
+    a missing scope is never laundered into a refutation.
     """
     ctx = routing_context or {}
     routing_scope: List[str] = []
     traffic_scope: List[str] = []
 
-    affected = ctx.get("affected_prefixes")
-    if isinstance(affected, (list, tuple, set)):
-        routing_scope.extend(str(p) for p in affected if p)
-    single = ctx.get("affected_prefix")
-    if single:
-        routing_scope.append(str(single))
+    for key in ("affected_prefixes", "affected_prefix"):
+        value = ctx.get(key)
+        if isinstance(value, (list, tuple, set)):
+            routing_scope.extend(f"prefix:{p}" for p in value if p)
+        elif value:
+            routing_scope.append(f"prefix:{value}")
 
     for point in routing_timeline or []:
         raw = point.get("raw_event") or {}
         if not isinstance(raw, dict):
             continue
-        for key in ("prefix", "prefixes", "affected_prefix"):
+        for key in ("prefix", "prefixes", "affected_prefix", "checked_prefix"):
             value = raw.get(key)
             if isinstance(value, (list, tuple, set)):
-                routing_scope.extend(str(p) for p in value if p)
+                routing_scope.extend(f"prefix:{p}" for p in value if p)
             elif value:
-                routing_scope.append(str(value))
+                routing_scope.append(f"prefix:{value}")
+        for key in ("victim_as", "expected_origin", "claimed_as", "target_as"):
+            value = raw.get(key)
+            if value:
+                routing_scope.append(f"asn:{str(value).replace('AS', '').strip()}")
+        origins = raw.get("legitimate_origins")
+        if isinstance(origins, (list, tuple, set)):
+            routing_scope.extend(
+                f"asn:{str(o).replace('AS', '').strip()}" for o in origins if o)
 
     for point in traffic_timeline or []:
         raw = point.get("raw_event") or {}
@@ -213,9 +238,17 @@ def collect_scope(
         for key in ("prefix", "prefixes", "affected_prefix"):
             value = raw.get(key)
             if isinstance(value, (list, tuple, set)):
-                traffic_scope.extend(str(p) for p in value if p)
+                traffic_scope.extend(f"prefix:{p}" for p in value if p)
             elif value:
-                traffic_scope.append(str(value))
+                traffic_scope.append(f"prefix:{value}")
+
+    block = traffic_block if isinstance(traffic_block, dict) else {}
+    measured_asn = block.get("asn") or block.get("target_as")
+    if measured_asn:
+        traffic_scope.append(f"asn:{str(measured_asn).replace('AS', '').strip()}")
+    measured_prefix = block.get("prefix") or block.get("measured_prefix")
+    if measured_prefix:
+        traffic_scope.append(f"prefix:{measured_prefix}")
 
     routing_scope = sorted(set(routing_scope))
     traffic_scope = sorted(set(traffic_scope))
@@ -327,7 +360,7 @@ def run_paddle(
 
     traffic_observations = build_traffic_observations(traffic_timeline)
     routing_scope, traffic_scope = collect_scope(
-        routing_timeline, traffic_timeline, routing_context)
+        routing_timeline, traffic_timeline, routing_context, traffic_block)
     mechanism = collect_mechanism(routing_timeline, routing_context)
     window = impact_window(traffic_block)
 

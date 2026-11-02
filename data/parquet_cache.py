@@ -80,11 +80,6 @@ def parse_timestamp_expr():
 # withdrawals as well.
 _PARQUET_SCHEMA_VERSION = 2
 
-#: A parquet smaller than this holds no rows.  An empty frame and a
-#: two-row frame are the same few hundred bytes, so the size settles
-#: the question before a column has to be read.
-_MIN_PARQUET_BYTES = 4096
-
 
 def ensure_dirs():
     PARQUET_DIR.mkdir(parents=True, exist_ok=True)
@@ -171,15 +166,11 @@ def parquet_is_hollow(parquet) -> bool:
     on.  The scan then read zero rows and reported "no routing
     activity" for a window that had never been measured.
 
-    An empty parquet is a few hundred bytes and a real one is a few
-    hundred kilobytes, so the size settles the question.  The row count
-    confirms it for the rare file that sits near the boundary.
+    The row count is the authority.  The file's size cannot stand in
+    for it: an empty parquet and a parquet with a single row differ by
+    about a kilobyte, and a window with one announcement is a real
+    measurement.
     """
-    try:
-        if Path(parquet).stat().st_size < _MIN_PARQUET_BYTES:
-            return True
-    except OSError:
-        return True
     try:
         frame = pl.read_parquet(parquet, columns=["announce"])
     except Exception:  # noqa: BLE001 - an unreadable cache is not usable
@@ -190,15 +181,12 @@ def parquet_is_hollow(parquet) -> bool:
 def parquet_is_usable(parquet) -> bool:
     """Whether the cached parquet can be read as a measurement.
 
-    The three conditions are the version, the rows and the file's own
-    existence.  The size check comes first because it costs a stat
-    rather than a column read, and a cache with no rows is useless
-    whatever its metadata says.
+    The conditions are the file's own existence, the schema version
+    and the rows.  A cache with no rows is useless whatever its
+    metadata says, so the row count is checked before the version is
+    trusted.
     """
-    try:
-        if Path(parquet).stat().st_size < _MIN_PARQUET_BYTES:
-            return False
-    except OSError:
+    if not Path(parquet).exists():
         return False
     if not parquet_version_matches(parquet):
         return False
@@ -492,6 +480,27 @@ def ensure_underlying_source(stamp_str):
     return gz_path
 
 
+def rebuild_hollow(stamp, txt_path: Path, gz_path: Path) -> Optional[Path]:
+    """Replace a cache with no rows by one built from the source.
+
+    A hollow cache is a window that was never measured, so it is
+    rebuilt from the raw file rather than read.  The source is the
+    decoded text when it is there and the archive's binary gzip
+    otherwise.
+    """
+    for source in (txt_path, gz_path):
+        if not (source.exists() and source.stat().st_size > 0):
+            continue
+        try:
+            built = ensure_parquet(source)
+        except Exception as exc:  # noqa: BLE001 - the rebuild is best effort
+            logger.debug(f"[parquet_cache] rebuild failed for {source}: {exc}")
+            continue
+        if built is not None and not parquet_is_hollow(built):
+            return built
+    return None
+
+
 def iter_window_chunks(
     start: datetime,
     end: datetime,
@@ -528,8 +537,10 @@ def iter_window_chunks(
         # A hollow file is not usable either: it carries the current
         # schema version but holds no rows, and reading it would report
         # "no routing activity" for a window that was never measured.
-        if (parquet.exists() and parquet_version_matches(parquet)
-                and not parquet_is_hollow(parquet)):
+        # The rows are checked by the read below rather than by a second
+        # read here, because a read of one column costs as much as a read
+        # of all of them.
+        if parquet.exists() and parquet_version_matches(parquet):
             fpath = parquet
         elif txt_path.exists() and txt_path.stat().st_size > 0:
             fpath = ensure_parquet(txt_path)
@@ -568,8 +579,21 @@ def iter_window_chunks(
             continue
 
         if df.is_empty():
-            cur += timedelta(minutes=5)
-            continue
+            # A cache with no rows is a window that was never measured.
+            # The source may still be there, so the window is rebuilt
+            # rather than reported as empty.
+            if fpath == parquet and auto_download:
+                rebuilt = rebuild_hollow(stamp, txt_path, gz_path)
+                if rebuilt is not None:
+                    try:
+                        df = pl.read_parquet(rebuilt, columns=columns)
+                    except (AttributeError) as exc:
+                        logger.warning(
+                            f"parquet rebuild read failed for {rebuilt}: {exc}")
+                        df = None
+            if df is None or df.is_empty():
+                cur += timedelta(minutes=5)
+                continue
 
         if not raw and "announce" in df.columns:
             if include_withdrawals:

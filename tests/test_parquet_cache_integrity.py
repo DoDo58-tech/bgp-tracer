@@ -26,7 +26,7 @@ import polars as pl
 from data import parquet_cache
 
 
-def _binary_gz(path: Path):
+def binary_gz(path: Path):
     """A file that looks like the archive's binary MRT."""
     with gzip.open(path, "wb") as fh:
         fh.write(b"\x00\x01\xe2\x00\x00\x10\x00\x04\x00\x00\x00Z\x00\x00\x1bj")
@@ -35,7 +35,7 @@ def _binary_gz(path: Path):
 def test_a_hollow_build_is_not_written(tmp_path, monkeypatch):
     """A source the builder cannot read must leave no cache behind."""
     src = tmp_path / "updates.20200101.0000.gz"
-    _binary_gz(src)
+    binary_gz(src)
 
     parquet = tmp_path / "updates.20200101.0000.parquet"
     monkeypatch.setattr(parquet_cache, "parquet_path_for", lambda _src: parquet)
@@ -72,7 +72,7 @@ def test_the_version_check_admits_a_hollow_cache(tmp_path):
 def test_the_binary_reader_does_not_pretend_to_read_text(tmp_path):
     """The binary reader must decode, not scan for a text marker."""
     src = tmp_path / "updates.20200101.0000.gz"
-    _binary_gz(src)
+    binary_gz(src)
 
     # The decode helper is what turns binary MRT into the pipe-separated
     # text the frame is read from.  When it is unavailable the reader
