@@ -163,9 +163,15 @@ def download_data(url, max_retries=3, retry_delay=5):
 
     for attempt in range(max_retries):
         try:
+            # ``-c`` resumes a partial file, but it also makes wget fail
+            # with a network error when the server refuses the range
+            # request, and a failure that is retried three times with a
+            # two-minute timeout each holds the whole sweep up.  The
+            # archive files are a few megabytes, so a fresh download
+            # with a short timeout is quicker than a resume that fails.
             subprocess.check_call(
-                ["wget", "-q", "-c", "-T", "120", url, "-O", str(outpath)],
-                timeout=150
+                ["wget", "-q", "-T", "30", "--tries=2", url, "-O", str(outpath)],
+                timeout=90
             )
         except subprocess.TimeoutExpired:
             logger.warning(f"Download timeout (attempt {attempt+1}/{max_retries}): {fname}")

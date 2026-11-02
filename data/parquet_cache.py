@@ -80,6 +80,11 @@ def parse_timestamp_expr():
 # withdrawals as well.
 _PARQUET_SCHEMA_VERSION = 2
 
+#: A parquet smaller than this holds no rows.  An empty frame and a
+#: two-row frame are the same few hundred bytes, so the size settles
+#: the question before a column has to be read.
+_MIN_PARQUET_BYTES = 4096
+
 
 def ensure_dirs():
     PARQUET_DIR.mkdir(parents=True, exist_ok=True)
@@ -155,6 +160,49 @@ def parquet_version_matches(parquet) -> bool:
     if meta is None:
         return False
     return meta.get("schema_version") == _PARQUET_SCHEMA_VERSION
+
+
+def parquet_is_hollow(parquet) -> bool:
+    """Whether the cached parquet holds no rows at all.
+
+    The binary ``.gz`` path used to write an empty frame for every
+    window it could not read as text, and its metadata carried the
+    current schema version, so the version check admitted it from then
+    on.  The scan then read zero rows and reported "no routing
+    activity" for a window that had never been measured.
+
+    An empty parquet is a few hundred bytes and a real one is a few
+    hundred kilobytes, so the size settles the question.  The row count
+    confirms it for the rare file that sits near the boundary.
+    """
+    try:
+        if Path(parquet).stat().st_size < _MIN_PARQUET_BYTES:
+            return True
+    except OSError:
+        return True
+    try:
+        frame = pl.read_parquet(parquet, columns=["announce"])
+    except Exception:  # noqa: BLE001 - an unreadable cache is not usable
+        return True
+    return frame.height == 0
+
+
+def parquet_is_usable(parquet) -> bool:
+    """Whether the cached parquet can be read as a measurement.
+
+    The three conditions are the version, the rows and the file's own
+    existence.  The size check comes first because it costs a stat
+    rather than a column read, and a cache with no rows is useless
+    whatever its metadata says.
+    """
+    try:
+        if Path(parquet).stat().st_size < _MIN_PARQUET_BYTES:
+            return False
+    except OSError:
+        return False
+    if not parquet_version_matches(parquet):
+        return False
+    return not parquet_is_hollow(parquet)
 
 
 def is_cache_valid(parquet, source):
@@ -237,6 +285,7 @@ def ensure_parquet(src_path):
     if is_cache_valid(parquet, src_path):
         return parquet
 
+    df = None
     try:
         if src_path.suffix == ".gz":
             df = read_gz_into_df(src_path)
@@ -249,7 +298,10 @@ def ensure_parquet(src_path):
     if df is None:
         return None
     if df.is_empty():
-        df = pl.DataFrame(schema={c: pl.Utf8 for c in _COLUMNS} | {"ts": pl.Datetime})
+        # An empty frame here means the source held no usable updates.
+        # Writing it out would replace a good cache with a hollow one,
+        # and the hollow file passes the version check from then on.
+        return None
 
     tmp = parquet.with_suffix(f".parquet.{os.getpid()}.tmp")
     df.write_parquet(tmp, compression="zstd", compression_level=3)
@@ -259,23 +311,26 @@ def ensure_parquet(src_path):
 
 
 def read_gz_into_df(gz_path):
-    rows = []
-    with gzip.open(gz_path, "rt", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            line = line.strip()
-            if not line or "|A|" not in line and "|W|" not in line:
-                continue
-            parts = line.split("|")
-            if len(parts) >= 6:
-                parts += [""] * (15 - len(parts))
-                rows.append(parts[:15])
-    if not rows:
-        return pl.DataFrame()
-    df = pl.DataFrame(rows, schema=_COLUMNS, orient="row")
-    df = df.with_columns(
-        parse_timestamp_expr().alias("ts")
-    )
-    return align_to_canonical(df)
+    """Read a binary MRT update file into the canonical frame.
+
+    The archive's ``.gz`` files are **binary** MRT, not the pipe-separated
+    text that ``bgpdump`` writes.  Reading them as text yields no line
+    that contains ``|A|``, so the frame comes back empty and the cache
+    is written hollow -- a file that claims to hold a window and holds
+    nothing.  The binary form therefore has to be decoded first.
+
+    The decode goes through ``bgpdump``, the same tool that produced the
+    text files in the decoded directory, so both paths yield the same
+    rows for the same window.
+    """
+    if decode_gz_to_txt is None:
+        return None
+
+    decoded = DECODED_DIR / f"{gz_path.stem}.txt"
+    if not (decoded.exists() and decoded.stat().st_size > 0):
+        if not decode_gz_to_txt(gz_path, decoded):
+            return None
+    return txt_to_announcements_df(decoded, include_withdrawals=True)
 
 
 def list_window_files(start: datetime, end: datetime) -> list[Path]:
@@ -469,7 +524,12 @@ def iter_window_chunks(
         # A parquet file is only usable when its schema version matches the
         # current one.  An older file holds announcements only, so reusing
         # it would silently strip the withdrawals the outage detector needs.
-        if parquet.exists() and parquet_version_matches(parquet):
+        #
+        # A hollow file is not usable either: it carries the current
+        # schema version but holds no rows, and reading it would report
+        # "no routing activity" for a window that was never measured.
+        if (parquet.exists() and parquet_version_matches(parquet)
+                and not parquet_is_hollow(parquet)):
             fpath = parquet
         elif txt_path.exists() and txt_path.stat().st_size > 0:
             fpath = ensure_parquet(txt_path)
