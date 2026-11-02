@@ -6,8 +6,8 @@ on every window the system has ever looked at, *where* does it stop?
 
 The reason tally is the point of the artefact.  An abstention rate of
 1.0 with ``not_exclusive`` at the top says something different from the
-same rate with ``empty_routing_buckets`` at the top, and only the tally
-distinguishes them: one is the test refusing to over-claim, the other is
+same rate with ``no_traffic`` at the top, and only the tally
+    10|distinguishes them: one is the test refusing to over-claim, the other is
 the data never having arrived.
 
 The run is the production path -- the same
@@ -18,15 +18,23 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# The sweep runs several processes, and each of them reads parquet
+# through Polars, which starts a thread pool of its own.  A process per
+# worker times a pool per worker is more threads than the machine has
+# cores, and the pools then wait on each other.  The pool is bounded
+# before Polars is imported, because the size is read at import time.
+os.environ.setdefault("POLARS_MAX_THREADS", "4")
 
 from agents.paddle_attribution import UNKNOWN, protocol_hash  # noqa: E402
 from agents.paddle_runtime import run_paddle  # noqa: E402
@@ -34,7 +42,6 @@ from agents.temporal import parse_timestamp  # noqa: E402
 from scripts.eval_paddle_corpus import (  # noqa: E402
     load_evidence,
     routing_timeline_of,
-    scan_window,
     traffic_timeline_of,
     unwrap,
 )
@@ -52,7 +59,91 @@ def cache_window(cache: Dict[str, Any]):
     return lo, hi
 
 
-def measure(caches: List[Path], alpha: float | None = None) -> Dict[str, Any]:
+def prepare(cache: Path) -> Optional[Dict[str, Any]]:
+    """The measurement inputs for one cache, or None when it cannot be scored."""
+    try:
+        payload = json.loads(cache.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"name": cache.name, "reason": "unreadable_cache"}
+
+    traffic_block = unwrap(payload.get("traffic"))
+    routing_block = unwrap(payload.get("routing"))
+
+    traffic_timeline = traffic_timeline_of(traffic_block)
+    if not traffic_timeline:
+        return {"name": cache.name, "reason": "no_traffic"}
+
+    lo, hi = cache_window(payload)
+    if lo is None:
+        return {"name": cache.name, "reason": "no_window"}
+
+    return {
+        "name": cache.name,
+        "asn": str(payload.get("asn") or ""),
+        "lo": lo,
+        "hi": hi,
+        "traffic_block": traffic_block,
+        "routing_block": routing_block,
+        "traffic_timeline": traffic_timeline,
+    }
+
+
+def build_evidence(cache: str) -> Dict[str, Any]:
+    """The archive measurement for one window, cached on disk.
+
+    The worker is given the cache's **path** rather than its contents.
+    A prepared window holds the detector's whole payload, which is a
+    couple of megabytes; shipping two hundred of them through the
+    pool's pipes costs more than the scan itself.
+    """
+    item = prepare(Path(cache))
+    if "reason" in item:
+        return item
+    try:
+        evidence = load_evidence(item["asn"], item["lo"], item["hi"])
+    except Exception as exc:  # noqa: BLE001
+        # A truncated archive is a data condition, not a reason to
+        # abandon the sweep.
+        item = dict(item)
+        item["reason"] = f"archive_unreadable:{type(exc).__name__}"
+        return item
+    item = dict(item)
+    item["evidence"] = evidence
+    return item
+
+
+def score(item: Dict[str, Any], alpha: Optional[float]) -> Dict[str, Any]:
+    """Run the estimator over one prepared window."""
+    if "reason" in item:
+        return item
+
+    protocol = {"max_placebo_probability": alpha} if alpha is not None else None
+    outage = item["routing_block"].get("outage_analysis") or \
+        item["routing_block"].get("outage") or {}
+    verdict, _, _ = run_paddle(
+        routing_analysis=outage,
+        traffic_timeline=item["traffic_timeline"],
+        routing_timeline=routing_timeline_of(item["routing_block"]),
+        routing_context={},
+        traffic_block=item["traffic_block"],
+        window_start=item["lo"],
+        window_end=item["hi"],
+        archive_evidence=item.get("evidence"),
+        protocol=protocol,
+    )
+
+    out = dict(item)
+    out["reason"] = verdict.reason
+    out["vetoes"] = dict(verdict.vetoes)
+    out["direction"] = verdict.direction
+    out["channel"] = verdict.channel
+    out["lag_seconds"] = verdict.lag_seconds
+    out["exclusivity_probability"] = verdict.exclusivity_probability
+    return out
+
+
+def measure(caches: List[Path], alpha: Optional[float] = None,
+            workers: int = 8) -> Dict[str, Any]:
     """Run the estimator over every cache and tally where it stops."""
     reasons: Counter = Counter()
     vetoes: Counter = Counter()
@@ -60,60 +151,45 @@ def measure(caches: List[Path], alpha: float | None = None) -> Dict[str, Any]:
     scored = 0
     examples: List[Dict[str, Any]] = []
 
-    for cache in caches:
-        try:
-            payload = json.loads(cache.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            reasons["unreadable_cache"] += 1
+    # The archive scan reads hundreds of millions of rows per window, so
+    # the windows are scanned in parallel.  The scan is a subprocess's
+    # worth of I/O and Polars work, so real processes are used: threads
+    # would serialise on the interpreter's own lock.
+    from concurrent.futures import ProcessPoolExecutor
+
+    paths = [str(cache) for cache in caches]
+    if workers > 1:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            scanned = list(pool.map(build_evidence, paths, chunksize=4))
+    else:
+        scanned = [build_evidence(path) for path in paths]
+
+    for item in scanned:
+        if "reason" in item:
+            reasons[item["reason"]] += 1
             continue
+        print(f"[{scored + 1}/{len(scanned)}] {item['name']}", flush=True)
 
-        asn = str(payload.get("asn") or "")
-        traffic_block = unwrap(payload.get("traffic"))
-        routing_block = unwrap(payload.get("routing"))
-
-        traffic_timeline = traffic_timeline_of(traffic_block)
-        if not traffic_timeline:
-            reasons["no_traffic"] += 1
+    for item in scanned:
+        if "reason" in item:
             continue
-
-        lo, hi = cache_window(payload)
-        if lo is None:
-            reasons["no_window"] += 1
+        result = score(item, alpha)
+        if "reason" in result and "vetoes" not in result:
+            reasons[result["reason"]] += 1
             continue
-
-        print(f"[{scored + 1}/{len(caches)}] {cache.name}", flush=True)
-        try:
-            evidence = load_evidence(asn, lo, hi)
-        except Exception as exc:  # noqa: BLE001
-            # A truncated archive is a data condition, not a reason to
-            # abandon the sweep.
-            reasons[f"archive_unreadable:{type(exc).__name__}"] += 1
-            continue
-        outage = routing_block.get("outage_analysis") or routing_block.get("outage") or {}
-        verdict, _, _ = run_paddle(
-            routing_analysis=outage,
-            traffic_timeline=traffic_timeline,
-            routing_timeline=routing_timeline_of(routing_block),
-            routing_context={},
-            traffic_block=traffic_block,
-            window_start=lo,
-            window_end=hi,
-            archive_evidence=evidence,
-        )
-
         scored += 1
-        reasons[verdict.reason] += 1
-        for name, state in verdict.vetoes.items():
+        reasons[result["reason"]] += 1
+        for name, state in result["vetoes"].items():
             vetoes[f"{name}:{state}"] += 1
-        if verdict.direction != UNKNOWN:
+        if result["direction"] != UNKNOWN:
             committed += 1
             if len(examples) < 10:
                 examples.append({
-                    "cache": cache.name,
-                    "direction": verdict.direction,
-                    "lag_seconds": verdict.lag_seconds,
-                    "channel": verdict.channel,
-                    "exclusivity_probability": verdict.exclusivity_probability,
+                    "cache": result["name"],
+                    "direction": result["direction"],
+                    "lag_seconds": result["lag_seconds"],
+                    "channel": result["channel"],
+                    "exclusivity_probability": result["exclusivity_probability"],
                 })
 
     return {
@@ -136,7 +212,7 @@ def cache_paths(root: Path):
     out = list(root.glob("quick_*.json"))
     for sub in ("stale", "old"):
         out.extend((root / sub).glob("quick_*.json"))
-    return sorted(out)
+    return sorted(set(out))
 
 
 def warm_parquet(caches: List[Path], workers: int = 8):
@@ -151,10 +227,14 @@ def warm_parquet(caches: List[Path], workers: int = 8):
     The workers are bounded, because the decode is disk-heavy and the
     point is to keep the machine responsive.
     """
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ProcessPoolExecutor
 
     from agents.control_plane import BASELINE_DAYS
-    from data.parquet_cache import PARQUET_DIR, parquet_version_matches
+    from data.parquet_cache import (
+        PARQUET_DIR,
+        parquet_is_hollow,
+        parquet_version_matches,
+    )
 
     stamps = set()
     for cache in caches:
@@ -181,11 +261,15 @@ def warm_parquet(caches: List[Path], workers: int = 8):
             stamps.add(moment)
             moment += timedelta(minutes=5)
 
-    def ready(stamp: datetime) -> bool:
-        path = PARQUET_DIR / f"updates.{stamp:%Y%m%d.%H%M}.parquet"
-        return path.exists() and parquet_version_matches(path)
+    # The readiness check reads one column of every candidate, so it is
+    # spread over threads: the work is I/O and the interpreter's lock
+    # is not what it waits on.
+    from concurrent.futures import ThreadPoolExecutor
 
-    todo = [s for s in sorted(stamps) if not ready(s)]
+    ordered = sorted(stamps)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        flags = list(pool.map(parquet_window_ready, ordered, chunksize=64))
+    todo = [s for s, ok in zip(ordered, flags) if not ok]
     if not todo:
         print(f"parquet cache: {len(stamps)} window(s) ready", flush=True)
         return
@@ -193,25 +277,57 @@ def warm_parquet(caches: List[Path], workers: int = 8):
     print(f"parquet cache: building {len(todo)} of {len(stamps)} window(s)",
           flush=True)
 
-    def build(stamp: datetime):
-        from data.parquet_cache import DECODED_DIR, UPDATES_ROOT, ensure_parquet
-        text = stamp.strftime("%Y%m%d.%H%M")
-        for source in (DECODED_DIR / f"updates.{text}.txt",
-                       UPDATES_ROOT / f"updates.{text}.gz"):
-            if source.exists() and source.stat().st_size > 0:
-                try:
-                    ensure_parquet(source)
-                except Exception as exc:  # noqa: BLE001
-                    # A truncated archive is a data condition, not a
-                    # reason to abandon the sweep.  The scan reports
-                    # the window it could not read.
-                    print(f"parquet cache: {source.name} unreadable "
-                          f"({type(exc).__name__})", flush=True)
-                return
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        list(pool.map(build, todo))
+    # The decode is a subprocess each, so the workers are real
+    # processes: a thread pool would serialise on the interpreter's own
+    # lock and run at the speed of one worker.
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        list(pool.map(build_parquet_window, todo, chunksize=8))
     print(f"parquet cache: {len(stamps)} window(s) ready", flush=True)
+
+
+def parquet_window_ready(stamp: datetime) -> bool:
+    """Whether one window's parquet cache can be read as a measurement."""
+    from data.parquet_cache import (
+        PARQUET_DIR,
+        parquet_is_hollow,
+        parquet_version_matches,
+    )
+    path = PARQUET_DIR / f"updates.{stamp:%Y%m%d.%H%M}.parquet"
+    if not path.exists() or not parquet_version_matches(path):
+        return False
+    return not parquet_is_hollow(path)
+
+
+def build_parquet_window(stamp: datetime):
+    """Build one window's parquet cache from whichever source is there."""
+    from data.parquet_cache import DECODED_DIR, UPDATES_ROOT, ensure_parquet
+    text = stamp.strftime("%Y%m%d.%H%M")
+    for source in (DECODED_DIR / f"updates.{text}.txt",
+                   UPDATES_ROOT / f"updates.{text}.gz"):
+        if source.exists() and source.stat().st_size > 0:
+            try:
+                ensure_parquet(source)
+            except Exception as exc:  # noqa: BLE001
+                # A truncated archive is a data condition, not a
+                # reason to abandon the sweep.  The scan reports
+                # the window it could not read.
+                print(f"parquet cache: {source.name} unreadable "
+                      f"({type(exc).__name__})", flush=True)
+            return
+
+
+def summary(run: Dict[str, Any], n_caches: int) -> Dict[str, Any]:
+    n_two = int(run.get("n_series_built") or 0)
+    n_commit = int(run.get("n_committed") or 0)
+    return {
+        "n_caches": n_caches,
+        "n_two_series": n_two,
+        "n_without_two_series": n_caches - n_two,
+        "n_committed": n_commit,
+        "n_stopped_at_first_veto": n_two - n_commit,
+        "reasons": run.get("reasons"),
+        "vetoes": run.get("vetoes"),
+    }
 
 
 def main() -> int:
@@ -220,6 +336,7 @@ def main() -> int:
     ap.add_argument("--out", default=str(DEFAULT_OUT))
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--no-warm", action="store_true")
+    ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--alpha", type=float, default=None,
                     help="Override the V2 level to test whether abstention is a "
                          "threshold artefact rather than a data limit.")
@@ -233,25 +350,14 @@ def main() -> int:
     if not args.no_warm:
         warm_parquet(caches)
 
-    run = measure(caches, args.alpha)
-    n_two = int(run.get("n_series_built") or 0)
-    n_commit = int(run.get("n_committed") or 0)
-
+    run = measure(caches, args.alpha, workers=args.workers)
     out = {
         "estimator": "PADDLE",
         "protocol_hash": protocol_hash(),
         "alpha_override": args.alpha,
         "n_caches": len(caches),
         "runs": [run],
-        "coverage_summary": {
-            "n_caches": len(caches),
-            "n_two_series": n_two,
-            "n_without_two_series": len(caches) - n_two,
-            "n_committed": n_commit,
-            "n_stopped_at_first_veto": n_two - n_commit,
-            "reasons": run.get("reasons"),
-            "vetoes": run.get("vetoes"),
-        },
+        "coverage_summary": summary(run, len(caches)),
     }
     path = Path(args.out)
     path.parent.mkdir(parents=True, exist_ok=True)
