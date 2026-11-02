@@ -155,11 +155,19 @@ def measure(caches: List[Path], alpha: Optional[float] = None,
     # the windows are scanned in parallel.  The scan is a subprocess's
     # worth of I/O and Polars work, so real processes are used: threads
     # would serialise on the interpreter's own lock.
+    #
+    # The workers are **spawned**, not forked.  A forked worker inherits
+    # the parent's Polars thread pool, and a thread pool whose threads
+    # do not exist in the child leaves the child's own Polars calls
+    # waiting on a lock nobody will ever release.
     from concurrent.futures import ProcessPoolExecutor
+    import multiprocessing
 
     paths = [str(cache) for cache in caches]
     if workers > 1:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
+        context = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=workers,
+                                 mp_context=context) as pool:
             scanned = list(pool.map(build_evidence, paths, chunksize=4))
     else:
         scanned = [build_evidence(path) for path in paths]
@@ -279,8 +287,14 @@ def warm_parquet(caches: List[Path], workers: int = 8):
 
     # The decode is a subprocess each, so the workers are real
     # processes: a thread pool would serialise on the interpreter's own
-    # lock and run at the speed of one worker.
-    with ProcessPoolExecutor(max_workers=workers) as pool:
+    # lock and run at the speed of one worker.  They are spawned rather
+    # than forked, so that no worker inherits a thread pool it cannot
+    # use.
+    import multiprocessing
+
+    context = multiprocessing.get_context("spawn")
+    with ProcessPoolExecutor(max_workers=workers,
+                             mp_context=context) as pool:
         list(pool.map(build_parquet_window, todo, chunksize=8))
     print(f"parquet cache: {len(stamps)} window(s) ready", flush=True)
 
